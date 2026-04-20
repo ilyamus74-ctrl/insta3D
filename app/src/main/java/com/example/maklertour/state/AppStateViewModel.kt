@@ -3,6 +3,8 @@ package com.maklertour.state
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.maklertour.data.camera.MockCameraProvider
+import com.maklertour.data.network.MockUploadApi
+import com.maklertour.data.network.UploadApi
 import com.maklertour.data.repository.InMemorySessionRepository
 import com.maklertour.data.repository.InMemoryUploadQueueRepository
 import com.maklertour.data.repository.SessionRepository
@@ -31,6 +33,7 @@ class AppStateViewModel(
     private val sessionRepository: SessionRepository = InMemorySessionRepository(),
     private val uploadQueueRepository: UploadQueueRepository = InMemoryUploadQueueRepository(),
     private val cameraProvider: CameraProvider = MockCameraProvider(),
+    private val uploadApi: UploadApi = MockUploadApi(),
 ) : ViewModel() {
 
     private val selectedSessionId = MutableStateFlow<String?>(null)
@@ -104,7 +107,36 @@ class AppStateViewModel(
     }
 
     fun processUpload(uploadId: String) {
-        uploadQueueRepository.updateStatus(uploadId, UploadStatus.Uploading)
+        viewModelScope.launch {
+            val item = uiState.value.uploadQueue.firstOrNull { it.id == uploadId } ?: return@launch
+            uploadQueueRepository.updateStatus(uploadId, UploadStatus.Uploading)
+
+            val maxAttempts = 3
+            var attempt = item.retryCount + 1
+            while (attempt <= maxAttempts) {
+                val uploaded = uploadApi.uploadChunk(
+                    uploadId = uploadId,
+                    sessionId = item.sessionId,
+                    attempt = attempt,
+                )
+                if (uploaded) {
+                    val processed = uploadApi.pollProcessingStatus(uploadId)
+                    uploadQueueRepository.updateStatus(
+                        uploadId,
+                        if (processed) UploadStatus.Success else UploadStatus.Error,
+                    )
+                    return@launch
+                }
+
+                uploadQueueRepository.incrementRetry(uploadId)
+                attempt += 1
+                if (attempt <= maxAttempts) {
+                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Queued)
+                }
+            }
+
+            uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
+        }
     }
 
     fun completeUpload(uploadId: String) {

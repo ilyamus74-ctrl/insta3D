@@ -135,8 +135,6 @@ private fun MaklerTourApp() {
                     queue = state.uploadQueue,
                     onEnqueue = viewModel::enqueueUpload,
                     onUpload = viewModel::processUpload,
-                    onSuccess = viewModel::completeUpload,
-                    onError = viewModel::failUpload,
                 )
             }
         }
@@ -264,8 +262,6 @@ private fun QueueScreen(
     queue: List<com.maklertour.domain.UploadItem>,
     onEnqueue: () -> Unit,
     onUpload: (String) -> Unit,
-    onSuccess: (String) -> Unit,
-    onError: (String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Upload Queue")
@@ -277,14 +273,16 @@ private fun QueueScreen(
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Session: ${item.sessionId.take(8)}")
                         Text("Status: ${item.status}")
+                        Text("Retry: ${item.retryCount}")
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onUpload(item.id) }) { Text("Отправка") }
-                            Button(onClick = { onSuccess(item.id) }) { Text("Успешно") }
-                            Button(onClick = { onError(item.id) }) { Text("Ошибка") }
+                            Button(onClick = { onUpload(item.id) }, enabled = item.status != com.maklertour.domain.UploadStatus.Uploading) {
+                                Text("Отправить (mock API)")
+                            }
                         }
                     }
                 }
             }
         }
     }
+
 }

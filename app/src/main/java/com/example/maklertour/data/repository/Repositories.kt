@@ -27,6 +27,7 @@ interface UploadQueueRepository {
     val queue: StateFlow<List<UploadItem>>
     fun enqueue(sessionId: String)
     fun updateStatus(uploadId: String, status: UploadStatus)
+    fun incrementRetry(uploadId: String)
 }
 
 class InMemorySessionRepository : SessionRepository {
@@ -246,6 +247,18 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
             }
         }
     }
+
+    override fun incrementRetry(uploadId: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(retryCount = item.retryCount + 1, updatedAt = Instant.now())
+                } else {
+                    item
+                }
+            }
+        }
+    }
 }
 
 class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository {
@@ -270,6 +283,19 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
         _queue.update { items ->
             items.map { item ->
                 if (item.id == uploadId) item.copy(status = status, updatedAt = Instant.now()) else item
+            }
+        }
+        persist()
+    }
+
+    override fun incrementRetry(uploadId: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(retryCount = item.retryCount + 1, updatedAt = Instant.now())
+                } else {
+                    item
+                }
             }
         }
         persist()
