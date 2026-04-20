@@ -3,8 +3,9 @@ package com.maklertour.state
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.maklertour.data.camera.MockCameraProvider
-import com.maklertour.data.network.MockUploadApi
+import com.maklertour.data.network.NetworkConfigProvider
 import com.maklertour.data.network.UploadApi
+import com.maklertour.data.network.UploadApiFactory
 import com.maklertour.data.repository.InMemorySessionRepository
 import com.maklertour.data.repository.InMemoryUploadQueueRepository
 import com.maklertour.data.repository.SessionRepository
@@ -33,7 +34,7 @@ class AppStateViewModel(
     private val sessionRepository: SessionRepository = InMemorySessionRepository(),
     private val uploadQueueRepository: UploadQueueRepository = InMemoryUploadQueueRepository(),
     private val cameraProvider: CameraProvider = MockCameraProvider(),
-    private val uploadApi: UploadApi = MockUploadApi(),
+    private val uploadApi: UploadApi = UploadApiFactory.create(NetworkConfigProvider.fromBuildConfig()),
 ) : ViewModel() {
 
     private val selectedSessionId = MutableStateFlow<String?>(null)

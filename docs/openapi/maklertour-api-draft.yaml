@@ -1,0 +1,89 @@
+openapi: 3.0.3
+info:
+  title: MaklerTour Backend API (Draft)
+  version: 0.1.0
+  description: Черновой REST-контракт для этапа интеграции Android MVP с backend.
+servers:
+  - url: https://api.example.com
+paths:
+  /auth/login:
+    post:
+      summary: Логин оператора
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Access + refresh токены
+  /auth/refresh:
+    post:
+      summary: Обновление токена
+      responses:
+        '200': { description: Новый access token }
+  /objects:
+    get:
+      summary: Список объектов оператора
+      responses:
+        '200': { description: OK }
+  /sessions:
+    post:
+      summary: Создать сессию съемки
+      responses:
+        '201': { description: Created }
+  /sessions/{id}/points:
+    post:
+      summary: Добавить точку в сессию
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '201': { description: Point created }
+  /upload/init:
+    post:
+      summary: Инициализация загрузки
+      responses:
+        '200': { description: Upload id + chunk rules }
+  /upload/chunk:
+    put:
+      summary: Загрузка чанка
+      responses:
+        '200': { description: Chunk accepted }
+  /upload/complete:
+    post:
+      summary: Завершить загрузку файла
+      responses:
+        '200': { description: Upload completed }
+  /drafts:
+    post:
+      summary: Сохранить черновик тура
+      responses:
+        '201': { description: Draft created }
+  /drafts/{id}/finalize:
+    post:
+      summary: Финализация черновика
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Finalized }
+  /processing/{object_id}/status:
+    get:
+      summary: Статус обработки тура
+      parameters:
+        - in: path
+          name: object_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Processing status }
