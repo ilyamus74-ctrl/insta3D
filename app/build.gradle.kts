@@ -20,12 +20,12 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "API_BASE_URL", '"https://mock.local"')
+            buildConfigField("String", "API_BASE_URL", "\"https://mock.local\"")
             buildConfigField("Boolean", "USE_MOCK_UPLOAD_API", "true")
         }
         release {
             isMinifyEnabled = false
-            buildConfigField("String", "API_BASE_URL", '"https://api.example.com"')
+            buildConfigField("String", "API_BASE_URL", "\"https://api.example.com\"")
             buildConfigField("Boolean", "USE_MOCK_UPLOAD_API", "false")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
