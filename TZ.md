@@ -39,10 +39,10 @@
 - [x] Инициализировать проект Android (Kotlin + Jetpack Compose).
 - [x] Настроить UI-библиотеку и базовую тему (Material 3, mobile-first).
 - [x] Настроить роутинг (Sessions / Camera / Draft / Queue, MVP-заглушки экранов).
-- [ ] Настроить состояние и типы домена (ViewModel + StateFlow).
+- [X] Настроить состояние и типы домена (ViewModel + StateFlow).
 
 ### Этап B. Домен и хранилище
-- [ ] Описать сущности: Session, CapturePoint, CameraStatus, UploadItem.
+- [X] Описать сущности: Session, CapturePoint, CameraStatus, UploadItem.
 - [ ] Реализовать локальное хранение (IndexedDB).
 - [ ] Реализовать репозитории (абстракции поверх хранилища).
 

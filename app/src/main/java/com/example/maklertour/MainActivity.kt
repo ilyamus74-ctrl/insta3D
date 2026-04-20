@@ -12,7 +12,9 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -22,6 +24,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.maklertour.state.AppStateViewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,6 +45,8 @@ private enum class AppTab(val route: String, val title: String) {
 @Composable
 private fun MaklerTourApp() {
     val navController = rememberNavController()
+    val viewModel = remember { AppStateViewModel() }
+    val state by viewModel.uiState.collectAsState()
 
     Scaffold(
         bottomBar = {
@@ -77,10 +82,32 @@ private fun MaklerTourApp() {
             startDestination = AppTab.Sessions.route,
             modifier = Modifier.padding(padding)
         ) {
-            composable(AppTab.Sessions.route) { PlaceholderScreen("Сессии", "Создание и список съемок") }
-            composable(AppTab.Camera.route) { PlaceholderScreen("Камера", "Подключение и capture через provider") }
-            composable(AppTab.Draft.route) { PlaceholderScreen("Черновик тура", "Порядок точек и связи") }
-            composable(AppTab.Queue.route) { PlaceholderScreen("Очередь", "Mock статусы отправки") }
+            composable(AppTab.Sessions.route) {
+                PlaceholderScreen(
+                    title = "Сессии",
+                    subtitle = "Создано сессий: ${state.sessions.size}"
+                )
+            }
+            composable(AppTab.Camera.route) {
+                val cameraTitle = if (state.cameraStatus.isConnected) "Камера подключена" else "Камера не подключена"
+                PlaceholderScreen(
+                    title = "Камера",
+                    subtitle = cameraTitle
+                )
+            }
+            composable(AppTab.Draft.route) {
+                val points = state.sessions.sumOf { it.points.size }
+                PlaceholderScreen(
+                    title = "Черновик тура",
+                    subtitle = "Снято точек: $points"
+                )
+            }
+            composable(AppTab.Queue.route) {
+                PlaceholderScreen(
+                    title = "Очередь",
+                    subtitle = "Пакетов в очереди: ${state.uploadQueue.size}"
+                )
+            }
         }
     }
 }
@@ -97,4 +124,5 @@ private fun PlaceholderScreen(title: String, subtitle: String) {
         Text(text = title)
         Text(text = subtitle)
     }
+
 }
