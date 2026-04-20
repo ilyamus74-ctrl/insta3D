@@ -1,8 +1,11 @@
 package com.maklertour
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -135,6 +138,7 @@ private fun MaklerTourApp() {
                     queue = state.uploadQueue,
                     onEnqueue = viewModel::enqueueUpload,
                     onUpload = viewModel::processUpload,
+                    onExportDiagnostics = viewModel::exportDiagnosticJson,
                 )
             }
         }
@@ -262,11 +266,20 @@ private fun QueueScreen(
     queue: List<com.maklertour.domain.UploadItem>,
     onEnqueue: () -> Unit,
     onUpload: (String) -> Unit,
+    onExportDiagnostics: () -> String,
 ) {
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Upload Queue")
         Button(onClick = onEnqueue) { Text("Добавить в очередь") }
-
+        Button(
+            onClick = {
+                val diagnostics = onExportDiagnostics()
+                clipboardManager.setText(AnnotatedString(diagnostics))
+                Toast.makeText(context, "diagnostic JSON скопирован", Toast.LENGTH_SHORT).show()
+            }
+        ) { Text("Скопировать diagnostic JSON") }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(queue) { _, item ->
                 Card(modifier = Modifier.fillMaxWidth()) {

@@ -16,6 +16,8 @@ import com.maklertour.domain.CapturePoint
 import com.maklertour.domain.Session
 import com.maklertour.domain.UploadItem
 import com.maklertour.domain.UploadStatus
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -147,4 +149,66 @@ class AppStateViewModel(
     fun failUpload(uploadId: String) {
         uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
     }
+
+
+    fun exportDiagnosticJson(): String {
+        val state = uiState.value
+        val sessionsJson = JSONArray().apply {
+            state.sessions.forEach { session ->
+                put(
+                    JSONObject().apply {
+                        put("id", session.id)
+                        put("name", session.name)
+                        put("address", session.address)
+                        put("comment", session.comment)
+                        put("createdAt", session.createdAt.toString())
+                        put(
+                            "points", JSONArray().apply {
+                                session.points.forEach { point ->
+                                    put(
+                                        JSONObject().apply {
+                                            put("id", point.id)
+                                            put("name", point.name)
+                                            put("capturedAt", point.capturedAt.toString())
+                                            put("status", point.status.name)
+                                            put("previewUri", point.previewUri ?: JSONObject.NULL)
+                                        }
+                                    )
+                                }
+                            }
+                        )
+                    }
+                )
+            }
+        }
+
+        val queueJson = JSONArray().apply {
+            state.uploadQueue.forEach { item ->
+                put(
+                    JSONObject().apply {
+                        put("id", item.id)
+                        put("sessionId", item.sessionId)
+                        put("status", item.status.name)
+                        put("retryCount", item.retryCount)
+                        put("updatedAt", item.updatedAt.toString())
+                    }
+                )
+            }
+        }
+
+        return JSONObject().apply {
+            put("generatedAt", java.time.Instant.now().toString())
+            put("selectedSessionId", state.selectedSessionId ?: JSONObject.NULL)
+            put("cameraStatus", JSONObject().apply {
+                put("isConnected", state.cameraStatus.isConnected)
+                put("model", state.cameraStatus.model ?: JSONObject.NULL)
+                put("batteryPercent", state.cameraStatus.batteryPercent ?: JSONObject.NULL)
+                put("freeStorageMb", state.cameraStatus.freeStorageMb ?: JSONObject.NULL)
+                put("lastError", state.cameraStatus.lastError ?: JSONObject.NULL)
+            })
+            put("sessions", sessionsJson)
+            put("uploadQueue", queueJson)
+        }.toString(2)
+    }
 }
+
