@@ -44,19 +44,19 @@
 ### Этап B. Домен и хранилище
 - [X] Описать сущности: Session, CapturePoint, CameraStatus, UploadItem.
 - [ ] Реализовать локальное хранение (IndexedDB).
-- [ ] Реализовать репозитории (абстракции поверх хранилища).
+- [X] Реализовать репозитории (абстракции поверх хранилища).
 
 ### Этап C. Интеграция с камерой (через адаптер)
-- [ ] Ввести интерфейс `CameraProvider` (connect/disconnect/getStatus/capture/listFiles).
-- [ ] Реализовать `MockCameraProvider` для разработки без устройства.
-- [ ] Подготовить `Insta360Provider`-заглушку под реальную интеграцию.
+- [X] Ввести интерфейс `CameraProvider` (connect/disconnect/getStatus/capture/listFiles).
+- [X] Реализовать `MockCameraProvider` для разработки без устройства.
+- [X] Подготовить `Insta360Provider`-заглушку под реальную интеграцию.
 
 ### Этап D. Экраны MVP
-- [ ] Dashboard: список сессий и создание новой.
-- [ ] Camera: подключение + статус + кнопка съемки.
-- [ ] Session Points: журнал точек с редактированием.
-- [ ] Draft Tour: сортировка порядка точек.
-- [ ] Upload Queue: запуск отправки и статусы.
+- [X] Dashboard: список сессий и создание новой.
+- [X] Camera: подключение + статус + кнопка съемки.
+- [X] Session Points: журнал точек с редактированием.
+- [X] Draft Tour: сортировка порядка точек.
+- [X] Upload Queue: запуск отправки и статусы.
 
 ### Этап E. Mock backend
 - [ ] Поднять локальный mock API (msw/json-server).
