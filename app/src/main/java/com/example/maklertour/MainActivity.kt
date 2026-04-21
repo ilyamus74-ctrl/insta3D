@@ -37,9 +37,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.maklertour.data.network.ConnectivityState
 import com.maklertour.data.repository.SharedPrefsSessionRepository
 import com.maklertour.data.repository.SharedPrefsUploadQueueRepository
 import com.maklertour.state.AppStateViewModel
+import com.maklertour.state.EnqueueUploadResult
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -264,15 +266,28 @@ private fun DraftScreen(
 @Composable
 private fun QueueScreen(
     queue: List<com.maklertour.domain.UploadItem>,
-    onEnqueue: () -> Unit,
+    onEnqueue: (Boolean) -> EnqueueUploadResult,
     onUpload: (String) -> Unit,
     onExportDiagnostics: () -> String,
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+    val isWifiConnected = ConnectivityState.isWifiConnected(context)
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Upload Queue")
-        Button(onClick = onEnqueue) { Text("Добавить в очередь") }
+        Text(if (isWifiConnected) "Wi‑Fi: подключен" else "Wi‑Fi: не подключен")
+        Button(
+            onClick = {
+                when (val result = onEnqueue(isWifiConnected)) {
+                    EnqueueUploadResult.Enqueued -> {
+                        Toast.makeText(context, "Сессия добавлена в очередь", Toast.LENGTH_SHORT).show()
+                    }
+                    is EnqueueUploadResult.Rejected -> {
+                        Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        ) { Text("Добавить в очередь") }
         Button(
             onClick = {
                 val diagnostics = onExportDiagnostics()

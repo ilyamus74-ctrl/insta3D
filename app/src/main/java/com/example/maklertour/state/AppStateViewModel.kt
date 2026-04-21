@@ -32,6 +32,11 @@ data class AppUiState(
     val selectedSessionId: String? = null,
 )
 
+sealed interface EnqueueUploadResult {
+    data object Enqueued : EnqueueUploadResult
+    data class Rejected(val reason: String) : EnqueueUploadResult
+}
+
 class AppStateViewModel(
     private val sessionRepository: SessionRepository = InMemorySessionRepository(),
     private val uploadQueueRepository: UploadQueueRepository = InMemoryUploadQueueRepository(),
@@ -104,9 +109,20 @@ class AppStateViewModel(
         if (index < pointsSize - 1) sessionRepository.movePoint(sessionId, index, index + 1)
     }
 
-    fun enqueueUpload() {
-        val sessionId = uiState.value.selectedSessionId ?: return
-        uploadQueueRepository.enqueue(sessionId)
+    fun enqueueUpload(isWifiAvailable: Boolean): EnqueueUploadResult {
+        if (!isWifiAvailable) {
+            return EnqueueUploadResult.Rejected("Выгрузка доступна только по Wi‑Fi")
+        }
+
+        val session = uiState.value.sessions.firstOrNull { it.id == uiState.value.selectedSessionId }
+            ?: return EnqueueUploadResult.Rejected("Сессия не выбрана")
+
+        if (session.points.size < 5) {
+            return EnqueueUploadResult.Rejected("Нужно минимум 5 точек для отправки")
+        }
+
+        uploadQueueRepository.enqueue(session.id)
+        return EnqueueUploadResult.Enqueued
     }
 
     fun processUpload(uploadId: String) {
