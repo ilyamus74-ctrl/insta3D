@@ -1,0 +1,213 @@
+{include file="maklertour_header.html"}
+{include file="maklertour_sidebar.html"}
+
+<main id="main" class="main">
+
+  <div class="pagetitle">
+    <h1>Заявка #{$order.id}</h1>
+    <nav>
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item">MaklerTour</li>
+        <li class="breadcrumb-item"><a href="/orders.php">Заявки</a></li>
+        <li class="breadcrumb-item active">#{$order.id}</li>
+      </ol>
+    </nav>
+  </div>
+
+  {if $error}
+    <div class="alert alert-danger">{$error}</div>
+  {/if}
+
+  {if $success}
+    <div class="alert alert-success">{$success}</div>
+  {/if}
+
+  <section class="section">
+
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Объект</h5>
+        <div class="mb-3 d-flex gap-2">
+          <a href="javascript:history.back()" class="btn btn-outline-secondary">← Назад</a>
+          {if $canEdit}<a href="#order-edit" class="btn btn-primary">Редактировать</a>{/if}
+        </div>
+
+        <table class="table">
+          <tr>
+            <th style="width:220px;">Название</th>
+            <td>{$order.title|escape}</td>
+          </tr>
+          <tr>
+            <th>Адрес</th>
+            <td>{$order.address|escape}</td>
+          </tr>
+          <tr>
+            <th>Площадь</th>
+            <td>{$order.area_m2} м²</td>
+          </tr>
+          <tr>
+            <th>Клиент</th>
+            <td>{$order.customer_name|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Телефон</th>
+            <td>{$order.customer_phone|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Email</th>
+            <td>{$order.customer_email|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Брокер</th>
+            <td>{$order.broker_name|default:'-'|escape} / {$order.broker_email|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Оператор</th>
+            <td>{$order.operator_name|default:'-'|escape} / {$order.operator_email|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Статус</th>
+            <td><span class="badge {$order.status_meta.class}"><i class="bi {$order.status_meta.icon}"></i> {$order.status_meta.label}</span></td>
+          </tr>
+            <tr><th>Публикация</th><td>{if $order.is_published == 1}<span class="badge bg-success">Опубликована</span>{else}<span class="badge bg-light text-dark">Черновик</span>{/if}</td></tr>
+          <tr>
+            <th>Публичный токен</th>
+            <td><code>{$order.public_token}</code></td>
+          </tr>
+        </table>
+
+        {if $canEdit}
+        <form id="order-edit" method="post" action="/order.php?id={$order.id}" class="row g-2 mt-3">
+          <input type="hidden" name="action" value="update_order">
+          <div class="col-md-6"><input type="text" class="form-control" name="title" value="{$order.title|escape}" placeholder="Название"></div>
+          <div class="col-md-6"><input type="text" class="form-control" name="address" value="{$order.address|escape}" placeholder="Адрес"></div>
+          <div class="col-md-3"><input type="number" step="0.01" class="form-control" name="area_m2" value="{$order.area_m2}" placeholder="Площадь"></div>
+          <div class="col-md-3"><input type="text" class="form-control" name="customer_name" value="{$order.customer_name|escape}" placeholder="Клиент"></div>
+          <div class="col-md-3"><input type="text" class="form-control" name="customer_phone" value="{$order.customer_phone|escape}" placeholder="Телефон"></div>
+          <div class="col-md-3"><input type="email" class="form-control" name="customer_email" value="{$order.customer_email|escape}" placeholder="Email"></div>
+          <div class="col-12 form-check form-switch ms-1"><input class="form-check-input" type="checkbox" name="is_published" value="1" {if $order.is_published == 1}checked{/if}><label class="form-check-label">Опубликовать</label></div>
+          <div class="col-12 d-flex gap-2"><button class="btn btn-primary" type="submit">Сохранить</button></div>
+        </form>
+        <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="close_order"><button class="btn btn-dark mt-2" type="submit">Закрыть</button></form>
+        <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="reopen_order"><button class="btn btn-outline-secondary mt-2" type="submit">Переоткрыть</button></form>
+        {/if}
+
+        <div id="order-map-placeholder" class="mt-3">Карта будет здесь</div>
+
+        <form method="post" action="/order.php?id={$order.id}" class="row g-2" style="display:none">
+          <input type="hidden" name="action" value="set_status">
+
+          <div class="col-md-3">
+            <select name="status" class="form-select">
+              <option value="NEW" {if $order.status == 'NEW'}selected{/if}>NEW</option>
+              <option value="ASSIGNED" {if $order.status == 'ASSIGNED'}selected{/if}>ASSIGNED</option>
+              <option value="IN_PROGRESS" {if $order.status == 'IN_PROGRESS'}selected{/if}>IN_PROGRESS</option>
+              <option value="CAPTURED" {if $order.status == 'CAPTURED'}selected{/if}>CAPTURED</option>
+              <option value="UPLOADING" {if $order.status == 'UPLOADING'}selected{/if}>UPLOADING</option>
+              <option value="UPLOADED" {if $order.status == 'UPLOADED'}selected{/if}>UPLOADED</option>
+              <option value="PROCESSING" {if $order.status == 'PROCESSING'}selected{/if}>PROCESSING</option>
+              <option value="READY" {if $order.status == 'READY'}selected{/if}>READY</option>
+              <option value="CANCELLED" {if $order.status == 'CANCELLED'}selected{/if}>CANCELLED</option>
+            </select>
+          </div>
+
+          <div class="col-md-3">
+            <button type="submit" class="btn btn-primary">Обновить статус</button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-md-4">
+        <div class="card"><div class="card-body"><h5 class="card-title">Sessions</h5><div class="display-6">{$mediaTotals.sessions|default:0}</div></div></div>
+
+      </div>
+      <div class="col-md-4">
+        <div class="card"><div class="card-body"><h5 class="card-title">Photos</h5><div class="display-6">{$mediaTotals.photos|default:0}</div></div></div>
+      </div>
+      <div class="col-md-4">
+        <div class="card"><div class="card-body"><h5 class="card-title">Videos</h5><div class="display-6">{$mediaTotals.videos|default:0}</div></div></div>
+
+      </div>
+    </div>
+
+    {foreach from=$captureSessions item=s}
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">Capture session #{$s.id}</h5>
+          <div class="row g-3 mb-3">
+            <div class="col-md-6"><strong>UUID:</strong> <code>{$s.app_session_uuid|default:'-'|escape}</code></div>
+            <div class="col-md-3"><strong>Camera:</strong> {$s.camera_model|default:'-'|escape}</div>
+            <div class="col-md-3"><strong>Status:</strong> <span class="badge bg-secondary">{$s.status|default:'-'|escape}</span></div>
+            <div class="col-md-3"><strong>Started:</strong> {$s.started_at|default:'-'}</div>
+            <div class="col-md-3"><strong>Completed:</strong> {$s.completed_at|default:'-'}</div>
+            <div class="col-md-3"><strong>Photos:</strong> {$s.photo_count|default:0}</div>
+            <div class="col-md-3"><strong>Videos:</strong> {$s.video_count|default:0}</div>
+          </div>
+
+          <h6 class="mb-3">Photos</h6>
+          {if $s.photos|@count > 0}
+            <div class="row g-3">
+              {foreach from=$s.photos item=p}
+                <div class="col-md-4 col-lg-3">
+                  <div class="card h-100">
+                    <div class="card-body">
+                      {if $p.preview_url}
+                        <img src="{$p.preview_url|escape}" class="img-fluid rounded mb-2" alt="{$p.display_name|escape}">
+                      {else}
+                        <div class="border rounded p-3 text-muted text-center mb-2">No preview</div>
+                      {/if}
+                      <div><strong>{$p.display_name|escape}</strong></div>
+                      <div class="small text-muted">#{$p.sequence_number|default:'-'}, room: {$p.room_name|default:'-'|escape}</div>
+                      <div class="mt-1"><span class="badge bg-secondary">{$p.upload_state|default:'-'|escape}</span></div>
+                      <div class="small mt-2"><a href="{$p.preview_url|escape}" target="_blank">Preview</a> · {$p.preview_size_human}</div>
+                      <div class="small"><a href="{$p.original_url|escape}" target="_blank">Original</a> · {$p.original_size_human}</div>
+                      <div class="small mt-2"><code>{$p.preview_effective_path|default:'-'|escape}</code></div>
+                      <div class="small"><code>{$p.original_effective_path|default:'-'|escape}</code></div>
+                    </div>
+                  </div>
+                </div>
+              {/foreach}
+            </div>
+          {else}
+            <div class="text-muted">Фото в этой сессии пока нет.</div>
+          {/if}
+
+          <h6 class="mt-4 mb-3">Videos</h6>
+          {if $s.videos|@count > 0}
+            <div class="row g-3">
+              {foreach from=$s.videos item=v}
+                <div class="col-md-6">
+                  <div class="card h-100">
+                    <div class="card-body">
+                      <div><strong>{$v.filename|default:'-'|escape}</strong></div>
+                      <div class="small">Size: {$v.size_human|default:'-'}, duration: {$v.duration_sec|default:'-'}</div>
+                      <div class="small">Upload: <span class="badge bg-secondary">{$v.upload_state|default:'-'|escape}</span> Processing: <span class="badge bg-secondary">{$v.processing_state|default:'-'|escape}</span></div>
+                      <div class="small mt-1"><code>{$v.storage_path|default:'-'|escape}</code></div>
+                      {if $v.media_url}
+                      <video controls preload="metadata" class="w-100 mt-2" style="max-height:280px;">
+                        <source src="{$v.media_url|escape}" type="video/mp4">
+                      </video>
+                      <div class="mt-2"><a href="{$v.media_url|escape}" target="_blank">Открыть видео в новой вкладке</a></div>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              {/foreach}
+            </div>
+          {else}
+            <div class="text-muted">Видео в этой сессии пока нет.</div>
+          {/if}
+        </div>
+
+      </div>
+    {foreachelse}
+      <div class="card"><div class="card-body"><div class="text-muted">По этой заявке пока нет capture sessions.</div></div></div>
+    {/foreach}
+  </section>
+
+</main>
+
+{include file="maklertour_footer.html"}

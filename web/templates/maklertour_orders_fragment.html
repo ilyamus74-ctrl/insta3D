@@ -1,0 +1,103 @@
+<div class="pagetitle">
+  <h1>Заявки</h1>
+  <nav>
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item">MaklerTour</li>
+      <li class="breadcrumb-item active">Заявки</li>
+    </ol>
+  </nav>
+</div>
+
+<section class="section">
+  {if $success}
+    <div class="alert alert-success">{$success}</div>
+  {/if}
+  {if $error}
+    <div class="alert alert-danger">{$error}</div>
+  {/if}
+
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title">Создать заявку</h5>
+
+      <form class="row g-3">
+        <input type="hidden" name="action" value="create_order">
+
+        <div class="col-md-6">
+          <label class="form-label">Название объекта</label>
+          <input type="text" name="title" class="form-control" required>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Площадь, м²</label>
+          <input type="number" step="0.01" name="area_m2" class="form-control">
+        </div>
+
+        <div class="col-md-12">
+          <label class="form-label">Адрес</label>
+          <input type="text" name="address" class="form-control">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Клиент</label>
+          <input type="text" name="customer_name" class="form-control">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Телефон клиента</label>
+          <input type="text" name="customer_phone" class="form-control">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Email клиента</label>
+          <input type="email" name="customer_email" class="form-control">
+        </div>
+
+        <div class="col-12">
+          <button type="button" class="btn btn-primary" data-action="create_order">
+            Создать заявку
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title">Список заявок</h5>
+
+      <table class="table table-striped">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Объект</th>
+            <th>Адрес</th>
+            <th>Площадь</th>
+            <th>Статус</th>
+            <th>Брокер</th>
+            <th>Оператор</th>
+            <th>Создано</th>
+          </tr>
+        </thead>
+        <tbody>
+          {foreach from=$orders item=o}
+            <tr>
+              <td>{$o.id}</td>
+              <td>{$o.title|escape}</td>
+              <td>{$o.address|escape}</td>
+              <td>{$o.area_m2}</td>
+              <td><span class="badge bg-secondary">{$o.status}</span></td>
+              <td>{$o.broker_name|default:'-'|escape}</td>
+              <td>{$o.operator_name|default:'-'|escape}</td>
+              <td>{$o.created_at}</td>
+            </tr>
+          {foreachelse}
+            <tr>
+              <td colspan="8">Заявок пока нет</td>
+            </tr>
+          {/foreach}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>

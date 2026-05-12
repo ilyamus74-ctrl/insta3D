@@ -1,0 +1,20 @@
+sudo python3 - <<'PY'
+from pathlib import Path
+p = Path('/opt/print-agent/agent.py')
+s = p.read_text()
+s = s.replace(
+'''        suffix = ".pdf"
+        low = file_name.lower()
+        if low.endswith(".zpl"):
+            suffix = ".zpl"
+        elif low.endswith(".png"):
+            suffix = ".png"''',
+'''        ext = os.path.splitext(file_name)[1].lower()
+        allowed_ext = {".pdf", ".zpl", ".png", ".txt", ".epl", ".lbl"}
+        suffix = ext if ext in allowed_ext else ".pdf"'''
+)
+p.write_text(s)
+print("patched")
+PY
+
+sudo systemctl restart print-agent

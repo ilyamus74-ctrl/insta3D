@@ -1,0 +1,89 @@
+{include file="maklertour_header.html"}
+{include file="maklertour_sidebar.html"}
+
+<main id="main" class="main">
+
+  <div class="pagetitle">
+    <h1>Пользователи</h1>
+    <nav>
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item">MaklerTour</li>
+        <li class="breadcrumb-item active">Пользователи</li>
+      </ol>
+    </nav>
+  </div>
+
+  {if $error}
+    <div class="alert alert-danger">{$error}</div>
+  {/if}
+
+  {if $success}
+    <div class="alert alert-success">{$success}</div>
+  {/if}
+
+  <section class="section">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Список пользователей</h5>
+
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Username</th>
+              <th>Email</th>
+              <th>ФИО</th>
+              <th>Role</th>
+              <th>Active</th>
+              <th>Создан</th>
+              <th>Последний вход</th>
+              <th>Действие</th>
+            </tr>
+          </thead>
+          <tbody>
+            {foreach from=$users item=u}
+              <tr>
+                <form method="post" action="/users.php">
+                  <input type="hidden" name="action" value="update_user">
+                  <input type="hidden" name="user_id" value="{$u.id}">
+
+                  <td>{$u.id}</td>
+                  <td>{$u.username|escape}</td>
+                  <td>{$u.email|escape}</td>
+                  <td>{$u.full_name|default:'-'|escape}</td>
+                  <td>
+                    <select class="form-select" name="role">
+                      <option value="ADMIN" {if $u.role === 'ADMIN'}selected{/if}>ADMIN</option>
+                      <option value="BROKER" {if $u.role === 'BROKER'}selected{/if}>BROKER</option>
+                      <option value="OPERATOR" {if $u.role === 'OPERATOR'}selected{/if}>OPERATOR</option>
+                      <option value="CLIENT" {if $u.role === 'CLIENT'}selected{/if}>CLIENT</option>
+                    </select>
+                  </td>
+                  <td>
+                    <select class="form-select" name="is_active">
+                      <option value="1" {if (int)$u.is_active === 1}selected{/if}>1</option>
+                      <option value="0" {if (int)$u.is_active === 0}selected{/if}>0</option>
+                    </select>
+                  </td>
+                  <td>{$u.created_at|default:'-'}</td>
+                  <td>{$u.last_login_at|default:'-'}</td>
+                  <td>
+                    <button type="submit" class="btn btn-sm btn-primary">Сохранить</button>
+                  </td>
+                </form>
+              </tr>
+            {foreachelse}
+              <tr>
+                <td colspan="9">Пользователей пока нет</td>
+              </tr>
+            {/foreach}
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+  </section>
+
+</main>
+
+{include file="maklertour_footer.html"}

@@ -1,0 +1,30 @@
+Нужно Android-приложение на Kotlin + Jetpack Compose для управления камерой Insta360 по Wi-Fi.
+
+Цель MVP:
+1. Авторизация оператора
+2. Список объектов/заявок
+3. Подключение к Insta360
+4. Съемка 360-точек
+5. Получение preview после каждой точки
+6. Локальное хранение сессии и точек через Room
+7. Экран черновика тура: список точек, reorder, ручные связи, стартовая точка
+8. Очередь загрузки originals через WorkManager
+9. Полная выгрузка только по нормальному Wi-Fi
+10. Backend API через Retrofit
+11. Архитектура MVVM + Hilt
+
+Сделай сначала Phase 1:
+- проектную структуру
+- модели данных
+- navigation graph
+- fake repository
+- экраны:
+  LoginScreen
+  ObjectsScreen
+  ObjectDetailsScreen
+  CameraConnectScreen
+  CaptureScreen
+  DraftTourScreen
+  UploadQueueScreen
+
+Отдельно подготовь CameraProvider interface, чтобы потом можно было подключить Insta360 SDK или OSC.

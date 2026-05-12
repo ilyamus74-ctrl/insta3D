@@ -1,0 +1,390 @@
+        <script src="/js/predictions.js"></script>
+
+        <!-- 1) Chart.js 
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
+        -->
+
+        <!-- 2) Адаптер времени для шкалы времени
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3" defer></script>
+         -->
+<!--
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+        <script src="https://unpkg.com/chartjs-chart-financial/dist/chartjs-chart-financial.js"></script>
+-->
+<!-- Chart.js v4 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<!-- адаптер времени -->
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<!-- финансовый плагин (candlestick/ohlc) -->
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
+
+        <script>
+        ///// Явная регистрация контроллеров/элемента
+        const fin = window['chartjs-chart-financial'];
+        Chart.register(fin.CandlestickController, fin.OhlcController, fin.FinancialElement);
+        </script>
+
+
+        <!-- 3) Твой скрипт, который создаёт график -->
+        <script src="/js/charts.js"></script>
+        <script src="/js/predictModal.js"></script>
+
+<style>
+    body { background:#0b0f1a; color:#e9edf5; }
+    .card { background:#12182b; border:1px solid #1c2440; }
+    .badge-high { background: #e09f1f; }
+    .badge-low  { background: #4a5568; }
+    .model-pill { cursor:pointer; }
+    .table thead th { color:#a8b3cc; border-color:#223157; }
+    .table tbody td { border-color:#1a2444; }
+    a, .link { color:#9ecbff; text-decoration: none; }
+    a:hover { color:#cfe3ff; }
+    .form-control, .form-select { background:#0f1526; color:#e9edf5; border-color:#1c2440; }
+    .form-control::placeholder { color:#8a93a8; }
+    .btn-gold { background:#e09f1f; color:#0b0f1a; border:0; }
+    .btn-gold:hover { background:#f3b63f; }
+    .muted { color:#8a93a8; }
+    #signalsTable {
+  table-layout: fixed;
+  width: 100%;
+}
+
+#signalsTable thead th,
+#signalsTable tbody td {
+  vertical-align: middle;
+}
+
+/* Ширины колонок: подгони под себя */
+#signalsTable .col-utc   { width: 120px; }
+#signalsTable .col-ev    { width: auto; }          /* тянется */
+#signalsTable .col-dir   { width: 70px;  text-align:center; }
+#signalsTable .col-prob  { width: 70px;  text-align:center; }
+#signalsTable .col-pips  { width: 80px;  text-align:right; }
+#signalsTable .col-prio  { width: 70px;  text-align:center; }
+
+/* Внутри «события» — две строки: заголовок и «коды» бледнее */
+.ev-wrap {
+  display: block;
+  overflow: hidden;
+}
+
+.ev-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;      /* одна строка для названия */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.ev-codes {
+  font-size: 0.9em;
+  color: #8a93a8;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;      /* одна строка для кодов */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* бейджи и читаемость */
+.badge-mid  { background:#6b8afd; color:#0b0f1a; }   /* синий */
+.badge-high { background:#e09f1f; color:#0b0f1a; }   /* золотой */
+.badge-low  { background:#3a455a; color:#e9edf5; }   /* серо-синий */
+
+#signalsTable tbody tr:hover {
+  background: rgba(224,159,31,0.08);
+}
+
+/* на узких экранах можно спрятать Prob/Pips/Prio */
+@media (max-width: 992px) {
+  #signalsTable .col-prob,
+  #signalsTable .col-pips,
+  #signalsTable .col-prio { display: none; }
+}
+/* сделать текст в таблице нормальным светлым */
+#signalsTable,
+#signalsTable th,
+#signalsTable td {
+  color: #e9edf5 !important;
+}
+#signalsTable tbody tr.row-active {
+  outline: 2px solid rgba(224,159,31,0.4);
+  background: rgba(224,159,31,0.10);
+}
+
+/* почти белый заголовок события */
+#signalsTable .ev-title {
+  color: #f3f6fb !important;
+  font-weight: 600;
+}
+
+/* коды после названия чуть бледнее, но читабельные */
+#signalsTable .ev-codes {
+  color: #b9c3d8 !important;
+}
+
+/* если используешь Bootstrap 5 — зададим его CSS-переменные для таблицы */
+#signalsTable.table {
+  --bs-table-color: #e9edf5;
+  --bs-table-bg: #12182b;
+  --bs-table-border-color: #1a2444;
+  --bs-table-hover-bg: rgba(224,159,31,0.08);
+  --bs-table-hover-color: #e9edf5;
+}
+
+/* подсветка активной строки */
+#signalsTable tbody tr.row-active {
+  outline: 2px solid rgba(224,159,31,0.4);
+  background: rgba(224,159,31,0.10);
+}
+@media (min-width: 992px) { /* только десктоп/большие планшеты */
+  .sticky-pane{
+    position: sticky;
+    top: 12px;                             /* отступ от верха */
+    max-height: calc(100vh - 24px);        /* чтобы влезало в окно */
+    overflow: auto;                        /* внутренняя прокрутка карточек */
+  }
+}
+/* приятный скролл к графику даже с фикс-хедером (если появится) */
+#chartCard { scroll-margin-top: 16px; }
+/* Чуткий скролл к графикам/секциям */
+#chartCard, #chartCardM { scroll-margin-top: 16px; }
+
+  </style>
+
+
+<div class="container py-4">
+
+  <div class="d-flex align-items-center mb-4">
+    <h1 class="me-3 mb-0">{"mainPredictDescription.predictsNameTable"|__}</h1>
+    <span class="muted">EUR/USD • live demo</span>
+  </div>
+
+  <!-- Панель управления -->
+  <div class="row g-3 mb-4">
+    <div class="col-lg-3">
+      <label class="form-label">{"mainPredictDescription.model"|__}</label>
+      <select id="modelSelect" class="form-select">
+        <option value="ET1">ET1</option>
+        <option value="ET2" selected>ET2</option>
+        <option value="ET3">ET3</option>
+        <option value="ET4">ET4</option>
+        <option value="ET5">ET5</option>
+      </select>
+    </div>
+    <div class="col-lg-3">
+      <label class="form-label">{"mainPredictDescription.dateFrom"|__}</label>
+      <input type="date" id="dateFrom" class="form-control">
+    </div>
+    <div class="col-lg-3">
+      <label class="form-label">{"mainPredictDescription.dateFrom"|__}</label>
+      <input type="date" id="dateTo" class="form-control">
+    </div>
+    <div class="col-lg-3">
+      <label class="form-label">{"mainPredictDescription.direction"|__}</label>
+      <select id="dirFilter" class="form-select">
+        <option value="">All</option>
+        <option value="1">Up</option>
+        <option value="0">Down</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <!-- Таблица сигналов -->
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong>{"mainPredictDescription.lists.signlas.records"|__}</strong>
+          <span class="muted" id="signalsCount">0 {"mainPredictDescription.lists.records"|__}</span>
+        </div>
+        <div class="card-body p-0">
+        <div class="table-responsive">
+        <table class="table table-hover table-sm mb-0" id="signalsTable">
+  <thead>
+    <tr>
+      <th class="col-utc">UTC</th>
+      <th class="col-ev">{"mainPredictDescription.details.event"|__}</th>
+      <th class="col-dir">Dir</th>
+      <th class="col-prob">Prob</th>
+      <th class="col-pips">Δ pips</th>
+      <th class="col-prio">Prio</th>
+      <!--<th class="col-prio">News</th>-->
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+        
+        
+        <!--  
+            <table class="table table-hover table-sm mb-0" id="signalsTable">
+              <thead>
+              <tr>
+                <th>UTC</th>
+                <th>Подія</th>
+                <th>Dir</th>
+                <th>Prob</th>
+                <th>Δ pips</th>
+                <th>Prio</th>
+              </tr>
+              </thead>
+              <tbody><!-- rows here -->
+            <!--</tbody></table>-->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Детали + график -->
+    <div class="col-lg-6">
+    <div class="sticky-pane" id="rightPane">
+      <div class="card mb-3">
+        <div class="card-header"><strong>{"mainPredictDescription.details"|__}</strong></div>
+        <div class="card-body">
+          <div class="row g-3">
+
+            <div class="col-12">
+               <div class="muted">{"mainPredictDescription.details.event"|__}</div>
+               <div id="metaEvent" class="h6 mb-2">—</div>
+            </div>
+
+            <div class="col-sm-6">
+              <div class="muted">{"mainPredictDescription.details.enter"|__}</div>
+              <div id="metaEntry" class="h5 mb-0">—</div>
+            </div>
+            <div class="col-sm-6">
+              <div class="muted">{"mainPredictDescription.details.exit"|__}</div>
+              <div id="metaExit" class="h5 mb-0">—</div>
+            </div>
+            <div class="col-sm-6">
+              <div class="muted">Δ ({"mainPredictDescription.details.punkts"|__})</div>
+              <div id="metaDelta" class="h5 mb-0">—</div>
+            </div>
+            <div class="col-sm-6">
+              <div class="muted">{"mainPredictDescription.details.prob"|__}</div>
+              <div id="metaProb" class="h5 mb-0">—</div>
+            </div>
+          </div>
+        </div>
+      
+      </div>
+
+      <div class="card mb-3" id="chartCard">
+        <div class="card-header d-flex justify-content-between">
+          <strong>{"mainPredictDescription.grafik"|__}</strong>
+          <span class="muted" id="metaWindow">±30 {"mainPredictDescription.grafik.min"|__}</span>
+        </div>
+        <div class="card-body">
+          <canvas id="priceChart" height="220"></canvas>
+        </div>
+      </div>
+
+      <!-- Отзыв -->
+      <div class="card">
+        <div class="card-header"><strong>{"mainPredictDescription.feedback"|__}</strong></div>
+        <div class="card-body">
+          <form id="feedbackForm">
+            <input type="hidden" id="fbSignalId" value="">
+            <div class="mb-3">
+              <label class="form-label">{"mainPredictDescription.feedback.starsName"|__}</label>
+              <select id="fbRating" class="form-select" required>
+                <option value="5">5 — {"mainPredictDescription.feedback.star.5"|__}</option>
+                <option value="4">4 — {"mainPredictDescription.feedback.star.4"|__}</option>
+                <option value="3">3 — {"mainPredictDescription.feedback.star.3"|__}</option>
+                <option value="2">2 — {"mainPredictDescription.feedback.star.2"|__}</option>
+                <option value="1">1 — {"mainPredictDescription.feedback.star.1"|__}</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">{"mainPredictDescription.feedback.comment"|__}</label>
+              <textarea id="fbComment" class="form-control" rows="3" placeholder="{"mainPredictDescription.feedback.comment.placeholder"|__}"></textarea>
+            </div>
+            <button class="btn btn-gold" type="submit">{"mainPredictDescription.feedback.button"|__}</button>
+            <span class="muted ms-2" id="fbStatus"></span>
+          </form>
+        </div>
+      </div>
+     </div>
+    </div>
+  </div>
+</div>
+
+
+
+
+<!-- Signal modal (мобила/планшеты) -->
+<div class="modal fade" id="signalModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen-lg-down modal-lg">
+    <div class="modal-content" style="background:#12182b; color:#e9edf5; border:1px solid #1c2440;">
+      <div class="modal-header" style="border-color:#1c2440;">
+        <h5 class="modal-title">{"mainPredictDescription.details"|__}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"
+          style="filter: invert(92%);"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Детали -->
+        <div class="row g-3 mb-3">
+          <div class="col-12">
+            <div class="muted">{"mainPredictDescription.details.event"|__}</div>
+            <div id="metaEventM" class="h6 mb-2">—</div>
+          </div>
+          <div class="col-6">
+            <div class="muted">{"mainPredictDescription.details.enter"|__}</div>
+            <div id="metaEntryM" class="h5 mb-0">—</div>
+          </div>
+          <div class="col-6">
+            <div class="muted">{"mainPredictDescription.details.exit"|__}</div>
+            <div id="metaExitM" class="h5 mb-0">—</div>
+          </div>
+          <div class="col-6">
+            <div class="muted">Δ ({"mainPredictDescription.details.punkts"|__})</div>
+            <div id="metaDeltaM" class="h5 mb-0">—</div>
+          </div>
+          <div class="col-6">
+            <div class="muted">{"mainPredictDescription.details.prob"|__}</div>
+            <div id="metaProbM" class="h5 mb-0">—</div>
+          </div>
+        </div>
+
+        <!-- Графік -->
+        <div class="card mb-3" id="chartCardM">
+          <div class="card-header d-flex justify-content-between">
+            <strong>{"mainPredictDescription.grafik"|__}</strong>
+            <span class="muted" id="metaWindowM">±30 {"mainPredictDescription.grafik.min"|__}</span>
+          </div>
+          <div class="card-body">
+            <canvas id="priceChartMobile" height="300"></canvas>
+          </div>
+        </div>
+
+        <!-- Відгук (можешь переиспользовать существующую форму, тут — копия-секция) -->
+        <div class="card">
+          <div class="card-header"><strong>{"mainPredictDescription.feedback"|__}</strong></div>
+          <div class="card-body">
+            <form id="feedbackFormM">
+              <input type="hidden" id="fbSignalIdM" value="">
+              <div class="mb-3">
+                <label class="form-label">{"mainPredictDescription.feedback.starsName"|__}</label>
+                <select id="fbRatingM" class="form-select" required>
+                  <option value="5">5 — {"mainPredictDescription.feedback.star.5"|__}</option>
+                  <option value="4">4 — {"mainPredictDescription.feedback.star.4"|__}</option>
+                  <option value="3">3 — {"mainPredictDescription.feedback.star.3"|__}</option>
+                  <option value="2">2 — {"mainPredictDescription.feedback.star.2"|__}</option>
+                  <option value="1">1 — {"mainPredictDescription.feedback.star.1"|__}</option>
+                </select>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">{"mainPredictDescription.feedback.comment"|__}</label>
+                <textarea id="fbCommentM" class="form-control" rows="3"></textarea>
+              </div>
+              <button class="btn btn-gold" type="submit">{"mainPredictDescription.feedback.button"|__}</button>
+              <span class="muted ms-2" id="fbStatusM"></span>
+            </form>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>

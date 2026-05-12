@@ -1,0 +1,27 @@
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+        <meta name="description" content="{$header_data['description']|__}" />
+        <title>{$header_data['title']|__}</title>
+        <meta name="keywords" content="{$header_data['keywords']|__}">
+        <meta name="author" content="" />
+        <!-- 🕸️ Canonical URL -->
+        <link rel="canonical" href="{$canonical|escape}">
+        {foreach from=$alternates key=hre item=url}
+        <link rel="alternate" hreflang="{$hre}" href="{$url|escape}">
+        {/foreach}
+        <link rel="alternate" hreflang="x-default" href="https://{$domainName}/">
+        <meta property="og:locale" content="{$og_locale|escape}">
+
+
+        <!-- Favicon-->
+        <link rel="icon" type="image/x-icon" href="https://{$domainName}/assets/favicon.ico" />
+        <!-- Font Awesome icons (free version)-->
+        <script src="https://use.fontawesome.com/releases/v6.3.0/js/all.js" crossorigin="anonymous"></script>
+        <!-- Google fonts-->
+        <link href="https://fonts.googleapis.com/css?family=Montserrat:400,700" rel="stylesheet" type="text/css" />
+        <link href="https://fonts.googleapis.com/css?family=Roboto+Slab:400,100,300,700" rel="stylesheet" type="text/css" />
+        <!-- Core theme CSS (includes Bootstrap)-->
+        <link href="https://{$domainName}/css/styles.css" rel="stylesheet" />
+
+    </head>

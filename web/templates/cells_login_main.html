@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="{$xlang}">
+ {include file='cells_header.html'}
+    <body id="page-top">
+ {*include file='cells_navBar.html'*}
+        <!-- Masthead-->
+<!--        <header class="masthead">
+            <div class="container">
+                <div class="masthead-subheading">{"EasyTradingMain"|__}<br></div>
+                <div class="masthead-heading text-uppercase">{"EasyTradingSignalsMain"|__}<br><br><br><br></div>
+                {if !$predictions}
+                 <a class="btn btn-primary btn-xl text-uppercase" href="predictions.html">{"ToPredictsButton"|__}</a>
+                {/if}
+            </div>
+        </header>
+-->
+{if $login}
+{include file='cells_login.html'}
+{/if}
+
+{*include file='footer.html'}
+
+{include file='downJS.html'*}
+    </body>
+</html>

@@ -1,0 +1,114 @@
+{include file="maklertour_header.html"}
+{include file="maklertour_sidebar.html"}
+
+<main id="main" class="main">
+
+  <div class="pagetitle">
+    <h1>Рынок заявок</h1>
+    <nav>
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item">MaklerTour</li>
+        <li class="breadcrumb-item active">Рынок заявок</li>
+      </ol>
+    </nav>
+  </div>
+
+  {if $error}
+    <div class="alert alert-danger">{$error}</div>
+  {/if}
+
+  {if $success}
+    <div class="alert alert-success">{$success}</div>
+  {/if}
+
+  <section class="section">
+
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Доступные заявки</h5>
+
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Объект</th>
+              <th>Адрес</th>
+              <th>Площадь</th>
+              <th>Клиент</th>
+              <th>Брокер</th>
+              <th>Создано</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {foreach from=$orders item=o}
+              <tr>
+                <td><a href="/order.php?id={$o.id}">{$o.id}</a></td>
+                <td><a href="/order.php?id={$o.id}">{$o.title|escape}</a></td>
+                <td>{$o.address|escape}</td>
+                <td>{$o.area_m2}</td>
+                <td>{$o.customer_name|default:'-'|escape}</td>
+                <td>{$o.broker_name|escape}</td>
+                <td>{$o.created_at}</td>
+                <td>
+                  <form method="post" action="/market.php" style="display:inline">
+                    <input type="hidden" name="action" value="take_order">
+                    <input type="hidden" name="order_id" value="{$o.id}">
+                    <button type="submit" class="btn btn-sm btn-primary">Взять</button>
+                  </form>
+                </td>
+              </tr>
+            {foreachelse}
+              <tr>
+                <td colspan="8">Новых заявок пока нет</td>
+              </tr>
+            {/foreach}
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">Мои заявки в работе</h5>
+
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Объект</th>
+          <th>Адрес</th>
+          <th>Площадь</th>
+          <th>Клиент</th>
+          <th>Брокер</th>
+          <th>Статус</th>
+          <th>Обновлено</th>
+        </tr>
+      </thead>
+      <tbody>
+        {foreach from=$myOrders item=o}
+          <tr>
+            <td><a href="/order.php?id={$o.id}">{$o.id}</a></td>
+            <td><a href="/order.php?id={$o.id}">{$o.title|escape}</a></td>
+            <td>{$o.address|escape}</td>
+            <td>{$o.area_m2}</td>
+            <td>{$o.customer_name|default:'-'|escape}</td>
+            <td>{$o.broker_name|escape}</td>
+            <td><span class="badge bg-primary">{$o.status}</span></td>
+            <td>{$o.updated_at}</td>
+          </tr>
+        {foreachelse}
+          <tr>
+            <td colspan="8">У вас пока нет заявок в работе</td>
+          </tr>
+        {/foreach}
+      </tbody>
+    </table>
+
+  </div>
+</div>
+  </section>
+
+</main>
+
+{include file="maklertour_footer.html"}

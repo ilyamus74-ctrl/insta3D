@@ -1,0 +1,146 @@
+<?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/api/form_helpers.php';
+
+auth_require_login();
+
+$user = auth_current_user();
+$userId = (int)$user['id'];
+$role = $user['role'] ?? 'BROKER';
+
+$error = null;
+$success = isset($_GET['created']) ? 'Заявка создана' : null;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'create_order') {
+    $formToken = trim($_POST['form_token'] ?? '');
+
+    if (!mt_consume_form_token($dbcnx, $userId, 'create_order', $formToken)) {
+    $error = 'Форма уже была отправлена или устарела. Обновите страницу и попробуйте снова.';
+    } else {
+        $title = trim($_POST['title'] ?? '');
+        $address = trim($_POST['address'] ?? '');
+        $areaM2 = trim($_POST['area_m2'] ?? '');
+        $customerName = trim($_POST['customer_name'] ?? '');
+        $customerPhone = trim($_POST['customer_phone'] ?? '');
+        $customerEmail = trim($_POST['customer_email'] ?? '');
+
+        if ($title === '' || $address === '') {
+            $error = 'Заполните название и адрес объекта';
+        } else {
+            $publicToken = bin2hex(random_bytes(16));
+            $areaValue = ($areaM2 !== '') ? (float)$areaM2 : null;
+
+            $stmt = $dbcnx->prepare("
+                INSERT INTO tour_orders
+                (broker_id, title, address, area_m2, customer_name, customer_phone, customer_email, status, public_token)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'NEW', ?)
+            ");
+
+            if (!$stmt) {
+                $error = 'DB prepare error: ' . $dbcnx->error;
+            } else {
+                $stmt->bind_param(
+                    "issdssss",
+                    $userId,
+                    $title,
+                    $address,
+                    $areaValue,
+                    $customerName,
+                    $customerPhone,
+                    $customerEmail,
+                    $publicToken
+                );
+
+           if ($stmt->execute()) {
+              $newOrderId = (int)$stmt->insert_id;
+
+              audit_log(
+              $userId,
+             'ORDER_CREATED',
+             'TOUR_ORDER',
+             $newOrderId,
+             'Создана заявка',
+             [
+                 'title' => $title,
+                 'address' => $address,
+                 'area_m2' => $areaValue,
+             ]
+            );
+
+             header('Location: /orders.php?created=1');
+             exit;
+            } else {
+
+                    $error = 'DB execute error: ' . $stmt->error;
+                }
+
+                $stmt->close();
+            }
+        }
+    }
+}
+
+}
+
+if ($role === 'ADMIN') {
+    $sql = "
+        SELECT o.*, 
+               b.full_name AS broker_name,
+               op.full_name AS operator_name
+        FROM tour_orders o
+        LEFT JOIN users b ON b.id = o.broker_id
+        LEFT JOIN users op ON op.id = o.operator_id
+        ORDER BY o.created_at DESC
+        LIMIT 200
+    ";
+    $stmt = $dbcnx->prepare($sql);
+} else {
+    $sql = "
+        SELECT o.*, 
+               b.full_name AS broker_name,
+               op.full_name AS operator_name
+        FROM tour_orders o
+        LEFT JOIN users b ON b.id = o.broker_id
+        LEFT JOIN users op ON op.id = o.operator_id
+        WHERE o.broker_id = ?
+        ORDER BY o.created_at DESC
+        LIMIT 200
+    ";
+    $stmt = $dbcnx->prepare($sql);
+    if ($stmt) {
+        $stmt->bind_param("i", $userId);
+    }
+}
+
+$orders = [];
+
+if ($stmt) {
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $orders[] = $row;
+    }
+    $stmt->close();
+} else {
+    $error = 'DB prepare error: ' . $dbcnx->error;
+}
+
+try {
+    $createOrderToken = mt_create_form_token($dbcnx, $userId, 'create_order');
+} catch (Throwable $e) {
+    error_log($e->getMessage());
+    $createOrderToken = '';
+}
+
+$smarty->assign('createOrderToken', $createOrderToken);
+$smarty->assign('current_user', $user);
+$smarty->assign('orders', $orders);
+$smarty->assign('error', $error);
+$smarty->assign('success', $success);
+
+$smarty->display('maklertour_orders.html');

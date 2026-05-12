@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <title>Connector Auth Sender</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        min-width: 320px;
+        padding: 12px;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+      input, textarea {
+        width: 100%;
+        box-sizing: border-box;
+        margin-bottom: 10px;
+      }
+      textarea {
+        resize: vertical;
+      }
+      button {
+        width: 100%;
+        padding: 8px;
+      }
+      .status {
+        margin-top: 10px;
+        font-size: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .row > * {
+        flex: 1;
+      }
+      .row .btn-secondary {
+        flex: 0 0 auto;
+        width: auto;
+        padding: 6px 10px;
+      }
+      .section-title {
+        font-size: 12px;
+        font-weight: bold;
+        margin: 6px 0;
+      }
+    </style>
+  </head>
+  <body>
+
+    <div class="section-title">Профиль</div>
+    <label for="profile-select">Активный профиль</label>
+    <select id="profile-select"></select>
+
+    <div class="row">
+      <div>
+        <label for="profile-name">Имя нового профиля</label>
+        <input id="profile-name" type="text" placeholder="Например, KoliPlus">
+      </div>
+      <button class="btn-secondary" id="profile-save-btn" type="button">Сохранить</button>
+    </div>
+    <button class="btn-secondary" id="profile-delete-btn" type="button">Удалить профиль</button>
+
+    <div class="section-title">Настройки</div>
+    <label for="system-url">Адрес системы</label>
+    <input id="system-url" type="text" placeholder="https://cargo.example.com">
+
+    <label for="connector-id">ID коннектора</label>
+    <input id="connector-id" type="number" placeholder="123">
+
+    <label for="token-keys">Ключи токена (LocalStorage)</label>
+    <textarea id="token-keys" rows="2" placeholder="auth_token, token"></textarea>
+
+    <button id="send-btn">Собрать и отправить</button>
+    <button id="save-btn" type="button">Сохранить настройки</button>
+    <div class="status" id="status"></div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,61 @@
+# ===== sane defaults =====
+Options +FollowSymLinks -Indexes -MultiViews
+AddDefaultCharset utf-8
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  <FilesMatch "\.php$">
+    Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+    Header set Pragma "no-cache"
+  </FilesMatch>
+</IfModule>
+
+# Скрытые/чувствительные файлы — запрет
+<FilesMatch "^(\.|composer\.(json|lock)|package\.json|yarn\.lock|.*\.(sql|log|bak))$">
+  Require all denied
+</FilesMatch>
+
+# ===== front controller =====
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # ====== Сначала снимаем языковой префикс для статики ======
+  # /en/img/foo.jpg → /img/foo.jpg, /de/assets/js/app.js → /assets/js/app.js
+  RewriteRule ^(de|en|uk|ru)/(assets|img|css|js|lib|mail|vcard|scss|NiceAdmin)(/?.*)$ /$2$3 [L]
+
+  # реальные файлы/директории — отдать как есть
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # скрытые файлы — запрет
+  RewriteRule ^\. - [F]
+
+  # всё остальное — в index.php
+  RewriteRule ^ index.php [L,QSA]
+</IfModule>
+
+# кэш/сжатие — по желанию
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/png  "access plus 1 year"
+  ExpiresByType image/gif  "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType text/css   "access plus 7 days"
+  ExpiresByType application/javascript "access plus 7 days"
+#  ExpiresByType text/html  "access plus 5 minutes"
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/xml application/xml
+  AddOutputFilterByType DEFLATE text/css text/javascript application/javascript
+  AddOutputFilterByType DEFLATE application/json application/xhtml+xml
+</IfModule>
+
+ErrorDocument 404 /404.php

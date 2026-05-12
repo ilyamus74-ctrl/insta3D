@@ -1,0 +1,304 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: ET3\n"
+"POT-Creation-Date: 2024-06-23 15:49+0300\n"
+"PO-Revision-Date: 2042-06-23 15:58+0300\n"
+"Last-Translator: Illia Gemanskiy <admin@@easytrade.one>\n"
+"Language-Team: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Poedit-KeywordsList: _;gettext;gettext_noop\n"
+"X-Poedit-Basepath: .\n"
+"X-Poedit-Language: UKRAINE\n"
+"X-Poedit-Country: UKRAINE\n"
+"X-Poedit-SourceCharset: utf-8\n"
+
+msgid "EasyTradingMain"
+msgstr "Проста Торгівля"
+
+
+msgid "EasyTradingSignalsMain"
+msgstr "сигнали"
+
+
+msgid "simpleAbout.H2"
+msgstr "Проста Торгівля"
+
+msgid "simpleAbout.H3"
+msgstr "Ти новачок у трейдингу чи вже професіонал? Торгівля на ринку Forex здається складною? \n Спробуй «Просту Торгівлю» — інструмент для тих, хто хоче бачити зрозумілі точки входу та виходу без зайвих ускладнень.\n\n Наші торгові сигнали побудовані на аналізі мільйонів світових подій. Ми використовуємо моделі штучного інтелекту, навчені на 25-річних історичних даних, та залежності, якими користуються великі фінансові корпорації. \n\n Ми хочемо, щоб ти випробував результат нашої роботи й залишив відгук. \n Твоя думка допоможе зробити систему точнішою та кориснішою для всіх."
+
+msgid "ToPredictsButton"
+msgstr "до Прогнозів"
+
+
+msgid "ContactsUsForm"
+msgstr "Запит до нас"
+
+msgid "ContactsUsSmallTextForm"
+msgstr "Заповніть поля та надішлить ваш запит до нас"
+
+msgid "ContactsUsYouNameForm"
+msgstr "Ваше ім'я"
+
+msgid "ContactsUsYouNameFormReq"
+msgstr "Ваше ім'я потрібне"
+
+msgid "ContactsUsYouEmailForm"
+msgstr "Ваш email"
+
+msgid "ContactsUsYouEmailFormReq"
+msgstr "Ваш email обов'язкове"
+
+msgid "ContactsUsYouPhoneForm"
+msgstr "Ваш телефон"
+
+msgid "ContactsUsYouPhoneFormReq"
+msgstr "Ваш телефон потрібен"
+
+msgid "ContactsUsYouMsgForm"
+msgstr "Ваше повідомлення"
+
+msgid "ContactsUsFormButton"
+msgstr "Надіслати повідомдення"
+
+
+msgid "mainNavBarAbout"
+msgstr "О проєкті"
+
+msgid "mainNavBarContact"
+msgstr "Зв'язок з нами"
+
+msgid "mainNavBarTeam"
+msgstr "Команда"
+
+msgid "mainNavBarService"
+msgstr "Послуги"
+
+msgid "mainNavBarPredict"
+msgstr "Прогнози"
+
+
+msgid "mainTitle"
+msgstr "Проста торгівля - сигнали"
+
+msgid "mainText"
+msgstr ""
+
+msgid "mainDescription"
+msgstr "EasyTrade — ІІ-прогнози Forex для EUR/USD на базі 20 років даних. Чіткі сигнали входу/виходу, безкоштовне тестування моделей ET1–ET3."
+
+msgid "mainKeywords"
+msgstr "форекс, трейдинг, прогноз форекс, сигнали EUR/USD, штучний інтелект, теханаліз, RSI, SMA, автоматична торгівля, EasyTrade"
+
+msgid "main_soc_og_title"
+msgstr "EasyTrade — ІІ-прогнози Forex"
+
+msgid "main_soc_og_description"
+msgstr "Сигнали входу/виходу з 20 років даних EUR/USD. Спробуй безкоштовно"
+
+msgid "main_twitter_tittle"
+msgstr "EasyTrade · AI Forex"
+
+msgid "main_twitter_description"
+msgstr "Чіткі сигнали EUR/USD. Доступ безкоштовний"
+
+
+msgid "mainAboutTitle"
+msgstr "Проєкт EasyTrade"
+
+msgid "mainAboutText"
+msgstr "Створення цього ресурсу базується на розумінні того, як працює ринок і як люди приймають рішення в щоденній торгівлі.<br>\n"
+"Ми досліджуємо поведінку більшості активних трейдерів і вплив новинних тригерів на ринкові коливання.<br><br>\n\n"
+"Було використано <b>20 років історичних даних</b> по парі EUR/USD із хвилинними тиками.<br>\n"
+"Початкові моделі на базі ARIMA показували лише загальні тенденції, але не могли передбачити реакцію ринку на конкретні новини.<br>\n"
+"Навіть додавання індикаторів, як-от SMA чи RSI, лише підтверджувало рух після події.<br><br>\n\n"
+"Сьогодні ми застосовуємо моделі штучного інтелекту, навчені на історичних даних, що дозволило досягти до <b>85 % точності прогнозів</b>.<br>\n"
+"Моделі постійно оновлюються та переобучаються для збереження достовірності.<br><br>\n\n"
+"Ми пропонуємо три етапи еволюції: <b>ET1</b>, <b>ET2</b> і <b>ET3</b> — остання є найсучаснішою версією.<br>\n"
+"Ви можете скористатися нашим інструментом безкоштовно та залишити відгук після угоди.<br>\n"
+"Зворотний зв’язок допоможе покращити систему й розширити підтримку нових валютних пар.<br><br>\n\n"
+"Підписка буде впроваджена пізніше (до <b>30 USD на місяць</b>), а поки сервіс доступний усім без обмежень.<br>\n"
+"З будь-яких питань звертайтесь через форму зворотного зв’язку або електронну пошту.<br>\n"
+"<b>З повагою, Команда EasyTrade</b>"
+
+msgid "mainAboutDescription"
+msgstr "EasyTrade — платформа з ІІ-моделями для прогнозування Forex. Прогнози руху EUR/USD на основі 20 років історії. Безкоштовне тестування, сигнали, теханаліз."
+
+msgid "mainAboutKeywords"
+msgstr "форекс, трейдинг, прогноз форекс, сигнали EUR/USD, штучний інтелект, ARIMA, RSI, SMA, технічний аналіз, автоматична торгівля, проста торгівля, EasyTrade"
+
+
+
+msgid "mainTeamTitle"
+msgstr "Команда EasyTrade — експерти зі штучного інтелекту та трейдингу"
+
+msgid "mainTeamDescription"
+msgstr "Знайомтеся з командою EasyTrade: аналітики, розробники та фахівці з машинного навчання, які створюють систему прогнозів Forex на основі 20-річних історичних даних. Ми робимо торгівлю простою та точною."
+
+msgid "mainTeamKeywords"
+msgstr "easytrade, команда easytrade, форекс, торгові сигнали, штучний інтелект, прогноз eur/usd, трейдинг, аналітика, розробка ІІ, команда проекту, фінтех"
+
+msgid "mainTeamTitleSoc"
+msgstr "Команда EasyTrade"
+
+msgid "mainTeamDescriptionSoc"
+msgstr "Люди, які створюють EasyTrade — фахівці з трейдингу та ІІ, що розробляють інструмент точного прогнозування Forex."
+
+msgid "mainTeamTitleTwitter"
+msgstr "Команда EasyTrade"
+
+msgid "mainTeamDescriptionTwitter"
+msgstr "Люди, які створюють EasyTrade — фахівці з трейдингу та ІІ, що розробляють інструмент точного прогнозування Forex."
+
+msgid "mainEnginerPerson"
+msgstr "Головний ІТ розробник"
+
+msgid "mainTraderPerson"
+msgstr "Фахівець з FOREX торгівлі"
+
+msgid "mainTesterPerson"
+msgstr "Тестувальник ПЗ та CEO фахівець"
+
+
+msgid "mainFeedBackText"
+msgstr "Ми слухаємо користувачів. Поділіться своїм досвідом, ідеями чи стратегіями - команда EasyTrade завжди на зв'язку."
+
+msgid "mainFeedBackTitle"
+msgstr "Зв’язатися з EasyTrade — ваші ідеї та відгуки для нас важливі"
+
+msgid "mainFeedBackDescription"
+msgstr "Ми відкриті до спілкування! Напишіть нам, якщо маєте запитання, пропозиції чи ідеї щодо покращення EasyTrade. Ми цінуємо зворотний зв’язок і готові розглядати нові торгові стратегії та функції."
+
+msgid "mainFeedBackKeywords"
+msgstr "easytrade, контакти easytrade, зворотний зв’язок, пропозиції, підтримка, нові стратегії, торгові сигнали, forex, трейдинг, зв’язатися з командою"
+
+msgid "mainFeedBackTitleSoc"
+msgstr "Зв’язатися з EasyTrade"
+
+msgid "mainFeedBackDesciprionSoc"
+msgstr "Ми цінуємо вашу думку. Поділіться ідеями чи досвідом — команда EasyTrade завжди на зв’язку."
+
+msgid "mainFeedBackTitleTwitter"
+msgstr "Зв’язатися з EasyTrade"
+
+msgid "mainFeedBackDesciprionTwitter"
+msgstr "Ми цінуємо вашу думку. Поділіться ідеями чи досвідом — команда EasyTrade завжди на зв’язку."
+
+msgid "mainPredictTitle"
+msgstr "Прогнози EUR/USD — Сигнали торгівлі | EasyTrade"
+
+msgid "mainPredictDescription"
+msgstr "Живі демо-сигнали для EUR/USD: напрямок, ймовірність, вхід/вихід і графік ±30 хв. Подієвий алгоритмічний аналіз. Оцінюйте результати та залишайте відгук."
+
+msgid "mainPredictKeywords"
+msgstr "EUR/USD, прогнози, торгові сигнали, форекс, алгоритмічна торгівля, імовірність, вхід, вихід, демо, подієвий аналіз"
+
+msgid "mainPredictTitleSoc"
+msgstr "Прогнози EUR/USD — Live демо-сигнали | EasyTrade"
+
+msgid "mainPredictDescriptionSoc"
+msgstr "Переглядайте live-сигнали по EUR/USD з імовірністю, входом/виходом і графіком ±30 хв. Оцініть точність роботи й допоможіть покращити модель."
+
+
+msgid "mainPredictTitleTwitter"
+msgstr "EUR/USD — Прогнози та сигнали | EasyTrade"
+
+msgid "mainPredictDescriptionTwitter"
+msgstr "Live-сигнали EUR/USD: напрямок, імовірність, вхід/вихід, графік ±30 хв. Оцініть результат і залиште відгук."
+
+msgid "mainPredictDescription.predictsNameTable"
+msgstr "Прогнози"
+
+msgid "mainPredictDescription.model"
+msgstr "Модель"
+
+msgid "mainPredictDescription.dateFrom"
+msgstr "Дата від"
+
+msgid "mainPredictDescription.dateTo"
+msgstr "Дата до"
+
+msgid "mainPredictDescription.direction"
+msgstr "Напрям"
+
+msgid "mainPredictDescription.details"
+msgstr "Деталі сигналу"
+
+msgid "mainPredictDescription.details.event"
+msgstr "Подія"
+
+msgid "mainPredictDescription.details.enter"
+msgstr "Вхід"
+
+msgid "mainPredictDescription.details.exit"
+msgstr "Вихід"
+
+msgid "mainPredictDescription.details.punkts"
+msgstr "пункти"
+
+msgid "mainPredictDescription.details.prob"
+msgstr "Ймовірність"
+
+msgid "mainPredictDescription.grafik"
+msgstr "Графік"
+
+msgid "mainPredictDescription.grafik.min"
+msgstr "хв"
+
+msgid "mainPredictDescription.lists.records"
+msgstr "Сигнали"
+
+msgid "mainPredictDescription.lists.signlas.records"
+msgstr "записів"
+
+msgid "mainPredictDescription.feedback"
+msgstr "Залишити відгук"
+
+msgid "mainPredictDescription.feedback.starsName"
+msgstr "Оцінка"
+
+msgid "mainPredictDescription.feedback.starsResults"
+msgstr ""
+
+msgid "mainPredictDescription.feedback.star.1"
+msgstr "Погано"
+
+msgid "mainPredictDescription.feedback.star.2"
+msgstr "Слабл"
+
+msgid "mainPredictDescription.feedback.star.3"
+msgstr "Середньо"
+
+msgid "mainPredictDescription.feedback.star.4"
+msgstr "Добре"
+
+msgid "mainPredictDescription.feedback.star.5"
+msgstr "Спрацювало ідеально"
+
+msgid "mainPredictDescription.feedback.comment"
+msgstr "Коментар (необов'язково)"
+
+msgid "mainPredictDescription.feedback.comment.placeholder"
+msgstr "Що сподобалось / що покращити?"
+
+msgid "mainPredictDescription.feedback.button"
+msgstr "Надіслати"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

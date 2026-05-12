@@ -1,0 +1,292 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: ET3\n"
+"POT-Creation-Date: 2024-06-23 15:49+0300\n"
+"PO-Revision-Date: 2042-06-23 15:58+0300\n"
+"Last-Translator: Illia Gemanskiy <admin@@easytrade.one>\n"
+"Language-Team: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Poedit-KeywordsList: _;gettext;gettext_noop\n"
+"X-Poedit-Basepath: .\n"
+"X-Poedit-Language: UKRAINE\n"
+"X-Poedit-Country: UKRAINE\n"
+"X-Poedit-SourceCharset: utf-8\n"
+
+msgid "EasyTradingMain"
+msgstr "Einfacher Handel"
+
+
+msgid "EasyTradingSignalsMain"
+msgstr "Signale"
+
+
+
+msgid "list_news"
+msgstr "Катигорія новин"
+
+msgid "simpleAbout.H2"
+msgstr "Einfaches Trading"
+
+
+msgid "simpleAbout.H3"
+msgstr "Bist du Einsteiger oder erfahrener Trader? \n Kommt dir der Forex-Handel zu kompliziert vor? \n Probiere Einfaches Trading – ein Werkzeug, das klare Ein- und Ausstiegssignale liefert, ohne unnötigen Lärm. \n \n Unsere Handelssignale basieren auf der Analyse von Millionen weltweiter Ereignisse. \n Mit 25 Jahren historischer Daten nutzen unsere KI-Modelle dieselben Abhängigkeiten und Muster, auf die auch große Finanzinstitutionen setzen. \n \n Wir laden dich ein, das Ergebnis unserer Arbeit zu testen und uns dein Feedback zu geben. \n Deine Rückmeldung hilft, das System noch präziser und nützlicher zu machen."
+
+msgid "ToPredictsButton"
+msgstr "zu Prognosen"
+
+msgid "ContactsUsForm"
+msgstr "Kontaktieren Sie uns"
+
+msgid "ContactsUsSmallTextForm"
+msgstr "Füllen Sie die Felder aus und senden Sie Ihre Anfrage an uns"
+
+msgid "ContactsUsYouNameForm"
+msgstr "Ihr Name"
+
+msgid "ContactsUsYouNameFormReq"
+msgstr "Name ist erforderlich."
+
+msgid "ContactsUsYouEmailForm"
+msgstr "Ihr Email"
+
+msgid "ContactsUsYouEmailFormReq"
+msgstr "Eine E-Mail ist erforderlich. Die E-Mail-Adresse ist ungultig."
+
+msgid "ContactsUsYouPhoneForm"
+msgstr "Ihr Telefonnummer"
+
+msgid "ContactsUsYouPhoneFormReq"
+msgstr "Eine Telefonnummer ist erforderlich"
+
+msgid "ContactsUsYouMsgForm"
+msgstr "Ihre Nachricht."
+
+msgid "ContactsUsFormButton"
+msgstr "Nachricht senden"
+
+msgid "mainNavBarAbout"
+msgstr "Über das Projekt"
+
+msgid "mainNavBarContact"
+msgstr "Verbindung"
+
+msgid "mainNavBarTeam"
+msgstr "unser Team"
+
+msgid "mainNavBarService"
+msgstr "Dienstleistungen"
+
+msgid "mainNavBarPredict"
+msgstr "Prognosen"
+
+msgid "mainTitle"
+msgstr "EasyTrade - Klare Ein-/Ausstiegssignale"
+
+msgid "mainText"
+msgstr ""
+
+msgid "mainDescription"
+msgstr "EasyTrade — KI-gestützte Forex-Prognosen für EUR/USD auf Basis von 20 Jahren Daten. Klare Ein-/Ausstiegssignale, kostenlos testen (ET1–ET3)."
+
+msgid "mainKeywords"
+msgstr "forex, trading, forex prognose, EUR/USD signale, KI trading, technischer analyse, RSI, SMA, automatisierter handel, EasyTrade"
+
+msgid "main_soc_og_title"
+msgstr "EasyTrade — KI-Forex-Signale"
+
+msgid "main_soc_og_description"
+msgstr "Ein/Aus-Signale aus 20 Jahren EUR/USD. Jetzt gratis testen."
+
+msgid "main_twitter_tittle"
+msgstr "EasyTrade · AI Forex"
+
+msgid "main_twitter_description"
+msgstr "Klare EUR/USD-Signale. Kostenloser Zugang."
+
+
+
+msgid "mainAboutTitle"
+msgstr "Über das Projekt EasyTrade"
+
+msgid "mainAboutText"
+msgstr "Die Entwicklung von EasyTrade basiert auf dem Verständnis, wie Märkte funktionieren und wie Menschen im Alltag handeln.<br>\n"
+"Unsere Theorie konzentriert sich auf das Vorhersagen des Verhaltens der meisten aktiven Trader und den Einfluss von Nachrichtenereignissen auf Marktbewegungen.<br><br>\n\n"
+"Wir haben <b>20 Jahre historische Minuten-Daten</b> von EUR/USD analysiert und mit dem ARIMA-Modell erste Prognosen getestet.<br>\n"
+"Diese lieferten allgemeine Trends, konnten jedoch Marktreaktionen auf aktuelle Nachrichten nicht genau erfassen.<br>\n"
+"Selbst technische Indikatoren wie SMA oder RSI bestätigten nur Bewegungen nach dem Ereignis.<br><br>\n\n"
+"Der Durchbruch gelang mit dem Einsatz künstlicher Intelligenz.<br>\n"
+"Unsere auf historischen Daten trainierten KI-Modelle erreichen bis zu <b>85 % Prognosegenauigkeit</b>.<br><br>\n\n"
+"Die Modelle werden wöchentlich neu trainiert, um aktuelle Marktbedingungen zu berücksichtigen.<br>\n"
+"Derzeit bieten wir drei Evolutionsstufen: <b>ET1</b>,<b> ET2</b> und <b>ET3</b>, wobei die dritte die modernste Version ist.<br><br>\n\n"
+"Sie können EasyTrade kostenlos nutzen und uns nach Ihrem Handel Feedback geben.<br>\n"
+"Ihr Rückmeldung hilft uns, die Modelle weiter zu verbessern und neue Währungspaare einzubinden.<br>\n"
+"In Zukunft wird ein Abonnement von bis zu <b>30 USD/Monat</b> eingeführt — derzeit bleibt der Service vollständig kostenlos.<br><br>\n\n"
+"Bei Fragen kontaktieren Sie uns über das Kontaktformular oder per E-Mail.<br><br>\n\n"
+"<b>Mit freundlichen Grüßen, Ihr EasyTrade-Team</b>"
+
+msgid "mainAboutDescription"
+msgstr "EasyTrade — KI-gestützte Forex-Analyseplattform. 20 Jahre EUR/USD-Daten, präzise Handelssignale und kostenlose Nutzung während der Testphase."
+
+msgid "mainAboutKeywords"
+msgstr "forex, trading, forex prognose, EUR/USD signale, KI trading, ARIMA, RSI, SMA, technischer analyse, automatisierter handel, forex signale, EasyTrade"
+
+
+msgid "mainTeamTitle"
+msgstr "EasyTrade Team — Experten für KI und Handelsstrategien"
+
+msgid "mainTeamDescription"
+msgstr "Lernen Sie das EasyTrade-Team kennen: Analysten, Entwickler und KI-Spezialisten, die ein Forex-Prognosesystem auf Basis von 20 Jahren Marktdaten entwickelt haben. Wir machen den Handel einfacher und präziser."
+
+msgid "mainTeamKeywords"
+msgstr "easytrade, easytrade team, forex, handelssignale, künstliche intelligenz, eur/usd prognose, trading, datenanalyse, fintech, projektteam"
+
+msgid "mainTeamTitleSoc"
+msgstr "EasyTrade Team"
+
+msgid "mainTeamDescriptionSoc"
+msgstr "Das Team hinter EasyTrade — Experten für KI und Trading, die ein Werkzeug für präzise Forex-Prognosen entwickeln."
+
+msgid "mainTeamTitleTwitter"
+msgstr "EasyTrade Team"
+
+msgid "mainTeamDescriptionTwitter"
+msgstr "Das Team hinter EasyTrade — Experten für KI und Trading, die ein Werkzeug für präzise Forex-Prognosen entwickeln."
+
+msgid "mainEnginerPerson"
+msgstr "Leitender IT-Entwickler"
+
+msgid "mainTraderPerson"
+msgstr "FOREX-Handelsspezialist"
+
+msgid "mainTesterPerson"
+msgstr "Softwaretester und SEO-Spezialist"
+
+
+msgid "mainFeedBackText"
+msgstr "Wenn Sie Fragen, Anregungen oder Ideen zur Projektentwicklung haben, kontaktieren Sie uns gerne. Wir prüfen jedes Feedback sorgfältig und helfen Ihnen gerne weiter. Auch bei der Planung neuer Funktionen und Verbesserungen berücksichtigen wir Ihre Vorschläge. Sie können Ihre eigene Implementierungsstrategie vorschlagen oder ein bestimmtes Tool beschreiben, das Sie sich für das Projekt wünschen. Ihre Meinung ist uns wichtig – nur so können wir das Projekt benutzerfreundlicher und nützlicher gestalten."
+
+msgid "mainFeedBackTitle"
+msgstr "Kontakt zu EasyTrade — Ihre Ideen und Ihr Feedback sind uns wichtig"
+
+msgid "mainFeedBackDescription"
+msgstr "Wir freuen uns auf Ihre Nachricht! Schreiben Sie uns bei Fragen, Vorschlägen oder Ideen zur Weiterentwicklung von EasyTrade. Ihr Feedback hilft uns, unsere Handelsstrategien und Tools noch besser zu machen."
+
+msgid "mainFeedBackKeywords"
+msgstr "easytrade, kontakt easytrade, feedback, vorschläge, support, forex, trading, künstliche intelligenz, neue strategien, fintech kommunikation"
+
+msgid "mainFeedBackTitleSoc"
+msgstr "Kontakt EasyTrade"
+
+msgid "mainFeedBackDesciprionSoc"
+msgstr "Teilen Sie Ihre Ideen oder Erfahrungen — das EasyTrade-Team hört zu und entwickelt sich weiter."
+
+msgid "mainFeedBackTitleTwitter"
+msgstr "Kontakt EasyTrade"
+
+msgid "mainFeedBackDesciprionTwitter"
+msgstr "Teilen Sie Ihre Ideen oder Erfahrungen — das EasyTrade-Team hört zu und entwickelt sich weiter."
+
+msgid "mainPredictTitle"
+msgstr "EUR/USD-Prognosen — Handelssignale | EasyTrade"
+
+msgid "mainPredictDescription"
+msgstr "Live-Demo-Signale für EUR/USD: Richtung, Wahrscheinlichkeit, Entry/Exit und ein ±30-Min-Chart. Ereignisgetriebene Analyse. Ergebnisse bewerten und Feedback geben."
+
+msgid "mainPredictKeywords"
+msgstr "EUR/USD, Prognosen, Handelssignale, Forex, algorithmischer Handel, Wahrscheinlichkeit, Entry, Exit, Demo, ereignisbasierte Analyse"
+
+msgid "mainPredictTitleSoc"
+msgstr "EUR/USD-Prognosen — Live-Demo-Signale | EasyTrade"
+
+msgid "mainPredictDescriptionSoc"
+msgstr "Live-Signale für EUR/USD mit Wahrscheinlichkeit, Entry/Exit und ±30-Min-Chart. Genauigkeit bewerten und die Modellqualität verbessern."
+
+msgid "mainPredictTitleTwitter"
+msgstr "EUR/USD — Prognosen & Signale | EasyTrade"
+
+msgid "mainPredictDescriptionTwitter"
+msgstr "Live-Signale EUR/USD: Richtung, Wahrscheinlichkeit, Entry/Exit, ±30-Min-Chart. Ergebnisse bewerten und Feedback teilen."
+
+msgid "mainPredictDescription.predictsNameTable"
+msgstr "Prognosen"
+
+msgid "mainPredictDescription.model"
+msgstr "Modell"
+
+msgid "mainPredictDescription.dateFrom"
+msgstr "stammen aus"
+
+msgid "mainPredictDescription.dateTo"
+msgstr "stammen bis"
+
+msgid "mainPredictDescription.direction"
+msgstr "Richtung"
+
+msgid "mainPredictDescription.details"
+msgstr "Details"
+
+msgid "mainPredictDescription.details.event"
+msgstr "Ereignis"
+
+msgid "mainPredictDescription.details.enter"
+msgstr "Eingang"
+
+msgid "mainPredictDescription.details.exit"
+msgstr "Ausfahrt"
+
+msgid "mainPredictDescription.details.punkts"
+msgstr "punkts"
+
+msgid "mainPredictDescription.details.prob"
+msgstr "Wahrscheinlichkeit"
+
+msgid "mainPredictDescription.grafik"
+msgstr "Zeitplan"
+
+msgid "mainPredictDescription.grafik.min"
+msgstr "min"
+
+msgid "mainPredictDescription.lists.records"
+msgstr "Aufzeichnungen"
+
+msgid "mainPredictDescription.lists.signlas.records"
+msgstr "Signale"
+
+msgid "mainPredictDescription.feedback"
+msgstr "Hinterlassen Sie eine Bewertung"
+
+msgid "mainPredictDescription.feedback.starsName"
+msgstr "Bewertung"
+
+msgid "mainPredictDescription.feedback.starsResults"
+msgstr ""
+
+msgid "mainPredictDescription.feedback.star.1"
+msgstr "Schlecht"
+
+msgid "mainPredictDescription.feedback.star.2"
+msgstr "Schwach"
+
+msgid "mainPredictDescription.feedback.star.3"
+msgstr "So So"
+
+msgid "mainPredictDescription.feedback.star.4"
+msgstr "Gut"
+
+msgid "mainPredictDescription.feedback.star.5"
+msgstr "Es hat perfekt funktioniert."
+
+msgid "mainPredictDescription.feedback.comment"
+msgstr "Kommentar (optional)"
+
+msgid "mainPredictDescription.feedback.comment.placeholder"
+msgstr "Was hat Ihnen gefallen, was könnte verbessert werden?"
+
+msgid "mainPredictDescription.feedback.button"
+msgstr "Schicken"
+
+
+
+

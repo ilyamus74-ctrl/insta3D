@@ -1,0 +1,215 @@
+{include file="maklertour_header.html"}
+{include file="maklertour_sidebar.html"}
+
+<main id="main" class="main">
+
+  <div class="pagetitle">
+    <h1>Заявка #{$order.id}</h1>
+    <nav>
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item">MaklerTour</li>
+        <li class="breadcrumb-item"><a href="/orders.php">Заявки</a></li>
+        <li class="breadcrumb-item active">#{$order.id}</li>
+      </ol>
+    </nav>
+  </div>
+
+  {if $error}
+    <div class="alert alert-danger">{$error}</div>
+  {/if}
+
+  {if $success}
+    <div class="alert alert-success">{$success}</div>
+  {/if}
+
+  <section class="section">
+    <a href="javascript:history.back()" class="btn btn-outline-secondary mb-3">← Назад</a>
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Объект</h5>
+
+        <table class="table">
+          <tr>
+            <th style="width:220px;">Название</th>
+            <td>{$order.title|escape}</td>
+          </tr>
+          <tr>
+            <th>Адрес</th>
+            <td>{$order.address|escape}</td>
+          </tr>
+          <tr>
+            <th>Площадь</th>
+            <td>{$order.area_m2} м²</td>
+          </tr>
+          <tr>
+            <th>Клиент</th>
+            <td>{$order.customer_name|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Телефон</th>
+            <td>{$order.customer_phone|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Email</th>
+            <td>{$order.customer_email|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Брокер</th>
+            <td>{$order.broker_name|default:'-'|escape} / {$order.broker_email|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Оператор</th>
+            <td>{$order.operator_name|default:'-'|escape} / {$order.operator_email|default:'-'|escape}</td>
+          </tr>
+          <tr>
+            <th>Статус</th>
+            <td><span class="badge bg-primary">{$order.status}</span></td>
+          </tr>
+          <tr>
+            <th>Публичный токен</th>
+            <td><code>{$order.public_token}</code></td>
+          </tr>
+        </table>
+
+        <form method="post" class="row g-2">
+          <input type="hidden" name="action" value="set_status">
+
+          <div class="col-md-3">
+            <select name="status" class="form-select">
+              <option value="NEW" {if $order.status == 'NEW'}selected{/if}>NEW</option>
+              <option value="ASSIGNED" {if $order.status == 'ASSIGNED'}selected{/if}>ASSIGNED</option>
+              <option value="IN_PROGRESS" {if $order.status == 'IN_PROGRESS'}selected{/if}>IN_PROGRESS</option>
+              <option value="CAPTURED" {if $order.status == 'CAPTURED'}selected{/if}>CAPTURED</option>
+              <option value="UPLOADING" {if $order.status == 'UPLOADING'}selected{/if}>UPLOADING</option>
+              <option value="UPLOADED" {if $order.status == 'UPLOADED'}selected{/if}>UPLOADED</option>
+              <option value="PROCESSING" {if $order.status == 'PROCESSING'}selected{/if}>PROCESSING</option>
+              <option value="READY" {if $order.status == 'READY'}selected{/if}>READY</option>
+              <option value="CANCELLED" {if $order.status == 'CANCELLED'}selected{/if}>CANCELLED</option>
+            </select>
+          </div>
+
+          <div class="col-md-3">
+            <button type="submit" class="btn btn-primary">Обновить статус</button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Capture sessions</h5>
+
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>App session UUID</th>
+              <th>Camera</th>
+              <th>Status</th>
+              <th>Started</th>
+              <th>Completed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {foreach from=$captureSessions item=s}
+              <tr>
+                <td>{$s.id}</td>
+                <td><code>{$s.app_session_uuid}</code></td>
+                <td>{$s.camera_model|default:'-'|escape}</td>
+                <td><span class="badge bg-secondary">{$s.status}</span></td>
+                <td>{$s.started_at|default:'-'}</td>
+                <td>{$s.completed_at|default:'-'}</td>
+              </tr>
+            {foreachelse}
+              <tr>
+                <td colspan="6">Сессий пока нет</td>
+              </tr>
+            {/foreach}
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Video scans</h5>
+
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Filename</th>
+              <th>Duration</th>
+              <th>Size</th>
+              <th>Upload</th>
+              <th>Processing</th>
+              <th>Storage path</th>
+            </tr>
+          </thead>
+          <tbody>
+            {foreach from=$videoScans item=v}
+              <tr>
+                <td>{$v.id}</td>
+                <td>{$v.filename|escape}</td>
+                <td>{$v.duration_sec|default:'-'}</td>
+                <td>{$v.size_bytes|default:'-'}</td>
+                <td><span class="badge bg-secondary">{$v.upload_state}</span></td>
+                <td><span class="badge bg-secondary">{$v.processing_state}</span></td>
+                <td><code>{$v.storage_path|default:'-'|escape}</code></td>
+              </tr>
+            {foreachelse}
+              <tr>
+                <td colspan="7">Видео пока нет</td>
+              </tr>
+            {/foreach}
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Photo points</h5>
+
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Seq</th>
+              <th>Title</th>
+              <th>Room</th>
+              <th>Preview</th>
+              <th>Original</th>
+              <th>Upload</th>
+            </tr>
+          </thead>
+          <tbody>
+            {foreach from=$capturePoints item=p}
+              <tr>
+                <td>{$p.id}</td>
+                <td>{$p.sequence_number}</td>
+                <td>{$p.title|default:'-'|escape}</td>
+                <td>{$p.room_name|default:'-'|escape}</td>
+                <td><code>{$p.preview_path|default:'-'|escape}</code></td>
+                <td><code>{$p.original_path|default:'-'|escape}</code></td>
+                <td><span class="badge bg-secondary">{$p.upload_state}</span></td>
+              </tr>
+            {foreachelse}
+              <tr>
+                <td colspan="7">Фото-точек пока нет</td>
+              </tr>
+            {/foreach}
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+
+  </section>
+
+</main>
+
+{include file="maklertour_footer.html"}

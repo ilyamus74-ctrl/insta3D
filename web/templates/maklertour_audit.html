@@ -1,0 +1,63 @@
+{include file="maklertour_header.html"}
+{include file="maklertour_sidebar.html"}
+
+<main id="main" class="main">
+
+  <div class="pagetitle">
+    <h1>Аудит</h1>
+    <nav>
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item">MaklerTour</li>
+        <li class="breadcrumb-item active">Аудит</li>
+      </ol>
+    </nav>
+  </div>
+
+  <section class="section">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Последние события</h5>
+
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>Время</th>
+              <th>Пользователь</th>
+              <th>Событие</th>
+              <th>Сущность</th>
+              <th>ID</th>
+              <th>IP</th>
+              <th>Описание</th>
+              <th>Extra</th>
+            </tr>
+          </thead>
+          <tbody>
+            {foreach from=$logs item=l}
+              <tr>
+                <td>{$l.event_time}</td>
+                <td>
+                  {$l.username|default:'-'|escape}<br>
+                  <small>{$l.email|default:'-'|escape}</small>
+                </td>
+                <td><span class="badge bg-secondary">{$l.event_type}</span></td>
+                <td>{$l.entity_type|default:'-'}</td>
+                <td>{$l.entity_id|default:'-'}</td>
+                <td>{$l.ip_address|default:'-'}</td>
+                <td>{$l.description|default:'-'|escape}</td>
+                <td><code>{$l.extra_data|default:''|escape}</code></td>
+              </tr>
+            {foreachelse}
+              <tr>
+                <td colspan="8">Событий пока нет</td>
+              </tr>
+            {/foreach}
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+  </section>
+
+</main>
+
+{include file="maklertour_footer.html"}

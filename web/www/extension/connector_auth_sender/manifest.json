@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Connector Auth Sender",
+  "version": "1.0.0",
+  "description": "Send auth cookies/token to the Cargo connector system.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "connector-auth-sender@cargo.local",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "authenticationInfo",
+          "websiteContent"
+        ]
+      }
+    },
+    "gecko_android": {
+      "strict_min_version": "142.0"
+    }
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Connector Auth Sender"
+  },
+  "permissions": [
+    "cookies",
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ]
+}
