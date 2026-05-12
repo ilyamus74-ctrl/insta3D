@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 data class AppUiState(
     val sessions: List<Session> = emptyList(),
@@ -486,7 +487,7 @@ class AppStateViewModel(
 
             var allUploaded = true
             scanVideos.forEach { scan ->
-                val file = scan.localVideoPath?.let { java.io.File(it) }
+                val file = scan.localVideoPath?.let { path -> File(path) }
                 val exists = file?.exists() == true
                 Log.d("Upload", "video file scanId=${scan.id} exists=$exists size=${if (exists) file?.length() else null}")
                 if (!exists) {
@@ -508,8 +509,8 @@ class AppStateViewModel(
             }
 
             session.points.forEach { point ->
-                val previewFile = point.localPreviewPath?.let(::java.io.File)
-                val originalFile = point.localOriginalPath?.let(::java.io.File)
+                val previewFile = point.localPreviewPath?.let { path -> File(path) }
+                val originalFile = point.localOriginalPath?.let { path -> File(path) }
                 val hasPreview = previewFile?.exists() == true
                 val hasOriginal = originalFile?.exists() == true
                 Log.d("Upload", "photo files pointId=${point.id} previewExists=$hasPreview originalExists=$hasOriginal")
@@ -539,7 +540,6 @@ class AppStateViewModel(
                 Log.e("Upload", "final Error uploadId=$uploadId")
             }
             return@launch
-            uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
         }
     }
 
