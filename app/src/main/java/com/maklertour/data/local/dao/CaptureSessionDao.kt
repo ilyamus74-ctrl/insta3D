@@ -29,6 +29,17 @@ interface CaptureSessionDao {
     @Query("UPDATE capture_sessions SET startPointId = :pointId, syncState = 'PENDING_UPDATE', updatedAtEpochMs = :updatedAtEpochMs WHERE id = :sessionId")
     suspend fun setStartPoint(sessionId: String, pointId: String?, updatedAtEpochMs: Long)
 
+    @Query("""
+        UPDATE capture_sessions
+        SET serverCaptureSessionId = :serverCaptureSessionId,
+            updatedAtEpochMs = :updatedAtEpochMs
+        WHERE id = :sessionId
+    """)
+    suspend fun updateServerCaptureSessionId(
+        sessionId: String,
+        serverCaptureSessionId: Long,
+        updatedAtEpochMs: Long
+    )
 
     @Query("UPDATE capture_sessions SET deletedAtEpochMs = :deletedAtEpochMs, syncState = 'PENDING_DELETE', updatedAtEpochMs = :deletedAtEpochMs WHERE id = :sessionId")
     suspend fun deleteById(sessionId: String, deletedAtEpochMs: Long)

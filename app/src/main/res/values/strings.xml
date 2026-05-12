@@ -63,7 +63,7 @@
     <string name="session_format">Session: %1$s</string>
     <string name="status_format">Status: %1$s</string>
     <string name="retry_format">Retry: %1$s</string>
-    <string name="send_mock_api">Send (mock API) send to server</string>
+    <string name="send_mock_api">An Server senden</string>
     <string name="tab_settings">Settings</string>
     <string name="settings">Settings</string>
     <string name="app_language">App language</string>

@@ -425,6 +425,13 @@ class AppStateViewModel(
             return EnqueueUploadResult.Rejected("Сессия не привязана к заявке")
         }
 
+        val existing = uiState.value.uploadQueue.firstOrNull { it.sessionId == session.id }
+        if (existing != null) {
+            Log.d("UploadQueue", "enqueue duplicate rejected sessionId=${session.id}")
+            return EnqueueUploadResult.Rejected("Сессия уже есть в очереди")
+        }
+
+        Log.d("UploadQueue", "enqueue requested sessionId=${session.id}")
         uploadQueueRepository.enqueue(session.id)
         return EnqueueUploadResult.Enqueued
     }
@@ -441,7 +448,7 @@ class AppStateViewModel(
             Log.d("Upload", "serverOrderId=${session?.serverOrderId}")
             Log.d("Upload", "serverCaptureSessionId=${session?.serverCaptureSessionId}")
             Log.d("Upload", "points count=${session?.points?.size ?: 0}")
-            val scanVideos = uiState.value.selectedSessionScanVideos.filter { it.sessionId == item.sessionId }
+            val scanVideos = sessionRepository.scanVideos.value.filter { it.sessionId == item.sessionId }
             Log.d("Upload", "scanVideos count=${scanVideos.size}")
 
             if (session?.serverOrderId == null) {
@@ -454,98 +461,84 @@ class AppStateViewModel(
             uploadError.value = null
 
             val uploader = mobileUploadApi
-            var allUploaded = true
-            if (uploader != null) {
-                val captureSessionId = session.serverCaptureSessionId ?: run {
-                    Log.d("Upload", "create_session orderId=${session.serverOrderId} appSessionUuid=${session.id}")
-                    val created = uploader.createSession(orderId = session.serverOrderId, appSessionUuid = session.id)
-                    Log.d("Upload", "create_session response captureSessionId=$created")
-                    if (created == 0L) {
-                        allUploaded = false
-                    }
-                    created
-                }
-
-                scanVideos.forEach { scan ->
-                    val file = scan.localVideoPath?.let { java.io.File(it) }
-                    Log.d("Upload", "upload_video_scan scanId=${scan.id} path=${scan.localVideoPath} exists=${file?.exists()} size=${file?.takeIf { it.exists() }?.length()}")
-                    val result = uploader.uploadVideoScan(
-                        orderId = session.serverOrderId,
-                        captureSessionId = captureSessionId,
-                        scan = scan,
-                    ) { progress ->
-                        val percent = if (progress.bytesTotal > 0) ((progress.bytesUploaded * 100L) / progress.bytesTotal).toInt().coerceIn(0, 100) else 0
-                        uploadQueueRepository.updateProgress(
-                            uploadId = uploadId,
-                            progressPercent = percent,
-                            bytesUploaded = progress.bytesUploaded,
-                            bytesTotal = progress.bytesTotal,
-                            currentFileName = file?.name ?: scan.name,
-                            currentStep = "Uploading video scan",
-                        )
-                    }
-                    Log.d("Upload", "upload_video_scan result=$result")
-                    if (!result) {
-                        allUploaded = false
-                    }
-                }
-
-                session.points.forEach { point ->
-                    Log.d("Upload", "upload_photo_point pointId=${point.id} previewPath=${point.localPreviewPath} originalPath=${point.localOriginalPath}")
-                    val result = uploader.uploadPhotoPoint(
-                        orderId = session.serverOrderId,
-                        captureSessionId = captureSessionId,
-                        point = point,
-                    ) { progress ->
-                        val percent = if (progress.bytesTotal > 0) ((progress.bytesUploaded * 100L) / progress.bytesTotal).toInt().coerceIn(0, 100) else 0
-                        uploadQueueRepository.updateProgress(
-                            uploadId = uploadId,
-                            progressPercent = percent,
-                            bytesUploaded = progress.bytesUploaded,
-                            bytesTotal = progress.bytesTotal,
-                            currentFileName = point.name,
-                            currentStep = "Uploading photo point",
-                        )
-                    }
-                    Log.d("Upload", "upload_photo_point result=$result")
-                    if (!result) {
-                        allUploaded = false
-                    }
-                }
-
-                if (allUploaded) {
-                    uploadQueueRepository.updateProgress(uploadId, 100, 0L, 0L, null, "Completed")
-                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Success)
-                } else {
-                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
-                }
+            if (uploader == null) {
+                uploadError.value = "MobileUploadApi is not configured"
+                uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
+                Log.e("Upload", "MobileUploadApi is null; real server upload is unavailable")
                 return@launch
             }
+            Log.d("Upload", "mobileUploadApi configured=true")
 
-            val maxAttempts = 3
-            var attempt = item.retryCount + 1
-            while (attempt <= maxAttempts) {
-                val uploaded = uploadApi.uploadChunk(
-                    uploadId = uploadId,
-                    sessionId = item.sessionId,
-                    attempt = attempt,
-                )
-                if (uploaded) {
-                    val processed = uploadApi.pollProcessingStatus(uploadId)
-                    uploadQueueRepository.updateStatus(
-                        uploadId,
-                        if (processed) UploadStatus.Success else UploadStatus.Error,
-                    )
+            val captureSessionId = session.serverCaptureSessionId ?: run {
+                Log.d("Upload", "create_session request orderId=${session.serverOrderId} appSessionUuid=${session.id}")
+                val created = uploader.createSession(orderId = session.serverOrderId, appSessionUuid = session.id)
+                Log.d("Upload", "create_session response captureSessionId=$created")
+                if (created <= 0L) {
+                    uploadError.value = "Не удалось создать capture session на сервере"
+                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
+                    Log.e("Upload", "create_session failed: captureSessionId=$created")
                     return@launch
                 }
+                sessionRepository.updateServerCaptureSessionId(session.id, created)
+                created
+            }
+            Log.d("Upload", "captureSessionId used=$captureSessionId")
 
-                uploadQueueRepository.incrementRetry(uploadId)
-                attempt += 1
-                if (attempt <= maxAttempts) {
-                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Queued)
+            var allUploaded = true
+            scanVideos.forEach { scan ->
+                val file = scan.localVideoPath?.let { java.io.File(it) }
+                val exists = file?.exists() == true
+                Log.d("Upload", "video file scanId=${scan.id} exists=$exists size=${if (exists) file?.length() else null}")
+                if (!exists) {
+                    Log.e("Upload", "video file missing scanId=${scan.id}")
+                    allUploaded = false
+                    return@forEach
                 }
+                val result = uploader.uploadVideoScan(
+                    orderId = session.serverOrderId,
+                    captureSessionId = captureSessionId,
+                    scan = scan,
+                ) { progress ->
+                    val percent = if (progress.bytesTotal > 0) ((progress.bytesUploaded * 100L) / progress.bytesTotal).toInt().coerceIn(0, 100) else 0
+                    uploadQueueRepository.updateProgress(uploadId, percent, progress.bytesUploaded, progress.bytesTotal, file?.name ?: scan.name, "Uploading video scan")
+
+                }
+                Log.d("Upload", "upload_video_scan result=$result")
+                if (!result) allUploaded = false
             }
 
+            session.points.forEach { point ->
+                val previewFile = point.localPreviewPath?.let(::java.io.File)
+                val originalFile = point.localOriginalPath?.let(::java.io.File)
+                val hasPreview = previewFile?.exists() == true
+                val hasOriginal = originalFile?.exists() == true
+                Log.d("Upload", "photo files pointId=${point.id} previewExists=$hasPreview originalExists=$hasOriginal")
+                if (!hasPreview && !hasOriginal) {
+                    Log.e("Upload", "photo files missing pointId=${point.id}")
+                    allUploaded = false
+                    return@forEach
+                }
+                val result = uploader.uploadPhotoPoint(
+                    orderId = session.serverOrderId,
+                    captureSessionId = captureSessionId,
+                    point = point,
+                ) { progress ->
+                    val percent = if (progress.bytesTotal > 0) ((progress.bytesUploaded * 100L) / progress.bytesTotal).toInt().coerceIn(0, 100) else 0
+                    uploadQueueRepository.updateProgress(uploadId, percent, progress.bytesUploaded, progress.bytesTotal, point.name, "Uploading photo point")
+                }
+                Log.d("Upload", "upload_photo_point result=$result")
+                if (!result) allUploaded = false
+            }
+
+            if (allUploaded) {
+                uploadQueueRepository.updateProgress(uploadId, 100, 0L, 0L, null, "Completed")
+                uploadQueueRepository.updateStatus(uploadId, UploadStatus.Success)
+                Log.d("Upload", "final Success uploadId=$uploadId")
+            } else {
+                uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
+                Log.e("Upload", "final Error uploadId=$uploadId")
+            }
+            return@launch
             uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
         }
     }

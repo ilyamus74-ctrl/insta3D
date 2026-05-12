@@ -65,6 +65,7 @@ interface SessionRepository {
     fun updateScanVideo(scanVideo: ScanVideo)
     fun deleteScanVideo(scanVideoId: String)
     fun deleteSession(sessionId: String)
+    fun updateServerCaptureSessionId(sessionId: String, serverCaptureSessionId: Long)
 }
 
 interface UploadQueueRepository {
@@ -164,6 +165,13 @@ class InMemorySessionRepository : SessionRepository {
     override fun deleteSession(sessionId: String) {
         _sessions.update { sessions -> sessions.filterNot { it.id == sessionId } }
     }
+    override fun updateServerCaptureSessionId(sessionId: String, serverCaptureSessionId: Long) {
+        _sessions.update { sessions ->
+            sessions.map { session ->
+                if (session.id == sessionId) session.copy(serverCaptureSessionId = serverCaptureSessionId) else session
+            }
+        }
+    }
 }
 
 
@@ -252,6 +260,15 @@ class SharedPrefsSessionRepository(context: Context) : SessionRepository {
         persist()
     }
 
+    override fun updateServerCaptureSessionId(sessionId: String, serverCaptureSessionId: Long) {
+        _sessions.update { sessions ->
+            sessions.map { session ->
+                if (session.id == sessionId) session.copy(serverCaptureSessionId = serverCaptureSessionId) else session
+            }
+        }
+        persist()
+    }
+
     private fun persist() {
         val payload = JSONArray().apply {
             _sessions.value.forEach { session ->
@@ -322,6 +339,10 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
     override val queue: StateFlow<List<UploadItem>> = _queue
 
     override fun enqueue(sessionId: String) {
+        if (_queue.value.any { it.sessionId == sessionId }) {
+            Log.d("UploadQueue", "enqueue ignored duplicate sessionId=$sessionId")
+            return
+        }
         _queue.update {
             it + UploadItem(
                 id = UUID.randomUUID().toString(),
@@ -377,6 +398,10 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
     override val queue: StateFlow<List<UploadItem>> = _queue
 
     override fun enqueue(sessionId: String) {
+        if (_queue.value.any { it.sessionId == sessionId }) {
+            Log.d("UploadQueue", "enqueue ignored duplicate sessionId=$sessionId")
+            return
+        }
         _queue.update {
             it + UploadItem(
                 id = UUID.randomUUID().toString(),
@@ -642,6 +667,12 @@ class RoomSessionRepository(
             captureSessionDao.deleteById(sessionId, now)
         }
     }
+
+    override fun updateServerCaptureSessionId(sessionId: String, serverCaptureSessionId: Long) {
+        scope.launch {
+            captureSessionDao.updateServerCaptureSessionId(sessionId, serverCaptureSessionId, Instant.now().toEpochMilli())
+        }
+    }
 }
 
 class RoomUploadQueueRepository(
@@ -654,6 +685,10 @@ class RoomUploadQueueRepository(
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     override fun enqueue(sessionId: String) {
+        if (queue.value.any { it.sessionId == sessionId }) {
+            Log.d("UploadQueue", "enqueue ignored duplicate sessionId=$sessionId")
+            return
+        }
         val now = Instant.now().toEpochMilli()
         scope.launch {
             uploadItemDao.upsert(

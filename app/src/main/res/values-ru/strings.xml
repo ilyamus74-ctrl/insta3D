@@ -63,7 +63,7 @@
     <string name="session_format">Сессия: %1$s</string>
     <string name="status_format">Статус: %1$s</string>
     <string name="retry_format">Повтор: %1$s</string>
-    <string name="send_mock_api">Отправить mock API на сервер</string>
+    <string name="send_mock_api">Отправить на сервер</string>
     <string name="tab_settings">Настройки</string>
     <string name="settings">Настройки</string>
     <string name="app_language">Язык приложения</string>

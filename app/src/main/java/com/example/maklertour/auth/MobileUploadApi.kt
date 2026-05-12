@@ -42,9 +42,18 @@ class MobileUploadApi(
             .build()
 
         client.newCall(request).execute().use { response ->
-            val json = JSONObject(response.body?.string().orEmpty())
-            json.optLong("capture_session_id", 0L).takeIf { it > 0L }
-                ?: json.optLong("session_id", 0L).takeIf { it > 0L }
+            val text = response.body?.string().orEmpty()
+            Log.d("MobileUploadApi", "create_session response http=${response.code} body=$text")
+            if (!response.isSuccessful) return@withContext 0L
+
+            runCatching { JSONObject(text) }
+                .onFailure { Log.e("MobileUploadApi", "create_session parse failed", it) }
+                .getOrNull()
+                ?.let { json ->
+                    json.optLong("capture_session_id", 0L).takeIf { it > 0L }
+                        ?: json.optLong("session_id", 0L).takeIf { it > 0L }
+                        ?: 0L
+                }
                 ?: 0L
         }
     }

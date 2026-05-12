@@ -471,6 +471,7 @@ private fun MaklerTourApp() {
                         onMoveDown = viewModel::movePointDown,
                         onDownloadOriginals = viewModel::downloadOriginalsForSession,
                         onSyncServer = viewModel::syncSessionMetadata,
+                        onAddToUploadQueue = viewModel::enqueueUpload,
                         onClearConfirmed = viewModel::clearConfirmedLocalOriginals,
                         rooms = state.selectedSessionRooms,
                         startPointId = state.selectedSessionStartPointId,
@@ -1089,6 +1090,7 @@ private fun DraftScreen(
     onMoveDown: (Int) -> Unit,
     onDownloadOriginals: () -> Unit,
     onSyncServer: () -> Unit,
+    onAddToUploadQueue: (Boolean) -> EnqueueUploadResult,
     onClearConfirmed: () -> Unit,
     rooms: List<com.maklertour.domain.RoomDraft>,
     startPointId: String?,
@@ -1105,6 +1107,8 @@ private fun DraftScreen(
 ) {
     val unassignedPoints = points.filter { it.roomId == null }
     val roomsSorted = rooms.sortedBy { it.orderIndex }
+    val context = LocalContext.current
+    val isWifiConnected = ConnectivityState.isWifiConnected(context)
     LaunchedEffect(scanVideos.size) {
         Log.d("DraftScreen", "DraftScreen videoScans count=${scanVideos.size}")
     }
@@ -1128,6 +1132,12 @@ private fun DraftScreen(
             ProjectControlsBlock(
                 onDownloadOriginals = onDownloadOriginals,
                 onSyncServer = onSyncServer,
+                onAddToUploadQueue = {
+                    when (val result = onAddToUploadQueue(isWifiConnected)) {
+                        EnqueueUploadResult.Enqueued -> Toast.makeText(context, "Сессия добавлена в очередь", Toast.LENGTH_SHORT).show()
+                        is EnqueueUploadResult.Rejected -> Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
+                    }
+                },
                 onClearConfirmed = onClearConfirmed,
             )
         }
@@ -1308,6 +1318,7 @@ private fun ProjectDraftPreviewBlock(
 private fun ProjectControlsBlock(
     onDownloadOriginals: () -> Unit,
     onSyncServer: () -> Unit,
+    onAddToUploadQueue: () -> Unit,
     onClearConfirmed: () -> Unit,
 ) {
     Text(stringResource(R.string.draft_project_controls), style = MaterialTheme.typography.titleMedium)
@@ -1316,6 +1327,9 @@ private fun ProjectControlsBlock(
             Text(stringResource(R.string.download_originals_to_phone))
         }
         Button(onClick = onSyncServer, modifier = Modifier.fillMaxWidth()) {
+            Text("Синхронизировать metadata")
+        }
+        Button(onClick = onAddToUploadQueue, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.sync_with_server))
         }
         Button(onClick = onClearConfirmed, modifier = Modifier.fillMaxWidth()) {
@@ -1437,6 +1451,9 @@ private fun QueueScreen(
                                 Text(stringResource(R.string.send_mock_api))
                             }
                         }
+                        Text("progress=${if (item.status == com.maklertour.domain.UploadStatus.Success) 100 else item.progressPercent}%")
+                        Text("step=${item.currentStep ?: "—"} file=${item.currentFileName ?: "—"}")
+                        Text("bytes=${item.bytesUploaded}/${item.bytesTotal}")
                     }
                 }
             }

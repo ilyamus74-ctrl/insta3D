@@ -63,8 +63,7 @@
     <string name="session_format">Session: %1$s</string>
     <string name="status_format">Status: %1$s</string>
     <string name="retry_format">Retry: %1$s</string>
-    <string name="send_mock_api">Send (mock API) to server</string>
-
+    <string name="send_mock_api">Send to server</string>
 
     <string name="delete_scan">Delete scan</string>
     <string name="download_video_to_phone">Download video to phone</string>
