@@ -546,10 +546,15 @@ if (!is_writable($orderDir)) {
         $totalSizeDeclared = (int)($_POST['total_size'] ?? 0);
         $isLastChunk = $chunkIndex >= 0 && $totalChunks > 0 && $chunkIndex === ($totalChunks - 1);
 
-        if ($chunkIndex < 0 || $totalChunks <= 0 || $uploadId === '') {
-            api_json(['ok' => false, 'error' => 'invalid chunk metadata'], 400);
+        if ($chunkIndex < 0 || $totalChunks <= 0 || $chunkIndex >= $totalChunks || $uploadId === '') {
+            api_json([
+                'ok' => false,
+                'error' => 'invalid chunk metadata',
+                'chunk_index' => $chunkIndex,
+                'total_chunks' => $totalChunks,
+            ], 400);
         }
-
+        
         $chunksDir = $orderDir . '/.chunks';
         if (!is_dir($chunksDir) && !mkdir($chunksDir, 0775, true)) {
             api_json(['ok' => false, 'error' => 'failed to create chunks dir'], 500);
@@ -734,12 +739,12 @@ if ($stmt) {
         ])
     );
 
-
-api_json([
-    'ok' => true,
-    'storage_path' => $relativePath,
-    'size_bytes' => $sizeBytes,
-]);
+    api_json([
+        'ok' => true,
+        'upload_complete' => true,
+        'storage_path' => $relativePath,
+        'size_bytes' => $sizeBytes,
+    ]);
 }
 
 
