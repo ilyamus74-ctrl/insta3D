@@ -1766,7 +1766,8 @@ private fun QueueScreen(
         }
     }
 
-}private enum class CaptureMode {
+}
+    private enum class CaptureMode {
     PHOTO_POINT,
     VIDEO_SCAN,
 }
