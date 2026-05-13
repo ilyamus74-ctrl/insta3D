@@ -22,4 +22,13 @@ interface ScanVideoDao {
     suspend fun deleteById(scanVideoId: String)
     @Query("DELETE FROM scan_videos WHERE sessionId = :sessionId")
     suspend fun deleteBySessionId(sessionId: String)
+    @Query(
+        """
+    UPDATE scan_videos
+    SET uploadState = :uploadState,
+        updatedAtEpochMs = :updatedAtEpochMs
+    WHERE id = :scanVideoId
+    """
+    )
+    suspend fun updateUploadState(scanVideoId: String, uploadState: String, updatedAtEpochMs: Long, )
 }

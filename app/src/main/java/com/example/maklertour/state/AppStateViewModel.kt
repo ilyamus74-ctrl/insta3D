@@ -27,6 +27,8 @@ import com.maklertour.domain.ScanVideoDownloadState
 import com.maklertour.domain.ScanVideo
 import com.maklertour.domain.CaptureStatus
 import com.maklertour.domain.VideoScanUiState
+import com.maklertour.domain.ServerUploadState
+import com.maklertour.domain.ScanVideoUploadState
 import com.example.maklertour.auth.MobileOrder
 import com.example.maklertour.auth.MobileUploadApi
 import org.json.JSONArray
@@ -509,6 +511,10 @@ class AppStateViewModel(
                     allUploaded = false
                     return@forEach
                 }
+                sessionRepository.updateScanVideoUploadState(
+                    scanVideoId = scan.id,
+                    state = ScanVideoUploadState.UPLOADING,
+                )
                 val result = uploader.uploadVideoScan(
                     orderId = session.serverOrderId,
                     captureSessionId = captureSessionId,
@@ -519,7 +525,20 @@ class AppStateViewModel(
 
                 }
                 Log.d("Upload", "upload_video_scan result=$result")
-                if (!result) allUploaded = false
+
+                if (result) {
+                    sessionRepository.updateScanVideoUploadState(
+                        scanVideoId = scan.id,
+                        state = ScanVideoUploadState.UPLOADED,
+                    )
+                } else {
+                    sessionRepository.updateScanVideoUploadState(
+                        scanVideoId = scan.id,
+                        state = ScanVideoUploadState.UPLOAD_ERROR,
+                    )
+                    allUploaded = false
+                }
+
             }
 
             session.points.forEach { point ->
@@ -533,6 +552,10 @@ class AppStateViewModel(
                     allUploaded = false
                     return@forEach
                 }
+                sessionRepository.updatePointServerUploadState(
+                    pointId = point.id,
+                    state = ServerUploadState.UPLOADING,
+                )
                 val result = uploader.uploadPhotoPoint(
                     orderId = session.serverOrderId,
                     captureSessionId = captureSessionId,
@@ -542,7 +565,19 @@ class AppStateViewModel(
                     uploadQueueRepository.updateProgress(uploadId, percent, progress.bytesUploaded, progress.bytesTotal, point.name, "Uploading photo point")
                 }
                 Log.d("Upload", "upload_photo_point result=$result")
-                if (!result) allUploaded = false
+
+                if (result) {
+                    sessionRepository.updatePointServerUploadState(
+                        pointId = point.id,
+                        state = ServerUploadState.CONFIRMED,
+                    )
+                } else {
+                    sessionRepository.updatePointServerUploadState(
+                        pointId = point.id,
+                        state = ServerUploadState.ERROR,
+                    )
+                    allUploaded = false
+                }
             }
 
             if (allUploaded) {

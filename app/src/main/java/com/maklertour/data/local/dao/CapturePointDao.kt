@@ -51,10 +51,16 @@ interface CapturePointDao {
         WHERE id = :pointId
         """
     )
-    suspend fun updatePreview(
-        pointId: String,
-        previewUri: String?,
-        localPreviewPath: String?,
-        updatedAtEpochMs: Long,
+    suspend fun updatePreview( pointId: String, previewUri: String?, localPreviewPath: String?, updatedAtEpochMs: Long,)
+
+    @Query(
+        """
+    UPDATE capture_points
+    SET serverUploadState = :serverUploadState,
+        serverConfirmedAtEpochMs = :serverConfirmedAtEpochMs,
+        updatedAtEpochMs = :updatedAtEpochMs
+    WHERE id = :pointId
+    """
     )
+    suspend fun updateServerUploadState(pointId: String, serverUploadState: String, serverConfirmedAtEpochMs: Long?, updatedAtEpochMs: Long, )
 }

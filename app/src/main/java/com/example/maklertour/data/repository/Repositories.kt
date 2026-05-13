@@ -63,6 +63,8 @@ interface SessionRepository {
     fun deleteConnection(connectionId: String)
     fun addScanVideo(scanVideo: ScanVideo)
     fun updateScanVideo(scanVideo: ScanVideo)
+    fun updatePointServerUploadState(pointId: String, state: ServerUploadState)
+    fun updateScanVideoUploadState(scanVideoId: String, state: ScanVideoUploadState)
     fun deleteScanVideo(scanVideoId: String)
     fun deleteSession(sessionId: String)
     fun updateServerCaptureSessionId(sessionId: String, serverCaptureSessionId: Long)
@@ -163,6 +165,8 @@ class InMemorySessionRepository : SessionRepository {
     override fun addScanVideo(scanVideo: ScanVideo) = Unit
     override fun updateScanVideo(scanVideo: ScanVideo) = Unit
     override fun deleteScanVideo(scanVideoId: String) = Unit
+    override fun updatePointServerUploadState(pointId: String, state: ServerUploadState) = Unit
+    override fun updateScanVideoUploadState(scanVideoId: String, state: ScanVideoUploadState) = Unit
     override fun deleteSession(sessionId: String) {
         _sessions.update { sessions -> sessions.filterNot { it.id == sessionId } }
     }
@@ -692,6 +696,31 @@ class RoomSessionRepository(
         scope.launch { scanVideoDao.upsert(scanVideo.toEntity()) }
     }
 
+    override fun updatePointServerUploadState(pointId: String, state: ServerUploadState) {
+        val now = Instant.now().toEpochMilli()
+        val confirmedAt = if (state == ServerUploadState.CONFIRMED) now else null
+
+        scope.launch {
+            capturePointDao.updateServerUploadState(
+                pointId = pointId,
+                serverUploadState = state.name,
+                serverConfirmedAtEpochMs = confirmedAt,
+                updatedAtEpochMs = now,
+            )
+        }
+    }
+
+    override fun updateScanVideoUploadState(scanVideoId: String, state: ScanVideoUploadState) {
+        val now = Instant.now().toEpochMilli()
+
+        scope.launch {
+            scanVideoDao.updateUploadState(
+                scanVideoId = scanVideoId,
+                uploadState = state.name,
+                updatedAtEpochMs = now,
+            )
+        }
+    }
     override fun deleteScanVideo(scanVideoId: String) {
         scope.launch { scanVideoDao.deleteById(scanVideoId) }
     }
