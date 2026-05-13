@@ -402,19 +402,34 @@ private fun MaklerTourApp() {
                     )
                 }
                 composable("order_work") {
+                    val orderSessions = selectedOrder?.let { order ->
+                        state.sessions.filter { it.serverOrderId == order.id }
+                    }.orEmpty()
+                    val selectedOrderSession = orderSessions.firstOrNull { it.id == state.selectedSessionId }
+                    val hasSelectedOrderSession = selectedOrderSession != null
                     OrderWorkScreen(
                         order = selectedOrder,
                         currentUserId = authStorage.getUserId(),
+                        orderSessions = orderSessions,
+                        selectedSessionId = state.selectedSessionId,
+                        selectedOrderSession = selectedOrderSession,
+                        uploadQueueSessionIds = state.uploadQueue.map { it.sessionId }.toSet(),
                         onStartCapture = {
-                            if (state.selectedSessionId == null) {
-                                pendingSessionName = selectedOrder?.title ?: localizedContext.getString(R.string.quick_capture)
-                                viewModel.createSession(pendingSessionName ?: "Session", "", "")
-                            }
+                            if (!hasSelectedOrderSession) return@OrderWorkScreen
                             navController.navigate(AppTab.Camera.route)
                         },
-                        onDraft = { navController.navigate(AppTab.Draft.route) },
-                        onVideoScans = { navController.navigate(AppTab.Camera.route) },
-                        onUploads = { navController.navigate(AppTab.Queue.route) },
+                        onDraft = {
+                            if (!hasSelectedOrderSession) return@OrderWorkScreen
+                            navController.navigate(AppTab.Draft.route)
+                        },
+                        onVideoScans = {
+                            if (!hasSelectedOrderSession) return@OrderWorkScreen
+                            navController.navigate(AppTab.Camera.route)
+                        },
+                        onUploads = {
+                            if (!hasSelectedOrderSession) return@OrderWorkScreen
+                            navController.navigate(AppTab.Queue.route)
+                        },
                         onCreateLocalSession = {
                             selectedOrder?.let { order ->
                                 viewModel.createSession(
@@ -423,6 +438,14 @@ private fun MaklerTourApp() {
                                     "Заявка #${order.id}",
                                 )
                             }
+                        },
+                        onSelectOrderSession = viewModel::selectSession,
+                        onOpenOrderSessionDraft = { sessionId ->
+                            viewModel.selectSession(sessionId)
+                            navController.navigate(AppTab.Draft.route)
+                        },
+                        onContinueOrderSessionCapture = { sessionId ->
+                            viewModel.selectSession(sessionId)
                             navController.navigate(AppTab.Camera.route)
                         },
                         onTakeOrder = {
@@ -672,11 +695,18 @@ private fun OrdersScreen(
 private fun OrderWorkScreen(
     order: MobileOrder?,
     currentUserId: Long?,
+    orderSessions: List<com.maklertour.domain.Session>,
+    selectedSessionId: String?,
+    selectedOrderSession: com.maklertour.domain.Session?,
+    uploadQueueSessionIds: Set<String>,
     onStartCapture: () -> Unit,
     onDraft: () -> Unit,
     onVideoScans: () -> Unit,
     onUploads: () -> Unit,
     onCreateLocalSession: () -> Unit,
+    onSelectOrderSession: (String) -> Unit,
+    onOpenOrderSessionDraft: (String) -> Unit,
+    onContinueOrderSessionCapture: (String) -> Unit,
     onTakeOrder: () -> Unit,
     onBack: () -> Unit,
     debugMode: Boolean,
@@ -707,6 +737,45 @@ private fun OrderWorkScreen(
             modifier = Modifier.fillMaxWidth(),
             enabled = canWork,
         ) { Text("Создать локальную сессию для этой заявки") }
+
+        Text("Локальные сессии этой заявки", style = MaterialTheme.typography.titleMedium)
+        if (orderSessions.isEmpty()) {
+            Text("По этой заявке пока нет локальных сессий.")
+            Text("Создайте новую сессию или привяжите существующую во вкладке 'Сессии'.")
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                orderSessions.forEach { session ->
+                    val isSelected = session.id == selectedSessionId
+                    val uploadedCount = session.points.count { it.serverUploadState == com.maklertour.domain.ServerUploadState.CONFIRMED }
+                    val queueState = when {
+                        uploadQueueSessionIds.contains(session.id) -> "в очереди"
+                        session.serverCaptureSessionId != null -> "загружено"
+                        else -> "локально"
+                    }
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(session.name.ifBlank { "Без названия" }, style = MaterialTheme.typography.titleSmall)
+                            Text("Фото: ${session.points.size}")
+                            Text("Видео: —")
+                            Text("Статус: $queueState (подтверждено фото: $uploadedCount)")
+                            if (isSelected) {
+                                Text("Выбрана для этой заявки")
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { onSelectOrderSession(session.id) }) { Text("Выбрать") }
+                                Button(onClick = { onOpenOrderSessionDraft(session.id) }) { Text("Открыть черновик") }
+                                Button(onClick = { onContinueOrderSessionCapture(session.id) }) { Text("Продолжить съемку") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (selectedOrderSession == null) {
+            Text("Выберите сессию этой заявки", color = Color.Red)
+        } else {
+            Text("Активная сессия: ${selectedOrderSession.name}")
+        }
         Button(onClick = onStartCapture, modifier = Modifier.fillMaxWidth(), enabled = canWork) { Text("Начать/продолжить съемку") }
         Button(onClick = onDraft, modifier = Modifier.fillMaxWidth(), enabled = canWork) { Text("Черновик") }
         Button(onClick = onVideoScans, modifier = Modifier.fillMaxWidth(), enabled = canWork) { Text("Видео сканы") }
