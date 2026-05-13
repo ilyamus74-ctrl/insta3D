@@ -1658,7 +1658,23 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
             Text("Preview not ready")
         }
         AppStorageStatusRow(cameraExists = cameraExists, phonePreviewExists = phonePreviewExists, phoneOriginalText = phoneOriginalText, serverText = serverText, cameraDeleteText = cameraDeleteText); OutlinedTextField(value = localName, onValueChange = { localName = it }, label = { Text(stringResource(R.string.rename)) }, modifier = Modifier.fillMaxWidth()); Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { Button(onClick = { onRename(point.id, localName) }) { Text(stringResource(R.string.save)) }; Button(onClick = { onMoveUp(index) }) { Text("↑") }; Button(onClick = { onMoveDown(index) }) { Text("↓") }; Button(onClick = { onDelete(point.id) }) { Text(stringResource(R.string.delete)) }; Button(onClick = { onSetStartPoint(point.id) }) { Text(stringResource(R.string.draft_make_start_point)) } }; if (debugMode) { Text(stringResource(R.string.debug_details)); Text("id=${point.id}"); Text("cameraFileUrl=${point.cameraFileUrl}"); Text("localPreviewPath=${point.localPreviewPath}"); Text("localOriginalPath=${point.localOriginalPath}"); Text("capturedAt=${point.capturedAt}"); Text("cameraDeleteState=${point.cameraDeleteState}"); Text("serverUploadState=${point.serverUploadState}") }; Text(stringResource(R.string.draft_assign_room));
-        Text(stringResource(R.string.draft_connect_to));
+        Text(stringResource(R.string.draft_connect_to))
+        Column(
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            allPoints
+                .filter { it.id != point.id }
+                .forEach { other ->
+                    TextButton(
+                        onClick = { onCreateConnection(point.id, other.id) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(other.name)
+                    }
+                }
+        }
+    }
+}
 
 @Composable
 private fun ConnectionsBlock(points: List<com.maklertour.domain.CapturePoint>, connections: List<com.maklertour.domain.TourDraftConnection>, onDeleteConnection: (String) -> Unit) { Text(stringResource(R.string.draft_connections), style = MaterialTheme.typography.titleMedium); if (connections.isEmpty()) { Text(stringResource(R.string.draft_no_connections)); return }; connections.forEach { c -> val fromName = points.firstOrNull { it.id == c.fromPointId }?.name ?: c.fromPointId; val toName = points.firstOrNull { it.id == c.toPointId }?.name ?: c.toPointId; Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { Text("$fromName → $toName"); TextButton(onClick = { onDeleteConnection(c.id) }) { Text(stringResource(R.string.delete)) } } } }
