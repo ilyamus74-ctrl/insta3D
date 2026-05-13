@@ -16,8 +16,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -582,7 +580,7 @@ private fun MaklerTourApp() {
         }
     }
 }
-@OptIn(ExperimentalLayoutApi::class)
+
 @Composable
 private fun OrdersScreen(
     orders: List<MobileOrder>,
@@ -595,7 +593,17 @@ private fun OrdersScreen(
     onTakeOrder: (MobileOrder) -> Unit,
 ) {
     var filter by remember { mutableStateOf("ALL") }
-
+    var filterMenuExpanded by remember { mutableStateOf(false) }
+    val orderFilters = listOf(
+        "ALL" to "Все",
+        "AVAILABLE" to "Доступные",
+        "MY_WORK" to "В работе",
+        "MY_CREATED" to "Мои заявки",
+        "CAPTURED" to "Отснято",
+        "UPLOADED" to "Загружено",
+        "READY" to "Готово",
+    )
+    val currentFilterLabel = orderFilters.firstOrNull { it.first == filter }?.second ?: "Все"
     val filtered = orders.filter { order ->
         when (filter) {
             "ALL" -> {
@@ -644,17 +652,24 @@ private fun OrdersScreen(
             }
         }
         if (!error.isNullOrBlank()) Text(error, color = Color.Red)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf(
-                "ALL" to "Все",
-                "AVAILABLE" to "Доступные",
-                "MY_WORK" to "В работе",
-                "MY_CREATED" to "Мои заявки",
-                "CAPTURED" to "Отснято",
-                "UPLOADED" to "Загружено",
-                "READY" to "Готово",
-            ).forEach { (k, t) ->
-                Button(onClick = { filter = k }) { Text(t) }
+        Box {
+            Button(onClick = { filterMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Фильтр: $currentFilterLabel")
+            }
+
+            DropdownMenu(
+                expanded = filterMenuExpanded,
+                onDismissRequest = { filterMenuExpanded = false },
+            ) {
+                orderFilters.forEach { (key, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = {
+                            filter = key
+                            filterMenuExpanded = false
+                        },
+                    )
+                }
             }
         }
         if (debugMode) {
