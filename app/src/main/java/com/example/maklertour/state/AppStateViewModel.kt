@@ -191,6 +191,17 @@ class AppStateViewModel(
     }
     fun selectOrder(order: MobileOrder) { selectedOrder.value = order }
     fun clearSelectedOrder() { selectedOrder.value = null }
+
+    fun attachSessionToOrder(sessionId: String, order: MobileOrder): Boolean {
+        sessionRepository.attachSessionToOrder(
+            sessionId = sessionId,
+            orderId = order.id,
+            orderTitle = order.title,
+            orderAddress = order.address,
+        )
+        uploadQueueRepository.resetSessionQueueItem(sessionId)
+        return true
+    }
     fun connectCamera() {
         viewModelScope.launch {
             Log.d("AppStateViewModel", "connectCamera(): provider=${cameraProvider::class.java.simpleName}")

@@ -311,11 +311,20 @@ private fun MaklerTourApp() {
                 composable(AppTab.Sessions.route) {
                     SessionsScreen(
                         state = state,
+                        orders = orders,
                         initialName = pendingSessionName,
                         onNameConsumed = { pendingSessionName = null },
                         onCreate = viewModel::createSession,
                         onSelect = viewModel::selectSession,
                         onDelete = viewModel::deleteSession,
+                        onAttachToOrder = { sessionId, order ->
+                            viewModel.attachSessionToOrder(sessionId, order)
+                        },
+                        onOpenOrdersTab = {
+                            navController.navigate(AppTab.Orders.route) {
+                                launchSingleTop = true
+                            }
+                        },
                     )
                 }
                 composable(AppTab.Orders.route) {
@@ -484,6 +493,8 @@ private fun MaklerTourApp() {
                     DraftScreen(
                         sessionName = selectedSession?.name
                             ?: localizedContext.getString(R.string.session_not_selected),
+                        sessionOrderId = selectedSession?.serverOrderId,
+                        sessionOrderTitle = selectedSession?.orderTitle,
                         points = selectedSession?.points.orEmpty(),
                         onRename = viewModel::renamePoint,
                         onDelete = viewModel::deletePoint,
@@ -788,16 +799,20 @@ private fun SettingsScreen(
 @Composable
 private fun SessionsScreen(
     state: com.maklertour.state.AppUiState,
+    orders: List<MobileOrder>,
     initialName: String?,
     onNameConsumed: () -> Unit,
     onCreate: (String, String, String) -> Unit,
     onSelect: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onAttachToOrder: (sessionId: String, order: MobileOrder) -> Unit,
+    onOpenOrdersTab: () -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var comment by remember { mutableStateOf("") }
     var deleteSessionId by remember { mutableStateOf<String?>(null) }
+    var attachSessionId by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
 
     LaunchedEffect(initialName) {
@@ -849,7 +864,7 @@ private fun SessionsScreen(
                                         text = { Text("Привязать к заявке") },
                                         onClick = {
                                             expanded = false
-                                            Toast.makeText(context, "Будет добавлено", Toast.LENGTH_SHORT).show()
+                                            attachSessionId = session.id
                                         }
                                     )
                                 }
@@ -860,6 +875,12 @@ private fun SessionsScreen(
                         }
                         Text(session.address)
                         Text("${stringResource(R.string.points)}: ${session.points.size}")
+                        if (session.serverOrderId != null) {
+                            Text("Заявка: #${session.serverOrderId} ${session.orderTitle.orEmpty()}".trim())
+                            Text("Адрес заявки: ${session.orderAddress ?: "—"}")
+                        } else {
+                            Text("Заявка: не привязана")
+                        }
                     }
                 }
             }
@@ -884,6 +905,45 @@ private fun SessionsScreen(
                     Text(stringResource(android.R.string.cancel))
                 }
             }
+        )
+    }
+
+    attachSessionId?.let { sessionId ->
+        AlertDialog(
+            onDismissRequest = { attachSessionId = null },
+            title = { Text("Привязать к заявке") },
+            text = {
+                if (orders.isEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Список заявок пуст. Откройте вкладку Заявки и нажмите Refresh")
+                        Button(onClick = {
+                            attachSessionId = null
+                            onOpenOrdersTab()
+                        }) {
+                            Text("Открыть заявки")
+                        }
+                    }
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        itemsIndexed(orders) { _, order ->
+                            Card(onClick = {
+                                onAttachToOrder(sessionId, order)
+                                Toast.makeText(context, "Сессия привязана к заявке #${order.id}", Toast.LENGTH_SHORT).show()
+                                attachSessionId = null
+                            }, modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Text("Заявка #${order.id}")
+                                    Text(order.title ?: "Без названия")
+                                    Text(order.address ?: "Адрес не указан")
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { attachSessionId = null }) { Text("Закрыть") }
+            },
         )
     }
 }
@@ -1103,6 +1163,8 @@ private fun nextPointName(currentName: String): String {
 @Composable
 private fun DraftScreen(
     sessionName: String,
+    sessionOrderId: Long?,
+    sessionOrderTitle: String?,
     points: List<com.maklertour.domain.CapturePoint>,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
@@ -1140,6 +1202,11 @@ private fun DraftScreen(
         item {
             Text(stringResource(R.string.session_points_format, sessionName))
             Text(stringResource(R.string.points_in_selected_session_format, points.size))
+            if (sessionOrderId != null) {
+                Text("Заявка: #$sessionOrderId ${sessionOrderTitle.orEmpty()}".trim())
+            } else {
+                Text("Заявка: не привязана")
+            }
         }
 
         item {

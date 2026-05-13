@@ -68,6 +68,7 @@ interface SessionRepository {
     fun deleteScanVideo(scanVideoId: String)
     fun deleteSession(sessionId: String)
     fun updateServerCaptureSessionId(sessionId: String, serverCaptureSessionId: Long)
+    fun attachSessionToOrder(sessionId: String, orderId: Long, orderTitle: String?, orderAddress: String?)
 }
 
 interface UploadQueueRepository {
@@ -84,6 +85,7 @@ interface UploadQueueRepository {
     )
     fun incrementRetry(uploadId: String)
     fun resetForRetry(uploadId: String)
+    fun resetSessionQueueItem(sessionId: String)
 }
 
 class InMemorySessionRepository : SessionRepository {
@@ -174,6 +176,23 @@ class InMemorySessionRepository : SessionRepository {
         _sessions.update { sessions ->
             sessions.map { session ->
                 if (session.id == sessionId) session.copy(serverCaptureSessionId = serverCaptureSessionId) else session
+            }
+        }
+    }
+
+    override fun attachSessionToOrder(sessionId: String, orderId: Long, orderTitle: String?, orderAddress: String?) {
+        _sessions.update { sessions ->
+            sessions.map { session ->
+                if (session.id == sessionId) {
+                    session.copy(
+                        serverOrderId = orderId,
+                        serverCaptureSessionId = null,
+                        orderTitle = orderTitle,
+                        orderAddress = orderAddress,
+                    )
+                } else {
+                    session
+                }
             }
         }
     }
@@ -280,6 +299,24 @@ class SharedPrefsSessionRepository(context: Context) : SessionRepository {
         persist()
     }
 
+    override fun attachSessionToOrder(sessionId: String, orderId: Long, orderTitle: String?, orderAddress: String?) {
+        _sessions.update { sessions ->
+            sessions.map { session ->
+                if (session.id == sessionId) {
+                    session.copy(
+                        serverOrderId = orderId,
+                        serverCaptureSessionId = null,
+                        orderTitle = orderTitle,
+                        orderAddress = orderAddress,
+                    )
+                } else {
+                    session
+                }
+            }
+        }
+        persist()
+    }
+
     private fun persist() {
         val payload = JSONArray().apply {
             _sessions.value.forEach { session ->
@@ -289,6 +326,10 @@ class SharedPrefsSessionRepository(context: Context) : SessionRepository {
                         put("name", session.name)
                         put("address", session.address)
                         put("comment", session.comment)
+                        put("serverOrderId", session.serverOrderId ?: JSONObject.NULL)
+                        put("serverCaptureSessionId", session.serverCaptureSessionId ?: JSONObject.NULL)
+                        put("orderTitle", session.orderTitle ?: JSONObject.NULL)
+                        put("orderAddress", session.orderAddress ?: JSONObject.NULL)
                         put("createdAt", session.createdAt.toString())
                         put(
                             "points", JSONArray().apply {
@@ -325,6 +366,10 @@ class SharedPrefsSessionRepository(context: Context) : SessionRepository {
                             name = sessionJson.getString("name"),
                             address = sessionJson.optString("address", ""),
                             comment = sessionJson.optString("comment", ""),
+                            serverOrderId = sessionJson.optLong("serverOrderId").takeIf { !sessionJson.isNull("serverOrderId") },
+                            serverCaptureSessionId = sessionJson.optLong("serverCaptureSessionId").takeIf { !sessionJson.isNull("serverCaptureSessionId") },
+                            orderTitle = sessionJson.optString("orderTitle").takeIf { it.isNotBlank() && it != "null" },
+                            orderAddress = sessionJson.optString("orderAddress").takeIf { it.isNotBlank() && it != "null" },
                             createdAt = Instant.parse(sessionJson.getString("createdAt")),
                             points = sessionJson.getJSONArray("points").toCapturePoints(),
                         )
@@ -418,6 +463,24 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
             }
         }
     }
+
+    override fun resetSessionQueueItem(sessionId: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.sessionId == sessionId) {
+                    item.copy(
+                        status = UploadStatus.Queued,
+                        progressPercent = 0,
+                        bytesUploaded = 0L,
+                        bytesTotal = 0L,
+                        currentFileName = null,
+                        currentStep = "Order changed, upload required",
+                        updatedAt = Instant.now(),
+                    )
+                } else item
+            }
+        }
+    }
 }
 
 class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository {
@@ -501,6 +564,24 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
         persist()
     }
 
+    override fun resetSessionQueueItem(sessionId: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.sessionId == sessionId) {
+                    item.copy(
+                        status = UploadStatus.Queued,
+                        progressPercent = 0,
+                        bytesUploaded = 0L,
+                        bytesTotal = 0L,
+                        currentFileName = null,
+                        currentStep = "Order changed, upload required",
+                        updatedAt = Instant.now(),
+                    )
+                } else item
+            }
+        }
+        persist()
+    }
 
     private fun persist() {
         val payload = JSONArray().apply {
@@ -749,6 +830,18 @@ class RoomSessionRepository(
     }
 }
 
+override fun attachSessionToOrder(sessionId: String, orderId: Long, orderTitle: String?, orderAddress: String?) {
+    val now = Instant.now().toEpochMilli()
+    scope.launch {
+        captureSessionDao.attachToOrder(
+            sessionId = sessionId,
+            orderId = orderId,
+            orderTitle = orderTitle,
+            orderAddress = orderAddress,
+            updatedAtEpochMs = now,
+        )
+    }
+}
 class RoomUploadQueueRepository(
     private val uploadItemDao: UploadItemDao,
 ) : UploadQueueRepository {
@@ -863,6 +956,28 @@ class RoomUploadQueueRepository(
                     bytesTotal = 0L,
                     currentFileName = null,
                     currentStep = "Preparing upload",
+                )
+            )
+        }
+    }
+
+    override fun resetSessionQueueItem(sessionId: String) {
+        val current = queue.value.firstOrNull { it.sessionId == sessionId } ?: return
+        scope.launch {
+            uploadItemDao.upsert(
+                UploadItemEntity(
+                    id = current.id,
+                    syncState = SyncState.PENDING_UPDATE.name,
+                    createdAtEpochMs = current.updatedAt.toEpochMilli(),
+                    updatedAtEpochMs = Instant.now().toEpochMilli(),
+                    captureSessionId = current.sessionId,
+                    status = UploadStatus.Queued.name,
+                    retryCount = current.retryCount,
+                    progressPercent = 0,
+                    bytesUploaded = 0L,
+                    bytesTotal = 0L,
+                    currentFileName = null,
+                    currentStep = "Order changed, upload required",
                 )
             )
         }
