@@ -34,6 +34,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
@@ -745,6 +746,7 @@ private fun OrderWorkScreen(
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 orderSessions.forEach { session ->
+                    var menuExpanded by remember(session.id) { mutableStateOf(false) }
                     val isSelected = session.id == selectedSessionId
                     val uploadedCount = session.points.count { it.serverUploadState == com.maklertour.domain.ServerUploadState.CONFIRMED }
                     val queueState = when {
@@ -753,19 +755,60 @@ private fun OrderWorkScreen(
                         else -> "локально"
                     }
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(session.name.ifBlank { "Без названия" }, style = MaterialTheme.typography.titleSmall)
+                                if (isSelected) {
+                                    Text("Выбрана для этой заявки", color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                            Box {
+                                IconButton(onClick = { menuExpanded = true }) {
+                                    Text("⋮")
+                                }
+                                DropdownMenu(
+                                    expanded = menuExpanded,
+                                    onDismissRequest = { menuExpanded = false },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Выбрать сессию") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onSelectOrderSession(session.id)
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Открыть черновик") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onOpenOrderSessionDraft(session.id)
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Продолжить съемку") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onContinueOrderSessionCapture(session.id)
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Открыть очередь") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onOpenOrderSessionUploads(session.id)
+                                        },
+                                    )
+                                }
+                            }
+                        }
                             Text(session.name.ifBlank { "Без названия" }, style = MaterialTheme.typography.titleSmall)
                             Text("Фото: ${session.points.size}")
                             Text("Видео: —")
                             Text("Статус: $queueState (подтверждено фото: $uploadedCount)")
-                            if (isSelected) {
-                                Text("Выбрана для этой заявки")
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { onSelectOrderSession(session.id) }) { Text("Выбрать") }
-                                Button(onClick = { onOpenOrderSessionDraft(session.id) }) { Text("Открыть черновик") }
-                                Button(onClick = { onContinueOrderSessionCapture(session.id) }) { Text("Продолжить съемку") }
-                            }
                         }
                     }
                 }
