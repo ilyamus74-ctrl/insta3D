@@ -335,6 +335,7 @@ if ($action === 'take_order') {
 if ($action === 'create_session') {
     $user = api_require_mobile_user($dbcnx);
     $userId = (int)$user['id'];
+    $role = $user['role'] ?? 'BROKER';
 
     $orderId = (int)($_POST['order_id'] ?? 0);
     $appSessionUuid = trim($_POST['app_session_uuid'] ?? '');
@@ -345,18 +346,22 @@ if ($action === 'create_session') {
     }
 
     $stmt = $dbcnx->prepare("
-        SELECT id
-        FROM tour_orders
-        WHERE id = ?
-          AND operator_id = ?
-        LIMIT 1
+    SELECT id
+    FROM tour_orders
+    WHERE id = ?
+      AND (
+          ? = 'ADMIN'
+          OR operator_id = ?
+          OR broker_id = ?
+      )
+    LIMIT 1
     ");
 
     if (!$stmt) {
         api_json(['ok' => false, 'error' => 'db prepare error'], 500);
     }
 
-    $stmt->bind_param("ii", $orderId, $userId);
+    $stmt->bind_param("isii", $orderId, $role, $userId, $userId);
     $stmt->execute();
     $res = $stmt->get_result();
     $order = $res->fetch_assoc();
@@ -420,9 +425,10 @@ if ($action === 'create_session') {
 if ($action === 'upload_video_scan') {
     $user = api_require_mobile_user($dbcnx);
     $userId = (int)$user['id'];
+    $role = $user['role'] ?? 'BROKER';
 
-error_log('UPLOAD_VIDEO_SCAN POST=' . json_encode($_POST, JSON_UNESCAPED_UNICODE));
-error_log('UPLOAD_VIDEO_SCAN FILES=' . json_encode(array_map(function($f) {
+    error_log('UPLOAD_VIDEO_SCAN POST=' . json_encode($_POST, JSON_UNESCAPED_UNICODE));
+    error_log('UPLOAD_VIDEO_SCAN FILES=' . json_encode(array_map(function($f) {
     return [
         'name' => $f['name'] ?? null,
         'type' => $f['type'] ?? null,
@@ -449,20 +455,24 @@ error_log('UPLOAD_VIDEO_SCAN FILES=' . json_encode(array_map(function($f) {
     }
 
     $stmt = $dbcnx->prepare("
-SELECT cs.id, cs.app_session_uuid
-FROM capture_sessions cs
-JOIN tour_orders o ON o.id = cs.order_id
-WHERE cs.id = ?
-  AND cs.order_id = ?
-  AND o.operator_id = ?
-LIMIT 1
+    SELECT cs.id, cs.app_session_uuid
+    FROM capture_sessions cs
+    JOIN tour_orders o ON o.id = cs.order_id
+    WHERE cs.id = ?
+      AND cs.order_id = ?
+      AND (
+         ? = 'ADMIN'
+         OR o.operator_id = ?
+         OR o.broker_id = ?
+     )
+   LIMIT 1
     ");
 
     if (!$stmt) {
         api_json(['ok' => false, 'error' => 'db session check prepare error'], 500);
     }
 
-    $stmt->bind_param("iii", $captureSessionId, $orderId, $userId);
+    $stmt->bind_param("iisii", $captureSessionId, $orderId, $role, $userId, $userId);
     $stmt->execute();
     $res = $stmt->get_result();
     $session = $res->fetch_assoc();
@@ -751,9 +761,11 @@ if ($stmt) {
 if ($action === 'upload_photo_point') {
     $user = api_require_mobile_user($dbcnx);
     $userId = (int)$user['id'];
+    $role = $user['role'] ?? 'BROKER';
 
-error_log('UPLOAD_PHOTO_POINT POST=' . json_encode($_POST, JSON_UNESCAPED_UNICODE));
-error_log('UPLOAD_PHOTO_POINT FILES=' . json_encode(array_map(function($f) {
+
+    error_log('UPLOAD_PHOTO_POINT POST=' . json_encode($_POST, JSON_UNESCAPED_UNICODE));
+    error_log('UPLOAD_PHOTO_POINT FILES=' . json_encode(array_map(function($f) {
     return [
         'name' => $f['name'] ?? null,
         'type' => $f['type'] ?? null,
@@ -776,16 +788,21 @@ error_log('UPLOAD_PHOTO_POINT FILES=' . json_encode(array_map(function($f) {
     }
 
     $stmt = $dbcnx->prepare("
-SELECT cs.id, cs.app_session_uuid
-FROM capture_sessions cs
-JOIN tour_orders o ON o.id = cs.order_id
-WHERE cs.id = ?
-  AND cs.order_id = ?
-  AND o.operator_id = ?
-LIMIT 1
+    SELECT cs.id, cs.app_session_uuid
+    FROM capture_sessions cs
+    JOIN tour_orders o ON o.id = cs.order_id
+    WHERE cs.id = ?
+      AND cs.order_id = ?
+      AND (
+          ? = 'ADMIN'
+          OR o.operator_id = ?
+          OR o.broker_id = ?
+      )
+    LIMIT 1
     ");
+
     if (!$stmt) api_json(['ok' => false, 'error' => 'db session check prepare error'], 500);
-    $stmt->bind_param("iii", $captureSessionId, $orderId, $userId);
+    $stmt->bind_param("iisii", $captureSessionId, $orderId, $role, $userId, $userId);
     $stmt->execute();
     $res = $stmt->get_result();
     $session = $res->fetch_assoc();
