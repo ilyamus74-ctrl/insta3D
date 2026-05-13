@@ -441,7 +441,10 @@ error_log('UPLOAD_VIDEO_SCAN FILES=' . json_encode(array_map(function($f) {
         api_json(['ok' => false, 'error' => 'missing required fields'], 400);
     }
 
-    if (empty($_FILES['video']) || $_FILES['video']['error'] !== UPLOAD_ERR_OK) {
+    $hasDirectVideo = !empty($_FILES['video']) && (int)($_FILES['video']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK;
+    $isChunkMode = isset($_POST['chunk_index']) || isset($_POST['total_chunks']) || isset($_POST['upload_id']);
+
+    if (!$hasDirectVideo) {
         api_json(['ok' => false, 'error' => 'missing video file'], 400);
     }
 
@@ -529,32 +532,144 @@ if (!is_writable($orderDir)) {
         $safeName = 'video_' . time() . '.mp4';
     }
 
-$finalName = $safeScanUuid . '_' . $safeName;
+    $finalName = $safeScanUuid . '_' . $safeName;
+    $targetPath = $orderDir . '/' . $finalName;
+    $relativePath = 'orders/' . $orderId . '/sessions/' . $safeSessionUuid . '/videos/' . $finalName;
+    $sizeBytes = null;
 
-$targetPath = $orderDir . '/' . $finalName;
-$relativePath = 'orders/' . $orderId . '/sessions/' . $safeSessionUuid . '/videos/' . $finalName;
+    if ($isChunkMode) {
+        $chunkIndex = (int)($_POST['chunk_index'] ?? -1);
+        $totalChunks = (int)($_POST['total_chunks'] ?? 0);
+        $uploadIdRaw = trim((string)($_POST['upload_id'] ?? ''));
+        $uploadId = preg_replace('/[^a-zA-Z0-9._-]+/', '_', $uploadIdRaw);
+        $chunkSizeDeclared = (int)($_POST['chunk_size'] ?? 0);
+        $totalSizeDeclared = (int)($_POST['total_size'] ?? 0);
+        $isLastChunk = $chunkIndex >= 0 && $totalChunks > 0 && $chunkIndex === ($totalChunks - 1);
 
+        if ($chunkIndex < 0 || $totalChunks <= 0 || $uploadId === '') {
+            api_json(['ok' => false, 'error' => 'invalid chunk metadata'], 400);
+        }
 
-if (!is_uploaded_file($_FILES['video']['tmp_name'])) {
-    api_json([
-        'ok' => false,
-        'error' => 'tmp file is not uploaded file',
-        'tmp_name' => $_FILES['video']['tmp_name'] ?? null,
-    ], 500);
-}
+        $chunksDir = $orderDir . '/.chunks';
+        if (!is_dir($chunksDir) && !mkdir($chunksDir, 0775, true)) {
+            api_json(['ok' => false, 'error' => 'failed to create chunks dir'], 500);
+        }
+        $uploadDir = $chunksDir . '/' . $safeScanUuid . '_' . $uploadId;
+        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true)) {
+            api_json(['ok' => false, 'error' => 'failed to create upload chunks dir'], 500);
+        }
 
-if (!move_uploaded_file($_FILES['video']['tmp_name'], $targetPath)) {
-    api_json([
-        'ok' => false,
-        'error' => 'failed to move uploaded file',
-        'tmp_name' => $_FILES['video']['tmp_name'] ?? null,
-        'target_path' => $targetPath,
-        'target_dir' => $orderDir,
-        'dir_writable' => is_writable($orderDir),
-    ], 500);
-}
+        $metaPath = $uploadDir . '/meta.json';
+        $meta = [];
+        if (is_file($metaPath)) {
+            $metaRaw = file_get_contents($metaPath);
+            $metaDecoded = json_decode((string)$metaRaw, true);
+            if (is_array($metaDecoded)) {
+                $meta = $metaDecoded;
+            }
+        }
+        if (isset($meta['total_chunks']) && (int)$meta['total_chunks'] !== $totalChunks) {
+            api_json(['ok' => false, 'error' => 'total_chunks mismatch for upload_id'], 409);
+        }
 
-    $sizeBytes = filesize($targetPath) ?: null;
+        $chunkFile = $uploadDir . '/' . str_pad((string)$chunkIndex, 6, '0', STR_PAD_LEFT) . '.part';
+        if (!move_uploaded_file($_FILES['video']['tmp_name'], $chunkFile)) {
+            api_json(['ok' => false, 'error' => 'failed to store chunk'], 500);
+        }
+        $actualChunkSize = filesize($chunkFile) ?: 0;
+        if ($chunkSizeDeclared > 0 && $actualChunkSize !== $chunkSizeDeclared) {
+            @unlink($chunkFile);
+            api_json(['ok' => false, 'error' => 'chunk_size mismatch'], 409);
+        }
+
+        $meta['upload_id'] = $uploadId;
+        $meta['safe_scan_uuid'] = $safeScanUuid;
+        $meta['total_chunks'] = $totalChunks;
+        $meta['total_size'] = $totalSizeDeclared > 0 ? $totalSizeDeclared : ($meta['total_size'] ?? null);
+        if (!isset($meta['chunks']) || !is_array($meta['chunks'])) {
+            $meta['chunks'] = [];
+        }
+        $meta['chunks'][(string)$chunkIndex] = [
+            'size' => $actualChunkSize,
+            'updated_at' => gmdate('c'),
+        ];
+        $meta['updated_at'] = gmdate('c');
+        if (file_put_contents($metaPath, json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) === false) {
+            api_json(['ok' => false, 'error' => 'failed to persist chunk metadata'], 500);
+        }
+
+        if (!$isLastChunk) {
+            api_json([
+                'ok' => true,
+                'chunk_received' => $chunkIndex,
+                'total_chunks' => $totalChunks,
+                'received_chunks' => count($meta['chunks']),
+                'upload_complete' => false,
+            ]);
+        }
+
+        for ($i = 0; $i < $totalChunks; $i++) {
+            $partPath = $uploadDir . '/' . str_pad((string)$i, 6, '0', STR_PAD_LEFT) . '.part';
+            if (!is_file($partPath)) {
+                api_json(['ok' => false, 'error' => 'missing chunk before finalize', 'missing_chunk' => $i], 409);
+            }
+        }
+
+        $out = fopen($targetPath, 'wb');
+        if (!$out) {
+            api_json(['ok' => false, 'error' => 'failed to open target video file'], 500);
+        }
+        $assembledSize = 0;
+        for ($i = 0; $i < $totalChunks; $i++) {
+            $partPath = $uploadDir . '/' . str_pad((string)$i, 6, '0', STR_PAD_LEFT) . '.part';
+            $partSize = filesize($partPath) ?: 0;
+            if (isset($meta['chunks'][(string)$i]['size']) && (int)$meta['chunks'][(string)$i]['size'] !== $partSize) {
+                fclose($out);
+                api_json(['ok' => false, 'error' => 'chunk size drift detected', 'chunk_index' => $i], 409);
+            }
+            $in = fopen($partPath, 'rb');
+            if (!$in) {
+                fclose($out);
+                api_json(['ok' => false, 'error' => 'failed to open chunk for finalize', 'chunk_index' => $i], 500);
+            }
+            $assembledSize += stream_copy_to_stream($in, $out);
+            fclose($in);
+        }
+        fclose($out);
+        if (($meta['total_size'] ?? 0) > 0 && $assembledSize !== (int)$meta['total_size']) {
+            api_json(['ok' => false, 'error' => 'total_size mismatch after finalize'], 409);
+        }
+
+        for ($i = 0; $i < $totalChunks; $i++) {
+            $partPath = $uploadDir . '/' . str_pad((string)$i, 6, '0', STR_PAD_LEFT) . '.part';
+            @unlink($partPath);
+        }
+        @unlink($metaPath);
+        @rmdir($uploadDir);
+        $sizeBytes = filesize($targetPath) ?: null;
+    } else {
+        // Fallback for small files: old single-request upload flow.
+        if (!is_uploaded_file($_FILES['video']['tmp_name'])) {
+            api_json([
+                'ok' => false,
+                'error' => 'tmp file is not uploaded file',
+                'tmp_name' => $_FILES['video']['tmp_name'] ?? null,
+            ], 500);
+        }
+
+        if (!move_uploaded_file($_FILES['video']['tmp_name'], $targetPath)) {
+            api_json([
+                'ok' => false,
+                'error' => 'failed to move uploaded file',
+                'tmp_name' => $_FILES['video']['tmp_name'] ?? null,
+                'target_path' => $targetPath,
+                'target_dir' => $orderDir,
+                'dir_writable' => is_writable($orderDir),
+            ], 500);
+        }
+
+        $sizeBytes = filesize($targetPath) ?: null;
+    }
 
     $stmt = $dbcnx->prepare("
         INSERT INTO video_scans
