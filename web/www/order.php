@@ -91,6 +91,27 @@ if($stmt){
   $stmt->close();
 }
 
+
+$processingJobsBySession = [];
+$stmt=$dbcnx->prepare("SELECT * FROM processing_jobs WHERE order_id = ? ORDER BY created_at DESC, id DESC");
+if($stmt){
+  $stmt->bind_param('i',$orderId);
+  $stmt->execute();
+  $rs=$stmt->get_result();
+  while($job=$rs->fetch_assoc()){
+    $sid=(int)$job['session_id'];
+    if(!isset($processingJobsBySession[$sid])){
+      $processingJobsBySession[$sid]=$job;
+    }
+  }
+  $stmt->close();
+}
+
+foreach($captureSessions as $idx=>$session){
+  $sid=(int)$session['id'];
+  $captureSessions[$idx]['processing_job']=$processingJobsBySession[$sid] ?? null;
+}
+
 $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),'videos'=>count($videoScans)];
 
 $smarty->assign('current_user',$user);

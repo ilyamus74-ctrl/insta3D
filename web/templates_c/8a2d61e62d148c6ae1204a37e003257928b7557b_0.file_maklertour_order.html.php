@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-11 20:26:56
+/* Smarty version 5.3.1, created on 2026-05-13 20:09:18
   from 'file:maklertour_order.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a023b90c57450_41695569',
+  'unifunc' => 'content_6a04da6ee8ffd8_19171983',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '8a2d61e62d148c6ae1204a37e003257928b7557b' => 
     array (
       0 => 'maklertour_order.html',
-      1 => 1778531114,
+      1 => 1778702888,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a023b90c57450_41695569 (\Smarty\Template $_smarty_tpl) {
+function content_6a04da6ee8ffd8_19171983 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -305,6 +305,33 @@ $_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
             </div>
           <?php } else { ?>
             <div class="text-muted">Видео в этой сессии пока нет.</div>
+          <?php }?>
+
+          <h6 class="mt-4 mb-3">Обработка / Метки</h6>
+          <?php $_smarty_tpl->assign('job', $_smarty_tpl->getValue('s')['processing_job'], false, NULL);?>
+          <?php if ($_smarty_tpl->getValue('job')) {?>
+            <div class="card border-light bg-light-subtle">
+              <div class="card-body">
+                <div><strong>marker kit:</strong> MaklerTour Kit v1</div>
+                <div><strong>expected IDs:</strong> 1–30</div>
+                <div><strong>marker size:</strong> 160 mm</div>
+                <div><strong>processing status:</strong> <span class="badge bg-secondary"><?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('job')['status'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
+</span></div>
+                <div><strong>metric status:</strong> <span class="badge bg-secondary"><?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('job')['metric_status'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
+</span></div>
+                <div><strong>markers detected count:</strong> <?php echo (($tmp = $_smarty_tpl->getValue('job')['markers_detected_count'] ?? null)===null||$tmp==='' ? 0 ?? null : $tmp);?>
+</div>
+                <div><strong>warning text:</strong> <?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('job')['warning_text'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
+</div>
+                <?php if ($_smarty_tpl->getValue('job')['metric_status'] == 'NO_MARKERS') {?>
+                  <div class="alert alert-warning mt-3 mb-0">Метки не обнаружены. Точная геометрия и размеры не гарантируются.</div>
+                <?php } elseif ($_smarty_tpl->getValue('job')['metric_status'] == 'METRIC_READY') {?>
+                  <div class="alert alert-success mt-3 mb-0">Метки обнаружены. Данные подходят для метрической реконструкции.</div>
+                <?php }?>
+              </div>
+            </div>
+          <?php } else { ?>
+            <div class="text-muted">Обработка ещё не запускалась.</div>
           <?php }?>
         </div>
 

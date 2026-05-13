@@ -86,25 +86,24 @@ Backend считает комплект стандартным и фиксиро
 - исходниках/производных 360 photo points.
 
 ## 9) Будущие таблицы
-Планируемые таблицы для фиксации использования и детекта:
-- `session_marker_usage`
+MaklerTour Kit v1 является стандартным ожидаемым комплектом для всех съемочных сессий.
+
+- Оператору не нужно вручную отмечать факт использования меток.
+- Backend всегда выполняет marker detection по ID 1..30.
+- Если метки не найдены — это результат обработки, а не ручной выбор оператора.
+- Отсутствие меток не блокирует upload, но снижает класс результата:
+  - `tour_only`
+  - `tour_with_graph`
+  - `tour_with_metric_reconstruction`
+  - `tour_with_floorplan`
+
+Удаляется/не используется:
+- `used_by_operator`
+- checkbox `"[ ] Метки использовались"`
+- `session_marker_usage` как обязательная таблица
+
+Планируемые таблицы marker processing:
+- `processing_jobs`
 - `marker_detections`
+- `reconstruction_results`
 
-### session_marker_usage (draft fields)
-- session_id
-- marker_kit_id
-- marker_type
-- marker_dictionary
-- marker_size_m
-- marker_ids_json
-- used_by_operator
-- notes
-
-### marker_detections (draft fields)
-- session_id
-- source_type
-- source_id
-- frame_index / timestamp_ms
-- marker_id
-- corners_json
-- confidence

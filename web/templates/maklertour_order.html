@@ -200,6 +200,29 @@
           {else}
             <div class="text-muted">Видео в этой сессии пока нет.</div>
           {/if}
+
+          <h6 class="mt-4 mb-3">Обработка / Метки</h6>
+          {assign var=job value=$s.processing_job}
+          {if $job}
+            <div class="card border-light bg-light-subtle">
+              <div class="card-body">
+                <div><strong>marker kit:</strong> MaklerTour Kit v1</div>
+                <div><strong>expected IDs:</strong> 1–30</div>
+                <div><strong>marker size:</strong> 160 mm</div>
+                <div><strong>processing status:</strong> <span class="badge bg-secondary">{$job.status|default:'-'|escape}</span></div>
+                <div><strong>metric status:</strong> <span class="badge bg-secondary">{$job.metric_status|default:'-'|escape}</span></div>
+                <div><strong>markers detected count:</strong> {$job.markers_detected_count|default:0}</div>
+                <div><strong>warning text:</strong> {$job.warning_text|default:'-'|escape}</div>
+                {if $job.metric_status == 'NO_MARKERS'}
+                  <div class="alert alert-warning mt-3 mb-0">Метки не обнаружены. Точная геометрия и размеры не гарантируются.</div>
+                {elseif $job.metric_status == 'METRIC_READY'}
+                  <div class="alert alert-success mt-3 mb-0">Метки обнаружены. Данные подходят для метрической реконструкции.</div>
+                {/if}
+              </div>
+            </div>
+          {else}
+            <div class="text-muted">Обработка ещё не запускалась.</div>
+          {/if}
         </div>
 
       </div>

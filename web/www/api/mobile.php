@@ -757,6 +757,99 @@ if ($stmt) {
     ]);
 }
 
+if ($action === 'create_processing_job') {
+    $user = api_require_mobile_user($dbcnx);
+    $userId = (int)$user['id'];
+    $role = $user['role'] ?? 'BROKER';
+
+    $orderId = (int)($_POST['order_id'] ?? 0);
+    $captureSessionId = (int)($_POST['capture_session_id'] ?? 0);
+    $jobType = trim((string)($_POST['job_type'] ?? 'MARKER_DETECTION'));
+    if ($jobType === '') {
+        $jobType = 'MARKER_DETECTION';
+    }
+
+    if ($orderId <= 0 || $captureSessionId <= 0) {
+        api_json(['ok' => false, 'error' => 'missing required fields'], 400);
+    }
+
+    $stmt = $dbcnx->prepare("
+        SELECT cs.id
+        FROM capture_sessions cs
+        JOIN tour_orders o ON o.id = cs.order_id
+        WHERE cs.id = ?
+          AND cs.order_id = ?
+          AND (
+              ? = 'ADMIN'
+              OR o.operator_id = ?
+              OR o.broker_id = ?
+          )
+        LIMIT 1
+    ");
+
+    if (!$stmt) {
+        api_json(['ok' => false, 'error' => 'db session check prepare error'], 500);
+    }
+
+    $stmt->bind_param("iisii", $captureSessionId, $orderId, $role, $userId, $userId);
+    $stmt->execute();
+    $session = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$session) {
+        api_json(['ok' => false, 'error' => 'capture session not found or access denied'], 403);
+    }
+
+    $stmt = $dbcnx->prepare("
+        INSERT INTO processing_jobs
+            (session_id, order_id, job_type, status, metric_status, marker_expected, marker_kit_id, marker_dictionary, marker_size_m)
+        VALUES
+            (?, ?, ?, 'QUEUED', 'UNKNOWN', 1, 'maklertour_kit_v1', 'APRILTAG_36H11', 0.1600)
+        ON DUPLICATE KEY UPDATE
+            updated_at = NOW(6)
+    ");
+    if (!$stmt) {
+        api_json(['ok' => false, 'error' => 'db processing job insert prepare error'], 500);
+    }
+    $stmt->bind_param("iis", $captureSessionId, $orderId, $jobType);
+    if (!$stmt->execute()) {
+        api_json(['ok' => false, 'error' => 'db processing job insert execute error: ' . $stmt->error], 500);
+    }
+    $stmt->close();
+
+    $stmt = $dbcnx->prepare("
+        SELECT id
+        FROM processing_jobs
+        WHERE session_id = ?
+          AND job_type = ?
+        LIMIT 1
+    ");
+    if (!$stmt) {
+        api_json(['ok' => false, 'error' => 'db processing job select prepare error'], 500);
+    }
+    $stmt->bind_param("is", $captureSessionId, $jobType);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    audit_log(
+        $userId,
+        'PROCESSING_JOB_CREATED',
+        'TOUR_ORDER',
+        $orderId,
+        'Создана задача обработки marker detection',
+        api_request_meta([
+            'capture_session_id' => $captureSessionId,
+            'job_type' => $jobType,
+            'processing_job_id' => (int)($row['id'] ?? 0),
+        ])
+    );
+
+    api_json([
+        'ok' => true,
+        'processing_job_id' => (int)($row['id'] ?? 0),
+    ]);
+}
 
 if ($action === 'upload_photo_point') {
     $user = api_require_mobile_user($dbcnx);
