@@ -747,68 +747,93 @@ private fun OrderWorkScreen(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 orderSessions.forEach { session ->
                     var menuExpanded by remember(session.id) { mutableStateOf(false) }
+
                     val isSelected = session.id == selectedSessionId
-                    val uploadedCount = session.points.count { it.serverUploadState == com.maklertour.domain.ServerUploadState.CONFIRMED }
+                    val uploadedCount = session.points.count {
+                        it.serverUploadState == com.maklertour.domain.ServerUploadState.CONFIRMED
+                    }
+
                     val queueState = when {
                         uploadQueueSessionIds.contains(session.id) -> "в очереди"
                         session.serverCaptureSessionId != null -> "загружено"
                         else -> "локально"
                     }
+
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Top,
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(session.name.ifBlank { "Без названия" }, style = MaterialTheme.typography.titleSmall)
-                                if (isSelected) {
-                                    Text("Выбрана для этой заявки", color = MaterialTheme.colorScheme.primary)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        session.name.ifBlank { "Без названия" },
+                                        style = MaterialTheme.typography.titleSmall,
+                                    )
+
+                                    if (isSelected) {
+                                        Text(
+                                            "Выбрана для этой заявки",
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+
+                                Box {
+                                    IconButton(onClick = { menuExpanded = true }) {
+                                        Text("⋮")
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = menuExpanded,
+                                        onDismissRequest = { menuExpanded = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Выбрать сессию") },
+                                            onClick = {
+                                                menuExpanded = false
+                                                onSelectOrderSession(session.id)
+                                            },
+                                        )
+
+                                        DropdownMenuItem(
+                                            text = { Text("Открыть черновик") },
+                                            onClick = {
+                                                menuExpanded = false
+                                                onOpenOrderSessionDraft(session.id)
+                                            },
+                                        )
+
+                                        DropdownMenuItem(
+                                            text = { Text("Продолжить съемку") },
+                                            onClick = {
+                                                menuExpanded = false
+                                                onContinueOrderSessionCapture(session.id)
+                                            },
+                                        )
+
+                                        DropdownMenuItem(
+                                            text = { Text("Открыть очередь") },
+                                            onClick = {
+                                                menuExpanded = false
+                                                onSelectOrderSession(session.id)
+                                                onUploads()
+                                            },
+                                        )
+                                    }
                                 }
                             }
-                            Box {
-                                IconButton(onClick = { menuExpanded = true }) {
-                                    Text("⋮")
-                                }
-                                DropdownMenu(
-                                    expanded = menuExpanded,
-                                    onDismissRequest = { menuExpanded = false },
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Выбрать сессию") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            onSelectOrderSession(session.id)
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Открыть черновик") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            onOpenOrderSessionDraft(session.id)
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Продолжить съемку") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            onContinueOrderSessionCapture(session.id)
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Открыть очередь") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            onOpenOrderSessionUploads(session.id)
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                            Text(session.name.ifBlank { "Без названия" }, style = MaterialTheme.typography.titleSmall)
+
                             Text("Фото: ${session.points.size}")
                             Text("Видео: —")
-                            Text("Статус: $queueState (подтверждено фото: $uploadedCount)")
+                            Text("Статус: $queueState")
+                            Text("Подтверждено фото: $uploadedCount")
                         }
                     }
                 }
@@ -819,10 +844,39 @@ private fun OrderWorkScreen(
         } else {
             Text("Активная сессия: ${selectedOrderSession.name}")
         }
-        Button(onClick = onStartCapture, modifier = Modifier.fillMaxWidth(), enabled = canWork) { Text("Начать/продолжить съемку") }
-        Button(onClick = onDraft, modifier = Modifier.fillMaxWidth(), enabled = canWork) { Text("Черновик") }
-        Button(onClick = onVideoScans, modifier = Modifier.fillMaxWidth(), enabled = canWork) { Text("Видео сканы") }
-        Button(onClick = onUploads, modifier = Modifier.fillMaxWidth(), enabled = canWork) { Text("Загрузки") }
+        val canOpenSelectedSession = canWork && selectedOrderSession != null
+
+        Button(
+            onClick = onStartCapture,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = canOpenSelectedSession,
+        ) {
+            Text("Начать/продолжить съемку")
+        }
+
+        Button(
+            onClick = onDraft,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = canOpenSelectedSession,
+        ) {
+            Text("Черновик")
+        }
+
+        Button(
+            onClick = onVideoScans,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = canOpenSelectedSession,
+        ) {
+            Text("Видео сканы")
+        }
+
+        Button(
+            onClick = onUploads,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = canOpenSelectedSession,
+        ) {
+            Text("Загрузки")
+        }
     }
 }
 
