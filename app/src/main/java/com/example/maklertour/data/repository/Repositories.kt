@@ -81,6 +81,7 @@ interface UploadQueueRepository {
         currentStep: String?,
     )
     fun incrementRetry(uploadId: String)
+    fun resetForRetry(uploadId: String)
 }
 
 class InMemorySessionRepository : SessionRepository {
@@ -340,7 +341,7 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
 
     override fun enqueue(sessionId: String) {
         if (_queue.value.any { it.sessionId == sessionId }) {
-            Log.d("UploadQueue", "enqueue ignored duplicate sessionId=$sessionId")
+            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId")
             return
         }
         _queue.update {
@@ -386,6 +387,24 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
                 } else {
                     item
                 }
+            }
+        }
+    }
+
+    override fun resetForRetry(uploadId: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(
+                        status = UploadStatus.Uploading,
+                        progressPercent = 0,
+                        bytesUploaded = 0L,
+                        bytesTotal = 0L,
+                        currentStep = "Preparing upload",
+                        currentFileName = null,
+                        updatedAt = Instant.now(),
+                    )
+                } else item
             }
         }
     }
@@ -399,7 +418,7 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
 
     override fun enqueue(sessionId: String) {
         if (_queue.value.any { it.sessionId == sessionId }) {
-            Log.d("UploadQueue", "enqueue ignored duplicate sessionId=$sessionId")
+            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId")
             return
         }
         _queue.update {
@@ -452,6 +471,26 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
         }
         persist()
     }
+
+    override fun resetForRetry(uploadId: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(
+                        status = UploadStatus.Uploading,
+                        progressPercent = 0,
+                        bytesUploaded = 0L,
+                        bytesTotal = 0L,
+                        currentStep = "Preparing upload",
+                        currentFileName = null,
+                        updatedAt = Instant.now(),
+                    )
+                } else item
+            }
+        }
+        persist()
+    }
+
 
     private fun persist() {
         val payload = JSONArray().apply {
@@ -686,7 +725,7 @@ class RoomUploadQueueRepository(
 
     override fun enqueue(sessionId: String) {
         if (queue.value.any { it.sessionId == sessionId }) {
-            Log.d("UploadQueue", "enqueue ignored duplicate sessionId=$sessionId")
+            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId")
             return
         }
         val now = Instant.now().toEpochMilli()
@@ -767,6 +806,28 @@ class RoomUploadQueueRepository(
                     bytesTotal = current.bytesTotal,
                     currentFileName = current.currentFileName,
                     currentStep = current.currentStep,
+                )
+            )
+        }
+    }
+
+    override fun resetForRetry(uploadId: String) {
+        val current = queue.value.firstOrNull { it.id == uploadId } ?: return
+        scope.launch {
+            uploadItemDao.upsert(
+                UploadItemEntity(
+                    id = current.id,
+                    syncState = SyncState.PENDING_UPDATE.name,
+                    createdAtEpochMs = current.updatedAt.toEpochMilli(),
+                    updatedAtEpochMs = Instant.now().toEpochMilli(),
+                    captureSessionId = current.sessionId,
+                    status = UploadStatus.Uploading.name,
+                    retryCount = current.retryCount,
+                    progressPercent = 0,
+                    bytesUploaded = 0L,
+                    bytesTotal = 0L,
+                    currentFileName = null,
+                    currentStep = "Preparing upload",
                 )
             )
         }

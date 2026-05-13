@@ -1,6 +1,9 @@
 package com.maklertour
 
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -82,6 +85,7 @@ import com.maklertour.i18n.withAppLanguage
 import com.maklertour.ui.components.AppSectionCard
 import com.maklertour.ui.components.AppStorageStatusRow
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import com.example.maklertour.auth.AuthStorage
 import com.example.maklertour.auth.LoginResult
 import com.example.maklertour.auth.MobileAuthApi
@@ -171,6 +175,7 @@ private fun MaklerTourApp() {
         )
     }
     val state by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
     var pendingSessionName by remember { mutableStateOf<String?>(null) }
     var orders by remember { mutableStateOf<List<MobileOrder>>(emptyList()) }
     var ordersError by remember { mutableStateOf<String?>(null) }
@@ -189,6 +194,21 @@ private fun MaklerTourApp() {
                 isLoggedIn = false
             }
             isBootChecking = false
+        }
+    }
+
+    DisposableEffect(Unit) {
+        val manager = context.applicationContext.getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                if (networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                    viewModel.processQueuedUploadsOnWifi()
+                }
+            }
+        }
+        manager?.registerDefaultNetworkCallback(callback)
+        onDispose {
+            runCatching { manager?.unregisterNetworkCallback(callback) }
         }
     }
 
@@ -1090,7 +1110,7 @@ private fun DraftScreen(
     onMoveDown: (Int) -> Unit,
     onDownloadOriginals: () -> Unit,
     onSyncServer: () -> Unit,
-    onAddToUploadQueue: (Boolean) -> EnqueueUploadResult,
+    onAddToUploadQueue: () -> EnqueueUploadResult,
     onClearConfirmed: () -> Unit,
     rooms: List<com.maklertour.domain.RoomDraft>,
     startPointId: String?,
@@ -1108,7 +1128,6 @@ private fun DraftScreen(
     val unassignedPoints = points.filter { it.roomId == null }
     val roomsSorted = rooms.sortedBy { it.orderIndex }
     val context = LocalContext.current
-    val isWifiConnected = ConnectivityState.isWifiConnected(context)
     LaunchedEffect(scanVideos.size) {
         Log.d("DraftScreen", "DraftScreen videoScans count=${scanVideos.size}")
     }
@@ -1133,7 +1152,7 @@ private fun DraftScreen(
                 onDownloadOriginals = onDownloadOriginals,
                 onSyncServer = onSyncServer,
                 onAddToUploadQueue = {
-                    when (val result = onAddToUploadQueue(isWifiConnected)) {
+                    when (val result = onAddToUploadQueue()) {
                         EnqueueUploadResult.Enqueued -> Toast.makeText(context, "Сессия добавлена в очередь", Toast.LENGTH_SHORT).show()
                         is EnqueueUploadResult.Rejected -> Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
                     }
@@ -1400,14 +1419,21 @@ private fun ConnectionsBlock(points: List<com.maklertour.domain.CapturePoint>, c
 private fun QueueScreen(
     selectedOrder: MobileOrder?,
     queue: List<com.maklertour.domain.UploadItem>,
-    onEnqueue: (Boolean) -> EnqueueUploadResult,
+    onEnqueue: () -> EnqueueUploadResult,
     onUpload: (String) -> Unit,
     uploadError: String?,
     onExportDiagnostics: () -> String,
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
-    val isWifiConnected = ConnectivityState.isWifiConnected(context)
+    var filter by remember { mutableStateOf("Новые") }
+    val filteredQueue = when (filter) {
+        "Новые" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Queued }
+        "В процессе" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Uploading }
+        "Ошибки" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Error }
+        "Успешные" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Success }
+        else -> queue
+    }
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (selectedOrder != null) {
             Text("Заявка #${selectedOrder.id} — ${selectedOrder.title}")
@@ -1419,10 +1445,14 @@ private fun QueueScreen(
         if (!uploadError.isNullOrBlank()) {
             Text("Ошибка upload: $uploadError", color = MaterialTheme.colorScheme.error)
         }
-        Text(if (isWifiConnected) "Wi‑Fi: подключен" else "Wi‑Fi: не подключен")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Новые", "В процессе", "Ошибки", "Успешные", "Все").forEach {
+                TextButton(onClick = { filter = it }) { Text(it) }
+            }
+        }
         Button(
             onClick = {
-                when (val result = onEnqueue(isWifiConnected)) {
+                when (val result = onEnqueue()) {
                     EnqueueUploadResult.Enqueued -> {
                         Toast.makeText(context, "Сессия добавлена в очередь", Toast.LENGTH_SHORT).show()
                     }
@@ -1440,20 +1470,33 @@ private fun QueueScreen(
             }
         ) { Text(stringResource(R.string.copy_diagnostic_json)) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(queue) { _, item ->
+            itemsIndexed(filteredQueue) { _, item ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(stringResource(R.string.session_format, item.sessionId.take(8)))
                         Text(stringResource(R.string.status_format, item.status))
                         Text(stringResource(R.string.retry_format, item.retryCount.toString()))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onUpload(item.id) }, enabled = item.status != com.maklertour.domain.UploadStatus.Uploading) {
-                                Text(stringResource(R.string.send_mock_api))
+                            Button(onClick = {
+                                if (!hasAnyInternet(context)) {
+                                    Toast.makeText(context, "Нет подключения к интернету", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    onUpload(item.id)
+                                }
+                            }, enabled = item.status != com.maklertour.domain.UploadStatus.Uploading) {
+                                Text(
+                                    when (item.status) {
+                                        com.maklertour.domain.UploadStatus.Uploading -> "Отправляется..."
+                                        com.maklertour.domain.UploadStatus.Queued -> "Отправить на сервер"
+                                        else -> "Отправить на сервер повторно"
+                                    }
+                                )
                             }
                         }
                         Text("progress=${if (item.status == com.maklertour.domain.UploadStatus.Success) 100 else item.progressPercent}%")
                         Text("step=${item.currentStep ?: "—"} file=${item.currentFileName ?: "—"}")
                         Text("bytes=${item.bytesUploaded}/${item.bytesTotal}")
+                        Text("updatedAt=${item.updatedAt}")
                     }
                 }
             }
@@ -1463,4 +1506,11 @@ private fun QueueScreen(
 }private enum class CaptureMode {
     PHOTO_POINT,
     VIDEO_SCAN,
+}
+
+private fun hasAnyInternet(context: android.content.Context): Boolean {
+    val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
+    val network = manager.activeNetwork ?: return false
+    val caps = manager.getNetworkCapabilities(network) ?: return false
+    return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
 }

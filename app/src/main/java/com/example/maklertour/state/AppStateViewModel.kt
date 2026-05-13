@@ -98,6 +98,7 @@ class AppStateViewModel(
     private val videoScanUiState = MutableStateFlow(VideoScanUiState.IDLE)
     private val selectedOrder = MutableStateFlow<MobileOrder?>(null)
     private val uploadError = MutableStateFlow<String?>(null)
+    private val isAutoUploadRunning = MutableStateFlow(false)
 
     val uiState: StateFlow<AppUiState> = combine(
         combine(
@@ -414,11 +415,7 @@ class AppStateViewModel(
     }
     fun deleteConnection(connectionId: String) = sessionRepository.deleteConnection(connectionId)
 
-    fun enqueueUpload(isWifiAvailable: Boolean): EnqueueUploadResult {
-        if (!isWifiAvailable) {
-            return EnqueueUploadResult.Rejected("Выгрузка доступна только по Wi‑Fi")
-        }
-
+    fun enqueueUpload(): EnqueueUploadResult {
         val session = uiState.value.sessions.firstOrNull { it.id == uiState.value.selectedSessionId }
             ?: return EnqueueUploadResult.Rejected("Сессия не выбрана")
 
@@ -438,11 +435,27 @@ class AppStateViewModel(
     }
 
     fun processUpload(uploadId: String) {
+        viewModelScope.launch { processUploadInternal(uploadId) }
+    }
+
+    fun processQueuedUploadsOnWifi() {
+        if (isAutoUploadRunning.value) return
         viewModelScope.launch {
-            val item = uiState.value.uploadQueue.firstOrNull { it.id == uploadId } ?: return@launch
+            isAutoUploadRunning.value = true
+            try {
+                uploadQueueRepository.queue.value
+                    .filter { it.status == UploadStatus.Queued }
+                    .forEach { processUploadInternal(it.id) }
+            } finally {
+                isAutoUploadRunning.value = false
+            }
+        }
+    }
+
+    private suspend fun processUploadInternal(uploadId: String) {
+        val item = uiState.value.uploadQueue.firstOrNull { it.id == uploadId } ?: return
             Log.d("Upload", "processUpload started uploadId=$uploadId")
-            uploadQueueRepository.updateStatus(uploadId, UploadStatus.Uploading)
-            uploadQueueRepository.updateProgress(uploadId, 0, 0L, 0L, null, "Preparing upload")
+            uploadQueueRepository.resetForRetry(uploadId)
 
             val session = uiState.value.sessions.firstOrNull { it.id == item.sessionId }
             Log.d("Upload", "selectedSessionId=${uiState.value.selectedSessionId}")
@@ -457,7 +470,8 @@ class AppStateViewModel(
                 Log.e("Upload", "session is not linked to server order")
                 uploadError.value = error
                 uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
-                return@launch
+
+                return
             }
             uploadError.value = null
 
@@ -466,7 +480,7 @@ class AppStateViewModel(
                 uploadError.value = "MobileUploadApi is not configured"
                 uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
                 Log.e("Upload", "MobileUploadApi is null; real server upload is unavailable")
-                return@launch
+                return
             }
             Log.d("Upload", "mobileUploadApi configured=true")
 
@@ -478,7 +492,7 @@ class AppStateViewModel(
                     uploadError.value = "Не удалось создать capture session на сервере"
                     uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
                     Log.e("Upload", "create_session failed: captureSessionId=$created")
-                    return@launch
+                    return
                 }
                 sessionRepository.updateServerCaptureSessionId(session.id, created)
                 created
@@ -537,10 +551,13 @@ class AppStateViewModel(
                 Log.d("Upload", "final Success uploadId=$uploadId")
             } else {
                 uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
+                val latest = uiState.value.uploadQueue.firstOrNull { it.id == uploadId }
+                if (latest != null) {
+                    uploadQueueRepository.updateProgress(uploadId, latest.progressPercent, latest.bytesUploaded, latest.bytesTotal, latest.currentFileName, "Upload failed")
+                }
+                uploadQueueRepository.incrementRetry(uploadId)
                 Log.e("Upload", "final Error uploadId=$uploadId")
             }
-            return@launch
-        }
     }
 
     fun completeUpload(uploadId: String) {
