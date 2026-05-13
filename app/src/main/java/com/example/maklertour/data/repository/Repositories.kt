@@ -259,7 +259,13 @@ class SharedPrefsSessionRepository(context: Context) : SessionRepository {
     override fun deleteConnection(connectionId: String) = Unit
     override fun addScanVideo(scanVideo: ScanVideo) = Unit
     override fun updateScanVideo(scanVideo: ScanVideo) = Unit
+
+    override fun updatePointServerUploadState(pointId: String, state: ServerUploadState) = Unit
+
+    override fun updateScanVideoUploadState(scanVideoId: String, state: ScanVideoUploadState) = Unit
+
     override fun deleteScanVideo(scanVideoId: String) = Unit
+
     override fun deleteSession(sessionId: String) {
         _sessions.update { sessions -> sessions.filterNot { it.id == sessionId } }
         persist()
