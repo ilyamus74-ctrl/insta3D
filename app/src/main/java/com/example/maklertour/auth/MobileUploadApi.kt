@@ -107,7 +107,7 @@ class MobileUploadApi(
             .post(bodyBuilder.build())
             .build()
 
-        client.newCall(request).execute().use { response ->
+        return client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             Log.d("MobileUploadApi", "upload_video_scan response http=${response.code} body=$text")
             response.isSuccessful && text.contains("\"ok\":true")
@@ -125,7 +125,9 @@ class MobileUploadApi(
             val offset = chunkIndex * CHUNK_SIZE_BYTES
             val chunkSize = min(CHUNK_SIZE_BYTES, totalSize - offset)
             var success = false
-            repeat(MAX_CHUNK_RETRIES) { attempt ->
+            var attempt = 0
+
+            while (attempt < MAX_CHUNK_RETRIES && !success) {
                 val bodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
                     .addFormDataPart("order_id", orderId.toString())
                     .addFormDataPart("capture_session_id", captureSessionId.toString())
@@ -158,7 +160,7 @@ class MobileUploadApi(
                         success = response.isSuccessful && ok && (if (chunkIndex == totalChunks - 1) complete else true)
                     }
                 }.onFailure { Log.e("UploadChunk", "chunk failed upload_id=$uploadId chunk=$chunkIndex attempt=${attempt + 1}", it) }
-                if (success) return@repeat
+                attempt += 1
             }
             if (!success) return false
             uploadedBefore += chunkSize
