@@ -551,6 +551,7 @@ private fun MaklerTourApp() {
                     )
                 }
 
+
                 composable(AppTab.Settings.route) {
                     SettingsScreen(
                         currentLanguage = appLanguage,
@@ -1613,7 +1614,8 @@ private fun DraftValidationCard(points: List<com.maklertour.domain.CapturePoint>
 
 
 @Composable
-private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint, rooms: List<com.maklertour.domain.RoomDraft>, currentRoomName: String?, isStartPoint: Boolean, allPoints: List<com.maklertour.domain.CapturePoint>, onRename: (String, String) -> Unit, onDelete: (String) -> Unit, onMoveUp: (Int) -> Unit, onMoveDown: (Int) -> Unit, onAssignPointToRoom: (String, String?) -> Unit, onSetStartPoint: (String) -> Unit, onCreateConnection: (String, String) -> Unit, debugMode: Boolean) { var localName by remember(point.id) { mutableStateOf(point.name) };
+private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint, rooms: List<com.maklertour.domain.RoomDraft>, currentRoomName: String?, isStartPoint: Boolean, allPoints: List<com.maklertour.domain.CapturePoint>, onRename: (String, String) -> Unit, onDelete: (String) -> Unit, onMoveUp: (Int) -> Unit, onMoveDown: (Int) -> Unit, onAssignPointToRoom: (String, String?) -> Unit, onSetStartPoint: (String) -> Unit, onCreateConnection: (String, String) -> Unit, debugMode: Boolean) {
+    var localName by remember(point.id) { mutableStateOf(point.name) };
     val previewSource = point.localPreviewPath ?: point.previewUri
 
     val previewModel = when {
@@ -1627,154 +1629,250 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
     }
 
     val previewIsOnlyOnCamera = previewModel == null && !point.cameraFileUrl.isNullOrBlank()
-    val cameraExists = point.cameraFileUrl != null && point.cameraDeleteState != com.maklertour.domain.DeleteState.DELETED;
+    val cameraExists =
+        point.cameraFileUrl != null && point.cameraDeleteState != com.maklertour.domain.DeleteState.DELETED;
     val phonePreviewExists = point.localPreviewPath != null;
-    val phoneOriginalText = when (point.localOriginalState) { com.maklertour.domain.FileLocalState.DOWNLOADED -> stringResource(R.string.downloaded);
+    val phoneOriginalText = when (point.localOriginalState) {
+        com.maklertour.domain.FileLocalState.DOWNLOADED -> stringResource(R.string.downloaded);
         com.maklertour.domain.FileLocalState.DOWNLOADING -> stringResource(R.string.downloading);
         com.maklertour.domain.FileLocalState.DOWNLOAD_ERROR -> stringResource(R.string.error);
-        com.maklertour.domain.FileLocalState.NOT_DOWNLOADED -> stringResource(R.string.not_exists) };
-    val serverText = when (point.serverUploadState) { com.maklertour.domain.ServerUploadState.CONFIRMED -> stringResource(R.string.uploaded);
+        com.maklertour.domain.FileLocalState.NOT_DOWNLOADED -> stringResource(R.string.not_exists)
+    };
+    val serverText = when (point.serverUploadState) {
+        com.maklertour.domain.ServerUploadState.CONFIRMED -> stringResource(R.string.uploaded);
         com.maklertour.domain.ServerUploadState.UPLOADING -> stringResource(R.string.downloading);
         com.maklertour.domain.ServerUploadState.QUEUED -> stringResource(R.string.upload_queued);
         com.maklertour.domain.ServerUploadState.ERROR -> stringResource(R.string.error);
-        com.maklertour.domain.ServerUploadState.NOT_QUEUED -> stringResource(R.string.not_uploaded) };
-    val cameraDeleteText = when (point.cameraDeleteState) { com.maklertour.domain.DeleteState.DELETED -> stringResource(R.string.deleted);
+        com.maklertour.domain.ServerUploadState.NOT_QUEUED -> stringResource(R.string.not_uploaded)
+    };
+    val cameraDeleteText = when (point.cameraDeleteState) {
+        com.maklertour.domain.DeleteState.DELETED -> stringResource(R.string.deleted);
         com.maklertour.domain.DeleteState.DELETE_ERROR -> stringResource(R.string.delete_error);
         com.maklertour.domain.DeleteState.DELETE_REQUESTED -> stringResource(R.string.deleting);
-        else -> stringResource(R.string.camera_clean) };
-    Card(modifier = Modifier.fillMaxWidth()) { Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { Text(stringResource(R.string.point_number_format, index + 1));
-        Text(point.name); if (isStartPoint) { Text(stringResource(R.string.draft_start_point)) };
-        Text(stringResource(R.string.draft_current_room_format, currentRoomName ?: "—"));
-        if (previewModel != null) {
-            AsyncImage(
-                model = previewModel,
-                contentDescription = point.name,
-                modifier = Modifier.fillMaxWidth().height(100.dp),
-                contentScale = ContentScale.Crop,
-            )
-        } else if (previewIsOnlyOnCamera) {
-            Text("Preview is on camera. Waiting for local preview download.")
-        } else {
-            Text("Preview not ready")
-        }
-        AppStorageStatusRow(cameraExists = cameraExists, phonePreviewExists = phonePreviewExists, phoneOriginalText = phoneOriginalText, serverText = serverText, cameraDeleteText = cameraDeleteText); OutlinedTextField(value = localName, onValueChange = { localName = it }, label = { Text(stringResource(R.string.rename)) }, modifier = Modifier.fillMaxWidth()); Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { Button(onClick = { onRename(point.id, localName) }) { Text(stringResource(R.string.save)) }; Button(onClick = { onMoveUp(index) }) { Text("↑") }; Button(onClick = { onMoveDown(index) }) { Text("↓") }; Button(onClick = { onDelete(point.id) }) { Text(stringResource(R.string.delete)) }; Button(onClick = { onSetStartPoint(point.id) }) { Text(stringResource(R.string.draft_make_start_point)) } }; if (debugMode) { Text(stringResource(R.string.debug_details)); Text("id=${point.id}"); Text("cameraFileUrl=${point.cameraFileUrl}"); Text("localPreviewPath=${point.localPreviewPath}"); Text("localOriginalPath=${point.localOriginalPath}"); Text("capturedAt=${point.capturedAt}"); Text("cameraDeleteState=${point.cameraDeleteState}"); Text("serverUploadState=${point.serverUploadState}") }; Text(stringResource(R.string.draft_assign_room));
-        Text(stringResource(R.string.draft_connect_to))
+        else -> stringResource(R.string.camera_clean)
+    };
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            allPoints
-                .filter { it.id != point.id }
-                .forEach { other ->
-                    TextButton(
-                        onClick = { onCreateConnection(point.id, other.id) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(other.name)
-                    }
-                }
-        }
-    }
-}
-
-@Composable
-private fun ConnectionsBlock(points: List<com.maklertour.domain.CapturePoint>, connections: List<com.maklertour.domain.TourDraftConnection>, onDeleteConnection: (String) -> Unit) { Text(stringResource(R.string.draft_connections), style = MaterialTheme.typography.titleMedium); if (connections.isEmpty()) { Text(stringResource(R.string.draft_no_connections)); return }; connections.forEach { c -> val fromName = points.firstOrNull { it.id == c.fromPointId }?.name ?: c.fromPointId; val toName = points.firstOrNull { it.id == c.toPointId }?.name ?: c.toPointId; Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { Text("$fromName → $toName"); TextButton(onClick = { onDeleteConnection(c.id) }) { Text(stringResource(R.string.delete)) } } } }
-@Composable
-private fun QueueScreen(
-    selectedOrder: MobileOrder?,
-    queue: List<com.maklertour.domain.UploadItem>,
-    onEnqueue: () -> EnqueueUploadResult,
-    onUpload: (String) -> Unit,
-    uploadError: String?,
-    onExportDiagnostics: () -> String,
-) {
-    val clipboardManager = LocalClipboardManager.current
-    val context = LocalContext.current
-    var filter by remember { mutableStateOf("Новые") }
-    val filteredQueue = when (filter) {
-        "Новые" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Queued }
-        "В процессе" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Uploading }
-        "Ошибки" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Error }
-        "Успешные" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Success }
-        else -> queue
-    }
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (selectedOrder != null) {
-            Text("Заявка #${selectedOrder.id} — ${selectedOrder.title}")
-        } else {
-            Text("Локальный черновик без заявки")
-        }
-
-        Text(stringResource(R.string.upload_queue))
-        if (!uploadError.isNullOrBlank()) {
-            Text("Ошибка upload: $uploadError", color = MaterialTheme.colorScheme.error)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Новые", "В процессе", "Ошибки", "Успешные", "Все").forEach {
-                TextButton(onClick = { filter = it }) { Text(it) }
+            Text(stringResource(R.string.point_number_format, index + 1));
+            Text(point.name); if (isStartPoint) {
+            Text(stringResource(R.string.draft_start_point))
+        };
+            Text(stringResource(R.string.draft_current_room_format, currentRoomName ?: "—"));
+            if (previewModel != null) {
+                AsyncImage(
+                    model = previewModel,
+                    contentDescription = point.name,
+                    modifier = Modifier.fillMaxWidth().height(100.dp),
+                    contentScale = ContentScale.Crop,
+                )
+            } else if (previewIsOnlyOnCamera) {
+                Text("Preview is on camera. Waiting for local preview download.")
+            } else {
+                Text("Preview not ready")
             }
-        }
-        Button(
-            onClick = {
-                when (val result = onEnqueue()) {
-                    EnqueueUploadResult.Enqueued -> {
-                        Toast.makeText(context, "Сессия добавлена в очередь", Toast.LENGTH_SHORT).show()
-                    }
-                    is EnqueueUploadResult.Rejected -> {
-                        Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        ) { Text(stringResource(R.string.add_to_queue)) }
-        Button(
-            onClick = {
-                val diagnostics = onExportDiagnostics()
-                clipboardManager.setText(AnnotatedString(diagnostics))
-                Toast.makeText(context, "diagnostic JSON скопирован", Toast.LENGTH_SHORT).show()
-            }
-        ) { Text(stringResource(R.string.copy_diagnostic_json)) }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(filteredQueue) { _, item ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(stringResource(R.string.session_format, item.sessionId.take(8)))
-                        Text(stringResource(R.string.status_format, item.status))
-                        Text(stringResource(R.string.retry_format, item.retryCount.toString()))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = {
-                                if (!hasAnyInternet(context)) {
-                                    Toast.makeText(context, "Нет подключения к интернету", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    onUpload(item.id)
-                                }
-                            }, enabled = item.status != com.maklertour.domain.UploadStatus.Uploading) {
-                                Text(
-                                    when (item.status) {
-                                        com.maklertour.domain.UploadStatus.Uploading -> "Отправляется..."
-                                        com.maklertour.domain.UploadStatus.Queued -> "Отправить на сервер"
-                                        else -> "Отправить на сервер повторно"
-                                    }
-                                )
-                            }
+            AppStorageStatusRow(
+                cameraExists = cameraExists,
+                phonePreviewExists = phonePreviewExists,
+                phoneOriginalText = phoneOriginalText,
+                serverText = serverText,
+                cameraDeleteText = cameraDeleteText
+            ); OutlinedTextField(
+            value = localName,
+            onValueChange = { localName = it },
+            label = { Text(stringResource(R.string.rename)) },
+            modifier = Modifier.fillMaxWidth()
+        ); Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(onClick = {
+                onRename(
+                    point.id,
+                    localName
+                )
+            }) { Text(stringResource(R.string.save)) }; Button(onClick = { onMoveUp(index) }) {
+            Text(
+                "↑"
+            )
+        }; Button(
+            onClick = { onMoveDown(index) }) { Text("↓") }; Button(onClick = { onDelete(point.id) }) {
+            Text(
+                stringResource(R.string.delete)
+            )
+        }; Button(
+            onClick = { onSetStartPoint(point.id) }) { Text(stringResource(R.string.draft_make_start_point)) }
+        }; if (debugMode) {
+            Text(stringResource(R.string.debug_details)); Text("id=${point.id}"); Text("cameraFileUrl=${point.cameraFileUrl}"); Text(
+                "localPreviewPath=${point.localPreviewPath}"
+            ); Text("localOriginalPath=${point.localOriginalPath}"); Text("capturedAt=${point.capturedAt}"); Text(
+                "cameraDeleteState=${point.cameraDeleteState}"
+            ); Text("serverUploadState=${point.serverUploadState}")
+        }; Text(stringResource(R.string.draft_assign_room));
+            Text(stringResource(R.string.draft_connect_to))
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                allPoints
+                    .filter { it.id != point.id }
+                    .forEach { other ->
+                        TextButton(
+                            onClick = { onCreateConnection(point.id, other.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(other.name)
                         }
-                        Text("progress=${if (item.status == com.maklertour.domain.UploadStatus.Success) 100 else item.progressPercent}%")
-                        Text("step=${item.currentStep ?: "—"} file=${item.currentFileName ?: "—"}")
-                        Text("bytes=${item.bytesUploaded}/${item.bytesTotal}")
-                        Text("updatedAt=${item.updatedAt}")
                     }
-                }
             }
         }
     }
 
-}
-    private enum class CaptureMode {
-    PHOTO_POINT,
-    VIDEO_SCAN,
-}
+    @Composable
+    private fun ConnectionsBlock(
+        points: List<com.maklertour.domain.CapturePoint>,
+        connections: List<com.maklertour.domain.TourDraftConnection>,
+        onDeleteConnection: (String) -> Unit
+    ) {
+        Text(
+            stringResource(R.string.draft_connections),
+            style = MaterialTheme.typography.titleMedium
+        ); if (connections.isEmpty()) {
+            Text(stringResource(R.string.draft_no_connections)); return
+        }; connections.forEach { c ->
+            val fromName = points.firstOrNull { it.id == c.fromPointId }?.name ?: c.fromPointId;
+            val toName = points.firstOrNull { it.id == c.toPointId }?.name ?: c.toPointId; Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("$fromName → $toName"); TextButton(onClick = { onDeleteConnection(c.id) }) {
+            Text(
+                stringResource(R.string.delete)
+            )
+        }
+        }
+        }
+    }
 
-private fun hasAnyInternet(context: android.content.Context): Boolean {
-    val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
-    val network = manager.activeNetwork ?: return false
-    val caps = manager.getNetworkCapabilities(network) ?: return false
-    return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
-}
+    @Composable
+    private fun QueueScreen(
+        selectedOrder: MobileOrder?,
+        queue: List<com.maklertour.domain.UploadItem>,
+        onEnqueue: () -> EnqueueUploadResult,
+        onUpload: (String) -> Unit,
+        uploadError: String?,
+        onExportDiagnostics: () -> String,
+    ) {
+        val clipboardManager = LocalClipboardManager.current
+        val context = LocalContext.current
+        var filter by remember { mutableStateOf("Новые") }
+        val filteredQueue = when (filter) {
+            "Новые" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Queued }
+            "В процессе" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Uploading }
+            "Ошибки" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Error }
+            "Успешные" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Success }
+            else -> queue
+        }
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (selectedOrder != null) {
+                Text("Заявка #${selectedOrder.id} — ${selectedOrder.title}")
+            } else {
+                Text("Локальный черновик без заявки")
+            }
+
+            Text(stringResource(R.string.upload_queue))
+            if (!uploadError.isNullOrBlank()) {
+                Text("Ошибка upload: $uploadError", color = MaterialTheme.colorScheme.error)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Новые", "В процессе", "Ошибки", "Успешные", "Все").forEach {
+                    TextButton(onClick = { filter = it }) { Text(it) }
+                }
+            }
+            Button(
+                onClick = {
+                    when (val result = onEnqueue()) {
+                        EnqueueUploadResult.Enqueued -> {
+                            Toast.makeText(
+                                context,
+                                "Сессия добавлена в очередь",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+
+                        is EnqueueUploadResult.Rejected -> {
+                            Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            ) { Text(stringResource(R.string.add_to_queue)) }
+            Button(
+                onClick = {
+                    val diagnostics = onExportDiagnostics()
+                    clipboardManager.setText(AnnotatedString(diagnostics))
+                    Toast.makeText(context, "diagnostic JSON скопирован", Toast.LENGTH_SHORT).show()
+                }
+            ) { Text(stringResource(R.string.copy_diagnostic_json)) }
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                itemsIndexed(filteredQueue) { _, item ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(stringResource(R.string.session_format, item.sessionId.take(8)))
+                            Text(stringResource(R.string.status_format, item.status))
+                            Text(stringResource(R.string.retry_format, item.retryCount.toString()))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        if (!hasAnyInternet(context)) {
+                                            Toast.makeText(
+                                                context,
+                                                "Нет подключения к интернету",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else {
+                                            onUpload(item.id)
+                                        }
+                                    },
+                                    enabled = item.status != com.maklertour.domain.UploadStatus.Uploading
+                                ) {
+                                    Text(
+                                        when (item.status) {
+                                            com.maklertour.domain.UploadStatus.Uploading -> "Отправляется..."
+                                            com.maklertour.domain.UploadStatus.Queued -> "Отправить на сервер"
+                                            else -> "Отправить на сервер повторно"
+                                        }
+                                    )
+                                }
+                            }
+                            Text("progress=${if (item.status == com.maklertour.domain.UploadStatus.Success) 100 else item.progressPercent}%")
+                            Text("step=${item.currentStep ?: "—"} file=${item.currentFileName ?: "—"}")
+                            Text("bytes=${item.bytesUploaded}/${item.bytesTotal}")
+                            Text("updatedAt=${item.updatedAt}")
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+
+    private enum class CaptureMode {
+        PHOTO_POINT,
+        VIDEO_SCAN,
+    }
+
+    private fun hasAnyInternet(context: android.content.Context): Boolean {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
+        val network = manager.activeNetwork ?: return false
+        val caps = manager.getNetworkCapabilities(network) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(
+            NetworkCapabilities.TRANSPORT_CELLULAR
+        )
+    }
