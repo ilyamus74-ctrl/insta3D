@@ -1725,6 +1725,7 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                             Text(other.name)
                         }
                     }
+                }
             }
         }
     }
@@ -1876,4 +1877,3 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
             NetworkCapabilities.TRANSPORT_CELLULAR
         )
     }
-}
