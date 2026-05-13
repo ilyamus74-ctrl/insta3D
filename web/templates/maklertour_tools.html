@@ -1,0 +1,74 @@
+{include file="maklertour_header.html"}
+{include file="maklertour_sidebar.html"}
+
+<main id="main" class="main">
+
+  <div class="pagetitle">
+    <h1>Инструменты</h1>
+    <nav>
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item">MaklerTour</li>
+        <li class="breadcrumb-item active">Инструменты</li>
+      </ol>
+    </nav>
+  </div>
+
+  <section class="section">
+    <div class="row g-3">
+      <div class="col-12 col-xl-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">MaklerTour Marker Kit v1</h5>
+            <p class="text-muted mb-3">Печатные AprilTag-метки для восстановления масштаба и геометрии.</p>
+            <div class="d-flex gap-2 flex-wrap">
+              <a class="btn btn-primary" href="/markers.php">Открыть набор</a>
+              <a class="btn btn-outline-primary" href="/markers.php?print=all" target="_blank">Печать всего комплекта</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-xl-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">Инструкция оператору</h5>
+            <ul class="mb-0">
+              {foreach from=$operatorChecklist item=step}
+                <li>{$step|escape}</li>
+              {/foreach}
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-xl-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">Insta360 X4</h5>
+            <ul class="mb-0">
+              {foreach from=$insta360Checklist item=step}
+                <li>{$step|escape}</li>
+              {/foreach}
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-xl-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <h5 class="card-title">Правила печати меток</h5>
+            <ul class="mb-0">
+              {foreach from=$printRules item=rule}
+                <li>{$rule|escape}</li>
+              {/foreach}
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+{include file="maklertour_footer.html"}

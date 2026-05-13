@@ -44,6 +44,22 @@ function marker_source_file(int $id): ?string
     return null;
 }
 
+
+function marker_data_uri(int $id): ?string
+{
+    $sourceFile = marker_source_file($id);
+    if ($sourceFile === null || !is_readable($sourceFile)) {
+        return null;
+    }
+
+    $raw = file_get_contents($sourceFile);
+    if ($raw === false || $raw === '') {
+        return null;
+    }
+
+    return 'data:image/png;base64,' . base64_encode($raw);
+}
+
 function marker_label(int $id): string
 {
     return 'MT-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT);
@@ -133,8 +149,9 @@ if ($printAll || $printOneId !== null) {
 <body>
 <?php foreach ($ids as $id): ?>
     <section class="marker-page">
-        <?php if (marker_source_file($id) !== null): ?>
-            <img class="marker-img" src="/markers.php?img=<?php echo $id; ?>" alt="AprilTag ID <?php echo $id; ?>">
+        <?php $dataUri = marker_data_uri($id); ?>
+        <?php if ($dataUri !== null): ?>
+            <img class="marker-img" src="<?= htmlspecialchars($dataUri, ENT_QUOTES, 'UTF-8') ?>" alt="AprilTag ID <?php echo $id; ?>">
         <?php else: ?>
             <div class="missing">source image missing</div>
         <?php endif; ?>
@@ -193,8 +210,9 @@ if ($printAll || $printOneId !== null) {
             <tr>
                 <td><?php echo marker_label($id); ?></td>
                 <td>
-                    <?php if (marker_source_file($id) !== null): ?>
-                        <img class="preview" src="/markers.php?img=<?php echo $id; ?>" alt="tag <?php echo $id; ?>">
+                    <?php $dataUri = marker_data_uri($id); ?>
+                    <?php if ($dataUri !== null): ?>
+                        <img class="preview" src="<?= htmlspecialchars($dataUri, ENT_QUOTES, 'UTF-8') ?>" alt="tag <?php echo $id; ?>">
                     <?php else: ?>
                         <span class="missing-small">source image missing</span>
                     <?php endif; ?>
