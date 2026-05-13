@@ -53,7 +53,13 @@ interface CaptureSessionDao {
         WHERE id = :sessionId
         """
     )
-    suspend fun attachToOrder(sessionId: String, orderId: Long, orderTitle: String?, orderAddress: String?, updatedAtEpochMs: Long, )
+    suspend fun attachToOrder(
+        sessionId: String,
+        orderId: Long,
+        orderTitle: String?,
+        orderAddress: String?,
+        updatedAtEpochMs: Long,
+    )
     @Query("UPDATE capture_sessions SET deletedAtEpochMs = :deletedAtEpochMs, syncState = 'PENDING_DELETE', updatedAtEpochMs = :deletedAtEpochMs WHERE id = :sessionId")
     suspend fun deleteById(sessionId: String, deletedAtEpochMs: Long)
 }

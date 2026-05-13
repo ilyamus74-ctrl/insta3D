@@ -828,20 +828,28 @@ class RoomSessionRepository(
             captureSessionDao.updateServerCaptureSessionId(sessionId, serverCaptureSessionId, Instant.now().toEpochMilli())
         }
     }
-}
 
-override fun attachSessionToOrder(sessionId: String, orderId: Long, orderTitle: String?, orderAddress: String?) {
-    val now = Instant.now().toEpochMilli()
-    scope.launch {
-        captureSessionDao.attachToOrder(
-            sessionId = sessionId,
-            orderId = orderId,
-            orderTitle = orderTitle,
-            orderAddress = orderAddress,
-            updatedAtEpochMs = now,
-        )
+    override fun attachSessionToOrder(
+        sessionId: String,
+        orderId: Long,
+        orderTitle: String?,
+        orderAddress: String?,
+    ) {
+        val now = Instant.now().toEpochMilli()
+
+        scope.launch {
+            captureSessionDao.attachToOrder(
+                sessionId = sessionId,
+                orderId = orderId,
+                orderTitle = orderTitle,
+                orderAddress = orderAddress,
+                updatedAtEpochMs = now,
+            )
+        }
     }
 }
+
+
 class RoomUploadQueueRepository(
     private val uploadItemDao: UploadItemDao,
 ) : UploadQueueRepository {
