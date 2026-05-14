@@ -1,0 +1,81 @@
+{include file="maklertour_header.html"}
+{include file="maklertour_sidebar.html"}
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum/build/pannellum.css">
+<link rel="stylesheet" href="/css/maklertour_tour.css">
+
+<main id="main" class="main maklertour-tour-page">
+  <div class="pagetitle">
+    <h1>3D тур</h1>
+    <nav>
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/main.php">MaklerTour</a></li>
+        <li class="breadcrumb-item"><a href="/order.php?id={$orderId}">Заявка #{$orderId}</a></li>
+        <li class="breadcrumb-item active">3D тур</li>
+      </ol>
+    </nav>
+  </div>
+
+  <section
+    class="tour-shell"
+    id="tourApp"
+    data-session-id="{$sessionId|escape}"
+  >
+    <aside class="tour-sidebar">
+      <div class="tour-card">
+        <div class="tour-title">Сессия #{$sessionId}</div>
+        <div class="tour-muted">UUID: {$sessionUuid|default:'-'|escape}</div>
+        <div class="tour-muted">Заявка: {$orderTitle|default:'-'|escape}</div>
+      </div>
+
+      <div class="tour-card">
+        <div class="tour-section-title">Обработка</div>
+        <div id="tourProcessingStatus" class="tour-badge tour-badge-muted">Загрузка...</div>
+
+        <div class="tour-stats">
+          <div>Detections: <span id="tourDetectionsCount">-</span></div>
+          <div>PHOTO_POINT: <span id="tourPhotoDetections">-</span></div>
+          <div>VIDEO_FRAME: <span id="tourVideoDetections">-</span></div>
+        </div>
+      </div>
+
+      <div class="tour-card">
+        <div class="tour-section-title">Метки</div>
+        <div id="tourMarkers" class="tour-marker-list">
+          <span class="tour-muted">Загрузка...</span>
+        </div>
+      </div>
+
+      <div class="tour-card">
+        <div class="tour-section-title">Точки съемки</div>
+        <div id="tourPoints" class="tour-points">
+          <div class="tour-muted">Загрузка...</div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="tour-viewer-area">
+      <div class="tour-topbar">
+        <div>
+          <div id="tourCurrentPoint" class="tour-current-title">-</div>
+          <div id="tourCurrentRoom" class="tour-muted">360 panorama</div>
+        </div>
+
+        <div>
+          <a class="btn btn-sm btn-outline-light" href="/order.php?id={$orderId}">
+            ← Назад к заявке
+          </a>
+        </div>
+      </div>
+
+      <div id="panorama" class="tour-panorama">
+        <div class="tour-viewer-placeholder">Загрузка тура...</div>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/pannellum/build/pannellum.js"></script>
+<script src="/js/maklertour_tour.js"></script>
+
+{include file="maklertour_footer.html"}

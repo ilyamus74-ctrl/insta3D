@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-14 09:57:41
+/* Smarty version 5.3.1, created on 2026-05-14 14:44:53
   from 'file:maklertour_order.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a059c959fc408_37022474',
+  'unifunc' => 'content_6a05dfe50a2fa8_57999010',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '8a2d61e62d148c6ae1204a37e003257928b7557b' => 
     array (
       0 => 'maklertour_order.html',
-      1 => 1778752389,
+      1 => 1778769869,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a059c959fc408_37022474 (\Smarty\Template $_smarty_tpl) {
+function content_6a05dfe50a2fa8_57999010 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -202,6 +202,13 @@ $foreach0DoElse = false;
         <div class="card-body">
           <h5 class="card-title">Capture session #<?php echo $_smarty_tpl->getValue('s')['id'];?>
 </h5>
+
+<?php if ((($tmp = $_smarty_tpl->getValue('s')['photo_count'] ?? null)===null||$tmp==='' ? 0 ?? null : $tmp) > 0) {?>
+<a class="btn btn-sm btn-outline-primary mb-2" href="/tour.php?session_id=<?php echo $_smarty_tpl->getValue('s')['id'];?>
+">
+  Открыть 3D тур
+</a>
+<?php }?>
           <div class="row g-3 mb-3">
             <div class="col-md-6"><strong>UUID:</strong> <code><?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('s')['app_session_uuid'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
 </code></div>
@@ -321,6 +328,35 @@ $_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
 </span></div>
                 <div><strong>markers detected count:</strong> <?php echo (($tmp = $_smarty_tpl->getValue('job')['markers_detected_count'] ?? null)===null||$tmp==='' ? 0 ?? null : $tmp);?>
 </div>
+                <div class="mt-2"><strong>unique marker IDs found:</strong>
+                  <?php if ($_smarty_tpl->getSmarty()->getModifierCallback('count')($_smarty_tpl->getValue('s')['marker_unique_ids']) > 0) {?>
+                    <?php
+$_from = $_smarty_tpl->getSmarty()->getRuntime('Foreach')->init($_smarty_tpl, $_smarty_tpl->getValue('s')['marker_unique_ids'], 'mid', false, NULL, 'ml', array (
+  'last' => true,
+  'iteration' => true,
+  'total' => true,
+));
+$foreach3DoElse = true;
+foreach ($_from ?? [] as $_smarty_tpl->getVariable('mid')->value) {
+$foreach3DoElse = false;
+$_smarty_tpl->tpl_vars['__smarty_foreach_ml']->value['iteration']++;
+$_smarty_tpl->tpl_vars['__smarty_foreach_ml']->value['last'] = $_smarty_tpl->tpl_vars['__smarty_foreach_ml']->value['iteration'] === $_smarty_tpl->tpl_vars['__smarty_foreach_ml']->value['total'];
+?>
+                      MT-<?php echo sprintf("%03d",$_smarty_tpl->getValue('mid'));
+if (!($_smarty_tpl->getValue('__smarty_foreach_ml')['last'] ?? null)) {?>, <?php }?>
+                    <?php
+}
+$_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
+                  <?php } else { ?>
+                    -
+                  <?php }?>
+                </div>
+                <div><strong>total detections:</strong> <?php echo (($tmp = $_smarty_tpl->getValue('s')['marker_detections_count'] ?? null)===null||$tmp==='' ? 0 ?? null : $tmp);?>
+</div>
+                <div><strong>PHOTO_POINT count:</strong> <?php echo (($tmp = $_smarty_tpl->getValue('s')['marker_source_counts']['PHOTO_POINT'] ?? null)===null||$tmp==='' ? 0 ?? null : $tmp);?>
+</div>
+                <div><strong>VIDEO_FRAME count:</strong> <?php echo (($tmp = $_smarty_tpl->getValue('s')['marker_source_counts']['VIDEO_FRAME'] ?? null)===null||$tmp==='' ? 0 ?? null : $tmp);?>
+</div>
                 <div><strong>warning text:</strong> <?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('job')['warning_text'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
 </div>
                 <div><strong>error text:</strong> <?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('job')['error_text'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
@@ -332,6 +368,46 @@ $_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
                 <?php }?>
               </div>
             </div>
+            <?php if ($_smarty_tpl->getSmarty()->getModifierCallback('count')($_smarty_tpl->getValue('s')['marker_detections']) > 0) {?>
+              <div class="table-responsive mt-3">
+                <table class="table table-sm table-bordered align-middle">
+                  <thead>
+                    <tr>
+                      <th>marker ID</th><th>source type</th><th>source id</th><th>frame</th><th>confidence</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <?php
+$_from = $_smarty_tpl->getSmarty()->getRuntime('Foreach')->init($_smarty_tpl, $_smarty_tpl->getValue('s')['marker_detections'], 'det', false, NULL, 'dets', array (
+  'iteration' => true,
+));
+$foreach4DoElse = true;
+foreach ($_from ?? [] as $_smarty_tpl->getVariable('det')->value) {
+$foreach4DoElse = false;
+$_smarty_tpl->tpl_vars['__smarty_foreach_dets']->value['iteration']++;
+?>
+                      <?php if (($_smarty_tpl->getValue('__smarty_foreach_dets')['iteration'] ?? null) > 30) {
+break 1;
+}?>
+                      <tr>
+                        <td>MT-<?php echo sprintf("%03d",$_smarty_tpl->getValue('det')['marker_id']);?>
+</td>
+                        <td><?php echo htmlspecialchars((string)$_smarty_tpl->getValue('det')['source_type'], ENT_QUOTES, 'UTF-8', true);?>
+</td>
+                        <td><?php echo htmlspecialchars((string)$_smarty_tpl->getValue('det')['source_id'], ENT_QUOTES, 'UTF-8', true);?>
+</td>
+                        <td><?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('det')['frame_index'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
+</td>
+                        <td><?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('det')['confidence'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
+</td>
+                      </tr>
+                    <?php
+}
+$_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
+                  </tbody>
+                </table>
+              </div>
+            <?php }?>
           <?php } else { ?>
             <div class="text-muted">Обработка ещё не запускалась.</div>
           <?php }?>
