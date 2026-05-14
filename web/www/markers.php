@@ -60,6 +60,122 @@ function marker_data_uri(int $id): ?string
     return 'data:image/png;base64,' . base64_encode($raw);
 }
 
+
+
+function marker_cropped_png_data_uri(int $id): ?string
+{
+    if (!function_exists('imagecreatefrompng')) {
+        return null;
+    }
+
+    $sourceFile = marker_source_file($id);
+    if ($sourceFile === null || !is_readable($sourceFile)) {
+        return null;
+    }
+
+    $img = @imagecreatefrompng($sourceFile);
+    if ($img === false) {
+        return null;
+    }
+
+    $width = imagesx($img);
+    $height = imagesy($img);
+
+    $minX = $width;
+    $minY = $height;
+    $maxX = -1;
+    $maxY = -1;
+
+    for ($y = 0; $y < $height; $y++) {
+        for ($x = 0; $x < $width; $x++) {
+            $rgb = imagecolorat($img, $x, $y);
+            $r = ($rgb >> 16) & 0xFF;
+            $g = ($rgb >> 8) & 0xFF;
+            $b = $rgb & 0xFF;
+
+            if ($r >= 245 && $g >= 245 && $b >= 245) {
+                continue;
+            }
+
+            if ($x < $minX) { $minX = $x; }
+            if ($y < $minY) { $minY = $y; }
+            if ($x > $maxX) { $maxX = $x; }
+            if ($y > $maxY) { $maxY = $y; }
+        }
+    }
+
+    if ($maxX < $minX || $maxY < $minY) {
+        imagedestroy($img);
+        return null;
+    }
+
+    $cropW = $maxX - $minX + 1;
+    $cropH = $maxY - $minY + 1;
+    $size = max($cropW, $cropH);
+
+    $centerX = ($minX + $maxX) / 2;
+    $centerY = ($minY + $maxY) / 2;
+
+    $squareMinX = (int)floor($centerX - (($size - 1) / 2));
+    $squareMinY = (int)floor($centerY - (($size - 1) / 2));
+    $squareMaxX = $squareMinX + $size - 1;
+    $squareMaxY = $squareMinY + $size - 1;
+
+    if ($squareMinX < 0) {
+        $squareMaxX -= $squareMinX;
+        $squareMinX = 0;
+    }
+    if ($squareMinY < 0) {
+        $squareMaxY -= $squareMinY;
+        $squareMinY = 0;
+    }
+    if ($squareMaxX >= $width) {
+        $shift = $squareMaxX - ($width - 1);
+        $squareMinX -= $shift;
+        $squareMaxX = $width - 1;
+    }
+    if ($squareMaxY >= $height) {
+        $shift = $squareMaxY - ($height - 1);
+        $squareMinY -= $shift;
+        $squareMaxY = $height - 1;
+    }
+
+    $squareMinX = max(0, $squareMinX);
+    $squareMinY = max(0, $squareMinY);
+    $squareMaxX = min($width - 1, $squareMaxX);
+    $squareMaxY = min($height - 1, $squareMaxY);
+
+    $finalW = $squareMaxX - $squareMinX + 1;
+    $finalH = $squareMaxY - $squareMinY + 1;
+    $finalSize = max($finalW, $finalH);
+
+    $out = imagecreatetruecolor($finalSize, $finalSize);
+    if ($out === false) {
+        imagedestroy($img);
+        return null;
+    }
+
+    $white = imagecolorallocate($out, 255, 255, 255);
+    imagefill($out, 0, 0, $white);
+
+    $dstX = (int)floor(($finalSize - $finalW) / 2);
+    $dstY = (int)floor(($finalSize - $finalH) / 2);
+    imagecopy($out, $img, $dstX, $dstY, $squareMinX, $squareMinY, $finalW, $finalH);
+
+    ob_start();
+    imagepng($out);
+    $pngRaw = ob_get_clean();
+
+    imagedestroy($out);
+    imagedestroy($img);
+
+    if ($pngRaw === false || $pngRaw === '') {
+        return null;
+    }
+
+    return 'data:image/png;base64,' . base64_encode($pngRaw);
+}
+
 function marker_label(int $id): string
 {
     return 'MT-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT);
@@ -127,7 +243,7 @@ if ($printAll || $printOneId !== null) {
             width: 160mm;
             height: 160mm;
             image-rendering: pixelated;
-            object-fit: contain;
+            object-fit: fill;
             border: 0;
         }
         .missing {
@@ -144,16 +260,24 @@ if ($printAll || $printOneId !== null) {
             box-sizing: border-box;
         }
         .meta { text-align: center; line-height: 1.5; font-size: 5mm; }
+        .ruler-160mm { width: 160mm; height: 0; border-top: 0.4mm solid #000; margin-top: 4mm; }
+        .ruler-label { font-size: 4mm; text-align: center; }
+        .gd-warning { width: 160mm; color: #b00020; text-align: center; font-size: 
     </style>
 </head>
 <body>
 <?php foreach ($ids as $id): ?>
     <section class="marker-page">
-        <?php $dataUri = marker_data_uri($id); ?>
+        <?php $dataUri = marker_cropped_png_data_uri($id); ?>
         <?php if ($dataUri !== null): ?>
             <img class="marker-img" src="<?= htmlspecialchars($dataUri, ENT_QUOTES, 'UTF-8') ?>" alt="AprilTag ID <?php echo $id; ?>">
         <?php else: ?>
             <div class="missing">source image missing</div>
+        <?php endif; ?>
+        <div class="ruler-160mm"></div>
+        <div class="ruler-label">Control line: 160 mm</div>
+        <?php if ($dataUri === null && !function_exists('imagecreatefrompng')): ?>
+            <div class="gd-warning">GD extension required for calibrated print</div>
         <?php endif; ?>
         <div class="meta">
             <div>MaklerTour Marker Kit v1</div>
@@ -161,6 +285,7 @@ if ($printAll || $printOneId !== null) {
             <div>AprilTag 36h11</div>
             <div>ID: <?php echo $id; ?></div>
             <div>Tag size: 160 mm</div>
+            <div>Size is the outer square of the AprilTag after white border crop.</div>
         </div>
     </section>
 <?php endforeach; ?>
@@ -181,7 +306,7 @@ if ($printAll || $printOneId !== null) {
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background: #f5f5f5; }
         .warn { color: #b00020; font-weight: bold; }
-        .preview { width: 64px; height: 64px; object-fit: contain; image-rendering: pixelated; }
+        .preview { width: 64px; height: 64px; object-fit: fill; image-rendering: pixelated; }
         .missing-small { color: #b00020; font-size: 12px; }
     </style>
 </head>
@@ -190,9 +315,10 @@ if ($printAll || $printOneId !== null) {
     <p><strong>Type:</strong> AprilTag</p>
     <p><strong>Dictionary:</strong> 36h11</p>
     <p><strong>IDs:</strong> 1–30</p>
-    <p><strong>Size:</strong> 160 mm</p>
+    <p><strong>Size:</strong> 160 mm (outer square of AprilTag after white-border crop)</p>
     <p class="warn">Печатать в масштабе 100%</p>
     <p class="warn">Не использовать fit-to-page</p>
+    <p class="warn">Если напечатанная метка меньше 160 mm, проверьте масштаб печати и отключите fit-to-page.</p>
 
     <p><a href="/markers.php?print=all" target="_blank">Печать всего комплекта</a></p>
 
@@ -210,9 +336,12 @@ if ($printAll || $printOneId !== null) {
             <tr>
                 <td><?php echo marker_label($id); ?></td>
                 <td>
-                    <?php $dataUri = marker_data_uri($id); ?>
-                    <?php if ($dataUri !== null): ?>
-                        <img class="preview" src="<?= htmlspecialchars($dataUri, ENT_QUOTES, 'UTF-8') ?>" alt="tag <?php echo $id; ?>">
+                    <?php $previewDataUri = marker_cropped_png_data_uri($id); ?>
+                    <?php if ($previewDataUri === null): ?>
+                        <?php $previewDataUri = marker_data_uri($id); ?>
+                    <?php endif; ?>
+                    <?php if ($previewDataUri !== null): ?>
+                        <img class="preview" src="<?= htmlspecialchars($previewDataUri, ENT_QUOTES, 'UTF-8') ?>" alt="tag <?php echo $id; ?>">
                     <?php else: ?>
                         <span class="missing-small">source image missing</span>
                     <?php endif; ?>
