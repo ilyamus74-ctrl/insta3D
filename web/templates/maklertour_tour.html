@@ -50,9 +50,16 @@
         <div class="tour-section-title">Карта точек</div>
         <div class="mb-2">
           <button type="button" id="tourMapReset" class="btn btn-sm btn-outline-light">Сбросить расположение</button>
+          <button type="button" id="tourAutoMapBtn" class="btn btn-sm btn-outline-info">Авторасставить по меткам</button>
         </div>
         <div id="tourMap" class="tour-map"></div>
-        <div class="tour-muted">Перетащите точки для ручного размещения.</div>
+        <div class="tour-map-legend">
+          <span><i class="dot manual"></i> Manual</span>
+          <span><i class="dot cov"></i> Marker co-visibility</span>
+          <span><i class="dot nomarker"></i> No markers</span>
+        </div>
+        <div class="tour-muted">Перетащите точки для ручного размещения.<br>
+          Авторасстановка по видимости меток, без метрической точности.</div>
       </div>
 
       <div class="tour-card">

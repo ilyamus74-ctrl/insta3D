@@ -11,9 +11,10 @@
 
   const mapEl = document.getElementById('tourMap');
   const mapResetBtn = document.getElementById('tourMapReset');
+  const autoMapBtn = document.getElementById('tourAutoMapBtn');
   const viewerArea = document.querySelector('.tour-viewer-area');
   const panoramaEl = document.getElementById('panorama');
-  let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0;
+  let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0, autoEdges = [];
   const preloadCache = new Set();
 
   const escapeHtml = (v) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
@@ -83,12 +84,15 @@
     mapEl.innerHTML = `<svg class="tour-map-svg" viewBox="0 0 ${W} ${H}"></svg>`;
     const svg = mapEl.querySelector('svg');
     const toPx = (m) => (W / 2) + (m * scale); const toPy = (m) => (H / 2) - (m * scale);
+    autoEdges.forEach((l) => { if (!temp[l.from_photo_point_id] || !temp[l.to_photo_point_id]) return; const a = temp[l.from_photo_point_id], b = temp[l.to_photo_point_id]; const line = document.createElementNS('http://www.w3.org/2000/svg', 'line'); line.setAttribute('x1', toPx(a.x)); line.setAttribute('y1', toPy(a.y)); line.setAttribute('x2', toPx(b.x)); line.setAttribute('y2', toPy(b.y)); line.setAttribute('class', 'tour-map-edge'); svg.appendChild(line); });
     links.forEach((l) => { if (!temp[l.from_photo_point_id] || !temp[l.to_photo_point_id]) return; const a = temp[l.from_photo_point_id], b = temp[l.to_photo_point_id]; const line = document.createElementNS('http://www.w3.org/2000/svg', 'line'); line.setAttribute('x1', toPx(a.x)); line.setAttribute('y1', toPy(a.y)); line.setAttribute('x2', toPx(b.x)); line.setAttribute('y2', toPy(b.y)); line.setAttribute('class', 'tour-map-link'); svg.appendChild(line); });
     photoPoints.forEach((p) => {
       const pos = temp[p.id]; const cx = toPx(pos.x), cy = toPy(pos.y);
-      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', 8); c.setAttribute('class', 'tour-map-point' + (photoPoints[currentIndex]?.id === p.id ? ' active' : '')); c.dataset.id = String(p.id); svg.appendChild(c);
+      const src = (positions[String(p.id)]?.source || 'MANUAL');
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', 8); c.setAttribute('class', 'tour-map-point source-' + src + (photoPoints[currentIndex]?.id === p.id ? ' active' : '')); c.dataset.id = String(p.id); svg.appendChild(c);
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text'); t.setAttribute('x', cx + 10); t.setAttribute('y', cy + 4); t.textContent = String(p.sequence_number ?? p.id); t.setAttribute('fill', '#e5e7eb'); t.setAttribute('font-size', '11'); svg.appendChild(t);
       c.addEventListener('click', () => openPointByPhotoPointId(p.id));
+      c.setAttribute('title', `${p.name || ('Point #' + p.id)} | ${(p.marker_labels || []).join(', ') || 'No markers'} | ${src} | x=${pos.x.toFixed(2)} y=${pos.y.toFixed(2)}`);
       let drag = false;
       c.addEventListener('mousedown', (e) => { drag = true; e.preventDefault(); });
 
@@ -125,8 +129,33 @@
     });
   }
 
-  fetch('/api/tour_session.php?session_id=' + encodeURIComponent(sessionId), { credentials: 'same-origin', headers: { Accept: 'application/json' } })
-    .then(async (r) => ({ ok: r.ok, data: await r.json(), status: r.status }))
-    .then(({ ok, data, status }) => { if (!ok || !data.ok) throw new Error(data.error || ('HTTP ' + status)); photoPoints = data.photo_points || []; links = data.links || []; positions = data.positions || {}; renderPoints(); })
-    .catch((err) => { pointsEl.innerHTML = '<div class="tour-muted">Ошибка загрузки тура: ' + escapeHtml(err.message) + '</div>'; });
+  async function loadTour() {
+    const r = await fetch('/api/tour_session.php?session_id=' + encodeURIComponent(sessionId), { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    const data = await r.json();
+    if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    photoPoints = data.photo_points || [];
+    links = data.links || [];
+    positions = data.positions || {};
+    autoEdges = data.auto_map_edges || [];
+    renderPoints();
+  }
+
+  if (autoMapBtn) {
+    autoMapBtn.addEventListener('click', async () => {
+      autoMapBtn.disabled = true;
+      try {
+        const r = await fetch('/api/tour_auto_map.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), overwrite: true }) });
+        const data = await r.json();
+        if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        alert('Авторасстановка выполнена. Позиции обновлены.');
+        await loadTour();
+      } catch (err) {
+        alert('Ошибка авторасстановки: ' + (err.message || 'unknown_error'));
+      } finally {
+        autoMapBtn.disabled = false;
+      }
+    });
+  }
+
+  loadTour().catch((err) => { pointsEl.innerHTML = '<div class="tour-muted">Ошибка загрузки тура: ' + escapeHtml(err.message) + '</div>'; });
 })();

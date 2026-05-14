@@ -212,3 +212,12 @@
 .tour-map-link { stroke:#334155; stroke-width:2; }
 .tour-map-point { fill:#93c5fd; stroke:#0c4a6e; stroke-width:2; cursor:grab; }
 .tour-map-point.active { fill:#22d3ee; stroke:#155e75; }
+.tour-map-edge { stroke:#475569; stroke-width:1.5; stroke-dasharray:4 3; }
+.tour-map-point.source-MANUAL { fill:#22d3ee; stroke:#155e75; }
+.tour-map-point.source-MARKER_COVISIBILITY { fill:#86efac; stroke:#166534; }
+.tour-map-point.source-AUTO_COVISIBILITY_NO_MARKERS { fill:#fbbf24; stroke:#92400e; }
+.tour-map-legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; font-size:12px; color:#cbd5e1; }
+.tour-map-legend .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:4px; }
+.tour-map-legend .dot.manual { background:#22d3ee; }
+.tour-map-legend .dot.cov { background:#86efac; }
+.tour-map-legend .dot.nomarker { background:#fbbf24; }

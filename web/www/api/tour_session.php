@@ -103,6 +103,34 @@ while ($p = $rs->fetch_assoc()) {
 }
 $stmt->close();
 
+$photoPointIds = array_map(static fn(array $pp): int => (int)$pp['id'], $photoPoints);
+$photoPointSet = array_fill_keys($photoPointIds, true);
+$markerMap = [];
+$markerCount = [];
+$stmt = $dbcnx->prepare("SELECT source_id, marker_id FROM marker_detections WHERE session_id = ? AND source_type = 'PHOTO_POINT'");
+if ($stmt) {
+    $stmt->bind_param('i', $sessionId);
+    $stmt->execute();
+    $rs = $stmt->get_result();
+    while ($row = $rs->fetch_assoc()) {
+        $pid = (int)$row['source_id'];
+        if (!isset($photoPointSet[$pid])) continue;
+        $mid = (int)$row['marker_id'];
+        $markerMap[$pid][$mid] = true;
+        $markerCount[$pid] = (int)($markerCount[$pid] ?? 0) + 1;
+    }
+    $stmt->close();
+}
+foreach ($photoPoints as &$pp) {
+    $pid = (int)$pp['id'];
+    $markers = isset($markerMap[$pid]) ? array_map('intval', array_keys($markerMap[$pid])) : [];
+    sort($markers);
+    $pp['markers'] = $markers;
+    $pp['marker_labels'] = array_map(static fn(int $id): string => 'MT-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT), $markers);
+    $pp['marker_detections_count'] = (int)($markerCount[$pid] ?? 0);
+}
+unset($pp);
+
 $links = [];
 $stmt = $dbcnx->prepare("SELECT id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, label FROM tour_point_links WHERE session_id = ? ORDER BY id ASC");
 
@@ -152,5 +180,19 @@ $stmt = $dbcnx->prepare("SELECT source_type, COUNT(*) AS cnt FROM marker_detecti
 if ($stmt) { $stmt->bind_param('i',$sessionId); $stmt->execute(); $rs=$stmt->get_result(); while($row=$rs->fetch_assoc()) $sourceCounts[(string)$row['source_type']] = (int)$row['cnt']; $stmt->close(); }
 $labels = array_map(static fn(int $id): string => 'MT-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT), $markerIds);
 
-api_json(['ok'=>true,'session'=>['id'=>(int)$session['id'],'order_id'=>(int)$session['order_id'],'app_session_uuid'=>$session['app_session_uuid'],'camera_model'=>$session['camera_model'],'status'=>$session['status'],'order_title'=>$session['order_title'],'order_address'=>$session['order_address']], 'processing'=>['job_id'=>$job?(int)$job['id']:null,'status'=>$job['status']??'NOT_CREATED','metric_status'=>$job['metric_status']??'UNKNOWN','marker_kit_id'=>$job['marker_kit_id']??'maklertour_kit_v1','marker_dictionary'=>$job['marker_dictionary']??'APRILTAG_36H11','marker_size_m'=>isset($job['marker_size_m'])?(float)$job['marker_size_m']:0.160,'markers_detected_count'=>isset($job['markers_detected_count'])?(int)$job['markers_detected_count']:0,'warning_text'=>$job['warning_text']??null,'error_text'=>$job['error_text']??null,'updated_at'=>$job['updated_at']??null], 'markers'=>['unique_ids'=>$markerIds,'labels'=>$labels,'source_counts'=>$sourceCounts], 'photo_points'=>$photoPoints, 'links'=>$links, 'positions'=>$positions]);
+$manualPositionsCount = 0; $markerCovPositionsCount = 0; $noMarkerPositionsCount = 0;
+foreach ($positions as $pos) {
+    $src = (string)($pos['source'] ?? 'UNKNOWN');
+    if ($src === 'MANUAL') $manualPositionsCount++;
+    if ($src === 'MARKER_COVISIBILITY') $markerCovPositionsCount++;
+    if ($src === 'AUTO_COVISIBILITY_NO_MARKERS') $noMarkerPositionsCount++;
+}
+$autoMapInfo = [
+    'has_auto_positions' => ($markerCovPositionsCount + $noMarkerPositionsCount) > 0,
+    'manual_positions_count' => $manualPositionsCount,
+    'marker_cov_positions_count' => $markerCovPositionsCount,
+    'no_marker_positions_count' => $noMarkerPositionsCount,
+];
+
+api_json(['ok'=>true,'session'=>['id'=>(int)$session['id'],'order_id'=>(int)$session['order_id'],'app_session_uuid'=>$session['app_session_uuid'],'camera_model'=>$session['camera_model'],'status'=>$session['status'],'order_title'=>$session['order_title'],'order_address'=>$session['order_address']], 'processing'=>['job_id'=>$job?(int)$job['id']:null,'status'=>$job['status']??'NOT_CREATED','metric_status'=>$job['metric_status']??'UNKNOWN','marker_kit_id'=>$job['marker_kit_id']??'maklertour_kit_v1','marker_dictionary'=>$job['marker_dictionary']??'APRILTAG_36H11','marker_size_m'=>isset($job['marker_size_m'])?(float)$job['marker_size_m']:0.160,'markers_detected_count'=>isset($job['markers_detected_count'])?(int)$job['markers_detected_count']:0,'warning_text'=>$job['warning_text']??null,'error_text'=>$job['error_text']??null,'updated_at'=>$job['updated_at']??null], 'markers'=>['unique_ids'=>$markerIds,'labels'=>$labels,'source_counts'=>$sourceCounts], 'photo_points'=>$photoPoints, 'links'=>$links, 'positions'=>$positions, 'auto_map_info'=>$autoMapInfo]);
 
