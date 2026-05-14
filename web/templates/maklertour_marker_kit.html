@@ -1,0 +1,38 @@
+{include file="maklertour_header.html"}
+{include file="maklertour_sidebar.html"}
+<main id="main" class="main">
+  <div class="pagetitle"><h1>Marker Kit Layout</h1></div>
+  <p>Здесь задаются реальные размеры, координаты и ориентация меток. Эти данные нужны для будущей метрической карты и расчёта расстояний.</p>
+  {if $error}<div class="alert alert-danger">{$error|escape}</div>{/if}
+  {if $success}<div class="alert alert-success">{$success|escape}</div>{/if}
+
+  <div class="mb-3 d-flex gap-2">
+    <a class="btn btn-sm btn-primary" href="/tools/seed_marker_kit_v1.php" target="_blank">Seed MT-001..MT-030</a>
+    <a class="btn btn-sm btn-outline-secondary" href="/api/marker_kit_layout.php" target="_blank">Export JSON</a>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-striped table-sm" id="markerKitTable">
+      <thead><tr><th>MT label</th><th>size_m</th><th>center_x_m</th><th>center_y_m</th><th>center_z_m</th><th>yaw_deg</th><th>pitch_deg</th><th>roll_deg</th><th>surface_type</th><th>note</th><th>actions</th></tr></thead>
+      <tbody>
+      {foreach from=$markers item=m}
+        <tr data-marker-id="{$m.marker_id|escape}">
+          <td>MT-{$m.marker_id|string_format:"%03d"}</td>
+          <td><input class="form-control form-control-sm" type="number" step="0.0001" name="marker_size_m" value="{$m.marker_size_m|default:'0.1600'|escape}"></td>
+          <td><input class="form-control form-control-sm" type="number" step="0.0001" name="center_x_m" value="{$m.center_x_m|default:'0'|escape}"></td>
+          <td><input class="form-control form-control-sm" type="number" step="0.0001" name="center_y_m" value="{$m.center_y_m|default:'0'|escape}"></td>
+          <td><input class="form-control form-control-sm" type="number" step="0.0001" name="center_z_m" value="{$m.center_z_m|default:'1.2'|escape}"></td>
+          <td><input class="form-control form-control-sm" type="number" step="0.001" name="yaw_deg" value="{$m.yaw_deg|default:'0'|escape}"></td>
+          <td><input class="form-control form-control-sm" type="number" step="0.001" name="pitch_deg" value="{$m.pitch_deg|default:'0'|escape}"></td>
+          <td><input class="form-control form-control-sm" type="number" step="0.001" name="roll_deg" value="{$m.roll_deg|default:'0'|escape}"></td>
+          <td><select class="form-select form-select-sm" name="surface_type"><option value="" {if !$m.surface_type}selected{/if}></option><option value="WALL" {if $m.surface_type=='WALL'}selected{/if}>WALL</option><option value="FLOOR" {if $m.surface_type=='FLOOR'}selected{/if}>FLOOR</option><option value="CEILING" {if $m.surface_type=='CEILING'}selected{/if}>CEILING</option><option value="OBJECT" {if $m.surface_type=='OBJECT'}selected{/if}>OBJECT</option><option value="CALIBRATION_RIG" {if $m.surface_type=='CALIBRATION_RIG'}selected{/if}>CALIBRATION_RIG</option></select></td>
+          <td><input class="form-control form-control-sm" type="text" maxlength="255" name="note" value="{$m.note|default:''|escape}"></td>
+          <td><button type="button" class="btn btn-sm btn-success js-save-row">Save row</button><div class="js-save-status small mt-1"></div></td>
+        </tr>
+      {/foreach}
+      </tbody>
+    </table>
+  </div>
+</main>
+<script src="/js/marker_kit_layout.js"></script>
+{include file="maklertour_footer.html"}

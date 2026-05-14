@@ -19,6 +19,7 @@
   const autoMapOverwriteManualBtn = document.getElementById('tourAutoMapOverwriteManualBtn');
   const viewerArea = document.querySelector('.tour-viewer-area');
   const panoramaEl = document.getElementById('panorama');
+  const markerLayoutEl = document.getElementById('tourMarkerLayoutSummary');
   let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0, autoEdges = [];
   let mapZoom = 1.0;
   const preloadCache = new Set();
@@ -171,6 +172,13 @@
     links = data.links || [];
     positions = data.positions || {};
     autoEdges = data.auto_map_edges || [];
+    if (markerLayoutEl) {
+      const ms = data.marker_layout_summary || {};
+      const missing = ms.missing_layout_marker_ids || [];
+      const missLabels = missing.map((id) => 'MT-' + String(id).padStart(3, '0'));
+      markerLayoutEl.innerHTML = `Marker layout: ${Number(ms.defined_markers_count || 0)} defined<br>Detected markers covered: ${Number(ms.detected_markers_with_layout_count || 0)}/${(data.markers?.unique_ids || []).length}` +
+        (missing.length ? `<br>Нет layout для ${missLabels.join(', ')}<br>Marker layout неполный. Для метрической карты нужно задать размеры, координаты и ориентацию всех найденных меток.` : '<br>Marker layout задан. Следующий этап — pose/metric map.');
+    }
     renderPoints();
   }
 

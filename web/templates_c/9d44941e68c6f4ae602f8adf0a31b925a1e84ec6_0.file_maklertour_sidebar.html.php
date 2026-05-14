@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-13 19:22:25
+/* Smarty version 5.3.1, created on 2026-05-14 18:52:12
   from 'file:maklertour_sidebar.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a04cf71c91579_57948222',
+  'unifunc' => 'content_6a0619dc21e424_60180367',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '9d44941e68c6f4ae602f8adf0a31b925a1e84ec6' => 
     array (
       0 => 'maklertour_sidebar.html',
-      1 => 1778699461,
+      1 => 1778784464,
       2 => 'file',
     ),
   ),
@@ -20,7 +20,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   array (
   ),
 ))) {
-function content_6a04cf71c91579_57948222 (\Smarty\Template $_smarty_tpl) {
+function content_6a0619dc21e424_60180367 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 ?><aside id="sidebar" class="sidebar">
   <ul class="sidebar-nav" id="sidebar-nav">
@@ -29,6 +29,7 @@ $_smarty_current_dir = '/home/makler/web/templates';
     <li class="nav-item"><a class="nav-link" href="/market.php"><i class="bi bi-shop"></i><span>Рынок заявок</span></a></li>
     <li class="nav-item"><a class="nav-link" href="/tools.php"><i class="bi bi-tools"></i><span>Инструменты</span></a></li>
     <?php if ($_smarty_tpl->getValue('current_user')['role'] == 'ADMIN') {?>
+      <li class="nav-item"><a class="nav-link" href="/marker_kit.php"><i class="bi bi-bounding-box"></i><span>Marker Kit</span></a></li>
       <li class="nav-item"><a class="nav-link" href="/users.php"><i class="bi bi-people"></i><span>Пользователи</span></a></li>
       <li class="nav-item"><a class="nav-link" href="/audit.php"><i class="bi bi-journal-text"></i><span>Аудит</span></a></li>
     <?php }?>

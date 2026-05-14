@@ -183,6 +183,37 @@ $stmt = $dbcnx->prepare("SELECT source_type, COUNT(*) AS cnt FROM marker_detecti
 if ($stmt) { $stmt->bind_param('i',$sessionId); $stmt->execute(); $rs=$stmt->get_result(); while($row=$rs->fetch_assoc()) $sourceCounts[(string)$row['source_type']] = (int)$row['cnt']; $stmt->close(); }
 $labels = array_map(static fn(int $id): string => 'MT-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT), $markerIds);
 
+$layoutDefinedCount = 0;
+$detectedCovered = 0;
+$missingLayoutMarkerIds = [];
+$layoutSet = [];
+$stmt = $dbcnx->prepare("SELECT marker_id FROM marker_kit_layout WHERE marker_kit_id = 'maklertour_kit_v1' AND marker_dictionary = 'APRILTAG_36H11'");
+if ($stmt) {
+    $stmt->execute();
+    $rs = $stmt->get_result();
+    while ($row = $rs->fetch_assoc()) {
+        $mid = (int)$row['marker_id'];
+        $layoutSet[$mid] = true;
+    }
+    $stmt->close();
+}
+$layoutDefinedCount = count($layoutSet);
+foreach ($markerIds as $mid) {
+    if (isset($layoutSet[$mid])) {
+        $detectedCovered++;
+    } else {
+        $missingLayoutMarkerIds[] = $mid;
+    }
+}
+
+$markerLayoutSummary = [
+    'marker_kit_id' => 'maklertour_kit_v1',
+    'marker_dictionary' => 'APRILTAG_36H11',
+    'defined_markers_count' => $layoutDefinedCount,
+    'detected_markers_with_layout_count' => $detectedCovered,
+    'missing_layout_marker_ids' => $missingLayoutMarkerIds,
+];
+
 $manualPositionsCount = 0; $markerCovPositionsCount = 0; $noMarkerPositionsCount = 0; $autoPositionsCount = 0;
 foreach ($positions as $pos) {
     $src = (string)($pos['source'] ?? 'UNKNOWN');
@@ -201,5 +232,5 @@ $autoMapInfo = [
     'no_marker_positions_count' => $noMarkerPositionsCount,
 ];
 
-api_json(['ok'=>true,'session'=>['id'=>(int)$session['id'],'order_id'=>(int)$session['order_id'],'app_session_uuid'=>$session['app_session_uuid'],'camera_model'=>$session['camera_model'],'status'=>$session['status'],'order_title'=>$session['order_title'],'order_address'=>$session['order_address']], 'processing'=>['job_id'=>$job?(int)$job['id']:null,'status'=>$job['status']??'NOT_CREATED','metric_status'=>$job['metric_status']??'UNKNOWN','marker_kit_id'=>$job['marker_kit_id']??'maklertour_kit_v1','marker_dictionary'=>$job['marker_dictionary']??'APRILTAG_36H11','marker_size_m'=>isset($job['marker_size_m'])?(float)$job['marker_size_m']:0.160,'markers_detected_count'=>isset($job['markers_detected_count'])?(int)$job['markers_detected_count']:0,'warning_text'=>$job['warning_text']??null,'error_text'=>$job['error_text']??null,'updated_at'=>$job['updated_at']??null], 'markers'=>['unique_ids'=>$markerIds,'labels'=>$labels,'source_counts'=>$sourceCounts], 'photo_points'=>$photoPoints, 'links'=>$links, 'positions'=>$positions, 'auto_map_info'=>$autoMapInfo]);
+api_json(['ok'=>true,'session'=>['id'=>(int)$session['id'],'order_id'=>(int)$session['order_id'],'app_session_uuid'=>$session['app_session_uuid'],'camera_model'=>$session['camera_model'],'status'=>$session['status'],'order_title'=>$session['order_title'],'order_address'=>$session['order_address']], 'processing'=>['job_id'=>$job?(int)$job['id']:null,'status'=>$job['status']??'NOT_CREATED','metric_status'=>$job['metric_status']??'UNKNOWN','marker_kit_id'=>$job['marker_kit_id']??'maklertour_kit_v1','marker_dictionary'=>$job['marker_dictionary']??'APRILTAG_36H11','marker_size_m'=>isset($job['marker_size_m'])?(float)$job['marker_size_m']:0.160,'markers_detected_count'=>isset($job['markers_detected_count'])?(int)$job['markers_detected_count']:0,'warning_text'=>$job['warning_text']??null,'error_text'=>$job['error_text']??null,'updated_at'=>$job['updated_at']??null], 'markers'=>['unique_ids'=>$markerIds,'labels'=>$labels,'source_counts'=>$sourceCounts], 'marker_layout_summary'=>$markerLayoutSummary, 'photo_points'=>$photoPoints, 'links'=>$links, 'positions'=>$positions, 'auto_map_info'=>$autoMapInfo]);
 
