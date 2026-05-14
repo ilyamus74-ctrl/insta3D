@@ -10,12 +10,17 @@
   const nextBtn = document.getElementById('tourNextPoint');
 
   const mapEl = document.getElementById('tourMap');
+  const mapMetaEl = document.getElementById('tourMapMeta');
   const mapResetBtn = document.getElementById('tourMapReset');
+  const mapFitBtn = document.getElementById('tourMapFitBtn');
+  const mapZoomOutBtn = document.getElementById('tourMapZoomOutBtn');
+  const mapZoomInBtn = document.getElementById('tourMapZoomInBtn');
   const autoMapBtn = document.getElementById('tourAutoMapBtn');
   const autoMapOverwriteManualBtn = document.getElementById('tourAutoMapOverwriteManualBtn');
   const viewerArea = document.querySelector('.tour-viewer-area');
   const panoramaEl = document.getElementById('panorama');
   let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0, autoEdges = [];
+  let mapZoom = 1.0;
   const preloadCache = new Set();
 
   const escapeHtml = (v) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
@@ -77,19 +82,40 @@
 
   function renderMap() {
     if (!mapEl) return;
-    const W = 280, H = 220, scale = 60;
+    const padding = 24;
+    const W = Math.max(280, Math.round(mapEl.clientWidth || 280));
+    const H = 220;
     const temp = {};
     photoPoints.forEach((p, i) => {
       const pos = positions[String(p.id)] || { x_m: Math.cos((i / Math.max(photoPoints.length, 1)) * Math.PI * 2) * 2, y_m: Math.sin((i / Math.max(photoPoints.length, 1)) * Math.PI * 2) * 2 };
       temp[p.id] = { x: Number(pos.x_m), y: Number(pos.y_m) };
     });
+    function computeMapTransform(points) {
+      if (!points.length) return { minX: -1, minY: -1, maxX: 1, maxY: 1, scale: 1, padding, width: W, height: H };
+      let minX = Math.min(...points.map((p) => p.x));
+      let maxX = Math.max(...points.map((p) => p.x));
+      let minY = Math.min(...points.map((p) => p.y));
+      let maxY = Math.max(...points.map((p) => p.y));
+      if (minX === maxX) { minX -= 1; maxX += 1; }
+      if (minY === maxY) { minY -= 1; maxY += 1; }
+      const scaleX = (W - padding * 2) / (maxX - minX);
+      const scaleY = (H - padding * 2) / (maxY - minY);
+      const scale = Math.max(0.0001, Math.min(scaleX, scaleY)) * mapZoom;
+      return { minX, minY, maxX, maxY, scale, padding, width: W, height: H };
+    }
+    function worldToScreen(x, y, transform) {
+      return { sx: transform.padding + ((x - transform.minX) * transform.scale), sy: transform.padding + ((y - transform.minY) * transform.scale) };
+    }
+    function screenToWorld(sx, sy, transform) {
+      return { x: transform.minX + ((sx - transform.padding) / transform.scale), y: transform.minY + ((sy - transform.padding) / transform.scale) };
+    }
+    const transform = computeMapTransform(Object.values(temp));
     mapEl.innerHTML = `<svg class="tour-map-svg" viewBox="0 0 ${W} ${H}"></svg>`;
     const svg = mapEl.querySelector('svg');
-    const toPx = (m) => (W / 2) + (m * scale); const toPy = (m) => (H / 2) - (m * scale);
-    autoEdges.forEach((l) => { if (!temp[l.from_photo_point_id] || !temp[l.to_photo_point_id]) return; const a = temp[l.from_photo_point_id], b = temp[l.to_photo_point_id]; const line = document.createElementNS('http://www.w3.org/2000/svg', 'line'); line.setAttribute('x1', toPx(a.x)); line.setAttribute('y1', toPy(a.y)); line.setAttribute('x2', toPx(b.x)); line.setAttribute('y2', toPy(b.y)); line.setAttribute('class', 'tour-map-edge'); svg.appendChild(line); });
-    links.forEach((l) => { if (!temp[l.from_photo_point_id] || !temp[l.to_photo_point_id]) return; const a = temp[l.from_photo_point_id], b = temp[l.to_photo_point_id]; const line = document.createElementNS('http://www.w3.org/2000/svg', 'line'); line.setAttribute('x1', toPx(a.x)); line.setAttribute('y1', toPy(a.y)); line.setAttribute('x2', toPx(b.x)); line.setAttribute('y2', toPy(b.y)); line.setAttribute('class', 'tour-map-link'); svg.appendChild(line); });
+    autoEdges.forEach((l) => { if (!temp[l.from_photo_point_id] || !temp[l.to_photo_point_id]) return; const a = temp[l.from_photo_point_id], b = temp[l.to_photo_point_id]; const aa = worldToScreen(a.x, a.y, transform); const bb = worldToScreen(b.x, b.y, transform); const line = document.createElementNS('http://www.w3.org/2000/svg', 'line'); line.setAttribute('x1', aa.sx); line.setAttribute('y1', aa.sy); line.setAttribute('x2', bb.sx); line.setAttribute('y2', bb.sy); line.setAttribute('class', 'tour-map-edge'); svg.appendChild(line); });
+    links.forEach((l) => { if (!temp[l.from_photo_point_id] || !temp[l.to_photo_point_id]) return; const a = temp[l.from_photo_point_id], b = temp[l.to_photo_point_id]; const aa = worldToScreen(a.x, a.y, transform); const bb = worldToScreen(b.x, b.y, transform); const line = document.createElementNS('http://www.w3.org/2000/svg', 'line'); line.setAttribute('x1', aa.sx); line.setAttribute('y1', aa.sy); line.setAttribute('x2', bb.sx); line.setAttribute('y2', bb.sy); line.setAttribute('class', 'tour-map-link'); svg.appendChild(line); });
     photoPoints.forEach((p) => {
-      const pos = temp[p.id]; const cx = toPx(pos.x), cy = toPy(pos.y);
+      const pos = temp[p.id]; const screen = worldToScreen(pos.x, pos.y, transform); const cx = screen.sx, cy = screen.sy;
       const src = (positions[String(p.id)]?.source || 'MANUAL');
       const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', 8); c.setAttribute('class', 'tour-map-point source-' + src + (photoPoints[currentIndex]?.id === p.id ? ' active' : '')); c.dataset.id = String(p.id); svg.appendChild(c);
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text'); t.setAttribute('x', cx + 10); t.setAttribute('y', cy + 4); t.textContent = String(p.sequence_number ?? p.id); t.setAttribute('fill', '#e5e7eb'); t.setAttribute('font-size', '11'); svg.appendChild(t);
@@ -106,11 +132,13 @@
         const nx = Math.max(8, Math.min(W - 8, nxRaw));
         const ny = Math.max(8, Math.min(H - 8, nyRaw));
         c.setAttribute('cx', nx); c.setAttribute('cy', ny); t.setAttribute('x', nx + 10); t.setAttribute('y', ny + 4);
-        temp[p.id] = { x: (nx - W / 2) / scale, y: -(ny - H / 2) / scale };
+        const world = screenToWorld(nx, ny, transform);
+        temp[p.id] = { x: world.x, y: world.y };
       });
 
       window.addEventListener('mouseup', () => { if (!drag) return; drag = false; positions[String(p.id)] = { photo_point_id: p.id, x_m: temp[p.id].x, y_m: temp[p.id].y, z_m: 0, yaw_deg: 0, source: 'MANUAL' }; fetch('/api/tour_point_position_save.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), photo_point_id: Number(p.id), x_m: temp[p.id].x, y_m: temp[p.id].y, z_m: 0, yaw_deg: 0 }) }).catch(() => {}); renderMap(); });
     });
+    if (mapMetaEl) mapMetaEl.textContent = `Fit: ON · Zoom: ${Math.round(mapZoom * 100)}% · Points: ${photoPoints.length}`;
   }
 
   if (prevBtn) prevBtn.addEventListener('click', () => currentIndex > 0 && openPoint(currentIndex - 1));
@@ -127,9 +155,13 @@
         return fetch('/api/tour_point_position_save.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), photo_point_id: Number(p.id), x_m: x, y_m: y, z_m: 0, yaw_deg: 0 }) }).catch(() => {});
       });
       await Promise.all(requests);
+      mapZoom = 1.0;
       renderMap();
     });
   }
+  if (mapFitBtn) mapFitBtn.addEventListener('click', () => { mapZoom = 1.0; renderMap(); });
+  if (mapZoomInBtn) mapZoomInBtn.addEventListener('click', () => { mapZoom = Math.min(mapZoom * 1.2, 5); renderMap(); });
+  if (mapZoomOutBtn) mapZoomOutBtn.addEventListener('click', () => { mapZoom = Math.max(mapZoom / 1.2, 0.3); renderMap(); });
 
   async function loadTour() {
     const r = await fetch('/api/tour_session.php?session_id=' + encodeURIComponent(sessionId), { credentials: 'same-origin', headers: { Accept: 'application/json' } });
@@ -149,6 +181,7 @@
         const data = await r.json();
         if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
         alert('Авторасстановка выполнена. Позиции обновлены.');
+        mapZoom = 1.0;
         await loadTour();
       } catch (err) {
         alert('Ошибка авторасстановки: ' + (err.message || 'unknown_error'));

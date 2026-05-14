@@ -48,12 +48,16 @@
 
       <div class="tour-card">
         <div class="tour-section-title">Карта точек</div>
-        <div class="mb-2">
+        <div class="tour-map-controls">
           <button type="button" id="tourMapReset" class="btn btn-sm btn-outline-light">Сбросить расположение</button>
           <button type="button" id="tourAutoMapBtn" class="btn btn-sm btn-outline-info">Авторасставить по меткам</button>
           <button type="button" id="tourAutoMapOverwriteManualBtn" class="btn btn-sm btn-outline-warning">Перезаписать ручные позиции</button>
+          <button type="button" id="tourMapFitBtn" class="btn btn-sm btn-outline-light">Вписать</button>
+          <button type="button" id="tourMapZoomOutBtn" class="btn btn-sm btn-outline-light">−</button>
+          <button type="button" id="tourMapZoomInBtn" class="btn btn-sm btn-outline-light">+</button>
         </div>
         <div id="tourMap" class="tour-map"></div>
+        <div id="tourMapMeta" class="tour-map-meta"></div>
         <div class="tour-map-legend">
           <span><i class="dot manual"></i> Manual</span>
           <span><i class="dot cov"></i> Marker co-visibility</span>
