@@ -5,7 +5,7 @@ if (PHP_SAPI !== 'cli') {
     exit("CLI only\n");
 }
 
-require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/../www/bootstrap.php';
 
 function parse_limit(array $argv): int {
     $limit = 1;

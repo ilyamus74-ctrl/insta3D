@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-13 20:09:18
+/* Smarty version 5.3.1, created on 2026-05-14 09:57:41
   from 'file:maklertour_order.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a04da6ee8ffd8_19171983',
+  'unifunc' => 'content_6a059c959fc408_37022474',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '8a2d61e62d148c6ae1204a37e003257928b7557b' => 
     array (
       0 => 'maklertour_order.html',
-      1 => 1778702888,
+      1 => 1778752389,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a04da6ee8ffd8_19171983 (\Smarty\Template $_smarty_tpl) {
+function content_6a059c959fc408_37022474 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -323,8 +323,10 @@ $_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
 </div>
                 <div><strong>warning text:</strong> <?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('job')['warning_text'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
 </div>
-                <?php if ($_smarty_tpl->getValue('job')['metric_status'] == 'NO_MARKERS') {?>
-                  <div class="alert alert-warning mt-3 mb-0">Метки не обнаружены. Точная геометрия и размеры не гарантируются.</div>
+                <div><strong>error text:</strong> <?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('job')['error_text'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
+</div>
+                <?php if ($_smarty_tpl->getValue('job')['status'] == 'PROCESSED' && $_smarty_tpl->getValue('job')['metric_status'] == 'NO_MARKERS') {?>
+                  <div class="alert alert-warning mt-3 mb-0">Метки не обнаружены или detector ещё не выполнил распознавание. Точная геометрия и размеры не гарантируются.</div>
                 <?php } elseif ($_smarty_tpl->getValue('job')['metric_status'] == 'METRIC_READY') {?>
                   <div class="alert alert-success mt-3 mb-0">Метки обнаружены. Данные подходят для метрической реконструкции.</div>
                 <?php }?>
@@ -333,6 +335,13 @@ $_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
           <?php } else { ?>
             <div class="text-muted">Обработка ещё не запускалась.</div>
           <?php }?>
+          <form method="post" action="/order.php?id=<?php echo $_smarty_tpl->getValue('order')['id'];?>
+" class="mt-3">
+            <input type="hidden" name="action" value="create_processing_job_web">
+            <input type="hidden" name="capture_session_id" value="<?php echo $_smarty_tpl->getValue('s')['id'];?>
+">
+            <button type="submit" class="btn btn-outline-primary btn-sm">Запустить обработку меток</button>
+          </form>
         </div>
 
       </div>
