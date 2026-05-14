@@ -107,6 +107,11 @@ function api_upsert_marker_processing_job(mysqli $dbcnx, int $orderId, int $capt
         (session_id, order_id, job_type, status, metric_status, marker_expected, marker_kit_id, marker_dictionary, marker_size_m)
         VALUES (?, ?, 'MARKER_DETECTION', 'QUEUED', 'UNKNOWN', 1, 'maklertour_kit_v1', 'APRILTAG_36H11', 0.1600)
         ON DUPLICATE KEY UPDATE
+            status = 'QUEUED',
+            metric_status = 'UNKNOWN',
+            markers_detected_count = 0,
+            warning_text = NULL,
+            error_text = NULL,
             updated_at = NOW(6)
     ");
 
@@ -830,6 +835,11 @@ if ($action === 'create_processing_job') {
         VALUES
             (?, ?, ?, 'QUEUED', 'UNKNOWN', 1, 'maklertour_kit_v1', 'APRILTAG_36H11', 0.1600)
         ON DUPLICATE KEY UPDATE
+            status = 'QUEUED',
+            metric_status = 'UNKNOWN',
+            markers_detected_count = 0,
+            warning_text = NULL,
+            error_text = NULL,
             updated_at = NOW(6)
     ");
     if (!$stmt) {
