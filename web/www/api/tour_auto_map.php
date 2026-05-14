@@ -4,6 +4,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/../bootstrap.php';
 
 header('Content-Type: application/json; charset=utf-8');
+const AUTO_ALGORITHM = 'MARKER_SEQUENCE_COVISIBILITY_V1';
+$MIN_CONFIDENCE = 30.0;
 
 auth_require_login();
 
@@ -51,11 +53,32 @@ if (!can_view_order_auto($session, $userId, $role)) auto_map_json(['ok' => false
 
 $photoPoints = [];
 $photoPointIds = [];
-$stmt = $dbcnx->prepare("SELECT id, name FROM photo_points WHERE session_id = ? ORDER BY COALESCE(sequence_number,999999), created_at, id");
+$stmt = $dbcnx->prepare("SELECT id, name, sequence_number FROM photo_points WHERE session_id = ? ORDER BY id ASC");
 $stmt->bind_param('i', $sessionId); $stmt->execute();
 $rs = $stmt->get_result();
-while ($row = $rs->fetch_assoc()) { $id = (int)$row['id']; $photoPoints[$id] = ['id'=>$id,'name'=>(string)($row['name'] ?: ('Point #'.$id))]; $photoPointIds[] = $id; }
+while ($row = $rs->fetch_assoc()) {
+    $id = (int)$row['id'];
+    $name = (string)($row['name'] ?: ('Point #' . $id));
+    $fallbackOrder = null;
+    if (preg_match('/(\d+)/u', $name, $m)) $fallbackOrder = (int)$m[1];
+    $photoPoints[$id] = ['id' => $id, 'name' => $name, 'sequence_number' => $row['sequence_number'] !== null ? (int)$row['sequence_number'] : null, 'fallback_order' => $fallbackOrder];
+}
 $stmt->close();
+if (!$photoPoints) auto_map_json(['ok' => true, 'session_id' => $sessionId, 'algorithm' => AUTO_ALGORITHM, 'confidence_threshold' => $MIN_CONFIDENCE, 'photo_points_count' => 0, 'positioned_count' => 0, 'markers_used' => [], 'marker_weights' => [], 'positions' => [], 'edges' => [], 'warnings' => ['No photo points found']]);
+
+$ordered = array_values($photoPoints);
+usort($ordered, static function (array $a, array $b): int {
+    $aSeq = $a['sequence_number']; $bSeq = $b['sequence_number'];
+    if ($aSeq !== null && $bSeq !== null && $aSeq !== $bSeq) return $aSeq <=> $bSeq;
+    if ($aSeq !== null && $bSeq === null) return -1;
+    if ($aSeq === null && $bSeq !== null) return 1;
+    $aF = $a['fallback_order']; $bF = $b['fallback_order'];
+    if ($aF !== null && $bF !== null && $aF !== $bF) return $aF <=> $bF;
+    if ($aF !== null && $bF === null) return -1;
+    if ($aF === null && $bF !== null) return 1;
+    return $a['id'] <=> $b['id'];
+});
+$photoPointIds = array_map(static fn(array $p): int => (int)$p['id'], $ordered);
 
 $warnings = [];
 $markersByPoint = [];
@@ -63,8 +86,8 @@ foreach ($photoPointIds as $id) $markersByPoint[$id] = [];
 $detCount = [];
 $confSum = [];
 
-$stmt = $dbcnx->prepare("SELECT source_id, marker_id, confidence FROM marker_detections WHERE session_id = ? AND source_type = 'PHOTO_POINT'");
-$stmt->bind_param('i', $sessionId); $stmt->execute();
+$stmt = $dbcnx->prepare("SELECT source_id, marker_id, confidence FROM marker_detections WHERE session_id = ? AND source_type = 'PHOTO_POINT' AND confidence >= ?");
+$stmt->bind_param('id', $sessionId, $MIN_CONFIDENCE); $stmt->execute();
 $rs = $stmt->get_result();
 while ($row = $rs->fetch_assoc()) {
     $pid = (int)$row['source_id'];
@@ -89,63 +112,43 @@ foreach ($photoPointIds as $pid) {
         'avg_confidence' => ($detCount[$pid] ?? 0) > 0 ? (float)(($confSum[$pid] ?? 0) / $detCount[$pid]) : 0.0,
     ];
 }
+$df = [];
+foreach ($photoPointIds as $pid) foreach ($signatures[$pid]['markers'] as $mid) $df[$mid] = (int)($df[$mid] ?? 0) + 1;
+$totalPoints = count($photoPointIds);
+$idf = [];
+foreach ($df as $mid => $freq) $idf[$mid] = log((1 + $totalPoints) / (1 + $freq)) + 1.0;
+$weightedSimilarity = static function (array $aMarkers, array $bMarkers, array $idfWeights): array {
+    $inter = array_values(array_intersect($aMarkers, $bMarkers));
+    $union = array_values(array_unique(array_merge($aMarkers, $bMarkers)));
+    $wInter = 0.0; foreach ($inter as $m) $wInter += (float)($idfWeights[$m] ?? 1.0);
+    $wUnion = 0.0; foreach ($union as $m) $wUnion += (float)($idfWeights[$m] ?? 1.0);
+    return ['sim' => $wUnion > 0 ? $wInter / $wUnion : 0.0, 'shared' => $inter];
+};
 
-$edges = [];
-$adj = [];
-foreach ($photoPointIds as $a) $adj[$a] = [];
-for ($i = 0; $i < count($photoPointIds); $i++) {
-    for ($j = $i + 1; $j < count($photoPointIds); $j++) {
-        $a = $photoPointIds[$i]; $b = $photoPointIds[$j];
-        $am = $signatures[$a]['markers']; $bm = $signatures[$b]['markers'];
-        $inter = array_values(array_intersect($am, $bm));
-        if (!$inter) continue;
-        $union = array_values(array_unique(array_merge($am, $bm)));
-        $sim = count($inter) / max(count($union), 1);
-        $edges[] = ['from_photo_point_id'=>$a,'to_photo_point_id'=>$b,'shared_markers'=>$inter,'similarity'=>$sim];
-        $adj[$a][] = ['id'=>$b,'sim'=>$sim];
-        $adj[$b][] = ['id'=>$a,'sim'=>$sim];
+$positions = []; $edges = [];
+$baseSpacing = 1.5; $minSpacing = 0.7; $maxSpacing = 2.2; $x = 0.0;
+for ($i = 0; $i < $totalPoints; $i++) {
+    $pid = $photoPointIds[$i];
+    $markers = $signatures[$pid]['markers'];
+    $source = count($markers) > 0 ? 'MARKER_SEQUENCE_COVISIBILITY' : 'AUTO_SEQUENCE_NO_MARKERS';
+    $y = 0.0;
+    if ($i > 0) {
+        $prev = $photoPointIds[$i - 1];
+        $simData = $weightedSimilarity($signatures[$prev]['markers'], $markers, $idf);
+        $sim = (float)$simData['sim'];
+        $spacing = $baseSpacing * (1.4 - min($sim, 0.8));
+        $spacing = max($minSpacing, min($maxSpacing, $spacing));
+        $x += $spacing;
+        $edges[] = ['from_photo_point_id' => $prev, 'to_photo_point_id' => $pid, 'similarity' => round($sim, 4), 'shared_markers' => array_values($simData['shared'])];
+        if ($sim < 0.2) $y = ($i % 2 === 0) ? 0.35 : -0.35;
     }
-}
-
-$positions = [];
-$visited = [];
-$baseDistance = 1.5;
-$rowIndex = 0;
-$clusterGap = 6.0;
-foreach ($photoPointIds as $start) {
-    if (isset($visited[$start]) || count($signatures[$start]['markers']) === 0) continue;
-    $queue = [$start];
-    $visited[$start] = true;
-    $order = [];
-    while ($queue) {
-        $cur = array_shift($queue); $order[] = $cur;
-        usort($adj[$cur], static fn($x,$y) => $y['sim'] <=> $x['sim']);
-        foreach ($adj[$cur] as $n) if (!isset($visited[$n['id']])) { $visited[$n['id']] = true; $queue[] = $n['id']; }
-    }
-    $x = 0.0; $y = -$rowIndex * $clusterGap;
-    $prev = null;
-    foreach ($order as $pid) {
-        if ($prev !== null) {
-            $sim = 0.0;
-            foreach ($adj[$prev] as $n) if ($n['id'] === $pid) { $sim = (float)$n['sim']; break; }
-            $x += $baseDistance / max($sim, 0.2);
-        }
-        $positions[$pid] = ['photo_point_id'=>$pid,'x_m'=>round($x,3),'y_m'=>round($y,3),'source'=>'MARKER_COVISIBILITY','markers'=>$signatures[$pid]['markers']];
-        $prev = $pid;
-    }
-    $rowIndex++;
-}
-$noMarkerX = 0.0;
-foreach ($photoPointIds as $pid) {
-    if (isset($positions[$pid])) continue;
-    $positions[$pid] = ['photo_point_id'=>$pid,'x_m'=>round($noMarkerX,3),'y_m'=>round(-$rowIndex * $clusterGap,3),'source'=>'AUTO_COVISIBILITY_NO_MARKERS','markers'=>[]];
-    $noMarkerX += $baseDistance;
+    $positions[$pid] = ['photo_point_id' => $pid, 'x_m' => round($x, 3), 'y_m' => $y, 'source' => $source, 'markers' => $markers, 'order_index' => $i];
 }
 
 $dbcnx->begin_transaction();
 try {
     if ($overwrite) {
-        $sources = "('MARKER_COVISIBILITY','AUTO_COVISIBILITY_NO_MARKERS'" . ($overwriteManual ? ",'MANUAL'" : '') . ')';
+        $sources = "('MARKER_COVISIBILITY','AUTO_COVISIBILITY_NO_MARKERS','MARKER_SEQUENCE_COVISIBILITY','AUTO_SEQUENCE_NO_MARKERS'" . ($overwriteManual ? ",'MANUAL'" : '') . ')';
         $sql = "DELETE FROM tour_point_positions WHERE session_id = ? AND source IN $sources";
         $stmt = $dbcnx->prepare($sql); $stmt->bind_param('i', $sessionId); $stmt->execute(); $stmt->close();
     }
@@ -168,4 +171,5 @@ try {
 }
 
 ksort($positions);
-auto_map_json(['ok'=>true,'session_id'=>$sessionId,'photo_points_count'=>count($photoPointIds),'positioned_count'=>count($positions),'markers_used'=>array_map('intval', array_keys($markersUsed)),'edges_count'=>count($edges),'warnings'=>$warnings,'positions'=>$positions,'edges'=>$edges]);
+$markerWeights = []; foreach ($idf as $mid => $w) $markerWeights[(string)$mid] = round($w, 4);
+auto_map_json(['ok'=>true,'session_id'=>$sessionId,'algorithm'=>AUTO_ALGORITHM,'confidence_threshold'=>$MIN_CONFIDENCE,'photo_points_count'=>count($photoPointIds),'positioned_count'=>count($positions),'markers_used'=>array_map('intval', array_keys($markersUsed)),'marker_weights'=>$markerWeights,'warnings'=>$warnings,'positions'=>$positions,'edges'=>$edges]);

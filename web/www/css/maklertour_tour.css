@@ -137,6 +137,10 @@
   margin-top: 4px;
 }
 
+.tour-point-markers { 
+  color:#94a3b8; font-size:11px; margin-top:3px; 
+}
+
 .tour-topbar {
   position: absolute;
   z-index: 20;
@@ -216,6 +220,8 @@
 .tour-map-point.source-MANUAL { fill:#22d3ee; stroke:#155e75; }
 .tour-map-point.source-MARKER_COVISIBILITY { fill:#86efac; stroke:#166534; }
 .tour-map-point.source-AUTO_COVISIBILITY_NO_MARKERS { fill:#fbbf24; stroke:#92400e; }
+.tour-map-point.source-MARKER_SEQUENCE_COVISIBILITY { fill:#86efac; stroke:#166534; }
+.tour-map-point.source-AUTO_SEQUENCE_NO_MARKERS { fill:#fbbf24; stroke:#92400e; }
 .tour-map-legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; font-size:12px; color:#cbd5e1; }
 .tour-map-legend .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:4px; }
 .tour-map-legend .dot.manual { background:#22d3ee; }

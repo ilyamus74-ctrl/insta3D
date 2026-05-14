@@ -107,7 +107,8 @@ $photoPointIds = array_map(static fn(array $pp): int => (int)$pp['id'], $photoPo
 $photoPointSet = array_fill_keys($photoPointIds, true);
 $markerMap = [];
 $markerCount = [];
-$stmt = $dbcnx->prepare("SELECT source_id, marker_id FROM marker_detections WHERE session_id = ? AND source_type = 'PHOTO_POINT'");
+$markerConfSum = [];
+$stmt = $dbcnx->prepare("SELECT source_id, marker_id, confidence FROM marker_detections WHERE session_id = ? AND source_type = 'PHOTO_POINT'");
 if ($stmt) {
     $stmt->bind_param('i', $sessionId);
     $stmt->execute();
@@ -118,6 +119,7 @@ if ($stmt) {
         $mid = (int)$row['marker_id'];
         $markerMap[$pid][$mid] = true;
         $markerCount[$pid] = (int)($markerCount[$pid] ?? 0) + 1;
+        $markerConfSum[$pid] = (float)($markerConfSum[$pid] ?? 0.0) + (float)$row['confidence'];
     }
     $stmt->close();
 }
@@ -128,6 +130,7 @@ foreach ($photoPoints as &$pp) {
     $pp['markers'] = $markers;
     $pp['marker_labels'] = array_map(static fn(int $id): string => 'MT-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT), $markers);
     $pp['marker_detections_count'] = (int)($markerCount[$pid] ?? 0);
+    $pp['avg_marker_confidence'] = ($pp['marker_detections_count'] > 0) ? round(((float)($markerConfSum[$pid] ?? 0.0) / $pp['marker_detections_count']), 2) : 0.0;
 }
 unset($pp);
 
@@ -180,16 +183,20 @@ $stmt = $dbcnx->prepare("SELECT source_type, COUNT(*) AS cnt FROM marker_detecti
 if ($stmt) { $stmt->bind_param('i',$sessionId); $stmt->execute(); $rs=$stmt->get_result(); while($row=$rs->fetch_assoc()) $sourceCounts[(string)$row['source_type']] = (int)$row['cnt']; $stmt->close(); }
 $labels = array_map(static fn(int $id): string => 'MT-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT), $markerIds);
 
-$manualPositionsCount = 0; $markerCovPositionsCount = 0; $noMarkerPositionsCount = 0;
+$manualPositionsCount = 0; $markerCovPositionsCount = 0; $noMarkerPositionsCount = 0; $autoPositionsCount = 0;
 foreach ($positions as $pos) {
     $src = (string)($pos['source'] ?? 'UNKNOWN');
     if ($src === 'MANUAL') $manualPositionsCount++;
-    if ($src === 'MARKER_COVISIBILITY') $markerCovPositionsCount++;
-    if ($src === 'AUTO_COVISIBILITY_NO_MARKERS') $noMarkerPositionsCount++;
+    if (in_array($src, ['MARKER_COVISIBILITY', 'MARKER_SEQUENCE_COVISIBILITY'], true)) $markerCovPositionsCount++;
+    if (in_array($src, ['AUTO_COVISIBILITY_NO_MARKERS', 'AUTO_SEQUENCE_NO_MARKERS'], true)) $noMarkerPositionsCount++;
+    if (in_array($src, ['MARKER_COVISIBILITY', 'AUTO_COVISIBILITY_NO_MARKERS', 'MARKER_SEQUENCE_COVISIBILITY', 'AUTO_SEQUENCE_NO_MARKERS'], true)) $autoPositionsCount++;
 }
+$algorithm = ($markerCovPositionsCount + $noMarkerPositionsCount) > 0 ? 'MARKER_SEQUENCE_COVISIBILITY_V1' : 'NONE';
 $autoMapInfo = [
+    'algorithm' => $algorithm,
     'has_auto_positions' => ($markerCovPositionsCount + $noMarkerPositionsCount) > 0,
     'manual_positions_count' => $manualPositionsCount,
+    'auto_positions_count' => $autoPositionsCount,
     'marker_cov_positions_count' => $markerCovPositionsCount,
     'no_marker_positions_count' => $noMarkerPositionsCount,
 ];

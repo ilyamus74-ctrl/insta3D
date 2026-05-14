@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-14 16:59:52
+/* Smarty version 5.3.1, created on 2026-05-14 17:26:23
   from 'file:maklertour_tour.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a05ff88d85413_00045483',
+  'unifunc' => 'content_6a0605bff39be3_96188496',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '0e5eded05bc37eff5c2407f99950b26d18b2f3c3' => 
     array (
       0 => 'maklertour_tour.html',
-      1 => 1778777723,
+      1 => 1778779060,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a05ff88d85413_00045483 (\Smarty\Template $_smarty_tpl) {
+function content_6a0605bff39be3_96188496 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -85,6 +85,7 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
         <div class="mb-2">
           <button type="button" id="tourMapReset" class="btn btn-sm btn-outline-light">Сбросить расположение</button>
           <button type="button" id="tourAutoMapBtn" class="btn btn-sm btn-outline-info">Авторасставить по меткам</button>
+          <button type="button" id="tourAutoMapOverwriteManualBtn" class="btn btn-sm btn-outline-warning">Перезаписать ручные позиции</button>
         </div>
         <div id="tourMap" class="tour-map"></div>
         <div class="tour-map-legend">
@@ -93,7 +94,7 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
           <span><i class="dot nomarker"></i> No markers</span>
         </div>
         <div class="tour-muted">Перетащите точки для ручного размещения.<br>
-          Авторасстановка по видимости меток, без метрической точности.</div>
+          Авторасстановка v1: порядок точек + видимость меток. Без метрической точности.</div>
       </div>
 
       <div class="tour-card">

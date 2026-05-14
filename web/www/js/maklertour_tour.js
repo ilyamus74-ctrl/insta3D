@@ -12,6 +12,7 @@
   const mapEl = document.getElementById('tourMap');
   const mapResetBtn = document.getElementById('tourMapReset');
   const autoMapBtn = document.getElementById('tourAutoMapBtn');
+  const autoMapOverwriteManualBtn = document.getElementById('tourAutoMapOverwriteManualBtn');
   const viewerArea = document.querySelector('.tour-viewer-area');
   const panoramaEl = document.getElementById('panorama');
   let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0, autoEdges = [];
@@ -67,7 +68,8 @@
       const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'tour-point'; btn.dataset.index = String(index);
       const seq = p.sequence_number ?? '-'; const room = p.room_name || '-';
       const thumb = p.preview_url ? `<img class="tour-point-thumb" src="${escapeHtml(p.preview_url)}" alt="">` : '<div class="tour-point-thumb"></div>';
-      btn.innerHTML = `${thumb}<div class="tour-point-body"><div class="tour-point-name">${escapeHtml(p.name || ('Point #' + p.id))}</div><div class="tour-point-meta">#${escapeHtml(seq)} · ${escapeHtml(room)}</div></div>`;
+      const markerLine = `${escapeHtml((p.marker_labels || []).join(', ') || 'без меток')} · conf ${escapeHtml((Number(p.avg_marker_confidence || 0)).toFixed(2))}`;
+      btn.innerHTML = `${thumb}<div class="tour-point-body"><div class="tour-point-name">${escapeHtml(p.name || ('Point #' + p.id))}</div><div class="tour-point-meta">#${escapeHtml(seq)} · ${escapeHtml(room)}</div><div class="tour-point-markers">${markerLine}</div></div>`;
       btn.addEventListener('click', () => openPoint(index)); pointsEl.appendChild(btn);
     });
     openPoint(0);
@@ -92,7 +94,7 @@
       const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', 8); c.setAttribute('class', 'tour-map-point source-' + src + (photoPoints[currentIndex]?.id === p.id ? ' active' : '')); c.dataset.id = String(p.id); svg.appendChild(c);
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text'); t.setAttribute('x', cx + 10); t.setAttribute('y', cy + 4); t.textContent = String(p.sequence_number ?? p.id); t.setAttribute('fill', '#e5e7eb'); t.setAttribute('font-size', '11'); svg.appendChild(t);
       c.addEventListener('click', () => openPointByPhotoPointId(p.id));
-      c.setAttribute('title', `${p.name || ('Point #' + p.id)} | ${(p.marker_labels || []).join(', ') || 'No markers'} | ${src} | x=${pos.x.toFixed(2)} y=${pos.y.toFixed(2)}`);
+      c.setAttribute('title', `${p.name || ('Point #' + p.id)} | markers: ${(p.marker_labels || []).join(', ') || 'No markers'} | detections: ${p.marker_detections_count || 0} | avg confidence: ${Number(p.avg_marker_confidence || 0).toFixed(2)} | source: ${src}`);
       let drag = false;
       c.addEventListener('mousedown', (e) => { drag = true; e.preventDefault(); });
 
@@ -140,11 +142,10 @@
     renderPoints();
   }
 
-  if (autoMapBtn) {
-    autoMapBtn.addEventListener('click', async () => {
-      autoMapBtn.disabled = true;
+  async function runAutoMap(overwriteManual) {
+      autoMapBtn.disabled = true; if (autoMapOverwriteManualBtn) autoMapOverwriteManualBtn.disabled = true;
       try {
-        const r = await fetch('/api/tour_auto_map.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), overwrite: true }) });
+        const r = await fetch('/api/tour_auto_map.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), overwrite: true, overwrite_manual: !!overwriteManual }) });
         const data = await r.json();
         if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
         alert('Авторасстановка выполнена. Позиции обновлены.');
@@ -152,10 +153,11 @@
       } catch (err) {
         alert('Ошибка авторасстановки: ' + (err.message || 'unknown_error'));
       } finally {
-        autoMapBtn.disabled = false;
+        autoMapBtn.disabled = false; if (autoMapOverwriteManualBtn) autoMapOverwriteManualBtn.disabled = false;
       }
-    });
   }
+  if (autoMapBtn) autoMapBtn.addEventListener('click', async () => runAutoMap(false));
+  if (autoMapOverwriteManualBtn) autoMapOverwriteManualBtn.addEventListener('click', async () => runAutoMap(true));
 
   loadTour().catch((err) => { pointsEl.innerHTML = '<div class="tour-muted">Ошибка загрузки тура: ' + escapeHtml(err.message) + '</div>'; });
 })();
