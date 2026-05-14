@@ -10,6 +10,7 @@
   const nextBtn = document.getElementById('tourNextPoint');
 
   const mapEl = document.getElementById('tourMap');
+  const mapResetBtn = document.getElementById('tourMapReset');
   const viewerArea = document.querySelector('.tour-viewer-area');
   const panoramaEl = document.getElementById('panorama');
   let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0;
@@ -90,7 +91,18 @@
       c.addEventListener('click', () => openPointByPhotoPointId(p.id));
       let drag = false;
       c.addEventListener('mousedown', (e) => { drag = true; e.preventDefault(); });
-      window.addEventListener('mousemove', (e) => { if (!drag) return; const r = svg.getBoundingClientRect(); const nx = e.clientX - r.left; const ny = e.clientY - r.top; c.setAttribute('cx', nx); c.setAttribute('cy', ny); t.setAttribute('x', nx + 10); t.setAttribute('y', ny + 4); temp[p.id] = { x: (nx - W / 2) / scale, y: -(ny - H / 2) / scale }; });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!drag) return;
+        const r = svg.getBoundingClientRect();
+        const nxRaw = e.clientX - r.left;
+        const nyRaw = e.clientY - r.top;
+        const nx = Math.max(8, Math.min(W - 8, nxRaw));
+        const ny = Math.max(8, Math.min(H - 8, nyRaw));
+        c.setAttribute('cx', nx); c.setAttribute('cy', ny); t.setAttribute('x', nx + 10); t.setAttribute('y', ny + 4);
+        temp[p.id] = { x: (nx - W / 2) / scale, y: -(ny - H / 2) / scale };
+      });
+
       window.addEventListener('mouseup', () => { if (!drag) return; drag = false; positions[String(p.id)] = { photo_point_id: p.id, x_m: temp[p.id].x, y_m: temp[p.id].y, z_m: 0, yaw_deg: 0, source: 'MANUAL' }; fetch('/api/tour_point_position_save.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), photo_point_id: Number(p.id), x_m: temp[p.id].x, y_m: temp[p.id].y, z_m: 0, yaw_deg: 0 }) }).catch(() => {}); renderMap(); });
     });
   }
@@ -99,6 +111,19 @@
   if (nextBtn) nextBtn.addEventListener('click', () => currentIndex < photoPoints.length - 1 && openPoint(currentIndex + 1));
   document.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft') currentIndex > 0 && openPoint(currentIndex - 1); if (e.key === 'ArrowRight') currentIndex < photoPoints.length - 1 && openPoint(currentIndex + 1); });
 
+  if (mapResetBtn) {
+    mapResetBtn.addEventListener('click', async () => {
+      const count = Math.max(photoPoints.length, 1);
+      const requests = photoPoints.map((p, i) => {
+        const x = Math.cos((i / count) * Math.PI * 2) * 2;
+        const y = Math.sin((i / count) * Math.PI * 2) * 2;
+        positions[String(p.id)] = { photo_point_id: p.id, x_m: x, y_m: y, z_m: 0, yaw_deg: 0, source: 'MANUAL' };
+        return fetch('/api/tour_point_position_save.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), photo_point_id: Number(p.id), x_m: x, y_m: y, z_m: 0, yaw_deg: 0 }) }).catch(() => {});
+      });
+      await Promise.all(requests);
+      renderMap();
+    });
+  }
 
   fetch('/api/tour_session.php?session_id=' + encodeURIComponent(sessionId), { credentials: 'same-origin', headers: { Accept: 'application/json' } })
     .then(async (r) => ({ ok: r.ok, data: await r.json(), status: r.status }))

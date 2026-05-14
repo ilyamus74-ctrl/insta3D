@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-14 16:12:28
+/* Smarty version 5.3.1, created on 2026-05-14 16:26:53
   from 'file:maklertour_tour.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a05f46c692433_69947293',
+  'unifunc' => 'content_6a05f7cda33360_18545467',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '0e5eded05bc37eff5c2407f99950b26d18b2f3c3' => 
     array (
       0 => 'maklertour_tour.html',
-      1 => 1778774528,
+      1 => 1778775921,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a05f46c692433_69947293 (\Smarty\Template $_smarty_tpl) {
+function content_6a05f7cda33360_18545467 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -82,6 +82,9 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
 
       <div class="tour-card">
         <div class="tour-section-title">Карта точек</div>
+        <div class="mb-2">
+          <button type="button" id="tourMapReset" class="btn btn-sm btn-outline-light">Сбросить расположение</button>
+        </div>
         <div id="tourMap" class="tour-map"></div>
         <div class="tour-muted">Перетащите точки для ручного размещения.</div>
       </div>
