@@ -50,7 +50,7 @@ function viewer_panorama_path(?string $originalPath): string {
     $viewerPath = str_replace('/photos/originals/', '/photos/viewer/', $originalPath);
 
     if ($viewerPath !== $originalPath) {
-        $full = '/home/makler/web/storage/' . ltrim($viewerPath, '/');
+        $full = APP_STORAGE_DIR . '/' . ltrim($viewerPath, '/');
         if (is_file($full)) {
             return $viewerPath;
         }
@@ -119,6 +119,9 @@ $stmt = $dbcnx->prepare("
         preview_size_bytes,
         original_size_bytes,
         upload_state,
+        initial_yaw_deg,
+        initial_pitch_deg,
+        initial_hfov,
         created_at
     FROM photo_points
     WHERE session_id = ?
@@ -147,6 +150,9 @@ while ($p = $rs->fetch_assoc()) {
         'original_url' => media_url($p['original_storage_path'] ?? ''),
         'preview_size_bytes' => $p['preview_size_bytes'] !== null ? (int)$p['preview_size_bytes'] : null,
         'original_size_bytes' => $p['original_size_bytes'] !== null ? (int)$p['original_size_bytes'] : null,
+        'initial_yaw_deg' => isset($p['initial_yaw_deg']) ? (float)$p['initial_yaw_deg'] : 0.0,
+        'initial_pitch_deg' => isset($p['initial_pitch_deg']) ? (float)$p['initial_pitch_deg'] : 0.0,
+        'initial_hfov' => isset($p['initial_hfov']) ? (float)$p['initial_hfov'] : 100.0,
     ];
 }
 $stmt->close();

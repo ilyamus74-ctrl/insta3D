@@ -6,6 +6,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require_once __DIR__ . '/../www/bootstrap.php';
+require_once __DIR__ . '/../libs/tour_media_prepare.php';
 
 const DETECTOR_BINARY = '/home/makler/web/tools/apriltag_detector_cpp/build/detect_markers';
 
@@ -196,6 +197,13 @@ function process_one_job(mysqli $dbcnx): bool {
         return true;
     }
 
+    $viewerSummary = ensure_viewer_panoramas_for_session($dbcnx, $sessionId, $processingLog);
+    $viewerWarning = null;
+    if (($viewerSummary['failed_count'] ?? 0) > 0) {
+        $viewerWarning = 'Viewer panoramas were not generated for some/all photo points.';
+        append_log($processingLog, 'viewer summary=' . json_encode($viewerSummary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+
     $stmt = $dbcnx->prepare('DELETE FROM marker_detections WHERE session_id = ?');
     $stmt->bind_param('i', $sessionId);
     $stmt->execute();
@@ -237,6 +245,10 @@ function process_one_job(mysqli $dbcnx): bool {
         $warning = "Only {$uniqueCount} unique markers detected. Metric reconstruction may be unstable.";
     } else {
         $warning = 'No MaklerTour markers detected. Accurate geometry and dimensions are not guaranteed.';
+    }
+
+    if ($viewerWarning !== null) {
+        $warning = $warning ? ($warning . ' ' . $viewerWarning) : $viewerWarning;
     }
 
     $stmt = $dbcnx->prepare("UPDATE processing_jobs SET status='PROCESSED', metric_status=?, markers_detected_count=?, warning_text=?, error_text=NULL, updated_at=NOW(6) WHERE id=?");

@@ -62,9 +62,11 @@
         </div>
 
         <div>
-          <a class="btn btn-sm btn-outline-light" href="/order.php?id={$orderId}">
-            ← Назад к заявке
-          </a>
+          <div class="tour-nav-buttons">
+            <button type="button" id="tourPrevPoint" class="btn btn-sm btn-outline-light">← Предыдущая</button>
+            <button type="button" id="tourNextPoint" class="btn btn-sm btn-outline-light">Следующая →</button>
+            <a class="btn btn-sm btn-outline-light" href="/order.php?id={$orderId}">← Назад к заявке</a>
+          </div>
         </div>
       </div>
 

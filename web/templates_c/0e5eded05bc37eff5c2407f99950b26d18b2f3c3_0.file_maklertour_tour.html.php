@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-14 14:45:57
+/* Smarty version 5.3.1, created on 2026-05-14 15:25:05
   from 'file:maklertour_tour.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a05e02593f452_48593669',
+  'unifunc' => 'content_6a05e9519c9418_17128148',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '0e5eded05bc37eff5c2407f99950b26d18b2f3c3' => 
     array (
       0 => 'maklertour_tour.html',
-      1 => 1778769546,
+      1 => 1778771906,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a05e02593f452_48593669 (\Smarty\Template $_smarty_tpl) {
+function content_6a05e9519c9418_17128148 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -96,10 +96,12 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
         </div>
 
         <div>
-          <a class="btn btn-sm btn-outline-light" href="/order.php?id=<?php echo $_smarty_tpl->getValue('orderId');?>
-">
-            ← Назад к заявке
-          </a>
+          <div class="tour-nav-buttons">
+            <button type="button" id="tourPrevPoint" class="btn btn-sm btn-outline-light">← Предыдущая</button>
+            <button type="button" id="tourNextPoint" class="btn btn-sm btn-outline-light">Следующая →</button>
+            <a class="btn btn-sm btn-outline-light" href="/order.php?id=<?php echo $_smarty_tpl->getValue('orderId');?>
+">← Назад к заявке</a>
+          </div>
         </div>
       </div>
 

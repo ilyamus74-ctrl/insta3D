@@ -177,3 +177,30 @@
     min-height: 420px;
   }
 }
+
+
+.tour-point {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.tour-point-thumb {
+  width: 72px;
+  height: 42px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #020617;
+  flex-shrink: 0;
+  border: 1px solid #1f2937;
+}
+
+.tour-point-body {
+  min-width: 0;
+}
+
+.tour-nav-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
