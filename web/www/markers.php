@@ -8,6 +8,27 @@ const MARKER_KIT_ID = 'maklertour_kit_v1';
 const MARKER_COUNT = 30;
 const MARKER_SIZE_MM = 160;
 
+const PRINT_CALIBRATION_MIN = 0.90;
+const PRINT_CALIBRATION_MAX = 1.10;
+
+function marker_print_calibration(): float
+{
+    $raw = $_GET['cal'] ?? null;
+    if (!is_string($raw) || $raw === '') {
+        return 1.0;
+    }
+    if (!preg_match('/^\d+(?:[.,]\d+)?$/', $raw)) {
+        return 1.0;
+    }
+
+    $value = (float)str_replace(',', '.', $raw);
+    if ($value < PRINT_CALIBRATION_MIN || $value > PRINT_CALIBRATION_MAX) {
+        return 1.0;
+    }
+
+    return $value;
+}
+
 function marker_id_from_get(string $key): ?int
 {
     if (!isset($_GET[$key])) {
@@ -59,6 +80,7 @@ function marker_data_uri(int $id): ?string
 
     return 'data:image/png;base64,' . base64_encode($raw);
 }
+
 
 
 
@@ -217,6 +239,8 @@ if (isset($_GET['print']) && !$printAll && $printOneId === null) {
 
 if ($printAll || $printOneId !== null) {
     $ids = $printAll ? range(1, MARKER_COUNT) : [$printOneId];
+    $printCalibration = marker_print_calibration();
+    $printSizeMm = MARKER_SIZE_MM * $printCalibration;
     ?>
 <!doctype html>
 <html lang="ru">
@@ -226,7 +250,10 @@ if ($printAll || $printOneId !== null) {
     <style>
         @page { size: A4 portrait; margin: 10mm; }
         html, body { margin: 0; padding: 0; }
-        body { font-family: Arial, sans-serif; }
+        body {
+            font-family: Arial, sans-serif;
+            --print-size-mm: <?= htmlspecialchars(number_format($printSizeMm, 3, '.', ''), ENT_QUOTES, 'UTF-8') ?>mm;
+        }
         .marker-page {
             page-break-after: always;
             width: 190mm;
@@ -240,15 +267,15 @@ if ($printAll || $printOneId !== null) {
         }
         .marker-page:last-child { page-break-after: auto; }
         .marker-img {
-            width: 160mm;
-            height: 160mm;
+            width: var(--print-size-mm);
+            height: var(--print-size-mm);
             image-rendering: pixelated;
             object-fit: fill;
             border: 0;
         }
         .missing {
-            width: 160mm;
-            height: 160mm;
+            width: var(--print-size-mm);
+            height: var(--print-size-mm);
             border: 1px dashed #888;
             display: flex;
             align-items: center;
@@ -260,9 +287,9 @@ if ($printAll || $printOneId !== null) {
             box-sizing: border-box;
         }
         .meta { text-align: center; line-height: 1.5; font-size: 5mm; }
-        .ruler-160mm { width: 160mm; height: 0; border-top: 0.4mm solid #000; margin-top: 4mm; }
+        .ruler-160mm { width: var(--print-size-mm); height: 0; border-top: 0.4mm solid #000; margin-top: 4mm; }
         .ruler-label { font-size: 4mm; text-align: center; }
-        .gd-warning { width: 160mm; color: #b00020; text-align: center; font-size: 
+        .gd-warning { width: var(--print-size-mm); color: #b00020; text-align: center; font-size: 4mm; }
     </style>
 </head>
 <body>
@@ -275,7 +302,7 @@ if ($printAll || $printOneId !== null) {
             <div class="missing">source image missing</div>
         <?php endif; ?>
         <div class="ruler-160mm"></div>
-        <div class="ruler-label">Control line: 160 mm</div>
+        <div class="ruler-label">Control line: <?= htmlspecialchars(number_format($printSizeMm, 1, '.', ''), ENT_QUOTES, 'UTF-8') ?> mm</div>
         <?php if ($dataUri === null && !function_exists('imagecreatefrompng')): ?>
             <div class="gd-warning">GD extension required for calibrated print</div>
         <?php endif; ?>
@@ -284,7 +311,10 @@ if ($printAll || $printOneId !== null) {
             <div><?php echo marker_label($id); ?></div>
             <div>AprilTag 36h11</div>
             <div>ID: <?php echo $id; ?></div>
-            <div>Tag size: 160 mm</div>
+            <div>Tag size target: 160 mm</div>
+            <?php if (abs($printCalibration - 1.0) > 0.0001): ?>
+                <div>Print calibration applied: ×<?= htmlspecialchars(number_format($printCalibration, 4, '.', ''), ENT_QUOTES, 'UTF-8') ?> (print size <?= htmlspecialchars(number_format($printSizeMm, 1, '.', ''), ENT_QUOTES, 'UTF-8') ?> mm)</div>
+            <?php endif; ?>
             <div>Size is the outer square of the AprilTag after white border crop.</div>
         </div>
     </section>
@@ -320,7 +350,8 @@ if ($printAll || $printOneId !== null) {
     <p class="warn">Не использовать fit-to-page</p>
     <p class="warn">Если напечатанная метка меньше 160 mm, проверьте масштаб печати и отключите fit-to-page.</p>
 
-    <p><a href="/markers.php?print=all" target="_blank">Печать всего комплекта</a></p>
+    <p><a href="/markers.php?print=all&cal=1.022" target="_blank">Печать всего комплекта</a></p>
+    <p>Если у вас выходит 157 mm вместо 160 mm, используйте калибровку печати: <code>/markers.php?print=all&amp;cal=1.022</code>.</p>
 
     <table>
         <thead>
@@ -346,8 +377,8 @@ if ($printAll || $printOneId !== null) {
                         <span class="missing-small">source image missing</span>
                     <?php endif; ?>
                 </td>
-                <td><a href="/markers.php?print=<?php echo $id; ?>" target="_blank">Print</a></td>
-                <td><a href="/markers.php?img=<?php echo $id; ?>" target="_blank">Image</a></td>
+                <td><a href="/markers.php?print=<?php echo $id; ?>&cal=1.022" target="_blank">Print</a></td>
+                <td><a href="/markers.php?img=<?php echo $id; ?>&cal=1.022" target="_blank">Image</a></td>
             </tr>
         <?php endfor; ?>
         </tbody>

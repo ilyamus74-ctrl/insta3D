@@ -140,9 +140,39 @@ if($stmt){
   $stmt->close();
 }
 
+$markerDetectionsBySession = [];
+$stmt=$dbcnx->prepare("SELECT * FROM marker_detections WHERE session_id IN (SELECT id FROM capture_sessions WHERE order_id = ?) ORDER BY id DESC");
+if($stmt){
+  $stmt->bind_param('i',$orderId);
+  $stmt->execute();
+  $rs=$stmt->get_result();
+  while($d=$rs->fetch_assoc()){
+    $sid=(int)$d['session_id'];
+    if(!isset($markerDetectionsBySession[$sid])){ $markerDetectionsBySession[$sid]=[]; }
+    $markerDetectionsBySession[$sid][]=$d;
+  }
+  $stmt->close();
+}
+
 foreach($captureSessions as $idx=>$session){
   $sid=(int)$session['id'];
   $captureSessions[$idx]['processing_job']=$processingJobsBySession[$sid] ?? null;
+
+  $detections = $markerDetectionsBySession[$sid] ?? [];
+  $unique=[];
+  $sourceCounts=['PHOTO_POINT'=>0,'VIDEO_FRAME'=>0];
+  foreach($detections as $det){
+    $mid=(int)($det['marker_id'] ?? 0);
+    if($mid>0){ $unique[$mid]=true; }
+    $stype=(string)($det['source_type'] ?? '');
+    if(isset($sourceCounts[$stype])){ $sourceCounts[$stype]++; }
+  }
+  $markerIds=array_keys($unique);
+  sort($markerIds);
+  $captureSessions[$idx]['marker_detections']=$detections;
+  $captureSessions[$idx]['marker_unique_ids']=$markerIds;
+  $captureSessions[$idx]['marker_detections_count']=count($detections);
+  $captureSessions[$idx]['marker_source_counts']=$sourceCounts;
 }
 
 $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),'videos'=>count($videoScans)];

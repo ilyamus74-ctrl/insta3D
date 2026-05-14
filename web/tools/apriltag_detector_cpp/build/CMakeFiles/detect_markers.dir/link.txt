@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/detect_markers.dir/src/detect_markers.cpp.o -o detect_markers  /usr/lib64/libopencv_imgcodecs.so.4.9.0 -lapriltag /usr/lib64/libopencv_imgproc.so.4.9.0 /usr/lib64/libopencv_core.so.4.9.0

@@ -1,5 +1,5 @@
-#include <apriltag.h>
-#include <tag36h11.h>
+#include <apriltag/apriltag.h>
+#include <apriltag/tag36h11.h>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>

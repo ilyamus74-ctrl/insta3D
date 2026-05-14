@@ -212,6 +212,18 @@
                 <div><strong>processing status:</strong> <span class="badge bg-secondary">{$job.status|default:'-'|escape}</span></div>
                 <div><strong>metric status:</strong> <span class="badge bg-secondary">{$job.metric_status|default:'-'|escape}</span></div>
                 <div><strong>markers detected count:</strong> {$job.markers_detected_count|default:0}</div>
+                <div class="mt-2"><strong>unique marker IDs found:</strong>
+                  {if $s.marker_unique_ids|@count > 0}
+                    {foreach from=$s.marker_unique_ids item=mid name=ml}
+                      MT-{$mid|string_format:"%03d"}{if !$smarty.foreach.ml.last}, {/if}
+                    {/foreach}
+                  {else}
+                    -
+                  {/if}
+                </div>
+                <div><strong>total detections:</strong> {$s.marker_detections_count|default:0}</div>
+                <div><strong>PHOTO_POINT count:</strong> {$s.marker_source_counts.PHOTO_POINT|default:0}</div>
+                <div><strong>VIDEO_FRAME count:</strong> {$s.marker_source_counts.VIDEO_FRAME|default:0}</div>
                 <div><strong>warning text:</strong> {$job.warning_text|default:'-'|escape}</div>
                 <div><strong>error text:</strong> {$job.error_text|default:'-'|escape}</div>
                 {if $job.status == 'PROCESSED' && $job.metric_status == 'NO_MARKERS'}
@@ -221,6 +233,29 @@
                 {/if}
               </div>
             </div>
+            {if $s.marker_detections|@count > 0}
+              <div class="table-responsive mt-3">
+                <table class="table table-sm table-bordered align-middle">
+                  <thead>
+                    <tr>
+                      <th>marker ID</th><th>source type</th><th>source id</th><th>frame</th><th>confidence</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {foreach from=$s.marker_detections item=det name=dets}
+                      {if $smarty.foreach.dets.iteration > 30}{break}{/if}
+                      <tr>
+                        <td>MT-{$det.marker_id|string_format:"%03d"}</td>
+                        <td>{$det.source_type|escape}</td>
+                        <td>{$det.source_id|escape}</td>
+                        <td>{$det.frame_index|default:'-'|escape}</td>
+                        <td>{$det.confidence|default:'-'|escape}</td>
+                      </tr>
+                    {/foreach}
+                  </tbody>
+                </table>
+              </div>
+            {/if}
           {else}
             <div class="text-muted">Обработка ещё не запускалась.</div>
           {/if}
