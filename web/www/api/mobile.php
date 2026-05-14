@@ -101,6 +101,29 @@ function api_current_mobile_user(mysqli $dbcnx): ?array {
     return $user;
 }
 
+function api_upsert_marker_processing_job(mysqli $dbcnx, int $orderId, int $captureSessionId): void {
+    $stmt = $dbcnx->prepare("
+        INSERT INTO processing_jobs
+        (session_id, order_id, job_type, status, metric_status, marker_expected, marker_kit_id, marker_dictionary, marker_size_m)
+        VALUES (?, ?, 'MARKER_DETECTION', 'QUEUED', 'UNKNOWN', 1, 'maklertour_kit_v1', 'APRILTAG_36H11', 0.1600)
+        ON DUPLICATE KEY UPDATE
+            updated_at = NOW(6)
+    ");
+
+    if (!$stmt) {
+        error_log('api_upsert_marker_processing_job prepare failed: ' . $dbcnx->error);
+        return;
+    }
+
+    $stmt->bind_param("ii", $captureSessionId, $orderId);
+
+    if (!$stmt->execute()) {
+        error_log('api_upsert_marker_processing_job execute failed: ' . $stmt->error);
+    }
+
+    $stmt->close();
+}
+
 function api_require_mobile_user(mysqli $dbcnx): array {
     $token = api_get_bearer_token();
 
@@ -733,6 +756,7 @@ if ($stmt) {
     $stmt->close();
 }
 
+    api_upsert_marker_processing_job($dbcnx, $orderId, $captureSessionId);
     audit_log(
         $userId,
         'VIDEO_UPLOADED',
@@ -962,6 +986,20 @@ if ($action === 'upload_photo_point') {
     $stmt->bind_param("isssissssii", $captureSessionId, $appPointUuid, $pointName, $roomNameVal, $sequenceVal, $cameraFileUrlVal, $cameraLocalPathVal, $previewStoragePath, $originalStoragePath, $previewSizeBytes, $originalSizeBytes);
     if (!$stmt->execute()) api_json(['ok' => false, 'error' => 'db photo insert execute error: ' . $stmt->error], 500);
     $stmt->close();
+
+    $stmt = $dbcnx->prepare("
+        UPDATE tour_orders
+        SET status = 'UPLOADED'
+        WHERE id = ?
+          AND status IN ('ASSIGNED','IN_PROGRESS','CAPTURED','UPLOADING')
+    ");
+    if ($stmt) {
+        $stmt->bind_param("i", $orderId);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    api_upsert_marker_processing_job($dbcnx, $orderId, $captureSessionId);
 
     audit_log($userId, 'PHOTO_UPLOADED', 'TOUR_ORDER', $orderId, 'Загружен photo point', api_request_meta(['capture_session_id'=>$captureSessionId, 'app_point_uuid'=>$appPointUuid, 'preview_storage_path'=>$previewStoragePath, 'original_storage_path'=>$originalStoragePath]));
     api_json(['ok'=>true,'preview_storage_path'=>$previewStoragePath,'original_storage_path'=>$originalStoragePath,'preview_size_bytes'=>$previewSizeBytes,'original_size_bytes'=>$originalSizeBytes]);
