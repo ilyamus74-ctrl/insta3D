@@ -144,6 +144,7 @@ if ($stmt) {
     while ($row = $rs->fetch_assoc()) {
         $links[] = [
             'id' => (int)$row['id'],
+            'session_id' => $sessionId,
             'from_photo_point_id' => (int)$row['from_photo_point_id'],
             'to_photo_point_id' => (int)$row['to_photo_point_id'],
             'yaw_deg' => isset($row['yaw_deg']) ? (float)$row['yaw_deg'] : 0.0,

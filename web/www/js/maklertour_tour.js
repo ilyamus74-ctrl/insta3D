@@ -20,6 +20,9 @@
   const viewerArea = document.querySelector('.tour-viewer-area');
   const panoramaEl = document.getElementById('panorama');
   const markerLayoutEl = document.getElementById('tourMarkerLayoutSummary');
+  const hotspotTargetEl = document.getElementById('tourHotspotTargetPoint');
+  const addHotspotBtn = document.getElementById('tourAddHotspotBtn');
+  const currentLinksEl = document.getElementById('tourCurrentLinks');
   let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0, autoEdges = [];
   let mapZoom = 1.0;
   const preloadCache = new Set();
@@ -35,7 +38,7 @@
   function buildHotspots(point) {
     return links.filter((l) => Number(l.from_photo_point_id) === Number(point.id)).map((l) => {
       const target = getById(l.to_photo_point_id);
-      return { pitch: toNum(l.pitch_deg, 0), yaw: toNum(l.yaw_deg, 0), type: 'info', text: l.label || (target?.name || 'Перейти'), clickHandlerFunc: () => openPointByPhotoPointId(l.to_photo_point_id) };
+      return { pitch: toNum(l.pitch_deg, 0), yaw: toNum(l.yaw_deg, 0), type: 'info', text: l.label || (target?.name || 'Перейти'), cssClass: 'tour-hotspot', clickHandlerFunc: () => openPointByPhotoPointId(l.to_photo_point_id) };
     });
   }
 
@@ -45,7 +48,7 @@
       const cur = photoPoints[currentIndex];
       cur._lastYaw = viewer.getYaw(); cur._lastPitch = viewer.getPitch(); cur._lastHfov = viewer.getHfov();
     }
-    currentIndex = index; markActive(index); updateNavButtons(); renderMap();
+    currentIndex = index; markActive(index); updateNavButtons(); renderMap(); renderHotspotTargetSelect(); renderCurrentLinks();
     currentPointEl.textContent = point.name || ('Point #' + point.id);
     currentRoomEl.textContent = point.room_name ? ('room: ' + point.room_name) : '360 panorama';
 
@@ -81,6 +84,41 @@
     openPoint(0);
   }
 
+  function renderHotspotTargetSelect() {
+    if (!hotspotTargetEl || !photoPoints.length) return;
+    const current = photoPoints[currentIndex];
+    hotspotTargetEl.innerHTML = '';
+    photoPoints.filter((p) => Number(p.id) !== Number(current?.id)).forEach((p) => {
+      const opt = document.createElement('option');
+      opt.value = String(p.id);
+      opt.textContent = p.name || ('Point #' + p.id);
+      hotspotTargetEl.appendChild(opt);
+    });
+  }
+
+  function renderCurrentLinks() {
+    if (!currentLinksEl) return;
+    const current = photoPoints[currentIndex];
+    if (!current) { currentLinksEl.innerHTML = ''; return; }
+    const rows = links.filter((l) => Number(l.from_photo_point_id) === Number(current.id));
+    if (!rows.length) { currentLinksEl.innerHTML = '<div class="tour-muted">Нет переходов для текущей точки.</div>'; return; }
+    currentLinksEl.innerHTML = '';
+    rows.forEach((l) => {
+      const target = getById(l.to_photo_point_id);
+      const item = document.createElement('div');
+      item.className = 'tour-link-item';
+      item.innerHTML = `<div>→ ${escapeHtml(l.label || target?.name || ('Point #' + l.to_photo_point_id))}</div><div class="tour-muted">yaw: ${Number(l.yaw_deg || 0).toFixed(1)} / pitch: ${Number(l.pitch_deg || 0).toFixed(1)}</div>`;
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'btn btn-sm btn-outline-danger mt-2'; del.textContent = 'Удалить';
+      del.addEventListener('click', async () => {
+        const r = await fetch('/api/tour_point_link_delete.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), link_id: Number(l.id) }) });
+        const d = await r.json(); if (!r.ok || !d.ok) return alert('Ошибка удаления перехода');
+        links = links.filter((x) => Number(x.id) !== Number(l.id));
+        renderCurrentLinks(); openPoint(currentIndex);
+      });
+      item.appendChild(del); currentLinksEl.appendChild(item);
+    });
+  }
   function renderMap() {
     if (!mapEl) return;
     const padding = 24;
@@ -180,6 +218,8 @@
         (missing.length ? `<br>Нет layout для ${missLabels.join(', ')}<br>Marker layout неполный. Для метрической карты нужно задать размеры, координаты и ориентацию всех найденных меток.` : '<br>Marker layout задан. Следующий этап — pose/metric map.');
     }
     renderPoints();
+    renderHotspotTargetSelect();
+    renderCurrentLinks();
   }
 
   async function runAutoMap(overwriteManual) {
@@ -200,5 +240,22 @@
   if (autoMapBtn) autoMapBtn.addEventListener('click', async () => runAutoMap(false));
   if (autoMapOverwriteManualBtn) autoMapOverwriteManualBtn.addEventListener('click', async () => runAutoMap(true));
 
+  if (addHotspotBtn) {
+    addHotspotBtn.addEventListener('click', async () => {
+      if (!viewer) return alert('Viewer не готов');
+      const current = photoPoints[currentIndex];
+      const toId = Number(hotspotTargetEl?.value || 0);
+      const target = getById(toId);
+      if (!current || !toId || !target) return;
+      const payload = { session_id: Number(sessionId), from_photo_point_id: Number(current.id), to_photo_point_id: toId, yaw_deg: Number(viewer.getYaw()), pitch_deg: Number(viewer.getPitch()), label: target.name || ('Point #' + target.id) };
+      const r = await fetch('/api/tour_point_link_save.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload) });
+      const d = await r.json();
+      if (!r.ok || !d.ok) return alert('Ошибка сохранения перехода');
+      const idx = links.findIndex((x) => Number(x.from_photo_point_id) === Number(d.link.from_photo_point_id) && Number(x.to_photo_point_id) === Number(d.link.to_photo_point_id));
+      if (idx >= 0) links[idx] = d.link; else links.push(d.link);
+      renderCurrentLinks(); openPoint(currentIndex);
+      if (currentLinksEl) currentLinksEl.insertAdjacentHTML('afterbegin', '<div class="tour-muted">Переход сохранён</div>');
+    });
+  }
   loadTour().catch((err) => { pointsEl.innerHTML = '<div class="tour-muted">Ошибка загрузки тура: ' + escapeHtml(err.message) + '</div>'; });
 })();

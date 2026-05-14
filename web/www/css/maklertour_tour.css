@@ -229,3 +229,34 @@
 .tour-map-legend .dot.manual { background:#22d3ee; }
 .tour-map-legend .dot.cov { background:#86efac; }
 .tour-map-legend .dot.nomarker { background:#fbbf24; }
+.tour-hotspot {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.9);
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.8);
+  cursor: pointer;
+}
+
+.tour-hotspot::after {
+  content: "➜";
+  color: #ffffff;
+  font-weight: bold;
+  display: block;
+  text-align: center;
+  line-height: 30px;
+}
+
+.tour-link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tour-link-item {
+  border: 1px solid #374151;
+  border-radius: 8px;
+  padding: 8px;
+  background: #111827;
+}
