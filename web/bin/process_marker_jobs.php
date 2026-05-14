@@ -7,6 +7,8 @@ if (PHP_SAPI !== 'cli') {
 
 require_once __DIR__ . '/../www/bootstrap.php';
 
+const DETECTOR_BINARY = '/home/makler/web/tools/apriltag_detector_cpp/build/detect_markers';
+
 function parse_limit(array $argv): int {
     $limit = 1;
     foreach ($argv as $arg) {
@@ -31,37 +33,19 @@ function resolve_session_uuid(array $session): string {
     return preg_replace('/[^a-zA-Z0-9_-]/', '_', $uuid) ?: ('session_' . (int)$session['id']);
 }
 
-function file_exists_safe(string $relativePath): bool {
-    if ($relativePath === '') {
-        return false;
-    }
-    $fullPath = APP_STORAGE_DIR . '/' . ltrim($relativePath, '/');
-    return is_file($fullPath);
+function abs_storage_path(string $relativePath): string {
+    return APP_STORAGE_DIR . '/' . ltrim($relativePath, '/');
 }
 
-function write_processing_log(array $job, array $session, int $videosFound, int $photosFound, int $missingFiles): void {
-    $sessionUuid = resolve_session_uuid($session);
-    $baseDir = APP_STORAGE_DIR . '/processing/sessions/' . $sessionUuid;
-    $framesDir = $baseDir . '/frames';
-    $detectionsDir = $baseDir . '/detections';
-    $logsDir = $baseDir . '/logs';
+function append_log(string $path, string $line): void {
+    @file_put_contents($path, sprintf("[%s] %s\n", date('c'), $line), FILE_APPEND);
+}
 
-    foreach ([$baseDir, $framesDir, $detectionsDir, $logsDir] as $dir) {
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0775, true);
-        }
-    }
-
-    $line = sprintf(
-        "[%s] job_id=%d session_id=%d videos_found=%d photos_found=%d missing_files=%d\n",
-        date('c'),
-        (int)$job['id'],
-        (int)$job['session_id'],
-        $videosFound,
-        $photosFound,
-        $missingFiles
-    );
-    @file_put_contents($logsDir . '/processing.log', $line, FILE_APPEND);
+function fail_job(mysqli $dbcnx, int $jobId, string $error): void {
+    $stmt = $dbcnx->prepare("UPDATE processing_jobs SET status='FAILED', metric_status='FAILED', markers_detected_count=0, warning_text=NULL, error_text=?, updated_at=NOW(6) WHERE id=?");
+    $stmt->bind_param('si', $error, $jobId);
+    $stmt->execute();
+    $stmt->close();
 }
 
 function process_one_job(mysqli $dbcnx): bool {
@@ -74,7 +58,7 @@ function process_one_job(mysqli $dbcnx): bool {
     $jobId = (int)$job['id'];
     $sessionId = (int)$job['session_id'];
 
-    $stmt = $dbcnx->prepare("UPDATE processing_jobs SET status = 'PROCESSING', updated_at = NOW(6) WHERE id = ?");
+    $stmt = $dbcnx->prepare("UPDATE processing_jobs SET status='PROCESSING', updated_at=NOW(6) WHERE id=?");
     $stmt->bind_param('i', $jobId);
     $stmt->execute();
     $stmt->close();
@@ -86,17 +70,22 @@ function process_one_job(mysqli $dbcnx): bool {
     $stmt->close();
 
     if (!$session) {
-        $error = 'Capture session not found';
-        $stmt = $dbcnx->prepare("UPDATE processing_jobs SET status='FAILED', metric_status='FAILED', error_text=?, updated_at=NOW(6) WHERE id=?");
-        $stmt->bind_param('si', $error, $jobId);
-        $stmt->execute();
-        $stmt->close();
-        echo "Job #{$jobId} failed: {$error}\n";
+        fail_job($dbcnx, $jobId, 'Capture session not found');
         return true;
     }
 
-    $videos = [];
-    $photos = [];
+    $sessionUuid = resolve_session_uuid($session);
+    $baseDir = APP_STORAGE_DIR . '/processing/sessions/' . $sessionUuid;
+    $framesBaseDir = $baseDir . '/frames';
+    $detectionsDir = $baseDir . '/detections';
+    $logsDir = $baseDir . '/logs';
+    foreach ([$baseDir, $framesBaseDir, $detectionsDir, $logsDir] as $dir) {
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
+    }
+    $processingLog = $logsDir . '/processing.log';
+
     $stmt = $dbcnx->prepare("SELECT * FROM video_scans WHERE session_id = ? AND upload_state = 'UPLOADED'");
     $stmt->bind_param('i', $sessionId);
     $stmt->execute();
@@ -109,54 +98,159 @@ function process_one_job(mysqli $dbcnx): bool {
     $photos = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
 
-    $videosFound = 0;
-    $photosFound = 0;
-    $missingFiles = 0;
-
-    foreach ($videos as $video) {
-        $path = trim((string)($video['storage_path'] ?? ''));
-        if (file_exists_safe($path)) {
-            $videosFound++;
-        } else {
-            $missingFiles++;
-        }
-    }
-
+    $items = [];
     foreach ($photos as $photo) {
-        $originalPath = trim((string)($photo['original_storage_path'] ?? ''));
-        if ($originalPath !== '' && file_exists_safe($originalPath)) {
-            $photosFound++;
-        } else {
-            $missingFiles++;
+        $sourcePath = trim((string)($photo['original_storage_path'] ?? ''));
+        if ($sourcePath === '') {
+            continue;
+        }
+        $abs = abs_storage_path($sourcePath);
+        if (!is_file($abs)) {
+            append_log($processingLog, "missing photo file source_id=" . (int)$photo['id'] . " path={$abs}");
+            continue;
+        }
+        $items[] = [
+            'source_type' => 'PHOTO_POINT',
+            'source_id' => (int)$photo['id'],
+            'source_path' => $sourcePath,
+            'absolute_path' => $abs,
+        ];
+    }
+    foreach ($videos as $video) {
+        $videoPath = trim((string)($video['storage_path'] ?? ''));
+        if ($videoPath === '') {
+            continue;
+        }
+        $absVideo = abs_storage_path($videoPath);
+        if (!is_file($absVideo)) {
+            append_log($processingLog, "missing video file source_id=" . (int)$video['id'] . " path={$absVideo}");
+            continue;
+        }
+
+        $videoFramesDir = $framesBaseDir . '/video_' . (int)$video['id'];
+        if (!is_dir($videoFramesDir)) {
+            @mkdir($videoFramesDir, 0775, true);
+        }
+
+        $framePattern = $videoFramesDir . '/frame_%06d.jpg';
+        $cmd = 'ffmpeg -hide_banner -loglevel error -y -i ' . escapeshellarg($absVideo) . ' -vf fps=1 -q:v 2 ' . escapeshellarg($framePattern) . ' 2>&1';
+        $output = [];
+        $rc = 0;
+        exec($cmd, $output, $rc);
+        append_log($processingLog, 'ffmpeg cmd=' . $cmd);
+        append_log($processingLog, 'ffmpeg rc=' . $rc . ' output=' . implode(" | ", $output));
+
+        foreach (glob($videoFramesDir . '/frame_*.jpg') ?: [] as $frameAbsPath) {
+            $baseName = basename($frameAbsPath);
+            if (!preg_match('/frame_(\d+)\.jpg$/', $baseName, $m)) {
+                continue;
+            }
+            $frameIndex = (int)$m[1];
+            $items[] = [
+                'source_type' => 'VIDEO_FRAME',
+                'source_id' => (int)$video['id'],
+                'source_path' => $videoPath,
+                'absolute_path' => $frameAbsPath,
+                'frame_index' => $frameIndex,
+                'timestamp_ms' => $frameIndex * 1000,
+            ];
         }
     }
 
-    write_processing_log($job, $session, $videosFound, $photosFound, $missingFiles);
-
-    if (($videosFound + $photosFound) === 0) {
-        $error = 'No uploaded media found for marker processing';
-        $stmt = $dbcnx->prepare("UPDATE processing_jobs SET status='FAILED', metric_status='FAILED', markers_detected_count=0, warning_text=NULL, error_text=?, updated_at=NOW(6) WHERE id=?");
-        $stmt->bind_param('si', $error, $jobId);
-        $stmt->execute();
-        $stmt->close();
-        echo "Job #{$jobId} failed: {$error}\n";
+    if (count($items) === 0) {
+        fail_job($dbcnx, $jobId, 'No uploaded media found for marker processing');
         return true;
     }
 
-    $warning = 'Marker detector is not connected yet. Uploaded media found, but marker detection was not executed.';
-    $stmt = $dbcnx->prepare("UPDATE processing_jobs SET status='PROCESSED', metric_status='NO_MARKERS', markers_detected_count=0, warning_text=?, error_text=NULL, updated_at=NOW(6) WHERE id=?");
-    $stmt->bind_param('si', $warning, $jobId);
+    if (!is_file(DETECTOR_BINARY)) {
+        fail_job($dbcnx, $jobId, 'AprilTag detector binary not found');
+        return true;
+    }
+
+    $inputJsonPath = $detectionsDir . '/input_media.json';
+    $outputJsonPath = $detectionsDir . '/detections.json';
+    file_put_contents($inputJsonPath, json_encode(['session_id' => $sessionId, 'items' => $items], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+
+    $detectorCmd = escapeshellarg(DETECTOR_BINARY)
+        . ' --input-list ' . escapeshellarg($inputJsonPath)
+        . ' --output ' . escapeshellarg($outputJsonPath)
+        . ' --tag-family ' . escapeshellarg('tag36h11')
+        . ' --valid-ids ' . escapeshellarg('1-30')
+        . ' --marker-size-m ' . escapeshellarg('0.160')
+        . ' 2>&1';
+
+    $detectorOutput = [];
+    $detectorRc = 0;
+    exec($detectorCmd, $detectorOutput, $detectorRc);
+    append_log($processingLog, 'detector cmd=' . $detectorCmd);
+    append_log($processingLog, 'detector rc=' . $detectorRc . ' output=' . implode(" | ", $detectorOutput));
+
+    if ($detectorRc !== 0) {
+        fail_job($dbcnx, $jobId, trim(implode("\n", $detectorOutput)) ?: 'Detector failed');
+        return true;
+    }
+
+    $decoded = json_decode((string)file_get_contents($outputJsonPath), true);
+    if (!is_array($decoded) || empty($decoded['ok'])) {
+        fail_job($dbcnx, $jobId, (string)($decoded['error'] ?? 'Invalid detector output'));
+        return true;
+    }
+
+    $stmt = $dbcnx->prepare('DELETE FROM marker_detections WHERE session_id = ?');
+    $stmt->bind_param('i', $sessionId);
     $stmt->execute();
     $stmt->close();
 
-    echo "Job #{$jobId} processed: NO_MARKERS\n";
+    $insert = $dbcnx->prepare('INSERT INTO marker_detections (session_id, source_type, source_id, source_path, frame_index, timestamp_ms, marker_kit_id, marker_dictionary, marker_id, marker_size_m, corners_json, center_x, center_y, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+
+    $uniqueIds = [];
+    $totalDetections = 0;
+    foreach (($decoded['detections'] ?? []) as $det) {
+        $sourceType = (string)($det['source_type'] ?? '');
+        $sourceId = (int)($det['source_id'] ?? 0);
+        $sourcePath = (string)($det['source_path'] ?? '');
+        $frameIndex = isset($det['frame_index']) && $det['frame_index'] !== null ? (int)$det['frame_index'] : null;
+        $timestampMs = isset($det['timestamp_ms']) && $det['timestamp_ms'] !== null ? (int)$det['timestamp_ms'] : null;
+        $markerKitId = 'maklertour_kit_v1';
+        $markerDictionary = 'APRILTAG_36H11';
+        $markerId = (int)($det['marker_id'] ?? 0);
+        $markerSize = 0.1600;
+        $cornersJson = json_encode($det['corners'] ?? [], JSON_UNESCAPED_SLASHES);
+        $centerX = (float)($det['center_x'] ?? 0.0);
+        $centerY = (float)($det['center_y'] ?? 0.0);
+        $confidence = (float)($det['confidence'] ?? 0.0);
+
+        $insert->bind_param('isisiissidsddd', $sessionId, $sourceType, $sourceId, $sourcePath, $frameIndex, $timestampMs, $markerKitId, $markerDictionary, $markerId, $markerSize, $cornersJson, $centerX, $centerY, $confidence);
+        $insert->execute();
+        $totalDetections++;
+        $uniqueIds[$markerId] = true;
+    }
+    $insert->close();
+
+    $uniqueCount = count($uniqueIds);
+    $warning = null;
+    $metric = 'NO_MARKERS';
+    if ($uniqueCount >= 3) {
+        $metric = 'METRIC_READY';
+    } elseif ($uniqueCount >= 1) {
+        $metric = 'PARTIAL_MARKERS';
+        $warning = "Only {$uniqueCount} unique markers detected. Metric reconstruction may be unstable.";
+    } else {
+        $warning = 'No MaklerTour markers detected. Accurate geometry and dimensions are not guaranteed.';
+    }
+
+    $stmt = $dbcnx->prepare("UPDATE processing_jobs SET status='PROCESSED', metric_status=?, markers_detected_count=?, warning_text=?, error_text=NULL, updated_at=NOW(6) WHERE id=?");
+    $stmt->bind_param('sisi', $metric, $totalDetections, $warning, $jobId);
+    $stmt->execute();
+    $stmt->close();
+
+    echo "Job #{$jobId} processed: {$metric}, detections={$totalDetections}\n";
     return true;
 }
 
 $limit = parse_limit($argv);
 for ($i = 0; $i < $limit; $i++) {
-    $processed = process_one_job($dbcnx);
-    if (!$processed) {
+    if (!process_one_job($dbcnx)) {
         break;
     }
 }
