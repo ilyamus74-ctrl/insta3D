@@ -213,8 +213,9 @@
                 <div><strong>metric status:</strong> <span class="badge bg-secondary">{$job.metric_status|default:'-'|escape}</span></div>
                 <div><strong>markers detected count:</strong> {$job.markers_detected_count|default:0}</div>
                 <div><strong>warning text:</strong> {$job.warning_text|default:'-'|escape}</div>
-                {if $job.metric_status == 'NO_MARKERS'}
-                  <div class="alert alert-warning mt-3 mb-0">Метки не обнаружены. Точная геометрия и размеры не гарантируются.</div>
+                <div><strong>error text:</strong> {$job.error_text|default:'-'|escape}</div>
+                {if $job.status == 'PROCESSED' && $job.metric_status == 'NO_MARKERS'}
+                  <div class="alert alert-warning mt-3 mb-0">Метки не обнаружены или detector ещё не выполнил распознавание. Точная геометрия и размеры не гарантируются.</div>
                 {elseif $job.metric_status == 'METRIC_READY'}
                   <div class="alert alert-success mt-3 mb-0">Метки обнаружены. Данные подходят для метрической реконструкции.</div>
                 {/if}
@@ -223,6 +224,11 @@
           {else}
             <div class="text-muted">Обработка ещё не запускалась.</div>
           {/if}
+          <form method="post" action="/order.php?id={$order.id}" class="mt-3">
+            <input type="hidden" name="action" value="create_processing_job_web">
+            <input type="hidden" name="capture_session_id" value="{$s.id}">
+            <button type="submit" class="btn btn-outline-primary btn-sm">Запустить обработку меток</button>
+          </form>
         </div>
 
       </div>

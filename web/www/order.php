@@ -13,7 +13,7 @@ $order=load_order($dbcnx,$orderId); if(!$order){http_response_code(404);exit('Or
 $canView = $role==='ADMIN' || ((int)$order['broker_id']===$userId) || ($role==='OPERATOR' && ((int)$order['operator_id']===$userId || ((int)$order['is_published']===1 && $order['status']==='NEW' && $order['operator_id']===null)));
 if(!$canView){http_response_code(403);exit('Forbidden');}
 $canEdit = $role==='ADMIN' || (int)$order['broker_id']===$userId;
-$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':null));
+$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':null)));
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
  $action=$_POST['action']??'';
@@ -23,6 +23,39 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     $title=trim($_POST['title']??''); $address=trim($_POST['address']??''); $area=trim($_POST['area_m2']??''); $cn=trim($_POST['customer_name']??''); $cp=trim($_POST['customer_phone']??''); $ce=trim($_POST['customer_email']??''); $pub=isset($_POST['is_published'])?1:0; $areaV=$area!==''?(float)$area:null;
     $st=$dbcnx->prepare("UPDATE tour_orders SET title=?,address=?,area_m2=?,customer_name=?,customer_phone=?,customer_email=?,is_published=? WHERE id=?");
     if($st){$st->bind_param('ssdsssii',$title,$address,$areaV,$cn,$cp,$ce,$pub,$orderId); if($st->execute()){audit_log($userId,'ORDER_UPDATED','TOUR_ORDER',$orderId,'Заявка обновлена');$st->close();header('Location: /order.php?id='.$orderId.'&updated=1');exit;} $error='DB execute error: '.$st->error; $st->close();}
+   }
+ }
+
+
+ if($action==='create_processing_job_web' && $canEdit){
+   $captureSessionId=(int)($_POST['capture_session_id']??0);
+   if($captureSessionId<=0){
+     $error='Не выбрана capture session для обработки';
+   } else {
+     $st=$dbcnx->prepare("SELECT id FROM capture_sessions WHERE id=? AND order_id=? LIMIT 1");
+     if($st){
+       $st->bind_param('ii',$captureSessionId,$orderId);
+       $st->execute();
+       $sessionExists=$st->get_result()->fetch_assoc();
+       $st->close();
+       if(!$sessionExists){
+         $error='Capture session не найдена для этой заявки';
+       } else {
+         $jobType='MARKER_DETECTION';
+         $st=$dbcnx->prepare("INSERT INTO processing_jobs (session_id, order_id, job_type, status, metric_status, marker_expected, marker_kit_id, marker_dictionary, marker_size_m) VALUES (?, ?, ?, 'QUEUED', 'UNKNOWN', 1, 'maklertour_kit_v1', 'APRILTAG_36H11', 0.1600) ON DUPLICATE KEY UPDATE updated_at = NOW(6)");
+         if($st){
+           $st->bind_param('iis',$captureSessionId,$orderId,$jobType);
+           if($st->execute()){
+             $st->close();
+             audit_log($userId,'PROCESSING_JOB_CREATED_WEB','TOUR_ORDER',$orderId,'Создана задача обработки marker detection из web',['capture_session_id'=>$captureSessionId,'job_type'=>$jobType]);
+             header('Location: /order.php?id='.$orderId.'&job_queued=1');
+             exit;
+           }
+           $error='DB execute error: '.$st->error;
+           $st->close();
+         }
+       }
+     }
    }
  }
  if($action==='close_order' && $canEdit){
