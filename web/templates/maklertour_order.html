@@ -287,11 +287,11 @@
   </section>
 
 </main>
-
+{literal}
 <script>
 async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!d.ok)return alert('Ошибка');document.getElementById('pubLink'+sessionId).textContent=d.url;}
 function copyPublicLink(sessionId){const v=document.getElementById('pubLink'+sessionId).textContent;if(!v||v==='-')return;navigator.clipboard.writeText(location.origin+v);}
 async function disablePublicLink(sessionId){const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!d.ok)return alert('Ошибка');document.getElementById('pubLink'+sessionId).textContent='-';}
 </script>
-
+{/literal}
 {include file="maklertour_footer.html"}

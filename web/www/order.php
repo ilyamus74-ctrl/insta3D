@@ -176,9 +176,35 @@ foreach($captureSessions as $idx=>$session){
 }
 
 $publicLinksBySession=[];
-$stmt=$dbcnx->prepare("SELECT session_id, token, is_active FROM public_tour_links WHERE order_id=? ORDER BY id DESC");
-if($stmt){$stmt->bind_param('i',$orderId);$stmt->execute();$rs=$stmt->get_result();while($r=$rs->fetch_assoc()){ $sid=(int)$r['session_id']; if(!isset($publicLinksBySession[$sid])) $publicLinksBySession[$sid]=$r; } $stmt->close();}
-foreach($captureSessions as $idx=>$session){ $sid=(int)$session['id']; $captureSessions[$idx]['public_link']=$publicLinksBySession[$sid] ?? null; }
+$publicLinksBySession = [];
+
+$hasPublicTourLinks = false;
+$res = $dbcnx->query("SHOW TABLES LIKE 'public_tour_links'");
+if ($res) {
+    $hasPublicTourLinks = $res->num_rows > 0;
+    $res->close();
+}
+
+if ($hasPublicTourLinks) {
+    $stmt = $dbcnx->prepare("SELECT session_id, token, is_active FROM public_tour_links WHERE order_id=? ORDER BY id DESC");
+    if ($stmt) {
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $rs = $stmt->get_result();
+        while ($r = $rs->fetch_assoc()) {
+            $sid = (int)$r['session_id'];
+            if (!isset($publicLinksBySession[$sid])) {
+                $publicLinksBySession[$sid] = $r;
+            }
+        }
+        $stmt->close();
+    }
+}
+
+foreach ($captureSessions as $idx => $session) {
+    $sid = (int)$session['id'];
+    $captureSessions[$idx]['public_link'] = $publicLinksBySession[$sid] ?? null;
+}
 
 $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),'videos'=>count($videoScans)];
 

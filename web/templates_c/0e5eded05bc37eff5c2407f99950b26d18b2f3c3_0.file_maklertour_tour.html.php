@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-15 16:14:19
+/* Smarty version 5.3.1, created on 2026-05-15 19:47:15
   from 'file:maklertour_tour.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a07465b41e358_85649659',
+  'unifunc' => 'content_6a0778438ec3f9_37093818',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '0e5eded05bc37eff5c2407f99950b26d18b2f3c3' => 
     array (
       0 => 'maklertour_tour.html',
-      1 => 1778861276,
+      1 => 1778873361,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a07465b41e358_85649659 (\Smarty\Template $_smarty_tpl) {
+function content_6a0778438ec3f9_37093818 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -50,6 +50,12 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
     class="tour-shell"
     id="tourApp"
     data-session-id="<?php echo htmlspecialchars((string)$_smarty_tpl->getValue('sessionId'), ENT_QUOTES, 'UTF-8', true);?>
+"
+    data-public-mode="<?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('publicMode') ?? null)===null||$tmp==='' ? 0 ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
+"
+    data-public-token="<?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('publicToken') ?? null)===null||$tmp==='' ? '' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
+"
+    data-api-url="<?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('apiUrl') ?? null)===null||$tmp==='' ? '' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
 "
   >
     <aside class="tour-sidebar">

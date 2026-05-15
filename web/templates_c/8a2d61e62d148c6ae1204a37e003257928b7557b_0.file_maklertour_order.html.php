@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-14 14:44:53
+/* Smarty version 5.3.1, created on 2026-05-15 19:47:12
   from 'file:maklertour_order.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a05dfe50a2fa8_57999010',
+  'unifunc' => 'content_6a0778407b4ab3_61001968',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '8a2d61e62d148c6ae1204a37e003257928b7557b' => 
     array (
       0 => 'maklertour_order.html',
-      1 => 1778769869,
+      1 => 1778874426,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a05dfe50a2fa8_57999010 (\Smarty\Template $_smarty_tpl) {
+function content_6a0778407b4ab3_61001968 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -209,6 +209,19 @@ $foreach0DoElse = false;
   Открыть 3D тур
 </a>
 <?php }?>
+          <div class="mb-2"><strong>Публичная ссылка:</strong>
+            <code id="pubLink<?php echo $_smarty_tpl->getValue('s')['id'];?>
+"><?php if ($_smarty_tpl->getValue('s')['public_link'] && $_smarty_tpl->getValue('s')['public_link']['is_active'] == 1) {?>/public_tour.php?t=<?php echo htmlspecialchars((string)$_smarty_tpl->getValue('s')['public_link']['token'], ENT_QUOTES, 'UTF-8', true);
+} else { ?>-<?php }?></code>
+            <?php if ($_smarty_tpl->getValue('canEdit')) {?>
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="createPublicLink(<?php echo $_smarty_tpl->getValue('s')['id'];?>
+)">Создать публичную ссылку</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyPublicLink(<?php echo $_smarty_tpl->getValue('s')['id'];?>
+)">Скопировать ссылку</button>
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="disablePublicLink(<?php echo $_smarty_tpl->getValue('s')['id'];?>
+)">Отключить ссылку</button>
+            <?php }?>
+          </div>
           <div class="row g-3 mb-3">
             <div class="col-md-6"><strong>UUID:</strong> <code><?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('s')['app_session_uuid'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
 </code></div>
@@ -432,6 +445,14 @@ $_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
   </section>
 
 </main>
+
+<?php echo '<script'; ?>
+>
+async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!d.ok)return alert('Ошибка');document.getElementById('pubLink'+sessionId).textContent=d.url;}
+function copyPublicLink(sessionId){const v=document.getElementById('pubLink'+sessionId).textContent;if(!v||v==='-')return;navigator.clipboard.writeText(location.origin+v);}
+async function disablePublicLink(sessionId){const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!d.ok)return alert('Ошибка');document.getElementById('pubLink'+sessionId).textContent='-';}
+<?php echo '</script'; ?>
+>
 
 <?php $_smarty_tpl->renderSubTemplate("file:maklertour_footer.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 }
