@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-15 11:04:58
+/* Smarty version 5.3.1, created on 2026-05-15 12:02:28
   from 'file:maklertour_tour.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a06fdda507cb4_02416307',
+  'unifunc' => 'content_6a070b54d9e625_30391324',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '0e5eded05bc37eff5c2407f99950b26d18b2f3c3' => 
     array (
       0 => 'maklertour_tour.html',
-      1 => 1778842612,
+      1 => 1778846266,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a06fdda507cb4_02416307 (\Smarty\Template $_smarty_tpl) {
+function content_6a070b54d9e625_30391324 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -90,7 +90,17 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
           <button type="button" id="tourMapZoomOutBtn" class="btn btn-sm btn-outline-light">−</button>
           <button type="button" id="tourMapZoomInBtn" class="btn btn-sm btn-outline-light">+</button>
         </div>
-        <div id="tourMap" class="tour-map"></div>
+        <div class="tour-map-tabs">
+          <button id="tourMap2dBtn" type="button" class="btn btn-sm btn-outline-light">2D карта</button>
+          <button id="tourMap3dBtn" type="button" class="btn btn-sm btn-outline-light">3D карта</button>
+        </div>
+        <div id="tourMap2dPanel">
+          <div id="tourMap" class="tour-map"></div>
+        </div>
+        <div id="tourMap3dPanel" style="display:none;">
+          <div id="tour3dMapCanvas" class="tour-3d-map"></div>
+          <div class="tour-muted">3D Map v0: схема точек съёмки и переходов, не метрическая модель помещения.</div>
+        </div>
         <div id="tourMapMeta" class="tour-map-meta"></div>
         <div class="tour-map-legend">
           <span><i class="dot manual"></i> Manual</span>
@@ -163,6 +173,9 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
 
 <?php echo '<script'; ?>
  src="https://cdn.jsdelivr.net/npm/pannellum/build/pannellum.js"><?php echo '</script'; ?>
+>
+<?php echo '<script'; ?>
+ src="/vendor/three/three.min.js"><?php echo '</script'; ?>
 >
 <?php echo '<script'; ?>
  src="/js/maklertour_tour.js"><?php echo '</script'; ?>

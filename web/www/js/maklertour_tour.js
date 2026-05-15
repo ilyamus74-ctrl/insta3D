@@ -24,6 +24,11 @@
   const viewerArea = document.querySelector('.tour-viewer-area');
   const panoramaEl = document.getElementById('panorama');
   const markerLayoutEl = document.getElementById('tourMarkerLayoutSummary');
+  const processingStatusEl = document.getElementById('tourProcessingStatus');
+  const detectionsCountEl = document.getElementById('tourDetectionsCount');
+  const photoDetectionsEl = document.getElementById('tourPhotoDetections');
+  const videoDetectionsEl = document.getElementById('tourVideoDetections');
+  const markersEl = document.getElementById('tourMarkers');
   const hotspotTargetEl = document.getElementById('tourHotspotTargetPoint');
   const addHotspotBtn = document.getElementById('tourAddHotspotBtn');
   const currentLinksEl = document.getElementById('tourCurrentLinks');
@@ -177,6 +182,53 @@
         renderCurrentLinks(); openPoint(currentIndex);
       });
       item.appendChild(del); currentLinksEl.appendChild(item);
+    });
+  }
+
+
+  function renderProcessingSummary(data) {
+    const processing = data.processing || {};
+    const markers = data.markers || {};
+    const sourceCounts = markers.source_counts || {};
+
+    if (processingStatusEl) {
+      const status = processing.status || '-';
+      const metric = processing.metric_status || '-';
+      processingStatusEl.textContent = status + ' / ' + metric;
+      processingStatusEl.classList.remove('tour-badge-muted');
+    }
+
+    if (detectionsCountEl) {
+      detectionsCountEl.textContent = String(processing.markers_detected_count ?? 0);
+    }
+
+    if (photoDetectionsEl) {
+      photoDetectionsEl.textContent = String(sourceCounts.PHOTO_POINT ?? 0);
+    }
+
+    if (videoDetectionsEl) {
+      videoDetectionsEl.textContent = String(sourceCounts.VIDEO_FRAME ?? 0);
+    }
+  }
+
+  function renderMarkersSummary(data) {
+    if (!markersEl) return;
+
+    const markers = data.markers || {};
+    const labels = markers.labels || [];
+
+    markersEl.innerHTML = '';
+
+    if (!labels.length) {
+      markersEl.innerHTML = '<span class="tour-muted">Метки не найдены</span>';
+      return;
+    }
+
+    labels.forEach((label) => {
+      const span = document.createElement('span');
+      span.className = 'tour-marker-pill';
+      span.textContent = label;
+      markersEl.appendChild(span);
     });
   }
 
@@ -357,6 +409,8 @@
     links = data.links || [];
     positions = data.positions || {};
     autoEdges = data.auto_map_edges || [];
+    renderProcessingSummary(data);
+    renderMarkersSummary(data);
     if (markerLayoutEl) {
       const ms = data.marker_layout_summary || {};
       const missing = ms.missing_layout_marker_ids || [];
