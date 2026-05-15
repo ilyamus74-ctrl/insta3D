@@ -23,6 +23,9 @@
   const hotspotTargetEl = document.getElementById('tourHotspotTargetPoint');
   const addHotspotBtn = document.getElementById('tourAddHotspotBtn');
   const currentLinksEl = document.getElementById('tourCurrentLinks');
+  const detectedMarkersListEl = document.getElementById('tourDetectedMarkersList');
+  const selectedMarkerInfoEl = document.getElementById('tourSelectedMarkerInfo');
+  const showMarkerHotspotsEl = document.getElementById('tourShowMarkerHotspots');
   let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0, autoEdges = [];
   let mapZoom = 1.0;
   const preloadCache = new Set();
@@ -35,11 +38,47 @@
   function markActive(index) { document.querySelectorAll('.tour-point').forEach((el) => el.classList.remove('active')); const active = document.querySelector(`.tour-point[data-index="${index}"]`); if (active) active.classList.add('active'); }
   function updateNavButtons() { if (prevBtn) prevBtn.disabled = currentIndex <= 0; if (nextBtn) nextBtn.disabled = currentIndex >= photoPoints.length - 1; }
   function openPointByPhotoPointId(photoPointId) { const idx = photoPoints.findIndex((p) => Number(p.id) === Number(photoPointId)); if (idx >= 0) openPoint(idx); }
+  function selectDetectedMarker(marker) {
+    if (!selectedMarkerInfoEl || !marker) return;
+    selectedMarkerInfoEl.classList.remove('tour-muted');
+    selectedMarkerInfoEl.innerHTML = `${escapeHtml(marker.marker_label || '-')}: yaw ${Number(marker.bearing_yaw_deg ?? 0).toFixed(2)}, pitch ${Number(marker.bearing_pitch_deg ?? 0).toFixed(2)}, conf ${Number(marker.confidence ?? 0).toFixed(2)}`;
+  }
+
+  function renderDetectedMarkers(point) {
+    if (!detectedMarkersListEl) return;
+    const detectedMarkers = point?.detected_markers || [];
+    detectedMarkersListEl.innerHTML = '';
+    if (!detectedMarkers.length) {
+      detectedMarkersListEl.innerHTML = '<span class="tour-muted">Для этой точки метки не найдены</span>';
+      if (selectedMarkerInfoEl) selectedMarkerInfoEl.innerHTML = 'Кликните по MT-метке в панораме.';
+      return;
+    }
+    detectedMarkers.forEach((marker) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tour-detected-marker-btn';
+      btn.textContent = `${marker.marker_label} (${Number(marker.confidence || 0).toFixed(1)})`;
+      btn.addEventListener('click', () => {
+        if (viewer && marker.bearing_yaw_deg !== null && marker.bearing_pitch_deg !== null) viewer.lookAt(Number(marker.bearing_pitch_deg), Number(marker.bearing_yaw_deg));
+        selectDetectedMarker(marker);
+      });
+      detectedMarkersListEl.appendChild(btn);
+    });
+  }
+
   function buildHotspots(point) {
-    return links.filter((l) => Number(l.from_photo_point_id) === Number(point.id)).map((l) => {
+    const hotSpots = links.filter((l) => Number(l.from_photo_point_id) === Number(point.id)).map((l) => {
       const target = getById(l.to_photo_point_id);
       return { pitch: toNum(l.pitch_deg, 0), yaw: toNum(l.yaw_deg, 0), type: 'info', text: l.label || (target?.name || 'Перейти'), cssClass: 'tour-hotspot', clickHandlerFunc: () => openPointByPhotoPointId(l.to_photo_point_id) };
     });
+    const showMarkers = !showMarkerHotspotsEl || !!showMarkerHotspotsEl.checked;
+    if (showMarkers) {
+      (point.detected_markers || []).forEach((marker) => {
+        if (marker.bearing_yaw_deg === null || marker.bearing_pitch_deg === null) return;
+        hotSpots.push({ pitch: Number(marker.bearing_pitch_deg), yaw: Number(marker.bearing_yaw_deg), type: 'info', text: (marker.marker_label || 'MT') + ' · conf ' + marker.confidence, cssClass: 'tour-marker-hotspot', clickHandlerFunc: () => selectDetectedMarker(marker) });
+      });
+    }
+    return hotSpots;
   }
 
   function openPoint(index) {
@@ -48,7 +87,7 @@
       const cur = photoPoints[currentIndex];
       cur._lastYaw = viewer.getYaw(); cur._lastPitch = viewer.getPitch(); cur._lastHfov = viewer.getHfov();
     }
-    currentIndex = index; markActive(index); updateNavButtons(); renderMap(); renderHotspotTargetSelect(); renderCurrentLinks();
+    currentIndex = index; markActive(index); updateNavButtons(); renderMap(); renderHotspotTargetSelect(); renderCurrentLinks(); renderDetectedMarkers(point);
     currentPointEl.textContent = point.name || ('Point #' + point.id);
     currentRoomEl.textContent = point.room_name ? ('room: ' + point.room_name) : '360 panorama';
 
@@ -237,6 +276,7 @@
         autoMapBtn.disabled = false; if (autoMapOverwriteManualBtn) autoMapOverwriteManualBtn.disabled = false;
       }
   }
+  if (showMarkerHotspotsEl) showMarkerHotspotsEl.addEventListener('change', () => openPoint(currentIndex));
   if (autoMapBtn) autoMapBtn.addEventListener('click', async () => runAutoMap(false));
   if (autoMapOverwriteManualBtn) autoMapOverwriteManualBtn.addEventListener('click', async () => runAutoMap(true));
 

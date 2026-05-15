@@ -260,3 +260,49 @@
   padding: 8px;
   background: #111827;
 }
+
+.tour-marker-hotspot {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.9);
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.8);
+  cursor: pointer;
+}
+
+.tour-marker-hotspot::after {
+  content: "MT";
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: bold;
+  display: block;
+  text-align: center;
+  line-height: 24px;
+}
+
+.tour-detected-markers-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tour-detected-marker-btn {
+  border: 1px solid #374151;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #111827;
+  color: #f9fafb;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.tour-detected-marker-btn:hover {
+  border-color: #10b981;
+}
+
+.tour-selected-marker-info {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}

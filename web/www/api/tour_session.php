@@ -108,7 +108,9 @@ $photoPointSet = array_fill_keys($photoPointIds, true);
 $markerMap = [];
 $markerCount = [];
 $markerConfSum = [];
-$stmt = $dbcnx->prepare("SELECT source_id, marker_id, confidence FROM marker_detections WHERE session_id = ? AND source_type = 'PHOTO_POINT'");
+$detectedMarkersBest = [];
+$imageSizeCache = [];
+$stmt = $dbcnx->prepare("SELECT source_id, marker_id, confidence, center_x, center_y, source_path FROM marker_detections WHERE session_id = ? AND source_type = 'PHOTO_POINT'");
 if ($stmt) {
     $stmt->bind_param('i', $sessionId);
     $stmt->execute();
@@ -117,9 +119,45 @@ if ($stmt) {
         $pid = (int)$row['source_id'];
         if (!isset($photoPointSet[$pid])) continue;
         $mid = (int)$row['marker_id'];
+        $confidence = (float)$row['confidence'];
         $markerMap[$pid][$mid] = true;
         $markerCount[$pid] = (int)($markerCount[$pid] ?? 0) + 1;
-        $markerConfSum[$pid] = (float)($markerConfSum[$pid] ?? 0.0) + (float)$row['confidence'];
+        $markerConfSum[$pid] = (float)($markerConfSum[$pid] ?? 0.0) + $confidence;
+
+        $best = $detectedMarkersBest[$pid][$mid] ?? null;
+        if ($best !== null && (float)$best['confidence'] >= $confidence) {
+            continue;
+        }
+
+        $centerX = (float)$row['center_x'];
+        $centerY = (float)$row['center_y'];
+        $sourcePath = trim((string)($row['source_path'] ?? ''));
+        $yaw = null;
+        $pitch = null;
+        if ($sourcePath !== '') {
+            if (!array_key_exists($sourcePath, $imageSizeCache)) {
+                $fullPath = APP_STORAGE_DIR . '/' . ltrim($sourcePath, '/');
+                $size = @getimagesize($fullPath);
+                $imageSizeCache[$sourcePath] = (is_array($size) && !empty($size[0]) && !empty($size[1])) ? [(int)$size[0], (int)$size[1]] : null;
+            }
+            $dims = $imageSizeCache[$sourcePath];
+            if (is_array($dims)) {
+                $imageWidth = (float)$dims[0];
+                $imageHeight = (float)$dims[1];
+                $yaw = ($centerX / $imageWidth) * 360.0 - 180.0;
+                $pitch = 90.0 - ($centerY / $imageHeight) * 180.0;
+            }
+        }
+
+        $detectedMarkersBest[$pid][$mid] = [
+            'marker_id' => $mid,
+            'marker_label' => 'MT-' . str_pad((string)$mid, 3, '0', STR_PAD_LEFT),
+            'confidence' => round($confidence, 2),
+            'center_x' => round($centerX, 2),
+            'center_y' => round($centerY, 2),
+            'bearing_yaw_deg' => $yaw !== null ? round($yaw, 2) : null,
+            'bearing_pitch_deg' => $pitch !== null ? round($pitch, 2) : null,
+        ];
     }
     $stmt->close();
 }
@@ -131,6 +169,9 @@ foreach ($photoPoints as &$pp) {
     $pp['marker_labels'] = array_map(static fn(int $id): string => 'MT-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT), $markers);
     $pp['marker_detections_count'] = (int)($markerCount[$pid] ?? 0);
     $pp['avg_marker_confidence'] = ($pp['marker_detections_count'] > 0) ? round(((float)($markerConfSum[$pid] ?? 0.0) / $pp['marker_detections_count']), 2) : 0.0;
+    $detected = isset($detectedMarkersBest[$pid]) ? array_values($detectedMarkersBest[$pid]) : [];
+    usort($detected, static fn(array $a, array $b): int => $a['marker_id'] <=> $b['marker_id']);
+    $pp['detected_markers'] = $detected;
 }
 unset($pp);
 

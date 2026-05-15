@@ -7,6 +7,7 @@ if (PHP_SAPI !== 'cli') {
 
 require_once __DIR__ . '/../www/bootstrap.php';
 require_once __DIR__ . '/../libs/tour_media_prepare.php';
+require_once __DIR__ . '/../libs/tour_auto_map_lib.php';
 
 const DETECTOR_BINARY = '/home/makler/web/tools/apriltag_detector_cpp/build/detect_markers';
 
@@ -255,6 +256,24 @@ function process_one_job(mysqli $dbcnx): bool {
     $stmt->bind_param('sisi', $metric, $totalDetections, $warning, $jobId);
     $stmt->execute();
     $stmt->close();
+
+    try {
+        $autoMap = run_tour_auto_map($dbcnx, $sessionId, true, false);
+        append_log($processingLog, 'Auto map after marker detection:');
+        append_log($processingLog, 'algorithm=' . (string)($autoMap['algorithm'] ?? TOUR_AUTO_MAP_ALGORITHM));
+        append_log($processingLog, 'positioned_count=' . (int)($autoMap['positioned_count'] ?? 0));
+        append_log($processingLog, 'warnings=' . json_encode($autoMap['warnings'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    } catch (Throwable $e) {
+        append_log($processingLog, 'Auto map failed: ' . $e->getMessage());
+        $autoWarning = 'Marker detection completed, but auto map failed: ' . $e->getMessage();
+        $warning = $warning ? ($warning . ' ' . $autoWarning) : $autoWarning;
+        $stmt = $dbcnx->prepare("UPDATE processing_jobs SET warning_text=?, updated_at=NOW(6) WHERE id=?");
+        if ($stmt) {
+            $stmt->bind_param('si', $warning, $jobId);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
 
     echo "Job #{$jobId} processed: {$metric}, detections={$totalDetections}\n";
     return true;

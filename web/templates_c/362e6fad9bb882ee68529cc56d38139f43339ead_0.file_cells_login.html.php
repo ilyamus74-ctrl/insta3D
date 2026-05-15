@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-15 07:54:04
+/* Smarty version 5.3.1, created on 2026-05-15 07:59:47
   from 'file:cells_login.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a06d11c16ff90_39735603',
+  'unifunc' => 'content_6a06d2732f9271_22369903',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '362e6fad9bb882ee68529cc56d38139f43339ead' => 
     array (
       0 => 'cells_login.html',
-      1 => 1778831613,
+      1 => 1778831974,
       2 => 'file',
     ),
   ),
@@ -20,7 +20,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   array (
   ),
 ))) {
-function content_6a06d11c16ff90_39735603 (\Smarty\Template $_smarty_tpl) {
+function content_6a06d2732f9271_22369903 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 ?>
   <main>
@@ -33,11 +33,11 @@ $_smarty_current_dir = '/home/makler/web/templates';
 
 <div class="auth-logo-wrap">
   <a href="/" class="d-flex justify-content-center">
-    <img
-      src="/img/logo/01E_home_aperture.png"
-      alt="MaklerTour"
-      class="auth-logo"
-    >
+<img
+  src="/img/logo/01E_home_aperture.png"
+  alt="MaklerTour"
+  class="auth-logo"
+  style="width:220px;max-width:80vw;height:auto;display:block;">
   </a>
 </div>
               <!-- End Logo -->
