@@ -20,6 +20,9 @@
     class="tour-shell"
     id="tourApp"
     data-session-id="{$sessionId|escape}"
+    data-public-mode="{$publicMode|default:0|escape}"
+    data-public-token="{$publicToken|default:''|escape}"
+    data-api-url="{$apiUrl|default:''|escape}"
   >
     <aside class="tour-sidebar">
       <div class="tour-card">

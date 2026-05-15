@@ -68,4 +68,7 @@ $smarty->assign('sessionId', $sessionId);
 $smarty->assign('orderId', (int)$row['id']);
 $smarty->assign('orderTitle', $row['title'] ?? '');
 $smarty->assign('sessionUuid', $row['app_session_uuid'] ?? '');
+$smarty->assign('publicMode', 0);
+$smarty->assign('publicToken', '');
+$smarty->assign('apiUrl', '/api/tour_session.php?session_id=' . rawurlencode((string)$sessionId));
 $smarty->display('maklertour_tour.html');

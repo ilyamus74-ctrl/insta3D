@@ -3,6 +3,8 @@
 
   const app = document.getElementById('tourApp'); if (!app) return;
   const sessionId = app.dataset.sessionId;
+  const isPublicMode = app.dataset.publicMode === '1';
+  const apiUrl = app.dataset.apiUrl || ('/api/tour_session.php?session_id=' + encodeURIComponent(sessionId));
   const pointsEl = document.getElementById('tourPoints');
   const currentPointEl = document.getElementById('tourCurrentPoint');
   const currentRoomEl = document.getElementById('tourCurrentRoom');
@@ -192,6 +194,7 @@
       const via = (l.shared_markers && l.shared_markers.length) ? (' · via MT-' + String(l.shared_markers[0]).padStart(3, '0')) : '';
       const conf = Number.isFinite(Number(l.confidence)) ? (' · conf ' + Number(l.confidence).toFixed(1)) : '';
       item.innerHTML = `<div>→ ${escapeHtml(l.label || target?.name || ('Point #' + l.to_photo_point_id))}</div><div class="tour-muted">${escapeHtml(l.source || 'MANUAL')}${escapeHtml(via)}${escapeHtml(conf)}</div><div class="tour-muted">yaw: ${Number(l.yaw_deg || 0).toFixed(1)} / pitch: ${Number(l.pitch_deg || 0).toFixed(1)}</div>`;
+      if (!isPublicMode) {
       const del = document.createElement('button');
       del.type = 'button'; del.className = 'btn btn-sm btn-outline-danger mt-2'; del.textContent = 'Удалить';
       del.addEventListener('click', async () => {
@@ -200,7 +203,8 @@
         links = links.filter((x) => Number(x.id) !== Number(l.id));
         renderCurrentLinks(); openPoint(currentIndex);
       });
-      item.appendChild(del); currentLinksEl.appendChild(item);
+      item.appendChild(del); }
+      currentLinksEl.appendChild(item);
     });
   }
 
@@ -463,7 +467,7 @@
   window.addEventListener('resize', () => { if (mapMode === '3d') resizeThreeMap(); });
 
   async function loadTour() {
-    const r = await fetch('/api/tour_session.php?session_id=' + encodeURIComponent(sessionId), { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    const r = await fetch(apiUrl, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
     const data = await r.json();
     if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
     photoPoints = data.photo_points || [];
@@ -503,7 +507,7 @@
   }
   if (showMarkerHotspotsEl) {
     const saved = localStorage.getItem('maklertour_show_marker_hotspots');
-    showMarkerHotspotsEl.checked = saved === null ? true : saved === '1';
+    showMarkerHotspotsEl.checked = isPublicMode ? false : (saved === null ? true : saved === '1');
     showMarkerHotspotsEl.addEventListener('change', () => {
       localStorage.setItem('maklertour_show_marker_hotspots', showMarkerHotspotsEl.checked ? '1' : '0');
       openPoint(currentIndex, viewer ? { yaw: viewer.getYaw(), pitch: viewer.getPitch(), hfov: viewer.getHfov() } : null);
