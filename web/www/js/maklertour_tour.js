@@ -41,7 +41,25 @@
   let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0, autoEdges = [];
   let panoramaQuality = localStorage.getItem('maklertour_panorama_quality') || 'light';
   let mapMode = localStorage.getItem('maklertour_map_mode') || '2d';
-  let threeMap = { scene: null, camera: null, renderer: null, raycaster: null, mouse: null, pointMeshes: new Map(), hitMeshes: [], labelSprites: [], linesGroup: null, pointsGroup: null, initialized: false, view: { centerX: 0, centerZ: 0, zoom: 1, baseSpan: 10 }, minZoom: 0.3, maxZoom: 8, isPanning: false, panLast: null };
+  let threeMap = {
+    scene: null,
+    camera: null,
+    renderer: null,
+    raycaster: null,
+    mouse: null,
+    pointMeshes: new Map(),
+    hitMeshes: [],
+    labelSprites: [],
+    linesGroup: null,
+    pointsGroup: null,
+    initialized: false,
+    view: { centerX: 0, centerZ: 0, zoom: 1, baseSpan: 10 },
+    minZoom: 0.3,
+    maxZoom: 8,
+    isPanning: false,
+    panLast: null,
+    dragMoved: false
+  };
   let mapZoom = 1.0;
   const preloadCache = new Set();
 
@@ -253,13 +271,19 @@
     threeMap.scene.background = new THREE.Color(0x020617);
     threeMap.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
     threeMap.renderer = new THREE.WebGLRenderer({ antialias: true });
+    threeMap.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     map3dCanvas.innerHTML = ''; map3dCanvas.appendChild(threeMap.renderer.domElement);
     threeMap.raycaster = new THREE.Raycaster(); threeMap.mouse = new THREE.Vector2();
     threeMap.initialized = true;
     const el = threeMap.renderer.domElement;
     el.addEventListener('click', onThreeMapClick);
     el.addEventListener('wheel', (e) => { e.preventDefault(); zoomThreeMap(e.deltaY > 0 ? -1 : 1); }, { passive: false });
-    el.addEventListener('mousedown', (e) => { if (e.button !== 0) return; threeMap.isPanning = true; threeMap.panLast = { x: e.clientX, y: e.clientY }; });
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      threeMap.isPanning = true;
+      threeMap.dragMoved = false;
+      threeMap.panLast = { x: e.clientX, y: e.clientY };
+    });
     window.addEventListener('mousemove', (e) => { if (!threeMap.isPanning || !threeMap.panLast) return; const dx = e.clientX - threeMap.panLast.x; const dy = e.clientY - threeMap.panLast.y; threeMap.panLast = { x: e.clientX, y: e.clientY }; panThreeMap(dx, dy); });
     window.addEventListener('mouseup', () => { threeMap.isPanning = false; threeMap.panLast = null; });
     resizeThreeMap();
