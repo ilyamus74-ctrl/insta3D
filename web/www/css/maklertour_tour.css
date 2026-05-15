@@ -310,3 +310,23 @@
   font-size: 12px;
   line-height: 1.5;
 }
+.tour-map-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tour-map-tab-active {
+  border-color: #38bdf8;
+  color: #ffffff;
+}
+
+.tour-3d-map {
+  width: 100%;
+  height: 260px;
+  min-height: 260px;
+  border: 1px solid #374151;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #020617;
+}

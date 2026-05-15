@@ -56,7 +56,17 @@
           <button type="button" id="tourMapZoomOutBtn" class="btn btn-sm btn-outline-light">−</button>
           <button type="button" id="tourMapZoomInBtn" class="btn btn-sm btn-outline-light">+</button>
         </div>
-        <div id="tourMap" class="tour-map"></div>
+        <div class="tour-map-tabs">
+          <button id="tourMap2dBtn" type="button" class="btn btn-sm btn-outline-light">2D карта</button>
+          <button id="tourMap3dBtn" type="button" class="btn btn-sm btn-outline-light">3D карта</button>
+        </div>
+        <div id="tourMap2dPanel">
+          <div id="tourMap" class="tour-map"></div>
+        </div>
+        <div id="tourMap3dPanel" style="display:none;">
+          <div id="tour3dMapCanvas" class="tour-3d-map"></div>
+          <div class="tour-muted">3D Map v0: схема точек съёмки и переходов, не метрическая модель помещения.</div>
+        </div>
         <div id="tourMapMeta" class="tour-map-meta"></div>
         <div class="tour-map-legend">
           <span><i class="dot manual"></i> Manual</span>
@@ -127,6 +137,7 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/pannellum/build/pannellum.js"></script>
+<script src="/vendor/three/three.min.js"></script>
 <script src="/js/maklertour_tour.js"></script>
 
 {include file="maklertour_footer.html"}
