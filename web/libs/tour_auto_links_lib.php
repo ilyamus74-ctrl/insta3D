@@ -95,7 +95,20 @@ function run_tour_auto_links(mysqli $dbcnx, int $sessionId, bool $overwriteAuto 
                 $yaw = (float)$det['yaw_deg']; $pitch = (float)$det['pitch_deg']; $confidence = (float)$det['confidence'];
 
                 $up = $dbcnx->prepare("INSERT INTO tour_point_links (session_id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, label, source, shared_markers_json, confidence) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE yaw_deg=VALUES(yaw_deg), pitch_deg=VALUES(pitch_deg), label=VALUES(label), source=VALUES(source), shared_markers_json=VALUES(shared_markers_json), confidence=VALUES(confidence)");
-                $up->bind_param('iiiddsssd', $sessionId, $from['id'], $to['id'], $yaw, $pitch, $label, $src='AUTO_MARKER_BEARING', $sharedJson, $confidence);
+                $source = 'AUTO_MARKER_BEARING';
+
+                $up->bind_param(
+                    'iiiddsssd',
+                    $sessionId,
+                    $from['id'],
+                    $to['id'],
+                    $yaw,
+                    $pitch,
+                    $label,
+                    $source,
+                    $sharedJson,
+                    $confidence
+                );
                 $up->execute();
                 $aff = $up->affected_rows;
                 $up->close();
