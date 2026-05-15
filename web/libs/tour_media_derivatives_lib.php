@@ -33,8 +33,16 @@ function ensure_tour_viewer_derivatives(mysqli $dbcnx, int $sessionId): array {
         }
 
         $targets = [
-            ['path' => str_replace('/photos/originals/', '/photos/viewer_light/', $originalStoragePath), 'size' => '2048x1024', 'quality' => 78],
-            ['path' => str_replace('/photos/originals/', '/photos/viewer_hd/', $originalStoragePath), 'size' => '4096x2048', 'quality' => 86],
+            [
+                'path' => str_replace('/photos/originals/', '/photos/viewer_light/', $originalStoragePath),
+                'scale' => '2048:1024',
+                'qv' => 5,
+            ],
+            [
+                'path' => str_replace('/photos/originals/', '/photos/viewer_hd/', $originalStoragePath),
+                'scale' => '4096:2048',
+                'qv' => 3,
+           ],
         ];
 
         foreach ($targets as $target) {
@@ -56,8 +64,9 @@ function ensure_tour_viewer_derivatives(mysqli $dbcnx, int $sessionId): array {
             }
 
             $cmd = 'ffmpeg -hide_banner -loglevel error -y -i ' . escapeshellarg($source)
-                . ' -vf scale=' . escapeshellarg((string)$target['size'])
-                . ' -q:v 3 ' . escapeshellarg($targetFull) . ' 2>&1';
+                . ' -vf ' . escapeshellarg('scale=' . (string)$target['scale'])
+                . ' -q:v ' . escapeshellarg((string)$target['qv'])
+                . ' ' . escapeshellarg($targetFull) . ' 2>&1';
             $output = [];
             $rc = 0;
             exec($cmd, $output, $rc);
