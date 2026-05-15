@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-11 07:58:14
+/* Smarty version 5.3.1, created on 2026-05-15 07:54:04
   from 'file:cells_login.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a018c1617f901_57792553',
+  'unifunc' => 'content_6a06d11c16ff90_39735603',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '362e6fad9bb882ee68529cc56d38139f43339ead' => 
     array (
       0 => 'cells_login.html',
-      1 => 1778423707,
+      1 => 1778831613,
       2 => 'file',
     ),
   ),
@@ -20,24 +20,27 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   array (
   ),
 ))) {
-function content_6a018c1617f901_57792553 (\Smarty\Template $_smarty_tpl) {
+function content_6a06d11c16ff90_39735603 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 ?>
   <main>
     <div class="container">
 
-      <section class="section register min-vh-100 d-flex flex-column align-items-center justify-content-center py-4">
+       <section class="section login min-vh-100 d-flex flex-column align-items-center justify-content-start pt-2 pb-4">
         <div class="container">
           <div class="row justify-content-center">
             <div class="col-lg-4 col-md-6 d-flex flex-column align-items-center justify-content-center">
 
-              <div class="d-flex justify-content-center py-4">
-                <a href="index.html" class="logo d-flex align-items-center w-auto">
-                 <!-- <span class="d-none d-lg-block">Cargo Cells</span>
--->
-                 			 <img src="img/CC_transparent_andorid.png" alt=""  height="60%">
-                </a>
-              </div><!-- End Logo -->
+<div class="auth-logo-wrap">
+  <a href="/" class="d-flex justify-content-center">
+    <img
+      src="/img/logo/01E_home_aperture.png"
+      alt="MaklerTour"
+      class="auth-logo"
+    >
+  </a>
+</div>
+              <!-- End Logo -->
 
               <div class="card mb-3">
 
@@ -46,7 +49,7 @@ $_smarty_current_dir = '/home/makler/web/templates';
                   <div class="pt-4 pb-2">
 
 
-                    <h5 class="card-title text-center pb-0 fs-4">Login to Cargo Cells</h5>
+                    <h5 class="card-title text-center pb-0 fs-4">Login to Makler Tour</h5>
                     <p class="text-center small">Enter your username & password to login</p>
                   </div>
 

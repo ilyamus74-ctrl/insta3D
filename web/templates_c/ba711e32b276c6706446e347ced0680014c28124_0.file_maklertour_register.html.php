@@ -1,4 +1,28 @@
-<!DOCTYPE html>
+<?php
+/* Smarty version 5.3.1, created on 2026-05-15 07:48:44
+  from 'file:maklertour_register.html' */
+
+/* @var \Smarty\Template $_smarty_tpl */
+if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
+  'version' => '5.3.1',
+  'unifunc' => 'content_6a06cfdcaf7013_72258331',
+  'has_nocache_code' => false,
+  'file_dependency' => 
+  array (
+    'ba711e32b276c6706446e347ced0680014c28124' => 
+    array (
+      0 => 'maklertour_register.html',
+      1 => 1778831292,
+      2 => 'file',
+    ),
+  ),
+  'includes' => 
+  array (
+  ),
+))) {
+function content_6a06cfdcaf7013_72258331 (\Smarty\Template $_smarty_tpl) {
+$_smarty_current_dir = '/home/makler/web/templates';
+?><!DOCTYPE html>
 <html lang="ru">
 
 <head>
@@ -39,16 +63,18 @@
                   <p class="text-center small">Создайте аккаунт маклера</p>
                 </div>
 
-                {if $register_error}
-                  <div class="alert alert-danger">{$register_error}</div>
-                {/if}
+                <?php if ($_smarty_tpl->getValue('register_error')) {?>
+                  <div class="alert alert-danger"><?php echo $_smarty_tpl->getValue('register_error');?>
+</div>
+                <?php }?>
 
-                {if $register_success}
-                  <div class="alert alert-success">{$register_success}</div>
+                <?php if ($_smarty_tpl->getValue('register_success')) {?>
+                  <div class="alert alert-success"><?php echo $_smarty_tpl->getValue('register_success');?>
+</div>
                   <div class="text-center">
                     <a href="/login.php" class="btn btn-primary">Войти</a>
                   </div>
-                {else}
+                <?php } else { ?>
 
                 <form class="row g-3" method="post">
 
@@ -90,7 +116,7 @@
 
                 </form>
 
-                {/if}
+                <?php }?>
 
               </div>
             </div>
@@ -105,4 +131,5 @@
 </main>
 
 </body>
-</html>
+</html><?php }
+}

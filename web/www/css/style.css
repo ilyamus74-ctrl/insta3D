@@ -1231,3 +1231,22 @@ h6 {
   font-size: 13px;
   color: #012970;
 }
+.auth-logo-wrap {
+  width: 100%;
+  text-align: center;
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.auth-logo {
+  display: block;
+  width: 180px;
+  max-width: 85vw;
+  height: auto;
+  object-fit: contain;
+}
+
+.login .card,
+.register .card {
+  margin-top: 0;
+}
