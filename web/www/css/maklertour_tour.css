@@ -233,6 +233,11 @@
 .tour-map-legend .dot.manual { background:#22d3ee; }
 .tour-map-legend .dot.cov { background:#86efac; }
 .tour-map-legend .dot.nomarker { background:#fbbf24; }
+.tour-3d-map { margin-top: 8px; border:1px solid #374151; border-radius:10px; background:#020617; width:100%; height:260px; overflow:hidden; }
+.tour-map-expanded .tour-3d-map { height: 520px; }
+@media (max-width: 992px) {
+  .tour-map-expanded .tour-3d-map { height: 60vh; }
+}
 .tour-hotspot {
   width: 34px;
   height: 34px;

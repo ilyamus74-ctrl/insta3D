@@ -19,6 +19,7 @@
   const mapFitBtn = document.getElementById('tourMapFitBtn');
   const mapZoomOutBtn = document.getElementById('tourMapZoomOutBtn');
   const mapZoomInBtn = document.getElementById('tourMapZoomInBtn');
+  const mapExpandBtn = document.getElementById('tourMapExpandBtn');
   const autoMapBtn = document.getElementById('tourAutoMapBtn');
   const autoMapOverwriteManualBtn = document.getElementById('tourAutoMapOverwriteManualBtn');
   const viewerArea = document.querySelector('.tour-viewer-area');
@@ -40,7 +41,7 @@
   let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0, autoEdges = [];
   let panoramaQuality = localStorage.getItem('maklertour_panorama_quality') || 'light';
   let mapMode = localStorage.getItem('maklertour_map_mode') || '2d';
-  let threeMap = { scene: null, camera: null, renderer: null, raycaster: null, mouse: null, pointMeshes: new Map(), initialized: false };
+  let threeMap = { scene: null, camera: null, renderer: null, raycaster: null, mouse: null, pointMeshes: new Map(), hitMeshes: [], labelSprites: [], linesGroup: null, pointsGroup: null, initialized: false, view: { centerX: 0, centerZ: 0, zoom: 1, baseSpan: 10 }, minZoom: 0.3, maxZoom: 8, isPanning: false, panLast: null };
   let mapZoom = 1.0;
   const preloadCache = new Set();
 
@@ -232,23 +233,36 @@
     });
   }
 
+  function createTextSprite(text) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgba(2,6,23,0.7)'; ctx.fillRect(0, 12, 128, 40);
+    ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 28px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(text || ''), 64, 33);
+    const texture = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true }));
+    sprite.scale.set(0.9, 0.45, 1);
+    return sprite;
+  }
+
   function initThreeMapIfNeeded() {
-    if (threeMap.initialized || !map3dCanvas || !window.THREE) return;
+    if (threeMap.initialized || !map3dCanvas) return;
+    if (!window.THREE) { map3dCanvas.innerHTML = '<div class="tour-muted" style="padding:10px;">Three.js не загружен: проверьте /vendor/three/three.min.js</div>'; return; }
     threeMap.scene = new THREE.Scene();
     threeMap.scene.background = new THREE.Color(0x020617);
-    const w = Math.max(map3dCanvas.clientWidth || 320, 320);
-    const h = Math.max(map3dCanvas.clientHeight || 260, 260);
-    threeMap.camera = new THREE.PerspectiveCamera(55, w / h, 0.1, 1000);
+    threeMap.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
     threeMap.renderer = new THREE.WebGLRenderer({ antialias: true });
-    threeMap.renderer.setSize(w, h);
-    map3dCanvas.innerHTML = '';
-    map3dCanvas.appendChild(threeMap.renderer.domElement);
-    threeMap.raycaster = new THREE.Raycaster();
-    threeMap.mouse = new THREE.Vector2();
-    const amb = new THREE.AmbientLight(0xffffff, 0.9); threeMap.scene.add(amb);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6); dir.position.set(3, 5, 2); threeMap.scene.add(dir);
+    map3dCanvas.innerHTML = ''; map3dCanvas.appendChild(threeMap.renderer.domElement);
+    threeMap.raycaster = new THREE.Raycaster(); threeMap.mouse = new THREE.Vector2();
     threeMap.initialized = true;
-    threeMap.renderer.domElement.addEventListener('click', onThreeMapClick);
+    const el = threeMap.renderer.domElement;
+    el.addEventListener('click', onThreeMapClick);
+    el.addEventListener('wheel', (e) => { e.preventDefault(); zoomThreeMap(e.deltaY > 0 ? -1 : 1); }, { passive: false });
+    el.addEventListener('mousedown', (e) => { if (e.button !== 0) return; threeMap.isPanning = true; threeMap.panLast = { x: e.clientX, y: e.clientY }; });
+    window.addEventListener('mousemove', (e) => { if (!threeMap.isPanning || !threeMap.panLast) return; const dx = e.clientX - threeMap.panLast.x; const dy = e.clientY - threeMap.panLast.y; threeMap.panLast = { x: e.clientX, y: e.clientY }; panThreeMap(dx, dy); });
+    window.addEventListener('mouseup', () => { threeMap.isPanning = false; threeMap.panLast = null; });
+    resizeThreeMap();
   }
 
   function onThreeMapClick(e) {
@@ -256,51 +270,54 @@
     const rect = threeMap.renderer.domElement.getBoundingClientRect();
     threeMap.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     threeMap.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    const objects = Array.from(threeMap.pointMeshes.values());
     threeMap.raycaster.setFromCamera(threeMap.mouse, threeMap.camera);
-    const hit = threeMap.raycaster.intersectObjects(objects, false);
+    const hit = threeMap.raycaster.intersectObjects(threeMap.hitMeshes, false);
     if (hit[0]?.object?.userData?.photoPointId) openPointByPhotoPointId(hit[0].object.userData.photoPointId);
   }
 
+  function fitThreeMapToPoints() {
+    const vals = photoPoints.map((p, i) => { const pos = positions[String(p.id)] || { x_m: Math.cos((i / Math.max(photoPoints.length, 1)) * Math.PI * 2) * 2, y_m: Math.sin((i / Math.max(photoPoints.length, 1)) * Math.PI * 2) * 2 }; return { x: Number(pos.x_m || 0), z: Number(pos.y_m || 0) }; });
+    const xs = vals.map(v=>v.x), zs = vals.map(v=>v.z);
+    const minX=Math.min(...xs, -1), maxX=Math.max(...xs,1), minZ=Math.min(...zs,-1), maxZ=Math.max(...zs,1);
+    threeMap.view.centerX = (minX+maxX)/2; threeMap.view.centerZ=(minZ+maxZ)/2;
+    threeMap.view.baseSpan = Math.max(maxX-minX, maxZ-minZ, 2) * 1.4;
+    setThreeMapZoom(1);
+  }
+  function setThreeMapZoom(zoom) { threeMap.view.zoom = Math.max(threeMap.minZoom, Math.min(threeMap.maxZoom, zoom)); renderThreeMap(); }
+  function zoomThreeMap(delta) { setThreeMapZoom(threeMap.view.zoom * (delta > 0 ? 1.2 : 1/1.2)); }
+  function panThreeMap(dx, dy) { const aspect = Math.max((map3dCanvas.clientWidth||320) / Math.max(map3dCanvas.clientHeight||260,1), 0.1); const span = threeMap.view.baseSpan / threeMap.view.zoom; threeMap.view.centerX -= (dx / Math.max(map3dCanvas.clientWidth||1,1)) * span * aspect; threeMap.view.centerZ += (dy / Math.max(map3dCanvas.clientHeight||1,1)) * span; renderThreeMap(); }
+
+  function resizeThreeMap() {
+    if (!threeMap.initialized || !threeMap.renderer || !threeMap.camera) return;
+    const w = Math.max(map3dCanvas.clientWidth || 320, 320), h = Math.max(map3dCanvas.clientHeight || 260, 260);
+    threeMap.renderer.setSize(w, h);
+    renderThreeMap();
+  }
+
   function renderThreeMap() {
-    if (!threeMap.initialized || !threeMap.scene || !threeMap.camera || !threeMap.renderer) return;
+    if (!threeMap.initialized || !threeMap.scene || !threeMap.camera || !threeMap.renderer || !window.THREE) return;
     while (threeMap.scene.children.length > 0) threeMap.scene.remove(threeMap.scene.children[0]);
-    threeMap.pointMeshes.clear();
+    threeMap.pointMeshes.clear(); threeMap.hitMeshes = []; threeMap.labelSprites = [];
     const amb = new THREE.AmbientLight(0xffffff, 0.9); threeMap.scene.add(amb);
     const dir = new THREE.DirectionalLight(0xffffff, 0.6); dir.position.set(3, 5, 2); threeMap.scene.add(dir);
-    threeMap.scene.add(new THREE.GridHelper(20, 20, 0x334155, 0x1e293b));
-    const seq = [...photoPoints].sort((a,b)=>Number(a.sequence_number||0)-Number(b.sequence_number||0));
     const pMap = {};
     photoPoints.forEach((p, i) => {
       const pos = positions[String(p.id)] || { x_m: Math.cos((i / Math.max(photoPoints.length, 1)) * Math.PI * 2) * 2, y_m: Math.sin((i / Math.max(photoPoints.length, 1)) * Math.PI * 2) * 2, z_m: 0 };
-      const x = Number(pos.x_m || 0), y = Number(pos.z_m || 0), z = Number(pos.y_m || 0);
-      pMap[p.id] = { x, y, z };
+      const x = Number(pos.x_m || 0), y = Number(pos.z_m || 0), z = Number(pos.y_m || 0); pMap[p.id] = { x, y, z };
       const active = Number(photoPoints[currentIndex]?.id) === Number(p.id);
-      const geo = new THREE.SphereGeometry(active ? 0.12 : 0.08, 16, 16);
-      const mat = new THREE.MeshStandardMaterial({ color: active ? 0x22d3ee : 0x93c5fd });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(x, y, z);
-      mesh.userData.photoPointId = Number(p.id);
-      threeMap.scene.add(mesh); threeMap.pointMeshes.set(Number(p.id), mesh);
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 16), new THREE.MeshStandardMaterial({ color: active ? 0x22d3ee : 0x93c5fd }));
+      mesh.position.set(x, y, z); mesh.scale.setScalar(active ? 1.5 : 1); threeMap.scene.add(mesh); threeMap.pointMeshes.set(Number(p.id), mesh);
+      const hit = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 10), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }));
+      hit.position.copy(mesh.position); hit.userData.photoPointId = Number(p.id); threeMap.scene.add(hit); threeMap.hitMeshes.push(hit);
+      const label = createTextSprite(String(p.sequence_number ?? p.id)); label.position.set(x, y + 0.45, z); threeMap.scene.add(label); threeMap.labelSprites.push(label);
     });
-    let drawLinks = links;
-    if (!drawLinks.length && seq.length > 1) {
-      drawLinks = seq.slice(1).map((p, i) => ({ from_photo_point_id: seq[i].id, to_photo_point_id: p.id }));
-    }
-    drawLinks.forEach((l) => {
-      const a = pMap[l.from_photo_point_id], b = pMap[l.to_photo_point_id]; if (!a || !b) return;
-      const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a.x,a.y,a.z), new THREE.Vector3(b.x,b.y,b.z)]);
-      threeMap.scene.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x64748b })));
-    });
-    const vals = Object.values(pMap);
-    const xs = vals.map(v=>v.x), zs = vals.map(v=>v.z);
-    const minX=Math.min(...xs, -1), maxX=Math.max(...xs,1), minZ=Math.min(...zs,-1), maxZ=Math.max(...zs,1);
-    const centerX=(minX+maxX)/2, centerZ=(minZ+maxZ)/2, span=Math.max(maxX-minX, maxZ-minZ, 2);
-    threeMap.camera.position.set(centerX, span*1.2, centerZ+span*1.5);
-    threeMap.camera.lookAt(centerX, 0, centerZ);
-    const w = Math.max(map3dCanvas.clientWidth || 320, 320), h = Math.max(map3dCanvas.clientHeight || 260, 260);
-    threeMap.camera.aspect = w / h; threeMap.camera.updateProjectionMatrix();
-    threeMap.renderer.setSize(w, h);
+    const seq = [...photoPoints].sort((a,b)=>Number(a.sequence_number||0)-Number(b.sequence_number||0));
+    let drawLinks = links; if (!drawLinks.length && seq.length > 1) drawLinks = seq.slice(1).map((p, i) => ({ from_photo_point_id: seq[i].id, to_photo_point_id: p.id }));
+    drawLinks.forEach((l) => { const a = pMap[l.from_photo_point_id], b = pMap[l.to_photo_point_id]; if (!a || !b) return; const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a.x,a.y,a.z), new THREE.Vector3(b.x,b.y,b.z)]); threeMap.scene.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x64748b }))); });
+    const aspect = Math.max((map3dCanvas.clientWidth || 320) / Math.max(map3dCanvas.clientHeight || 260, 1), 0.1);
+    const span = threeMap.view.baseSpan / threeMap.view.zoom;
+    threeMap.camera.left = -span * aspect / 2; threeMap.camera.right = span * aspect / 2; threeMap.camera.top = span / 2; threeMap.camera.bottom = -span / 2;
+    threeMap.camera.position.set(threeMap.view.centerX, 8, threeMap.view.centerZ + 8); threeMap.camera.lookAt(threeMap.view.centerX, 0, threeMap.view.centerZ); threeMap.camera.updateProjectionMatrix();
     threeMap.renderer.render(threeMap.scene, threeMap.camera);
   }
 
@@ -312,7 +329,7 @@
     if (map3dPanel) map3dPanel.style.display = is3d ? '' : 'none';
     if (map2dBtn) map2dBtn.classList.toggle('tour-map-tab-active', !is3d);
     if (map3dBtn) map3dBtn.classList.toggle('tour-map-tab-active', is3d);
-    if (is3d) { initThreeMapIfNeeded(); renderThreeMap(); }
+    if (is3d) { initThreeMapIfNeeded(); if (threeMap.view.baseSpan <= 0 || !Number.isFinite(threeMap.view.baseSpan)) fitThreeMapToPoints(); resizeThreeMap(); }
   }
 
   function renderMap() {
@@ -397,9 +414,11 @@
 
   if (map2dBtn) map2dBtn.addEventListener('click', () => { mapMode = '2d'; localStorage.setItem('maklertour_map_mode', mapMode); applyMapMode(); });
   if (map3dBtn) map3dBtn.addEventListener('click', () => { mapMode = '3d'; localStorage.setItem('maklertour_map_mode', mapMode); applyMapMode(); });
-  if (mapFitBtn) mapFitBtn.addEventListener('click', () => { mapZoom = 1.0; renderMap(); });
-  if (mapZoomInBtn) mapZoomInBtn.addEventListener('click', () => { mapZoom = Math.min(mapZoom * 1.2, 5); renderMap(); });
-  if (mapZoomOutBtn) mapZoomOutBtn.addEventListener('click', () => { mapZoom = Math.max(mapZoom / 1.2, 0.3); renderMap(); });
+  if (mapFitBtn) mapFitBtn.addEventListener('click', () => { if (mapMode === '3d') { fitThreeMapToPoints(); resizeThreeMap(); } else { mapZoom = 1.0; renderMap(); } });
+  if (mapZoomInBtn) mapZoomInBtn.addEventListener('click', () => { if (mapMode === '3d') zoomThreeMap(1); else { mapZoom = Math.min(mapZoom * 1.2, 5); renderMap(); } });
+  if (mapZoomOutBtn) mapZoomOutBtn.addEventListener('click', () => { if (mapMode === '3d') zoomThreeMap(-1); else { mapZoom = Math.max(mapZoom / 1.2, 0.3); renderMap(); } });
+  if (mapExpandBtn) mapExpandBtn.addEventListener('click', () => { const card = mapExpandBtn.closest('.tour-card'); const expanded = card?.classList.toggle('tour-map-expanded'); mapExpandBtn.textContent = expanded ? 'Свернуть карту' : 'Развернуть карту'; resizeThreeMap(); });
+  window.addEventListener('resize', () => { if (mapMode === '3d') resizeThreeMap(); });
 
   async function loadTour() {
     const r = await fetch('/api/tour_session.php?session_id=' + encodeURIComponent(sessionId), { credentials: 'same-origin', headers: { Accept: 'application/json' } });
@@ -421,6 +440,7 @@
     renderPoints();
     renderHotspotTargetSelect();
     renderCurrentLinks();
+    if (window.THREE) fitThreeMapToPoints();
     applyMapMode();
   }
 
