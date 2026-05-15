@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/../../libs/tour_auto_map_lib.php';
+require_once __DIR__ . '/../../libs/tour_auto_links_lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -37,6 +38,7 @@ if (!is_array($data)) auto_map_json(['ok' => false, 'error' => 'bad_json'], 400)
 $sessionId = (int)($data['session_id'] ?? 0);
 $overwrite = (bool)($data['overwrite'] ?? true);
 $overwriteManual = (bool)($data['overwrite_manual'] ?? false);
+$generateLinks = (bool)($data['generate_links'] ?? true);
 if ($sessionId <= 0) auto_map_json(['ok' => false, 'error' => 'bad_session_id'], 400);
 
 $user = auth_current_user();
@@ -55,6 +57,10 @@ if (!can_view_order_auto($session, $userId, $role)) auto_map_json(['ok' => false
 
 try {
     $result = run_tour_auto_map($dbcnx, $sessionId, $overwrite, $overwriteManual);
+    $autoLinks = null;
+    if ($generateLinks) {
+        $autoLinks = run_tour_auto_links($dbcnx, $sessionId, true, $overwriteManual);
+    }
     auto_map_json([
         'ok' => true,
         'session_id' => $sessionId,
@@ -63,6 +69,7 @@ try {
         'warnings' => $result['warnings'] ?? [],
         'positions' => $result['positions'] ?? [],
         'edges' => $result['edges'] ?? [],
+        'auto_links' => $autoLinks,
     ]);
 } catch (Throwable $e) {
     auto_map_json(['ok' => false, 'error' => 'auto_map_failed', 'message' => $e->getMessage()], 500);

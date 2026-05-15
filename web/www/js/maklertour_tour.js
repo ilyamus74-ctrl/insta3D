@@ -69,7 +69,10 @@
   function buildHotspots(point) {
     const hotSpots = links.filter((l) => Number(l.from_photo_point_id) === Number(point.id)).map((l) => {
       const target = getById(l.to_photo_point_id);
-      return { pitch: toNum(l.pitch_deg, 0), yaw: toNum(l.yaw_deg, 0), type: 'info', text: l.label || (target?.name || 'Перейти'), cssClass: 'tour-hotspot', clickHandlerFunc: () => openPointByPhotoPointId(l.to_photo_point_id) };
+      const markerLabel = (l.shared_markers && l.shared_markers.length) ? ('MT-' + String(l.shared_markers[0]).padStart(3, '0')) : '';
+      const confText = Number.isFinite(Number(l.confidence)) ? (' · conf ' + Number(l.confidence).toFixed(1)) : '';
+      const autoSuffix = l.source === 'AUTO_MARKER_BEARING' ? (' AUTO · via ' + markerLabel + confText) : '';
+      return { pitch: toNum(l.pitch_deg, 0), yaw: toNum(l.yaw_deg, 0), type: 'info', text: (l.label || (target?.name || 'Перейти')) + autoSuffix, cssClass: l.source === 'AUTO_MARKER_BEARING' ? 'tour-hotspot tour-hotspot-auto' : 'tour-hotspot tour-hotspot-manual', clickHandlerFunc: () => openPointByPhotoPointId(l.to_photo_point_id) };
     });
     const showMarkers = !showMarkerHotspotsEl || !!showMarkerHotspotsEl.checked;
     if (showMarkers) {
@@ -146,7 +149,9 @@
       const target = getById(l.to_photo_point_id);
       const item = document.createElement('div');
       item.className = 'tour-link-item';
-      item.innerHTML = `<div>→ ${escapeHtml(l.label || target?.name || ('Point #' + l.to_photo_point_id))}</div><div class="tour-muted">yaw: ${Number(l.yaw_deg || 0).toFixed(1)} / pitch: ${Number(l.pitch_deg || 0).toFixed(1)}</div>`;
+      const via = (l.shared_markers && l.shared_markers.length) ? (' · via MT-' + String(l.shared_markers[0]).padStart(3, '0')) : '';
+      const conf = Number.isFinite(Number(l.confidence)) ? (' · conf ' + Number(l.confidence).toFixed(1)) : '';
+      item.innerHTML = `<div>→ ${escapeHtml(l.label || target?.name || ('Point #' + l.to_photo_point_id))}</div><div class="tour-muted">${escapeHtml(l.source || 'MANUAL')}${escapeHtml(via)}${escapeHtml(conf)}</div><div class="tour-muted">yaw: ${Number(l.yaw_deg || 0).toFixed(1)} / pitch: ${Number(l.pitch_deg || 0).toFixed(1)}</div>`;
       const del = document.createElement('button');
       del.type = 'button'; del.className = 'btn btn-sm btn-outline-danger mt-2'; del.textContent = 'Удалить';
       del.addEventListener('click', async () => {
@@ -254,7 +259,7 @@
       const missing = ms.missing_layout_marker_ids || [];
       const missLabels = missing.map((id) => 'MT-' + String(id).padStart(3, '0'));
       markerLayoutEl.innerHTML = `Marker layout: ${Number(ms.defined_markers_count || 0)} defined<br>Detected markers covered: ${Number(ms.detected_markers_with_layout_count || 0)}/${(data.markers?.unique_ids || []).length}` +
-        (missing.length ? `<br>Нет layout для ${missLabels.join(', ')}<br>Marker layout неполный. Для метрической карты нужно задать размеры, координаты и ориентацию всех найденных меток.` : '<br>Marker layout задан. Следующий этап — pose/metric map.');
+        (missing.length ? `<br>Нет layout для ${missLabels.join(', ')}<br>Marker layout неполный. Для метрической карты нужно задать размеры, координаты и ориентацию всех найденных меток.` : '<br>Автострелки строятся по общим видимым MT-меткам между соседними точками. Это навигационные переходы, не метрическое направление камеры.')
     }
     renderPoints();
     renderHotspotTargetSelect();
@@ -264,7 +269,7 @@
   async function runAutoMap(overwriteManual) {
       autoMapBtn.disabled = true; if (autoMapOverwriteManualBtn) autoMapOverwriteManualBtn.disabled = true;
       try {
-        const r = await fetch('/api/tour_auto_map.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), overwrite: true, overwrite_manual: !!overwriteManual }) });
+        const r = await fetch('/api/tour_auto_map.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ session_id: Number(sessionId), overwrite: true, overwrite_manual: !!overwriteManual, generate_links: true }) });
         const data = await r.json();
         if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
         alert('Авторасстановка выполнена. Позиции обновлены.');

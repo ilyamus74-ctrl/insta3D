@@ -176,7 +176,7 @@ foreach ($photoPoints as &$pp) {
 unset($pp);
 
 $links = [];
-$stmt = $dbcnx->prepare("SELECT id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, label FROM tour_point_links WHERE session_id = ? ORDER BY id ASC");
+$stmt = $dbcnx->prepare("SELECT id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, label, source, shared_markers_json, confidence FROM tour_point_links WHERE session_id = ? ORDER BY id ASC");
 
 if ($stmt) {
     $stmt->bind_param('i', $sessionId);
@@ -191,6 +191,9 @@ if ($stmt) {
             'yaw_deg' => isset($row['yaw_deg']) ? (float)$row['yaw_deg'] : 0.0,
             'pitch_deg' => isset($row['pitch_deg']) ? (float)$row['pitch_deg'] : 0.0,
             'label' => (string)($row['label'] ?? ''),
+            'source' => (string)($row['source'] ?? 'MANUAL'),
+            'shared_markers' => (json_decode((string)($row['shared_markers_json'] ?? '[]'), true) ?: []),
+            'confidence' => isset($row['confidence']) ? (float)$row['confidence'] : null,
         ];
     }
     $stmt->close();
