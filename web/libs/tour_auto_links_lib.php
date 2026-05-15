@@ -2,6 +2,11 @@
 declare(strict_types=1);
 
 const TOUR_AUTO_LINKS_ALGORITHM = 'AUTO_MARKER_BEARING_V1';
+function normalize_yaw(float $yaw): float {
+    while ($yaw > 180.0) $yaw -= 360.0;
+    while ($yaw < -180.0) $yaw += 360.0;
+    return $yaw;
+}
 
 function run_tour_auto_links(mysqli $dbcnx, int $sessionId, bool $overwriteAuto = true, bool $overwriteManual = false): array {
     $MIN_CONFIDENCE = 30.0;
@@ -90,20 +95,27 @@ function run_tour_auto_links(mysqli $dbcnx, int $sessionId, bool $overwriteAuto 
                 if ($manual && !$overwriteManual) { $warnings[] = "Manual link exists for {$from['name']} -> {$to['name']}, auto skipped"; $skipped++; continue; }
 
                 $det = $bestDet[$from['id']][$bestMid];
+                $detTo = $bestDet[$to['id']][$bestMid];
                 $sharedJson = json_encode(array_values(array_map('intval', $common)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 $label = (string)$to['name'];
                 $yaw = (float)$det['yaw_deg']; $pitch = (float)$det['pitch_deg']; $confidence = (float)$det['confidence'];
+                $targetYaw = normalize_yaw((float)$detTo['yaw_deg'] + 180.0);
+                $targetPitch = 0.0;
+                $targetHfov = 100.0;
 
-                $up = $dbcnx->prepare("INSERT INTO tour_point_links (session_id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, label, source, shared_markers_json, confidence) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE yaw_deg=VALUES(yaw_deg), pitch_deg=VALUES(pitch_deg), label=VALUES(label), source=VALUES(source), shared_markers_json=VALUES(shared_markers_json), confidence=VALUES(confidence)");
+                $up = $dbcnx->prepare("INSERT INTO tour_point_links (session_id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, target_yaw_deg, target_pitch_deg, target_hfov, label, source, shared_markers_json, confidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE yaw_deg=VALUES(yaw_deg), pitch_deg=VALUES(pitch_deg), target_yaw_deg=VALUES(target_yaw_deg), target_pitch_deg=VALUES(target_pitch_deg), target_hfov=VALUES(target_hfov), label=VALUES(label), source=VALUES(source), shared_markers_json=VALUES(shared_markers_json), confidence=VALUES(confidence)");
                 $source = 'AUTO_MARKER_BEARING';
 
                 $up->bind_param(
-                    'iiiddsssd',
+                    'iiidddddsssd',
                     $sessionId,
                     $from['id'],
                     $to['id'],
                     $yaw,
                     $pitch,
+                    $targetYaw,
+                    $targetPitch,
+                    $targetHfov,
                     $label,
                     $source,
                     $sharedJson,
@@ -113,7 +125,7 @@ function run_tour_auto_links(mysqli $dbcnx, int $sessionId, bool $overwriteAuto 
                 $aff = $up->affected_rows;
                 $up->close();
                 if ($aff === 1) $created++; else $updated++;
-                $outLinks[] = ['from_photo_point_id'=>$from['id'],'to_photo_point_id'=>$to['id'],'yaw_deg'=>round($yaw,2),'pitch_deg'=>round($pitch,2),'label'=>$label,'source'=>'AUTO_MARKER_BEARING','shared_markers'=>json_decode($sharedJson,true) ?: [],'confidence'=>round($confidence,2)];
+                $outLinks[] = ['from_photo_point_id'=>$from['id'],'to_photo_point_id'=>$to['id'],'yaw_deg'=>round($yaw,2),'pitch_deg'=>round($pitch,2),'target_yaw_deg'=>round($targetYaw,2),'target_pitch_deg'=>round($targetPitch,2),'target_hfov'=>round($targetHfov,2),'label'=>$label,'source'=>'AUTO_MARKER_BEARING','shared_markers'=>json_decode($sharedJson,true) ?: [],'confidence'=>round($confidence,2)];
             }
         }
         $dbcnx->commit();

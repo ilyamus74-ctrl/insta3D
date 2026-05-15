@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-15 08:38:27
+/* Smarty version 5.3.1, created on 2026-05-15 11:04:58
   from 'file:maklertour_tour.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a06db83748769_59229636',
+  'unifunc' => 'content_6a06fdda507cb4_02416307',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '0e5eded05bc37eff5c2407f99950b26d18b2f3c3' => 
     array (
       0 => 'maklertour_tour.html',
-      1 => 1778833889,
+      1 => 1778842612,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a06db83748769_59229636 (\Smarty\Template $_smarty_tpl) {
+function content_6a06fdda507cb4_02416307 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -114,7 +114,8 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
       </div>
       <div class="tour-card">
         <div class="tour-section-title">Найденные метки в панораме</div>
-        <label class="tour-muted"><input type="checkbox" id="tourShowMarkerHotspots" checked> Показывать MT-метки</label>
+        <div class="tour-settings-row"><label class="tour-muted"><input type="checkbox" id="tourShowMarkerHotspots" checked> Показывать MT-метки</label></div>
+        <div class="tour-muted mt-1">Физические AprilTag на фото будут удаляться отдельной clean-обработкой позже.</div>
         <div id="tourDetectedMarkersList" class="tour-detected-markers-list">
           <span class="tour-muted">Выберите точку</span>
         </div>
@@ -140,6 +141,11 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
 
         <div>
           <div class="tour-nav-buttons">
+            <div class="tour-quality-toggle">
+              <span class="tour-muted">Качество:</span>
+              <button type="button" id="tourQualityLightBtn" class="btn btn-sm btn-outline-light tour-quality-btn">Light</button>
+              <button type="button" id="tourQualityHdBtn" class="btn btn-sm btn-outline-light tour-quality-btn">HD</button>
+            </div>
             <button type="button" id="tourPrevPoint" class="btn btn-sm btn-outline-light">← Предыдущая</button>
             <button type="button" id="tourNextPoint" class="btn btn-sm btn-outline-light">Следующая →</button>
             <a class="btn btn-sm btn-outline-light" href="/order.php?id=<?php echo $_smarty_tpl->getValue('orderId');?>

@@ -80,7 +80,8 @@
       </div>
       <div class="tour-card">
         <div class="tour-section-title">Найденные метки в панораме</div>
-        <label class="tour-muted"><input type="checkbox" id="tourShowMarkerHotspots" checked> Показывать MT-метки</label>
+        <div class="tour-settings-row"><label class="tour-muted"><input type="checkbox" id="tourShowMarkerHotspots" checked> Показывать MT-метки</label></div>
+        <div class="tour-muted mt-1">Физические AprilTag на фото будут удаляться отдельной clean-обработкой позже.</div>
         <div id="tourDetectedMarkersList" class="tour-detected-markers-list">
           <span class="tour-muted">Выберите точку</span>
         </div>
@@ -106,6 +107,11 @@
 
         <div>
           <div class="tour-nav-buttons">
+            <div class="tour-quality-toggle">
+              <span class="tour-muted">Качество:</span>
+              <button type="button" id="tourQualityLightBtn" class="btn btn-sm btn-outline-light tour-quality-btn">Light</button>
+              <button type="button" id="tourQualityHdBtn" class="btn btn-sm btn-outline-light tour-quality-btn">HD</button>
+            </div>
             <button type="button" id="tourPrevPoint" class="btn btn-sm btn-outline-light">← Предыдущая</button>
             <button type="button" id="tourNextPoint" class="btn btn-sm btn-outline-light">Следующая →</button>
             <a class="btn btn-sm btn-outline-light" href="/order.php?id={$orderId}">← Назад к заявке</a>

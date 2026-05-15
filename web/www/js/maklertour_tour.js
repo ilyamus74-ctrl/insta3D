@@ -26,7 +26,10 @@
   const detectedMarkersListEl = document.getElementById('tourDetectedMarkersList');
   const selectedMarkerInfoEl = document.getElementById('tourSelectedMarkerInfo');
   const showMarkerHotspotsEl = document.getElementById('tourShowMarkerHotspots');
+  const qualityLightBtn = document.getElementById('tourQualityLightBtn');
+  const qualityHdBtn = document.getElementById('tourQualityHdBtn');
   let viewer = null, photoPoints = [], links = [], positions = {}, currentIndex = 0, autoEdges = [];
+  let panoramaQuality = localStorage.getItem('maklertour_panorama_quality') || 'light';
   let mapZoom = 1.0;
   const preloadCache = new Set();
 
@@ -37,7 +40,7 @@
   function preloadPanorama(url) { if (!url || preloadCache.has(url)) return; preloadCache.add(url); const i = new Image(); i.src = url; }
   function markActive(index) { document.querySelectorAll('.tour-point').forEach((el) => el.classList.remove('active')); const active = document.querySelector(`.tour-point[data-index="${index}"]`); if (active) active.classList.add('active'); }
   function updateNavButtons() { if (prevBtn) prevBtn.disabled = currentIndex <= 0; if (nextBtn) nextBtn.disabled = currentIndex >= photoPoints.length - 1; }
-  function openPointByPhotoPointId(photoPointId) { const idx = photoPoints.findIndex((p) => Number(p.id) === Number(photoPointId)); if (idx >= 0) openPoint(idx); }
+  function openPointByPhotoPointId(photoPointId, viewOptions = null) { const idx = photoPoints.findIndex((p) => Number(p.id) === Number(photoPointId)); if (idx >= 0) openPoint(idx, viewOptions); }
   function selectDetectedMarker(marker) {
     if (!selectedMarkerInfoEl || !marker) return;
     selectedMarkerInfoEl.classList.remove('tour-muted');
@@ -66,13 +69,19 @@
     });
   }
 
+  function getPanoramaUrl(point) {
+    if (panoramaQuality === 'hd' && point.panorama_hd_url) return point.panorama_hd_url;
+    if (point.panorama_light_url) return point.panorama_light_url;
+    return point.panorama_url;
+  }
+
   function buildHotspots(point) {
     const hotSpots = links.filter((l) => Number(l.from_photo_point_id) === Number(point.id)).map((l) => {
       const target = getById(l.to_photo_point_id);
       const markerLabel = (l.shared_markers && l.shared_markers.length) ? ('MT-' + String(l.shared_markers[0]).padStart(3, '0')) : '';
       const confText = Number.isFinite(Number(l.confidence)) ? (' · conf ' + Number(l.confidence).toFixed(1)) : '';
       const autoSuffix = l.source === 'AUTO_MARKER_BEARING' ? (' AUTO · via ' + markerLabel + confText) : '';
-      return { pitch: toNum(l.pitch_deg, 0), yaw: toNum(l.yaw_deg, 0), type: 'info', text: (l.label || (target?.name || 'Перейти')) + autoSuffix, cssClass: l.source === 'AUTO_MARKER_BEARING' ? 'tour-hotspot tour-hotspot-auto' : 'tour-hotspot tour-hotspot-manual', clickHandlerFunc: () => openPointByPhotoPointId(l.to_photo_point_id) };
+      return { pitch: toNum(l.pitch_deg, 0), yaw: toNum(l.yaw_deg, 0), type: 'info', text: (l.label || (target?.name || 'Перейти')) + autoSuffix, cssClass: l.source === 'AUTO_MARKER_BEARING' ? 'tour-hotspot tour-hotspot-auto' : 'tour-hotspot tour-hotspot-manual', clickHandlerFunc: () => openPointByPhotoPointId(l.to_photo_point_id, { yaw: Number(l.target_yaw_deg), pitch: Number(l.target_pitch_deg), hfov: Number(l.target_hfov || 100) }) };
     });
     const showMarkers = !showMarkerHotspotsEl || !!showMarkerHotspotsEl.checked;
     if (showMarkers) {
@@ -84,7 +93,7 @@
     return hotSpots;
   }
 
-  function openPoint(index) {
+  function openPoint(index, viewOptions = null) {
     const point = photoPoints[index]; if (!point) return;
     if (viewer && photoPoints[currentIndex]) {
       const cur = photoPoints[currentIndex];
@@ -94,22 +103,23 @@
     currentPointEl.textContent = point.name || ('Point #' + point.id);
     currentRoomEl.textContent = point.room_name ? ('room: ' + point.room_name) : '360 panorama';
 
-    if (!point.panorama_url) { panoramaEl.innerHTML = '<div class="tour-viewer-placeholder">Нет panorama для этой точки</div>'; return; }
+    const panoramaUrl = getPanoramaUrl(point);
+    if (!panoramaUrl) { panoramaEl.innerHTML = '<div class="tour-viewer-placeholder">Нет panorama для этой точки</div>'; return; }
     viewerArea.classList.add('is-loading');
     const preImg = new Image();
     preImg.onload = function () {
       if (viewer) { viewer.destroy(); viewer = null; }
       panoramaEl.innerHTML = '';
-      viewer = pannellum.viewer('panorama', { type: 'equirectangular', panorama: point.panorama_url, autoLoad: true, showZoomCtrl: true, compass: false, yaw: toNum(point._lastYaw, toNum(point.initial_yaw_deg, 0)), pitch: toNum(point._lastPitch, toNum(point.initial_pitch_deg, 0)), hfov: toNum(point._lastHfov, toNum(point.initial_hfov, 100)), hotSpots: buildHotspots(point) });
+      viewer = pannellum.viewer('panorama', { type: 'equirectangular', panorama: panoramaUrl, autoLoad: true, showZoomCtrl: true, compass: false, yaw: (viewOptions && Number.isFinite(Number(viewOptions.yaw))) ? Number(viewOptions.yaw) : toNum(point._lastYaw, toNum(point.initial_yaw_deg, 0)), pitch: (viewOptions && Number.isFinite(Number(viewOptions.pitch))) ? Number(viewOptions.pitch) : toNum(point._lastPitch, toNum(point.initial_pitch_deg, 0)), hfov: (viewOptions && Number.isFinite(Number(viewOptions.hfov))) ? Number(viewOptions.hfov) : toNum(point._lastHfov, toNum(point.initial_hfov, 100)), hotSpots: buildHotspots(point) });
       viewerArea.classList.remove('is-loading');
-      [index - 1, index + 1].forEach((i) => { if (photoPoints[i]?.panorama_url) preloadPanorama(photoPoints[i].panorama_url); });
-      links.filter((l) => Number(l.from_photo_point_id) === Number(point.id)).forEach((l) => { const target = getById(l.to_photo_point_id); if (target?.panorama_url) preloadPanorama(target.panorama_url); });
+      [index - 1, index + 1].forEach((i) => { if (photoPoints[i]) preloadPanorama(getPanoramaUrl(photoPoints[i])); });
+      links.filter((l) => Number(l.from_photo_point_id) === Number(point.id)).forEach((l) => { const target = getById(l.to_photo_point_id); if (target) preloadPanorama(getPanoramaUrl(target)); });
     };
     preImg.onerror = function () {
       viewerArea.classList.remove('is-loading');
-      panoramaEl.innerHTML = `<div class="tour-viewer-placeholder">Ошибка загрузки panorama.<br><a target="_blank" rel="noopener" href="${escapeHtml(point.panorama_url)}">Открыть JPG напрямую</a></div>`;
+      panoramaEl.innerHTML = `<div class="tour-viewer-placeholder">Ошибка загрузки panorama.<br><a target="_blank" rel="noopener" href="${escapeHtml(panoramaUrl)}">Открыть JPG напрямую</a></div>`;
     };
-    preImg.src = point.panorama_url;
+    preImg.src = panoramaUrl;
   }
 
   function renderPoints() {
@@ -281,7 +291,27 @@
         autoMapBtn.disabled = false; if (autoMapOverwriteManualBtn) autoMapOverwriteManualBtn.disabled = false;
       }
   }
-  if (showMarkerHotspotsEl) showMarkerHotspotsEl.addEventListener('change', () => openPoint(currentIndex));
+  if (showMarkerHotspotsEl) {
+    const saved = localStorage.getItem('maklertour_show_marker_hotspots');
+    showMarkerHotspotsEl.checked = saved === null ? true : saved === '1';
+    showMarkerHotspotsEl.addEventListener('change', () => {
+      localStorage.setItem('maklertour_show_marker_hotspots', showMarkerHotspotsEl.checked ? '1' : '0');
+      openPoint(currentIndex, viewer ? { yaw: viewer.getYaw(), pitch: viewer.getPitch(), hfov: viewer.getHfov() } : null);
+    });
+  }
+  if (qualityLightBtn) qualityLightBtn.addEventListener('click', () => {
+    panoramaQuality = 'light';
+    localStorage.setItem('maklertour_panorama_quality', panoramaQuality);
+    applyQualityUi();
+    openPoint(currentIndex, viewer ? { yaw: viewer.getYaw(), pitch: viewer.getPitch(), hfov: viewer.getHfov() } : null);
+  });
+  if (qualityHdBtn) qualityHdBtn.addEventListener('click', () => {
+    panoramaQuality = 'hd';
+    localStorage.setItem('maklertour_panorama_quality', panoramaQuality);
+    applyQualityUi();
+    openPoint(currentIndex, viewer ? { yaw: viewer.getYaw(), pitch: viewer.getPitch(), hfov: viewer.getHfov() } : null);
+  });
+  applyQualityUi();
   if (autoMapBtn) autoMapBtn.addEventListener('click', async () => runAutoMap(false));
   if (autoMapOverwriteManualBtn) autoMapOverwriteManualBtn.addEventListener('click', async () => runAutoMap(true));
 
@@ -301,6 +331,10 @@
       renderCurrentLinks(); openPoint(currentIndex);
       if (currentLinksEl) currentLinksEl.insertAdjacentHTML('afterbegin', '<div class="tour-muted">Переход сохранён</div>');
     });
+  }
+  function applyQualityUi() {
+    if (qualityLightBtn) qualityLightBtn.classList.toggle('active', panoramaQuality !== 'hd');
+    if (qualityHdBtn) qualityHdBtn.classList.toggle('active', panoramaQuality === 'hd');
   }
   loadTour().catch((err) => { pointsEl.innerHTML = '<div class="tour-muted">Ошибка загрузки тура: ' + escapeHtml(err.message) + '</div>'; });
 })();

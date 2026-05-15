@@ -49,6 +49,12 @@ $fromId = (int)($data['from_photo_point_id'] ?? 0);
 $toId = (int)($data['to_photo_point_id'] ?? 0);
 $yaw = (float)($data['yaw_deg'] ?? 0.0);
 $pitch = (float)($data['pitch_deg'] ?? 0.0);
+$targetYawRaw = $data['target_yaw_deg'] ?? null;
+$targetPitchRaw = $data['target_pitch_deg'] ?? null;
+$targetHfovRaw = $data['target_hfov'] ?? null;
+$targetYaw = is_numeric($targetYawRaw) ? (float)$targetYawRaw : null;
+$targetPitch = is_numeric($targetPitchRaw) ? (float)$targetPitchRaw : null;
+$targetHfov = is_numeric($targetHfovRaw) ? (float)$targetHfovRaw : null;
 $label = trim((string)($data['label'] ?? ''));
 
 if ($sessionId <= 0 || $fromId <= 0 || $toId <= 0) {
@@ -100,22 +106,22 @@ $stmt->close();
 
 if ($existing) {
     $linkId = (int)$existing['id'];
-    $stmt = $dbcnx->prepare("UPDATE tour_point_links SET yaw_deg = ?, pitch_deg = ?, label = ?, updated_at = NOW() WHERE id = ? AND session_id = ?");
+    $stmt = $dbcnx->prepare("UPDATE tour_point_links SET yaw_deg = ?, pitch_deg = ?, target_yaw_deg = ?, target_pitch_deg = ?, target_hfov = ?, label = ?, updated_at = NOW() WHERE id = ? AND session_id = ?");
     if (!$stmt) {
         api_json(['ok' => false, 'error' => 'db_prepare_update_failed'], 500);
     }
-    $stmt->bind_param('ddsii', $yaw, $pitch, $label, $linkId, $sessionId);
+    $stmt->bind_param('dddddsii', $yaw, $pitch, $targetYaw, $targetPitch, $targetHfov, $label, $linkId, $sessionId);
     if (!$stmt->execute()) {
         $stmt->close();
         api_json(['ok' => false, 'error' => 'db_update_failed'], 500);
     }
     $stmt->close();
 } else {
-    $stmt = $dbcnx->prepare("INSERT INTO tour_point_links (session_id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
+    $stmt = $dbcnx->prepare("INSERT INTO tour_point_links (session_id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, target_yaw_deg, target_pitch_deg, target_hfov, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())");
     if (!$stmt) {
         api_json(['ok' => false, 'error' => 'db_prepare_insert_failed'], 500);
     }
-    $stmt->bind_param('iiidds', $sessionId, $fromId, $toId, $yaw, $pitch, $label);
+    $stmt->bind_param('iiiddddds', $sessionId, $fromId, $toId, $yaw, $pitch, $targetYaw, $targetPitch, $targetHfov, $label);
     if (!$stmt->execute()) {
         $stmt->close();
         api_json(['ok' => false, 'error' => 'db_insert_failed'], 500);

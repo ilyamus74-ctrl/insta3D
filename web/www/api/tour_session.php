@@ -59,6 +59,15 @@ function viewer_panorama_path(?string $originalPath): string {
     return $originalPath;
 }
 
+function viewer_variant_path(?string $originalPath, string $variant): string {
+    $originalPath = trim((string)$originalPath);
+    if ($originalPath === '') return '';
+    $path = str_replace('/photos/originals/', '/photos/' . $variant . '/', $originalPath);
+    if ($path === $originalPath) return '';
+    $full = APP_STORAGE_DIR . '/' . ltrim($path, '/');
+    return (is_file($full) && filesize($full) > 0) ? $path : '';
+}
+
 $sessionId = (int)($_GET['session_id'] ?? 0);
 if ($sessionId <= 0) {
     api_json(['ok' => false, 'error' => 'bad_session_id'], 400);
@@ -85,6 +94,10 @@ $stmt->bind_param('i', $sessionId);
 $stmt->execute();
 $rs = $stmt->get_result();
 while ($p = $rs->fetch_assoc()) {
+    $lightPath = viewer_variant_path($p['original_storage_path'] ?? '', 'viewer_light');
+    $hdPath = viewer_variant_path($p['original_storage_path'] ?? '', 'viewer_hd');
+    $fallbackPath = viewer_panorama_path($p['original_storage_path'] ?? '');
+    $panoramaUrl = media_url($lightPath !== '' ? $lightPath : $fallbackPath);
     $photoPoints[] = [
         'id' => (int)$p['id'],
         'name' => (string)($p['name'] ?: ('Point #' . $p['id'])),
@@ -92,7 +105,9 @@ while ($p = $rs->fetch_assoc()) {
         'sequence_number' => $p['sequence_number'] !== null ? (int)$p['sequence_number'] : null,
         'upload_state' => $p['upload_state'],
         'preview_url' => media_url($p['preview_storage_path'] ?? ''),
-        'panorama_url' => media_url(viewer_panorama_path($p['original_storage_path'] ?? '')),
+        'panorama_light_url' => media_url($lightPath),
+        'panorama_hd_url' => media_url($hdPath),
+        'panorama_url' => $panoramaUrl,
         'original_url' => media_url($p['original_storage_path'] ?? ''),
         'preview_size_bytes' => $p['preview_size_bytes'] !== null ? (int)$p['preview_size_bytes'] : null,
         'original_size_bytes' => $p['original_size_bytes'] !== null ? (int)$p['original_size_bytes'] : null,
@@ -176,7 +191,7 @@ foreach ($photoPoints as &$pp) {
 unset($pp);
 
 $links = [];
-$stmt = $dbcnx->prepare("SELECT id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, label, source, shared_markers_json, confidence FROM tour_point_links WHERE session_id = ? ORDER BY id ASC");
+$stmt = $dbcnx->prepare("SELECT id, from_photo_point_id, to_photo_point_id, yaw_deg, pitch_deg, target_yaw_deg, target_pitch_deg, target_hfov, label, source, shared_markers_json, confidence FROM tour_point_links WHERE session_id = ? ORDER BY id ASC");
 
 if ($stmt) {
     $stmt->bind_param('i', $sessionId);
@@ -190,6 +205,9 @@ if ($stmt) {
             'to_photo_point_id' => (int)$row['to_photo_point_id'],
             'yaw_deg' => isset($row['yaw_deg']) ? (float)$row['yaw_deg'] : 0.0,
             'pitch_deg' => isset($row['pitch_deg']) ? (float)$row['pitch_deg'] : 0.0,
+            'target_yaw_deg' => $row['target_yaw_deg'] !== null ? (float)$row['target_yaw_deg'] : null,
+            'target_pitch_deg' => $row['target_pitch_deg'] !== null ? (float)$row['target_pitch_deg'] : null,
+            'target_hfov' => $row['target_hfov'] !== null ? (float)$row['target_hfov'] : null,
             'label' => (string)($row['label'] ?? ''),
             'source' => (string)($row['source'] ?? 'MANUAL'),
             'shared_markers' => (json_decode((string)($row['shared_markers_json'] ?? '[]'), true) ?: []),

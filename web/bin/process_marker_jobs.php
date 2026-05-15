@@ -6,7 +6,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require_once __DIR__ . '/../www/bootstrap.php';
-require_once __DIR__ . '/../libs/tour_media_prepare.php';
+require_once __DIR__ . '/../libs/tour_media_derivatives_lib.php';
 require_once __DIR__ . '/../libs/tour_auto_map_lib.php';
 require_once __DIR__ . '/../libs/tour_auto_links_lib.php';
 
@@ -199,7 +199,7 @@ function process_one_job(mysqli $dbcnx): bool {
         return true;
     }
 
-    $viewerSummary = ensure_viewer_panoramas_for_session($dbcnx, $sessionId, $processingLog);
+    $viewerSummary = ensure_tour_viewer_derivatives($dbcnx, $sessionId);
     $viewerWarning = null;
     if (($viewerSummary['failed_count'] ?? 0) > 0) {
         $viewerWarning = 'Viewer panoramas were not generated for some/all photo points.';
