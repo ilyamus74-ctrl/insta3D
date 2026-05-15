@@ -284,12 +284,25 @@
       threeMap.dragMoved = false;
       threeMap.panLast = { x: e.clientX, y: e.clientY };
     });
-    window.addEventListener('mousemove', (e) => { if (!threeMap.isPanning || !threeMap.panLast) return; const dx = e.clientX - threeMap.panLast.x; const dy = e.clientY - threeMap.panLast.y; threeMap.panLast = { x: e.clientX, y: e.clientY }; panThreeMap(dx, dy); });
+    window.addEventListener('mousemove', (e) => {
+      if (!threeMap.isPanning || !threeMap.panLast) return;
+      const dx = e.clientX - threeMap.panLast.x;
+      const dy = e.clientY - threeMap.panLast.y;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        threeMap.dragMoved = true;
+      }
+      threeMap.panLast = { x: e.clientX, y: e.clientY };
+      panThreeMap(dx, dy);
+    });
     window.addEventListener('mouseup', () => { threeMap.isPanning = false; threeMap.panLast = null; });
     resizeThreeMap();
   }
 
   function onThreeMapClick(e) {
+    if (threeMap.dragMoved) {
+      threeMap.dragMoved = false;
+      return;
+    }
     if (!threeMap.renderer || !threeMap.camera || !threeMap.raycaster) return;
     const rect = threeMap.renderer.domElement.getBoundingClientRect();
     threeMap.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -441,7 +454,12 @@
   if (mapFitBtn) mapFitBtn.addEventListener('click', () => { if (mapMode === '3d') { fitThreeMapToPoints(); resizeThreeMap(); } else { mapZoom = 1.0; renderMap(); } });
   if (mapZoomInBtn) mapZoomInBtn.addEventListener('click', () => { if (mapMode === '3d') zoomThreeMap(1); else { mapZoom = Math.min(mapZoom * 1.2, 5); renderMap(); } });
   if (mapZoomOutBtn) mapZoomOutBtn.addEventListener('click', () => { if (mapMode === '3d') zoomThreeMap(-1); else { mapZoom = Math.max(mapZoom / 1.2, 0.3); renderMap(); } });
-  if (mapExpandBtn) mapExpandBtn.addEventListener('click', () => { const card = mapExpandBtn.closest('.tour-card'); const expanded = card?.classList.toggle('tour-map-expanded'); mapExpandBtn.textContent = expanded ? 'Свернуть карту' : 'Развернуть карту'; resizeThreeMap(); });
+  if (mapExpandBtn) mapExpandBtn.addEventListener('click', () => {
+    const card = mapExpandBtn.closest('.tour-card');
+    const expanded = card?.classList.toggle('tour-map-expanded');
+    mapExpandBtn.textContent = expanded ? 'Свернуть карту' : 'Развернуть карту';
+    setTimeout(resizeThreeMap, 50);
+  });
   window.addEventListener('resize', () => { if (mapMode === '3d') resizeThreeMap(); });
 
   async function loadTour() {
