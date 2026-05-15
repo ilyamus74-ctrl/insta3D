@@ -211,6 +211,7 @@ $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),
 $smarty->assign('current_user',$user);
 $smarty->assign('order',$order);
 $smarty->assign('canEdit',$canEdit);
+$smarty->assign('canCreatePublicLink', $canCreatePublicLink);
 $smarty->assign('captureSessions',$captureSessions);
 $smarty->assign('photoPoints',$photoPoints);
 $smarty->assign('capturePoints',$capturePoints);

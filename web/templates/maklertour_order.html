@@ -145,7 +145,7 @@
 {/if}
           <div class="mb-2"><strong>Публичная ссылка:</strong>
             <code id="pubLink{$s.id}">{if $s.public_link && $s.public_link.is_active == 1}/public_tour.php?t={$s.public_link.token|escape}{else}-{/if}</code>
-            {if $canEdit}
+            {if $canCreatePublicLink}
             <button type="button" class="btn btn-sm btn-outline-primary" onclick="createPublicLink({$s.id})">Создать публичную ссылку</button>
             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyPublicLink({$s.id})">Скопировать ссылку</button>
             <button type="button" class="btn btn-sm btn-outline-danger" onclick="disablePublicLink({$s.id})">Отключить ссылку</button>
@@ -176,8 +176,8 @@
                       <div><strong>{$p.display_name|escape}</strong></div>
                       <div class="small text-muted">#{$p.sequence_number|default:'-'}, room: {$p.room_name|default:'-'|escape}</div>
                       <div class="mt-1"><span class="badge bg-secondary">{$p.upload_state|default:'-'|escape}</span></div>
-                      <div class="small mt-2"><a href="{$p.preview_url|escape}" target="_blank">Preview</a> · {$p.preview_size_human}</div>
-                      <div class="small"><a href="{$p.original_url|escape}" target="_blank">Original</a> · {$p.original_size_human}</div>
+                      <div class="small mt-2"><a href="{$p.preview_url|escape}" target="_blank">Preview</a> (uploaded app preview) · {$p.preview_size_human}</div>
+                      <div class="small"><a href="{$p.original_url|escape}" target="_blank">Original</a> (uploaded original) · {$p.original_size_human}</div>
                       <div class="small mt-2"><code>{$p.preview_effective_path|default:'-'|escape}</code></div>
                       <div class="small"><code>{$p.original_effective_path|default:'-'|escape}</code></div>
                     </div>
@@ -289,9 +289,9 @@
 </main>
 {literal}
 <script>
-async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!d.ok)return alert('Ошибка');document.getElementById('pubLink'+sessionId).textContent=d.url;}
-function copyPublicLink(sessionId){const v=document.getElementById('pubLink'+sessionId).textContent;if(!v||v==='-')return;navigator.clipboard.writeText(location.origin+v);}
-async function disablePublicLink(sessionId){const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!d.ok)return alert('Ошибка');document.getElementById('pubLink'+sessionId).textContent='-';}
+async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка создания ссылки');document.getElementById('pubLink'+sessionId).textContent=d.url||'-';}
+async function copyPublicLink(sessionId){const v=document.getElementById('pubLink'+sessionId).textContent.trim();if(!v||v==='-')return;try{await navigator.clipboard.writeText(location.origin+v);}catch(e){alert('Не удалось скопировать ссылку');}}
+async function disablePublicLink(sessionId){const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка отключения ссылки');document.getElementById('pubLink'+sessionId).textContent='-';}
 </script>
 {/literal}
 {include file="maklertour_footer.html"}

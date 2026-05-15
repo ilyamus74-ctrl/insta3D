@@ -1,5 +1,5 @@
-{include file="maklertour_header.html"}
-{include file="maklertour_sidebar.html"}
+  {include file="maklertour_header.html"}
+  {include file="maklertour_sidebar.html"}
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum/build/pannellum.css">
 <link rel="stylesheet" href="/css/maklertour_tour.css">
@@ -30,7 +30,6 @@
         <div class="tour-muted">UUID: {$sessionUuid|default:'-'|escape}</div>
         <div class="tour-muted">Заявка: {$orderTitle|default:'-'|escape}</div>
       </div>
-
       <div class="tour-card">
         <div class="tour-section-title">Обработка</div>
         <div id="tourProcessingStatus" class="tour-badge tour-badge-muted">Загрузка...</div>
@@ -41,14 +40,12 @@
           <div>VIDEO_FRAME: <span id="tourVideoDetections">-</span></div>
         </div>
       </div>
-
       <div class="tour-card">
         <div class="tour-section-title">Метки</div>
         <div id="tourMarkers" class="tour-marker-list">
           <span class="tour-muted">Загрузка...</span>
         </div>
       </div>
-
       <div class="tour-card">
         <div class="tour-section-title">Карта точек</div>
         <div class="tour-map-controls">
@@ -92,6 +89,7 @@
         <div class="tour-muted mt-2">Поверните панораму в сторону перехода, выберите целевую точку и нажмите добавить. Будут сохранены текущие yaw/pitch.</div>
         <div id="tourCurrentLinks" class="tour-link-list mt-2"></div>
       </div>
+
       <div class="tour-card">
         <div class="tour-section-title">Найденные метки в панораме</div>
         <div class="tour-settings-row"><label class="tour-muted"><input type="checkbox" id="tourShowMarkerHotspots" checked> Показывать MT-метки</label></div>
@@ -144,4 +142,4 @@
 <script src="/vendor/three/three.min.js"></script>
 <script src="/js/maklertour_tour.js"></script>
 
-{include file="maklertour_footer.html"}
+  {include file="maklertour_footer.html"}

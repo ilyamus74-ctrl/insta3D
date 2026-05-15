@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-15 19:47:15
+/* Smarty version 5.3.1, created on 2026-05-15 20:31:41
   from 'file:maklertour_tour.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a0778438ec3f9_37093818',
+  'unifunc' => 'content_6a0782ad045381_20013888',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '0e5eded05bc37eff5c2407f99950b26d18b2f3c3' => 
     array (
       0 => 'maklertour_tour.html',
-      1 => 1778873361,
+      1 => 1778877098,
       2 => 'file',
     ),
   ),
@@ -23,10 +23,11 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a0778438ec3f9_37093818 (\Smarty\Template $_smarty_tpl) {
+function content_6a0782ad045381_20013888 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
-$_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
-$_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
+?>  <?php $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
+?>
+  <?php $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 ?>
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum/build/pannellum.css">
@@ -67,7 +68,6 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
         <div class="tour-muted">Заявка: <?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('orderTitle') ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
 </div>
       </div>
-
       <div class="tour-card">
         <div class="tour-section-title">Обработка</div>
         <div id="tourProcessingStatus" class="tour-badge tour-badge-muted">Загрузка...</div>
@@ -78,14 +78,12 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
           <div>VIDEO_FRAME: <span id="tourVideoDetections">-</span></div>
         </div>
       </div>
-
       <div class="tour-card">
         <div class="tour-section-title">Метки</div>
         <div id="tourMarkers" class="tour-marker-list">
           <span class="tour-muted">Загрузка...</span>
         </div>
       </div>
-
       <div class="tour-card">
         <div class="tour-section-title">Карта точек</div>
         <div class="tour-map-controls">
@@ -129,6 +127,7 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
         <div class="tour-muted mt-2">Поверните панораму в сторону перехода, выберите целевую точку и нажмите добавить. Будут сохранены текущие yaw/pitch.</div>
         <div id="tourCurrentLinks" class="tour-link-list mt-2"></div>
       </div>
+
       <div class="tour-card">
         <div class="tour-section-title">Найденные метки в панораме</div>
         <div class="tour-settings-row"><label class="tour-muted"><input type="checkbox" id="tourShowMarkerHotspots" checked> Показывать MT-метки</label></div>
@@ -188,6 +187,6 @@ $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->ca
  src="/js/maklertour_tour.js"><?php echo '</script'; ?>
 >
 
-<?php $_smarty_tpl->renderSubTemplate("file:maklertour_footer.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
+  <?php $_smarty_tpl->renderSubTemplate("file:maklertour_footer.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 }
 }

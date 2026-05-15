@@ -10,4 +10,4 @@ $smarty->assign('sessionUuid', 'public');
 $smarty->assign('publicMode', 1);
 $smarty->assign('publicToken', $token);
 $smarty->assign('apiUrl', '/api/public_tour_session.php?token=' . rawurlencode($token));
-$smarty->display('maklertour_tour.html');
+$smarty->display('maklertour_public_tour.html');

@@ -86,3 +86,5 @@
   - upload video scan
   - upload photo points
 - Add WorkManager upload queue later.
+
+- TODO (public tour media derivatives): server-side preview derivatives pipeline: previews 1024x512 or 512x256, viewer_light 2048x1024, viewer_hd 4096x2048, originals untouched camera original.

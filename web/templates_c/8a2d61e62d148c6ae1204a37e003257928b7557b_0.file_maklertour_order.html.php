@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-15 19:47:12
+/* Smarty version 5.3.1, created on 2026-05-15 20:51:41
   from 'file:maklertour_order.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a0778407b4ab3_61001968',
+  'unifunc' => 'content_6a07875de48e01_07585233',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '8a2d61e62d148c6ae1204a37e003257928b7557b' => 
     array (
       0 => 'maklertour_order.html',
-      1 => 1778874426,
+      1 => 1778878012,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a0778407b4ab3_61001968 (\Smarty\Template $_smarty_tpl) {
+function content_6a07875de48e01_07585233 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -213,7 +213,7 @@ $foreach0DoElse = false;
             <code id="pubLink<?php echo $_smarty_tpl->getValue('s')['id'];?>
 "><?php if ($_smarty_tpl->getValue('s')['public_link'] && $_smarty_tpl->getValue('s')['public_link']['is_active'] == 1) {?>/public_tour.php?t=<?php echo htmlspecialchars((string)$_smarty_tpl->getValue('s')['public_link']['token'], ENT_QUOTES, 'UTF-8', true);
 } else { ?>-<?php }?></code>
-            <?php if ($_smarty_tpl->getValue('canEdit')) {?>
+            <?php if ($_smarty_tpl->getValue('canCreatePublicLink')) {?>
             <button type="button" class="btn btn-sm btn-outline-primary" onclick="createPublicLink(<?php echo $_smarty_tpl->getValue('s')['id'];?>
 )">Создать публичную ссылку</button>
             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyPublicLink(<?php echo $_smarty_tpl->getValue('s')['id'];?>
@@ -266,10 +266,10 @@ $foreach1DoElse = false;
                       <div class="mt-1"><span class="badge bg-secondary"><?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('p')['upload_state'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
 </span></div>
                       <div class="small mt-2"><a href="<?php echo htmlspecialchars((string)$_smarty_tpl->getValue('p')['preview_url'], ENT_QUOTES, 'UTF-8', true);?>
-" target="_blank">Preview</a> · <?php echo $_smarty_tpl->getValue('p')['preview_size_human'];?>
+" target="_blank">Preview</a> (uploaded app preview) · <?php echo $_smarty_tpl->getValue('p')['preview_size_human'];?>
 </div>
                       <div class="small"><a href="<?php echo htmlspecialchars((string)$_smarty_tpl->getValue('p')['original_url'], ENT_QUOTES, 'UTF-8', true);?>
-" target="_blank">Original</a> · <?php echo $_smarty_tpl->getValue('p')['original_size_human'];?>
+" target="_blank">Original</a> (uploaded original) · <?php echo $_smarty_tpl->getValue('p')['original_size_human'];?>
 </div>
                       <div class="small mt-2"><code><?php echo htmlspecialchars((string)(($tmp = $_smarty_tpl->getValue('p')['preview_effective_path'] ?? null)===null||$tmp==='' ? '-' ?? null : $tmp), ENT_QUOTES, 'UTF-8', true);?>
 </code></div>
@@ -448,9 +448,9 @@ $_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
 
 <?php echo '<script'; ?>
 >
-async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!d.ok)return alert('Ошибка');document.getElementById('pubLink'+sessionId).textContent=d.url;}
-function copyPublicLink(sessionId){const v=document.getElementById('pubLink'+sessionId).textContent;if(!v||v==='-')return;navigator.clipboard.writeText(location.origin+v);}
-async function disablePublicLink(sessionId){const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!d.ok)return alert('Ошибка');document.getElementById('pubLink'+sessionId).textContent='-';}
+async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка создания ссылки');document.getElementById('pubLink'+sessionId).textContent=d.url||'-';}
+async function copyPublicLink(sessionId){const v=document.getElementById('pubLink'+sessionId).textContent.trim();if(!v||v==='-')return;try{await navigator.clipboard.writeText(location.origin+v);}catch(e){alert('Не удалось скопировать ссылку');}}
+async function disablePublicLink(sessionId){const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка отключения ссылки');document.getElementById('pubLink'+sessionId).textContent='-';}
 <?php echo '</script'; ?>
 >
 

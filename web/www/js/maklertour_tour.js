@@ -132,24 +132,24 @@
       cur._lastYaw = viewer.getYaw(); cur._lastPitch = viewer.getPitch(); cur._lastHfov = viewer.getHfov();
     }
     currentIndex = index; markActive(index); updateNavButtons(); renderMap(); updateThreeMapActivePoint(); renderHotspotTargetSelect(); renderCurrentLinks(); renderDetectedMarkers(point);
-    currentPointEl.textContent = point.name || ('Point #' + point.id);
-    currentRoomEl.textContent = point.room_name ? ('room: ' + point.room_name) : '360 panorama';
+    if (currentPointEl) currentPointEl.textContent = point.name || ('Point #' + point.id);
+    if (currentRoomEl) currentRoomEl.textContent = point.room_name ? ('room: ' + point.room_name) : '360 panorama';
 
     const panoramaUrl = getPanoramaUrl(point);
-    if (!panoramaUrl) { panoramaEl.innerHTML = '<div class="tour-viewer-placeholder">Нет panorama для этой точки</div>'; return; }
-    viewerArea.classList.add('is-loading');
+    if (!panoramaUrl) { if (panoramaEl) panoramaEl.innerHTML = '<div class="tour-viewer-placeholder">Нет panorama для этой точки</div>'; return; }
+    if (viewerArea) viewerArea.classList.add('is-loading');
     const preImg = new Image();
     preImg.onload = function () {
       if (viewer) { viewer.destroy(); viewer = null; }
-      panoramaEl.innerHTML = '';
+      if (panoramaEl) panoramaEl.innerHTML = '';
       viewer = pannellum.viewer('panorama', { type: 'equirectangular', panorama: panoramaUrl, autoLoad: true, showZoomCtrl: true, compass: false, yaw: (viewOptions && Number.isFinite(Number(viewOptions.yaw))) ? Number(viewOptions.yaw) : toNum(point._lastYaw, toNum(point.initial_yaw_deg, 0)), pitch: (viewOptions && Number.isFinite(Number(viewOptions.pitch))) ? Number(viewOptions.pitch) : toNum(point._lastPitch, toNum(point.initial_pitch_deg, 0)), hfov: (viewOptions && Number.isFinite(Number(viewOptions.hfov))) ? Number(viewOptions.hfov) : toNum(point._lastHfov, toNum(point.initial_hfov, 100)), hotSpots: buildHotspots(point) });
-      viewerArea.classList.remove('is-loading');
+      if (viewerArea) viewerArea.classList.remove('is-loading');
       [index - 1, index + 1].forEach((i) => { if (photoPoints[i]) preloadPanorama(getPanoramaUrl(photoPoints[i])); });
       links.filter((l) => Number(l.from_photo_point_id) === Number(point.id)).forEach((l) => { const target = getById(l.to_photo_point_id); if (target) preloadPanorama(getPanoramaUrl(target)); });
     };
     preImg.onerror = function () {
-      viewerArea.classList.remove('is-loading');
-      panoramaEl.innerHTML = `<div class="tour-viewer-placeholder">Ошибка загрузки panorama.<br><a target="_blank" rel="noopener" href="${escapeHtml(panoramaUrl)}">Открыть JPG напрямую</a></div>`;
+      if (viewerArea) viewerArea.classList.remove('is-loading');
+      if (panoramaEl) panoramaEl.innerHTML = `<div class="tour-viewer-placeholder">Ошибка загрузки panorama.<br><a target="_blank" rel="noopener" href="${escapeHtml(panoramaUrl)}">Открыть JPG напрямую</a></div>`;
     };
     preImg.src = panoramaUrl;
   }
