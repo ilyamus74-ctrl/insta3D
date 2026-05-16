@@ -20,6 +20,7 @@ function tour_storage_abs_path(string $relativePath): string
 {
     if (!tour_is_safe_relative_path($relativePath)) {
         throw new InvalidArgumentException('Unsafe storage path');
+    }
     return tour_storage_root_dir() . '/' . ltrim($relativePath, '/');
 }
 
