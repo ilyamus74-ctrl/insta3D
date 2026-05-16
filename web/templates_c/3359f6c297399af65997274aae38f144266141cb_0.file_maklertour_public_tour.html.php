@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-15 20:51:16
+/* Smarty version 5.3.1, created on 2026-05-16 19:22:49
   from 'file:maklertour_public_tour.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a078744832843_44902152',
+  'unifunc' => 'content_6a08c40994bfc9_24685527',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '3359f6c297399af65997274aae38f144266141cb' => 
     array (
       0 => 'maklertour_public_tour.html',
-      1 => 1778878031,
+      1 => 1778959353,
       2 => 'file',
     ),
   ),
@@ -20,7 +20,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   array (
   ),
 ))) {
-function content_6a078744832843_44902152 (\Smarty\Template $_smarty_tpl) {
+function content_6a08c40994bfc9_24685527 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 ?><!doctype html>
 <html lang="ru">
@@ -28,8 +28,8 @@ $_smarty_current_dir = '/home/makler/web/templates';
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Публичный 3D тур</title>
-  <link rel="stylesheet" href="/vendor/bootstrap/css/bootstrap.min.css">
-  <link rel="stylesheet" href="/vendor/bootstrap-icons/bootstrap-icons.css">
+  <link rel="stylesheet" href="/assets/vendor/bootstrap/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/assets/vendor/bootstrap-icons/bootstrap-icons.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum/build/pannellum.css">
   <link rel="stylesheet" href="/css/maklertour_tour.css">
   <style>
@@ -108,7 +108,7 @@ $_smarty_current_dir = '/home/makler/web/templates';
           </div>
         </div>
 
-        <div class="tour-viewer-area"><div id="panorama"></div></div>
+        <div class="tour-viewer-area"><div id="panorama" class="tour-panorama"></div></div>
 
         <div class="tour-nav-row">
           <button id="tourPrevPoint" type="button" class="btn btn-outline-light">← Previous</button>
