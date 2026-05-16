@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../bootstrap.php';
+require_once __DIR__ . '/../../libs/tour_media_derivatives_lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -954,7 +955,7 @@ if ($action === 'upload_photo_point') {
     if (!is_dir($previewsDir) && !mkdir($previewsDir, 0775, true)) api_json(['ok' => false, 'error' => 'failed to create previews dir'], 500);
     if (!is_dir($originalsDir) && !mkdir($originalsDir, 0775, true)) api_json(['ok' => false, 'error' => 'failed to create originals dir'], 500);
 
-    $previewStoragePath = null; $originalStoragePath = null; $previewSizeBytes = null; $originalSizeBytes = null;
+    $previewStoragePath = null; $originalStoragePath = null; $previewSizeBytes = null; $originalSizeBytes = null; $previewWarning = null;
     foreach ([['key'=>'preview','dir'=>$previewsDir,'sub'=>'previews'], ['key'=>'original','dir'=>$originalsDir,'sub'=>'originals']] as $spec) {
         $key = $spec['key'];
         if (!empty($_FILES[$key]) && $_FILES[$key]['error'] === UPLOAD_ERR_OK) {
@@ -968,6 +969,16 @@ if ($action === 'upload_photo_point') {
             $sizeBytes = filesize($targetPath) ?: null;
             if ($key === 'preview') { $previewStoragePath = $relativePath; $previewSizeBytes = $sizeBytes; }
             else { $originalStoragePath = $relativePath; $originalSizeBytes = $sizeBytes; }
+        }
+    }
+
+    if ($originalStoragePath !== null && $originalStoragePath !== '') {
+        $genPreview = tour_ensure_photo_preview_from_original($originalStoragePath, true);
+        if ($genPreview['ok']) {
+            $previewStoragePath = $genPreview['preview_path'];
+            $previewSizeBytes = (int)$genPreview['preview_size_bytes'];
+        } else {
+            $previewWarning = 'server_preview_generation_failed';
         }
     }
 
@@ -1012,7 +1023,7 @@ if ($action === 'upload_photo_point') {
     api_upsert_marker_processing_job($dbcnx, $orderId, $captureSessionId);
 
     audit_log($userId, 'PHOTO_UPLOADED', 'TOUR_ORDER', $orderId, 'Загружен photo point', api_request_meta(['capture_session_id'=>$captureSessionId, 'app_point_uuid'=>$appPointUuid, 'preview_storage_path'=>$previewStoragePath, 'original_storage_path'=>$originalStoragePath]));
-    api_json(['ok'=>true,'preview_storage_path'=>$previewStoragePath,'original_storage_path'=>$originalStoragePath,'preview_size_bytes'=>$previewSizeBytes,'original_size_bytes'=>$originalSizeBytes]);
+    $resp=['ok'=>true,'preview_storage_path'=>$previewStoragePath,'original_storage_path'=>$originalStoragePath,'preview_size_bytes'=>$previewSizeBytes,'original_size_bytes'=>$originalSizeBytes]; if($previewWarning!==null){$resp['preview_warning']=$previewWarning;} api_json($resp);
 }
 
 if ($action === 'ping') {

@@ -77,6 +77,11 @@ function process_one_job(mysqli $dbcnx): bool {
         return true;
     }
 
+    $derivSummary = tour_ensure_session_media_derivatives($dbcnx, $sessionId, true, false);
+    if (!$derivSummary['ok']) {
+        append_log(APP_STORAGE_DIR . '/logs/marker_worker_cron.log', 'derivatives warning session_id=' . $sessionId . ' summary=' . json_encode($derivSummary, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+    }
+
     $sessionUuid = resolve_session_uuid($session);
     $baseDir = APP_STORAGE_DIR . '/processing/sessions/' . $sessionUuid;
     $framesBaseDir = $baseDir . '/frames';
@@ -199,12 +204,7 @@ function process_one_job(mysqli $dbcnx): bool {
         return true;
     }
 
-    $viewerSummary = ensure_tour_viewer_derivatives($dbcnx, $sessionId);
     $viewerWarning = null;
-    if (($viewerSummary['failed_count'] ?? 0) > 0) {
-        $viewerWarning = 'Viewer panoramas were not generated for some/all photo points.';
-        append_log($processingLog, 'viewer summary=' . json_encode($viewerSummary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-    }
 
     $stmt = $dbcnx->prepare('DELETE FROM marker_detections WHERE session_id = ?');
     $stmt->bind_param('i', $sessionId);

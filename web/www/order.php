@@ -13,6 +13,7 @@ $order=load_order($dbcnx,$orderId); if(!$order){http_response_code(404);exit('Or
 $canView = $role==='ADMIN' || ((int)$order['broker_id']===$userId) || ($role==='OPERATOR' && ((int)$order['operator_id']===$userId || ((int)$order['is_published']===1 && $order['status']==='NEW' && $order['operator_id']===null)));
 if(!$canView){http_response_code(403);exit('Forbidden');}
 $canEdit = $role==='ADMIN' || (int)$order['broker_id']===$userId;
+$canCreatePublicLink = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
 $error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':null)));
 
 if($_SERVER['REQUEST_METHOD']==='POST'){

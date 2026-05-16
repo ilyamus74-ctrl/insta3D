@@ -2,11 +2,11 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../bootstrap.php';
+require_once __DIR__ . '/../../libs/tour_media_derivatives_lib.php';
 header('Content-Type: application/json; charset=utf-8');
 
 function api_json(array $payload, int $code = 200): void { http_response_code($code); echo json_encode($payload, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
 function pm_url(string $token, ?string $path): string { $path=trim((string)$path); return $path==='' ? '' : '/public_media.php?token='.rawurlencode($token).'&path='.rawurlencode($path); }
-function viewer_variant_path(?string $originalPath, string $variant): string { $o=trim((string)$originalPath); if($o==='') return ''; $p=str_replace('/photos/originals/','/photos/'.$variant.'/',$o); if($p===$o) return ''; $full=APP_STORAGE_DIR.'/'.ltrim($p,'/'); return (is_file($full)&&filesize($full)>0)?$p:''; }
 
 $token = trim((string)($_GET['token'] ?? ''));
 if ($token === '') api_json(['ok'=>false,'error'=>'bad_token'],400);
@@ -27,19 +27,29 @@ $photoPoints=[]; $stmt=$dbcnx->prepare("SELECT id,name,room_name,sequence_number
 if(!$stmt) api_json(['ok'=>false,'error'=>'db_prepare_photo_failed'],500);
 $stmt->bind_param('i',$sessionId); $stmt->execute(); $rs=$stmt->get_result();
 while($p=$rs->fetch_assoc()){
-  $light=viewer_variant_path($p['original_storage_path']??'','viewer_light');
-  $hd=viewer_variant_path($p['original_storage_path']??'','viewer_hd');
-  $pan=$light!=='' ? $light : $hd;
+  $orig=(string)($p['original_storage_path']??'');
+  $light=tour_viewer_variant_path_from_original($orig,'viewer_light');
+  $hd=tour_viewer_variant_path_from_original($orig,'viewer_hd');
+  if($orig!=='' && ($light!=='' || $hd!=='')) {
+    $ensure=tour_ensure_photo_viewer_derivatives($orig,false);
+    if(!$ensure['ok']){
+      error_log('public_tour_session derivatives warning session_id='.(string)$sessionId.' photo_point_id='.(string)$p['id'].' original_storage_path='.$orig.' errors='.json_encode($ensure['errors'], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+    }
+  }
+  $lightExists=($light!=='') && is_file(tour_storage_abs_path($light)) && (int)filesize(tour_storage_abs_path($light))>0;
+  $hdExists=($hd!=='') && is_file(tour_storage_abs_path($hd)) && (int)filesize(tour_storage_abs_path($hd))>0;
+  $pan=$lightExists ? $light : ($hdExists ? $hd : '');
   $photoPoints[]=[
     'id'=>(int)$p['id'], 'name'=>(string)($p['name']?:('Point #'.$p['id'])), 'room_name'=>$p['room_name'],
     'sequence_number'=>$p['sequence_number']!==null?(int)$p['sequence_number']:null,
     'preview_url'=>pm_url($token,$p['preview_storage_path']??''),
-    'panorama_light_url'=>pm_url($token,$light), 'panorama_hd_url'=>pm_url($token,$hd), 'panorama_url'=>pm_url($token,$pan),
+    'panorama_light_url'=>pm_url($token,$lightExists?$light:''), 'panorama_hd_url'=>pm_url($token,$hdExists?$hd:''), 'panorama_url'=>pm_url($token,$pan),
     'initial_yaw_deg'=>isset($p['initial_yaw_deg'])?(float)$p['initial_yaw_deg']:0.0,
     'initial_pitch_deg'=>isset($p['initial_pitch_deg'])?(float)$p['initial_pitch_deg']:0.0,
     'initial_hfov'=>isset($p['initial_hfov'])?(float)$p['initial_hfov']:100.0,
     'markers'=>[], 'marker_labels'=>[], 'marker_detections_count'=>0, 'avg_marker_confidence'=>0.0, 'detected_markers'=>[]
   ];
+  if(!$lightExists && !$hdExists){ $photoPoints[count($photoPoints)-1]['panorama_missing_reason']='viewer_derivatives_missing'; }
 }
 $stmt->close();
 $links=[]; $stmt=$dbcnx->prepare("SELECT id,from_photo_point_id,to_photo_point_id,yaw_deg,pitch_deg,target_yaw_deg,target_pitch_deg,target_hfov,label,source,shared_markers_json,confidence FROM tour_point_links WHERE session_id=? ORDER BY id");
