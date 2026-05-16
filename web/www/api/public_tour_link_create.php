@@ -10,7 +10,15 @@ $u=auth_current_user(); $uid=(int)$u['id']; $role=(string)($u['role']??'BROKER')
 $stmt=$dbcnx->prepare("SELECT cs.order_id,o.broker_id,o.operator_id FROM capture_sessions cs JOIN tour_orders o ON o.id=cs.order_id WHERE cs.id=? LIMIT 1"); $stmt->bind_param('i',$sessionId);$stmt->execute();$row=$stmt->get_result()->fetch_assoc();$stmt->close(); if(!$row) api_json(['ok'=>false],404);
 $allowed = $role === 'ADMIN' || (int)$row['broker_id'] === $uid || ($role === 'OPERATOR' && (int)$row['operator_id'] === $uid);
 if(!$allowed) api_json(['ok'=>false,'error'=>'forbidden'],403);
+
+$stmt=$dbcnx->prepare("SELECT token FROM public_tour_links WHERE session_id=? AND is_active=1 AND (expires_at IS NULL OR expires_at > NOW(6)) ORDER BY id DESC LIMIT 1");
+$stmt->bind_param('i',$sessionId);$stmt->execute();$existing=$stmt->get_result()->fetch_assoc();$stmt->close();
+if($existing && !empty($existing['token'])){
+    $token=(string)$existing['token'];
+    api_json(['ok'=>true,'token'=>$token,'url'=>'/public_tour.php?t='.rawurlencode($token),'reused'=>true]);
+}
+
 $token=bin2hex(random_bytes(32));
 $stmt=$dbcnx->prepare("INSERT INTO public_tour_links (order_id,session_id,token,is_active,created_by,created_at,updated_at) VALUES (?,?,?,1,?,NOW(6),NOW(6))");
 $oid=(int)$row['order_id']; $stmt->bind_param('iisi',$oid,$sessionId,$token,$uid); if(!$stmt->execute()) api_json(['ok'=>false],500); $stmt->close();
-api_json(['ok'=>true,'token'=>$token,'url'=>'/public_tour.php?t='.rawurlencode($token)]);
+api_json(['ok'=>true,'token'=>$token,'url'=>'/public_tour.php?t='.rawurlencode($token),'reused'=>false]);

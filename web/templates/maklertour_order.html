@@ -143,7 +143,7 @@
   Открыть 3D тур
 </a>
 {/if}
-          <div class="mb-2">
+          <div class="mb-2" id="publicLinkState{$s.id}">
             {if $s.public_link && $s.public_link.is_active == 1}
               <span class="badge bg-success">Публичная ссылка активна</span>
               <div class="input-group input-group-sm mt-2" style="max-width:720px;">
@@ -295,9 +295,26 @@
 </main>
 {literal}
 <script>
-async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка создания ссылки');const el=document.getElementById('pubLink'+sessionId);if(el){el.value=d.url||'';}location.reload();}
-async function copyPublicLink(sessionId){const el=document.getElementById('pubLink'+sessionId);const v=(el&&el.value?el.value:'').trim();if(!v)return;try{await navigator.clipboard.writeText(location.origin+v);}catch(e){alert('Не удалось скопировать ссылку');}}
-async function disablePublicLink(sessionId){const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка отключения ссылки');location.reload();}
+function publicLinkBlockHtml(sessionId, relativeUrl, isActive, canManage){
+  if(isActive){
+    return '<span class="badge bg-success">Публичная ссылка активна</span>'+
+      '<div class="input-group input-group-sm mt-2" style="max-width:720px;">'+
+      '<input id="pubLink'+sessionId+'" class="form-control form-control-sm" readonly value="'+relativeUrl+'">'+
+      '<button type="button" class="btn btn-sm btn-outline-primary" onclick="window.open(document.getElementById(\'pubLink'+sessionId+'\').value,\'_blank\')">Открыть</button>'+
+      (canManage?'<button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyPublicLink('+sessionId+')">Скопировать</button><button type="button" class="btn btn-sm btn-outline-danger" onclick="disablePublicLink('+sessionId+')">Отключить</button>':'')+
+      '</div>';
+  }
+  return '<span class="badge bg-secondary">Публичная ссылка не создана</span>'+
+    '<input type="hidden" id="pubLink'+sessionId+'" value="">'+
+    (canManage?'<button type="button" class="btn btn-sm btn-outline-primary ms-2" onclick="createPublicLink('+sessionId+')">Создать публичную ссылку</button>':'');
+}
+function renderPublicLinkState(sessionId, relativeUrl, isActive){
+  var box=document.getElementById('publicLinkState'+sessionId); if(!box) return;
+  box.innerHTML=publicLinkBlockHtml(sessionId, relativeUrl||'', !!isActive, true);
+}
+async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка');renderPublicLinkState(sessionId,d.url||'',true);}
+function copyPublicLink(sessionId){const el=document.getElementById('pubLink'+sessionId);if(!el||!el.value)return;const abs=location.origin+el.value;(navigator.clipboard&&navigator.clipboard.writeText)?navigator.clipboard.writeText(abs).then(()=>{}):window.prompt('Скопируйте ссылку',abs);}
+async function disablePublicLink(sessionId){if(!confirm('Отключить публичную ссылку?'))return;const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка');renderPublicLinkState(sessionId,'',false);}
 </script>
 {/literal}
 {include file="maklertour_footer.html"}

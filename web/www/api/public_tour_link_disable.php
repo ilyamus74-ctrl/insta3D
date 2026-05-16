@@ -10,5 +10,5 @@ $u=auth_current_user(); $uid=(int)$u['id']; $role=(string)($u['role']??'BROKER')
 $stmt=$dbcnx->prepare("SELECT cs.order_id,o.broker_id,o.operator_id FROM capture_sessions cs JOIN tour_orders o ON o.id=cs.order_id WHERE cs.id=? LIMIT 1"); $stmt->bind_param('i',$sessionId);$stmt->execute();$row=$stmt->get_result()->fetch_assoc();$stmt->close(); if(!$row) api_json(['ok'=>false],404);
 $allowed = $role === 'ADMIN' || (int)$row['broker_id'] === $uid || ($role === 'OPERATOR' && (int)$row['operator_id'] === $uid);
 if(!$allowed) api_json(['ok'=>false,'error'=>'forbidden'],403);
-$stmt=$dbcnx->prepare("UPDATE public_tour_links SET is_active=0,updated_at=NOW(6) WHERE session_id=? AND is_active=1"); $stmt->bind_param('i',$sessionId); if(!$stmt->execute()) api_json(['ok'=>false],500); $stmt->close();
-api_json(['ok'=>true]);
+$stmt=$dbcnx->prepare("UPDATE public_tour_links SET is_active=0,updated_at=NOW(6) WHERE session_id=? AND is_active=1"); $stmt->bind_param('i',$sessionId); if(!$stmt->execute()) api_json(['ok'=>false],500); $disabled=(int)$stmt->affected_rows; $stmt->close();
+api_json(['ok'=>true,'disabled_count'=>$disabled]);

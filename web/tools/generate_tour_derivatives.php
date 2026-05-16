@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 
-require_once '/workspace/insta3D/web/configs/connectDB.php';
-require_once '/workspace/insta3D/web/libs/tour_media_derivatives_lib.php';
+require_once '/home/makler/web/configs/connectDB.php';
+require_once '/home/makler/web/libs/tour_media_derivatives_lib.php';
 
 $args = getopt('', ['session-id:', 'with-preview', 'overwrite']);
 $sessionId = isset($args['session-id']) ? (int)$args['session-id'] : 0;
