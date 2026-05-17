@@ -1,6 +1,7 @@
 package com.maklertour.data.camera.osc
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -17,6 +18,10 @@ data class DownloadResult(
     val localPath: String?,
     val fileSizeBytes: Long?,
     val checksumSha256: String?,
+    val contentType: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val looksLikeDualFisheye: Boolean = false,
     val error: String? = null,
 )
 
@@ -118,15 +123,26 @@ class OscFileDownloader(
                         }
                     }
 
+                    val contentType = connection.contentType
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(target.absolutePath, bounds)
+                    val width = bounds.outWidth.takeIf { it > 0 }
+                    val height = bounds.outHeight.takeIf { it > 0 }
+                    val looksLikeDualFisheye = looksLikeDualFisheyeJpeg(width, height, target.length())
+
                     val result = DownloadResult(
                         localPath = target.absolutePath,
                         fileSizeBytes = target.length(),
                         checksumSha256 = digest.digest().joinToString("") { "%02x".format(it) },
+                        contentType = contentType,
+                        width = width,
+                        height = height,
+                        looksLikeDualFisheye = looksLikeDualFisheye,
                     )
 
                     Log.d(
                         "OscFileDownloader",
-                        "download(): success localPath=${result.localPath}, size=${result.fileSizeBytes}"
+                        "download(): success localPath=${result.localPath}, size=${result.fileSizeBytes}, contentType=$contentType, width=$width, height=$height, looksLikeDualFisheye=$looksLikeDualFisheye"
                     )
 
                     result
@@ -144,8 +160,20 @@ class OscFileDownloader(
                     localPath = null,
                     fileSizeBytes = null,
                     checksumSha256 = null,
+                    contentType = null,
+                    width = null,
+                    height = null,
+                    looksLikeDualFisheye = false,
                     error = error.message ?: "download failed",
                 )
             }
         }
+
+    private fun looksLikeDualFisheyeJpeg(width: Int?, height: Int?, fileSizeBytes: Long): Boolean {
+        if (width == null || height == null || height <= 0) return false
+        val ratio = width.toDouble() / height.toDouble()
+        val ratioNotEquirect = ratio < 1.8 || ratio > 2.2
+        val verySmallForPano = fileSizeBytes in 1..1_500_000
+        return ratioNotEquirect || verySmallForPano
+    }
 }

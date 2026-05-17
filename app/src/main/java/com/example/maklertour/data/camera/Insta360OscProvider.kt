@@ -96,8 +96,9 @@ class Insta360OscProvider(
             }
 
             val results = finalResponse?.optJSONObject("results")
-            val fileUrl = results?.optString("fileUrl")?.takeIf { it.isNotBlank() }
-            val localFileUrl = results?.optString("_localFileUrl")?.takeIf { it.isNotBlank() }
+            val selected = selectBestOriginalUrl(results)
+            val fileUrl = selected.first
+            val localFileUrl = selected.second
             if (fileUrl.isNullOrBlank() && localFileUrl.isNullOrBlank()) {
                 return@withLock CapturePoint(
                     name = pointName,
@@ -108,6 +109,7 @@ class Insta360OscProvider(
             val pointId = java.util.UUID.randomUUID().toString()
             Log.d("Insta360OscProvider", "captured fileUrl=$fileUrl")
             Log.d("Insta360OscProvider", "captured localFileUrl=$localFileUrl")
+            Log.d("Insta360OscProvider", "capture final response=$finalResponse")
 
             CapturePoint(
                 id = pointId,
@@ -685,5 +687,25 @@ private suspend fun trySwitchToVideoMode(): Boolean {
         return response
             ?.optJSONObject("results")
             ?.optJSONObject("options")
+    }
+
+
+    private fun selectBestOriginalUrl(results: JSONObject?): Pair<String?, String?> {
+        if (results == null) return null to null
+        val fileUrls = mutableListOf<String>()
+        results.optString("fileUrl").takeIf { it.isNotBlank() }?.let(fileUrls::add)
+        results.optJSONArray("fileUrls")?.let { arr -> for (i in 0 until arr.length()) arr.optString(i)?.takeIf { it.isNotBlank() }?.let(fileUrls::add) }
+        val localUrls = mutableListOf<String>()
+        results.optString("_localFileUrl").takeIf { it.isNotBlank() }?.let(localUrls::add)
+        results.optJSONArray("_localFileUrls")?.let { arr -> for (i in 0 until arr.length()) arr.optString(i)?.takeIf { it.isNotBlank() }?.let(localUrls::add) }
+        Log.d("Insta360OscProvider", "takePicture result URLs fileUrls=$fileUrls localUrls=$localUrls")
+        fun isBad(s: String): Boolean {
+            val v = s.lowercase()
+            return v.contains("thumb") || v.contains("preview") || v.contains("raw") || v.contains("fisheye")
+        }
+        val selectedFile = fileUrls.firstOrNull { !isBad(it) } ?: fileUrls.firstOrNull()
+        val selectedLocal = localUrls.firstOrNull { !isBad(it) } ?: localUrls.firstOrNull()
+        Log.d("Insta360OscProvider", "takePicture selected original fileUrl=$selectedFile localFileUrl=$selectedLocal")
+        return selectedFile to selectedLocal
     }
 }

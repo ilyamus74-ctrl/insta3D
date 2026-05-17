@@ -18,14 +18,20 @@ class LocalOriginalManager(
     suspend fun downloadOriginalForPoint(sessionId: String, pointId: String) {
         val point = capturePointDao.getById(pointId) ?: return
         val fileUrl = point.cameraFileUrl ?: return
+        Log.d("RoomSessionRepository", "downloadOriginalForPoint(): start pointId=$pointId fileUrl=$fileUrl")
         capturePointDao.upsert(point.copy(localOriginalState = FileLocalState.DOWNLOADING.name))
         val result = oscFileDownloader.downloadOriginal(fileUrl, sessionId, pointId)
+        val isBadProjection = result.looksLikeDualFisheye
+        Log.d(
+            "RoomSessionRepository",
+            "downloadOriginalForPoint(): pointId=$pointId localPath=${result.localPath} size=${result.fileSizeBytes} mime=${result.contentType} width=${result.width} height=${result.height} looksLikeDualFisheye=${result.looksLikeDualFisheye} error=${result.error}"
+        )
         capturePointDao.upsert(
             point.copy(
-                localOriginalPath = result.localPath,
+                localOriginalPath = if (isBadProjection) null else result.localPath,
                 fileSizeBytes = result.fileSizeBytes,
                 checksumSha256 = result.checksumSha256,
-                localOriginalState = if (result.error == null) FileLocalState.DOWNLOADED.name else FileLocalState.DOWNLOAD_ERROR.name,
+                localOriginalState = if (result.error == null && !isBadProjection) FileLocalState.DOWNLOADED.name else FileLocalState.DOWNLOAD_ERROR.name,
                 updatedAtEpochMs = System.currentTimeMillis(),
             )
         )
