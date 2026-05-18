@@ -454,7 +454,7 @@ class AppStateViewModel(
             uploadAppSessionUuid = uploadAppSessionUuid,
             serverCaptureSessionId = null,
         )
-        
+
         return EnqueueUploadResult.Enqueued
     }
 

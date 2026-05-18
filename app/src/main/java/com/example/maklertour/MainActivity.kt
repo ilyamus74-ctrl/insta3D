@@ -36,7 +36,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -1792,25 +1791,17 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
             if (!uploadError.isNullOrBlank()) {
                 Text("Ошибка upload: $uploadError", color = MaterialTheme.colorScheme.error)
             }
-            Text("Фильтр очереди: $filter")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Новые", "В процессе", "Ошибки", "Успешные", "Все").forEach {
-                    if (filter == it) {
-                        Button(onClick = { filter = it }) { Text(it) }
-                    } else {
-                        OutlinedButton(onClick = { filter = it }) { Text(it) }
-                    }
-                }
-            }
+            SimpleFilterDropdown(
+                label = "Фильтр очереди",
+                selected = filter,
+                options = listOf("Новые", "В процессе", "Ошибки", "Успешные", "Все"),
+                onSelected = { filter = it }
+            )
             Button(
                 onClick = {
                     when (val result = onEnqueue()) {
                         EnqueueUploadResult.Enqueued -> {
-                            Toast.makeText(
-                                context,
-                                "Сессия добавлена в очередь",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            Toast.makeText(context, "Сессия добавлена в очередь", Toast.LENGTH_SHORT).show()
                         }
 
                         is EnqueueUploadResult.Rejected -> {
@@ -1901,6 +1892,40 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
         VIDEO_SCAN,
     }
 
+@Composable
+private fun SimpleFilterDropdown(
+    label: String,
+    selected: String,
+    options: List<String>,
+    onSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label)
+        Box {
+            Button(
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(selected)
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option) },
+                        onClick = {
+                            onSelected(option)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
     private fun hasAnyInternet(context: android.content.Context): Boolean {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
         val network = manager.activeNetwork ?: return false
