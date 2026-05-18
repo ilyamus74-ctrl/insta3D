@@ -943,8 +943,8 @@ class RoomUploadQueueRepository(
         uploadAppSessionUuid: String?,
         serverCaptureSessionId: Long?,
     ) {
-        if (queue.value.any { it.sessionId == sessionId }) {
-            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId")
+        if (queue.value.any { it.sessionId == sessionId && it.orderId == orderId }) {
+            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId")
             return
         }
         val now = Instant.now().toEpochMilli()
