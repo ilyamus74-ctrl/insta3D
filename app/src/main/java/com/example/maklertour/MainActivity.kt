@@ -543,6 +543,7 @@ private fun MaklerTourApp() {
                 composable(AppTab.Queue.route) {
                     QueueScreen(
                         selectedOrder = selectedOrder,
+                        sessions = state.sessions,
                         queue = state.uploadQueue,
                         onEnqueue = viewModel::enqueueUpload,
                         onUpload = viewModel::processUpload,
@@ -1759,6 +1760,7 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
     @Composable
     private fun QueueScreen(
         selectedOrder: MobileOrder?,
+        sessions: List<com.maklertour.domain.Session>,
         queue: List<com.maklertour.domain.UploadItem>,
         onEnqueue: () -> EnqueueUploadResult,
         onUpload: (String) -> Unit,
@@ -1820,14 +1822,25 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
             ) { Text(stringResource(R.string.copy_diagnostic_json)) }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(filteredQueue) { _, item ->
+                    val session = sessions.firstOrNull { it.id == item.sessionId }
+                    val orderLabel = if (session?.serverOrderId != null) {
+                        "Заявка #${session.serverOrderId} — ${session.orderTitle ?: "без названия"}"
+                    } else {
+                        "Заявка: не привязана"
+                    }
+                    val sessionLabel = session?.name ?: "Сессия ${item.sessionId.take(8)}"
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(stringResource(R.string.session_format, item.sessionId.take(8)))
-                            Text(stringResource(R.string.status_format, item.status))
-                            Text(stringResource(R.string.retry_format, item.retryCount.toString()))
+                            Text(orderLabel, style = MaterialTheme.typography.titleSmall)
+                            Text("Сессия: $sessionLabel")
+                            if (!session?.orderAddress.isNullOrBlank()) {
+                                Text("Адрес: ${session.orderAddress}")
+                            }
+                            Text("Статус: ${item.status}")
+                            Text("Попыток: ${item.retryCount}")
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = {
@@ -1852,10 +1865,11 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                                     )
                                 }
                             }
-                            Text("progress=${if (item.status == com.maklertour.domain.UploadStatus.Success) 100 else item.progressPercent}%")
-                            Text("step=${item.currentStep ?: "—"} file=${item.currentFileName ?: "—"}")
-                            Text("bytes=${item.bytesUploaded}/${item.bytesTotal}")
-                            Text("updatedAt=${item.updatedAt}")
+                            Text("Прогресс: ${if (item.status == com.maklertour.domain.UploadStatus.Success) 100 else item.progressPercent}%")
+                            Text("Шаг: ${item.currentStep ?: "—"}")
+                            Text("Файл: ${item.currentFileName ?: "—"}")
+                            Text("Bytes: ${item.bytesUploaded}/${item.bytesTotal}")
+                            Text("Обновлено: ${item.updatedAt}")
                         }
                     }
                 }
