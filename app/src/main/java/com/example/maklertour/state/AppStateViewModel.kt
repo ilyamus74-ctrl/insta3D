@@ -441,8 +441,7 @@ class AppStateViewModel(
             return EnqueueUploadResult.Rejected("Эта сессия уже есть в очереди для заявки #${order.id}")
         }
 
-        val binding = uiState.value.orderSessionBindings.firstOrNull { it.orderId == order.id && it.captureSessionId == session.id }
-        val uploadAppSessionUuid = binding?.uploadAppSessionUuid ?: "${session.id}_${order.id}"
+        val uploadAppSessionUuid = "${session.id}_${order.id}"
 
         Log.d("UploadQueue", "enqueue requested sessionId=${session.id} orderId=${order.id}")
         uploadQueueRepository.enqueue(
@@ -451,10 +450,11 @@ class AppStateViewModel(
             orderId = order.id,
             orderTitle = order.title,
             orderAddress = order.address,
-            bindingId = binding?.id,
+            bindingId = null,
             uploadAppSessionUuid = uploadAppSessionUuid,
-            serverCaptureSessionId = binding?.serverCaptureSessionId,
+            serverCaptureSessionId = null,
         )
+        
         return EnqueueUploadResult.Enqueued
     }
 
