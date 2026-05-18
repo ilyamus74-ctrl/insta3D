@@ -429,21 +429,32 @@ class AppStateViewModel(
     fun deleteConnection(connectionId: String) = sessionRepository.deleteConnection(connectionId)
 
     fun enqueueUpload(): EnqueueUploadResult {
+        val order = selectedOrder.value ?: return EnqueueUploadResult.Rejected("Выберите заявку для загрузки этой сессии.")
         val session = uiState.value.sessions.firstOrNull { it.id == uiState.value.selectedSessionId }
-            ?: return EnqueueUploadResult.Rejected("Сессия не выбрана")
-
-        if (session.serverOrderId == null) {
-            return EnqueueUploadResult.Rejected("Сессия не привязана к заявке")
+            ?: return EnqueueUploadResult.Rejected("Сессия не выбрана.")
+        if (order.status.uppercase() in setOf("READY", "COMPLETED", "CLOSED") || order.operatorClosedAt != null) {
+            return EnqueueUploadResult.Rejected("Заявка закрыта для загрузки.")
         }
-
-        val existing = uiState.value.uploadQueue.firstOrNull { it.sessionId == session.id }
+        val existing = uiState.value.uploadQueue.firstOrNull { it.sessionId == session.id && it.orderId == order.id }
         if (existing != null) {
-            Log.d("UploadQueue", "enqueue duplicate rejected sessionId=${session.id}")
-            return EnqueueUploadResult.Rejected("Сессия уже есть в очереди")
+            Log.d("UploadQueue", "enqueue duplicate rejected sessionId=${session.id} orderId=${order.id}")
+            return EnqueueUploadResult.Rejected("Эта сессия уже есть в очереди для заявки #${order.id}")
         }
 
-        Log.d("UploadQueue", "enqueue requested sessionId=${session.id}")
-        uploadQueueRepository.enqueue(session.id)
+        val binding = uiState.value.orderSessionBindings.firstOrNull { it.orderId == order.id && it.captureSessionId == session.id }
+        val uploadAppSessionUuid = binding?.uploadAppSessionUuid ?: "${session.id}_${order.id}"
+
+        Log.d("UploadQueue", "enqueue requested sessionId=${session.id} orderId=${order.id}")
+        uploadQueueRepository.enqueue(
+            sessionId = session.id,
+            sessionTitle = session.name,
+            orderId = order.id,
+            orderTitle = order.title,
+            orderAddress = order.address,
+            bindingId = binding?.id,
+            uploadAppSessionUuid = uploadAppSessionUuid,
+            serverCaptureSessionId = binding?.serverCaptureSessionId,
+        )
         return EnqueueUploadResult.Enqueued
     }
 
@@ -478,14 +489,20 @@ class AppStateViewModel(
             val scanVideos = sessionRepository.scanVideos.value.filter { it.sessionId == item.sessionId }
             Log.d("Upload", "scanVideos count=${scanVideos.size}")
 
-            if (session?.serverOrderId == null) {
-                val error = "Сессия не привязана к заявке"
-                Log.e("Upload", "session is not linked to server order")
+        if (item.orderId == null) {
+            val error = "В элементе очереди не выбрана заявка"
                 uploadError.value = error
                 uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
-
                 return
             }
+
+        if (session == null) {
+            uploadError.value = "Сессия для загрузки не найдена"
+            uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
+            return
+        }
+        val orderId = item.orderId
+        val appSessionUuid = item.uploadAppSessionUuid ?: "${item.sessionId}_${orderId}"
             uploadError.value = null
 
             val uploader = mobileUploadApi
@@ -497,9 +514,9 @@ class AppStateViewModel(
             }
             Log.d("Upload", "mobileUploadApi configured=true")
 
-            val captureSessionId = session.serverCaptureSessionId ?: run {
-                Log.d("Upload", "create_session request orderId=${session.serverOrderId} appSessionUuid=${session.id}")
-                val created = uploader.createSession(orderId = session.serverOrderId, appSessionUuid = session.id)
+        val captureSessionId = item.serverCaptureSessionId ?: run {
+            Log.d("Upload", "create_session request orderId=$orderId appSessionUuid=$appSessionUuid")
+            val created = uploader.createSession(orderId = orderId, appSessionUuid = appSessionUuid)
                 Log.d("Upload", "create_session response captureSessionId=$created")
                 if (created <= 0L) {
                     uploadError.value = "Не удалось создать capture session на сервере"
@@ -507,7 +524,10 @@ class AppStateViewModel(
                     Log.e("Upload", "create_session failed: captureSessionId=$created")
                     return
                 }
+            uploadQueueRepository.updateServerCaptureSessionId(uploadId, created)
+            if (item.orderId == session.serverOrderId) {
                 sessionRepository.updateServerCaptureSessionId(session.id, created)
+            }
                 created
             }
             Log.d("Upload", "captureSessionId used=$captureSessionId")
@@ -527,7 +547,7 @@ class AppStateViewModel(
                     state = ScanVideoUploadState.UPLOADING,
                 )
                 val result = uploader.uploadVideoScan(
-                    orderId = session.serverOrderId,
+                    orderId = orderId,
                     captureSessionId = captureSessionId,
                     scan = scan,
                 ) { progress ->
@@ -568,7 +588,7 @@ class AppStateViewModel(
                     state = ServerUploadState.UPLOADING,
                 )
                 val result = uploader.uploadPhotoPoint(
-                    orderId = session.serverOrderId,
+                    orderId = orderId,
                     captureSessionId = captureSessionId,
                     point = point,
                 ) { progress ->

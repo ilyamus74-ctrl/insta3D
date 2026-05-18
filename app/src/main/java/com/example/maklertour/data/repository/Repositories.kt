@@ -73,7 +73,17 @@ interface SessionRepository {
 
 interface UploadQueueRepository {
     val queue: StateFlow<List<UploadItem>>
-    fun enqueue(sessionId: String)
+
+    fun enqueue(
+        sessionId: String,
+        sessionTitle: String?,
+        orderId: Long?,
+        orderTitle: String?,
+        orderAddress: String?,
+        bindingId: String?,
+        uploadAppSessionUuid: String?,
+        serverCaptureSessionId: Long?,
+    )
     fun updateStatus(uploadId: String, status: UploadStatus)
     fun updateProgress(
         uploadId: String,
@@ -86,6 +96,7 @@ interface UploadQueueRepository {
     fun incrementRetry(uploadId: String)
     fun resetForRetry(uploadId: String)
     fun resetSessionQueueItem(sessionId: String)
+    fun updateServerCaptureSessionId(uploadId: String, serverCaptureSessionId: Long)
 }
 
 class InMemorySessionRepository : SessionRepository {
@@ -394,8 +405,17 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
     private val _queue = MutableStateFlow<List<UploadItem>>(emptyList())
     override val queue: StateFlow<List<UploadItem>> = _queue
 
-    override fun enqueue(sessionId: String) {
-        if (_queue.value.any { it.sessionId == sessionId }) {
+    override fun enqueue(
+        sessionId: String,
+        sessionTitle: String?,
+        orderId: Long?,
+        orderTitle: String?,
+        orderAddress: String?,
+        bindingId: String?,
+        uploadAppSessionUuid: String?,
+        serverCaptureSessionId: Long?,
+    ) {
+        if (_queue.value.any { it.sessionId == sessionId && it.orderId == orderId }) {
             Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId")
             return
         }
@@ -403,6 +423,13 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
             it + UploadItem(
                 id = UUID.randomUUID().toString(),
                 sessionId = sessionId,
+                sessionTitle = sessionTitle,
+                orderId = orderId,
+                orderTitle = orderTitle,
+                orderAddress = orderAddress,
+                bindingId = bindingId,
+                uploadAppSessionUuid = uploadAppSessionUuid,
+                serverCaptureSessionId = serverCaptureSessionId,
                 status = UploadStatus.Queued,
                 updatedAt = Instant.now(),
             )
@@ -478,6 +505,13 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
                         updatedAt = Instant.now(),
                     )
                 } else item
+            }
+        }
+    }
+    override fun updateServerCaptureSessionId(uploadId: String, serverCaptureSessionId: Long) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) item.copy(serverCaptureSessionId = serverCaptureSessionId, updatedAt = Instant.now()) else item
             }
         }
     }
@@ -489,8 +523,17 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
     private val _queue = MutableStateFlow(loadQueue())
     override val queue: StateFlow<List<UploadItem>> = _queue
 
-    override fun enqueue(sessionId: String) {
-        if (_queue.value.any { it.sessionId == sessionId }) {
+    override fun enqueue(
+        sessionId: String,
+        sessionTitle: String?,
+        orderId: Long?,
+        orderTitle: String?,
+        orderAddress: String?,
+        bindingId: String?,
+        uploadAppSessionUuid: String?,
+        serverCaptureSessionId: Long?,
+    ) {
+        if (_queue.value.any { it.sessionId == sessionId && it.orderId == orderId }) {
             Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId")
             return
         }
@@ -498,6 +541,13 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
             it + UploadItem(
                 id = UUID.randomUUID().toString(),
                 sessionId = sessionId,
+                sessionTitle = sessionTitle,
+                orderId = orderId,
+                orderTitle = orderTitle,
+                orderAddress = orderAddress,
+                bindingId = bindingId,
+                uploadAppSessionUuid = uploadAppSessionUuid,
+                serverCaptureSessionId = serverCaptureSessionId,
                 status = UploadStatus.Queued,
                 updatedAt = Instant.now(),
             )
@@ -578,6 +628,16 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
                         updatedAt = Instant.now(),
                     )
                 } else item
+            }
+        }
+        persist()
+    }
+
+
+    override fun updateServerCaptureSessionId(uploadId: String, serverCaptureSessionId: Long) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) item.copy(serverCaptureSessionId = serverCaptureSessionId, updatedAt = Instant.now()) else item
             }
         }
         persist()
@@ -590,6 +650,13 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
                     JSONObject().apply {
                         put("id", item.id)
                         put("sessionId", item.sessionId)
+                        put("sessionTitle", item.sessionTitle)
+                        put("orderId", item.orderId)
+                        put("orderTitle", item.orderTitle)
+                        put("orderAddress", item.orderAddress)
+                        put("bindingId", item.bindingId)
+                        put("uploadAppSessionUuid", item.uploadAppSessionUuid)
+                        put("serverCaptureSessionId", item.serverCaptureSessionId)
                         put("status", item.status.name)
                         put("retryCount", item.retryCount)
                         put("updatedAt", item.updatedAt.toString())
@@ -616,6 +683,13 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
                         UploadItem(
                             id = json.getString("id"),
                             sessionId = json.getString("sessionId"),
+                            sessionTitle = json.optString("sessionTitle").takeIf { it.isNotBlank() && it != "null" },
+                            orderId = json.optLong("orderId").takeIf { !json.isNull("orderId") },
+                            orderTitle = json.optString("orderTitle").takeIf { it.isNotBlank() && it != "null" },
+                            orderAddress = json.optString("orderAddress").takeIf { it.isNotBlank() && it != "null" },
+                            bindingId = json.optString("bindingId").takeIf { it.isNotBlank() && it != "null" },
+                            uploadAppSessionUuid = json.optString("uploadAppSessionUuid").takeIf { it.isNotBlank() && it != "null" },
+                            serverCaptureSessionId = json.optLong("serverCaptureSessionId").takeIf { !json.isNull("serverCaptureSessionId") },
                             status = UploadStatus.valueOf(json.getString("status")),
                             retryCount = json.optInt("retryCount", 0),
                             updatedAt = Instant.parse(json.getString("updatedAt")),
@@ -859,7 +933,16 @@ class RoomUploadQueueRepository(
         items.map { it.toDomain() }
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    override fun enqueue(sessionId: String) {
+    override fun enqueue(
+        sessionId: String,
+        sessionTitle: String?,
+        orderId: Long?,
+        orderTitle: String?,
+        orderAddress: String?,
+        bindingId: String?,
+        uploadAppSessionUuid: String?,
+        serverCaptureSessionId: Long?,
+    ) {
         if (queue.value.any { it.sessionId == sessionId }) {
             Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId")
             return
@@ -873,6 +956,13 @@ class RoomUploadQueueRepository(
                     createdAtEpochMs = now,
                     updatedAtEpochMs = now,
                     captureSessionId = sessionId,
+                    sessionTitle = sessionTitle,
+                    serverOrderId = orderId,
+                    orderTitle = orderTitle,
+                    orderAddress = orderAddress,
+                    bindingId = bindingId,
+                    uploadAppSessionUuid = uploadAppSessionUuid,
+                    serverCaptureSessionId = serverCaptureSessionId,
                     status = UploadStatus.Queued.name,
                     retryCount = 0,
                 )
@@ -890,6 +980,13 @@ class RoomUploadQueueRepository(
                     createdAtEpochMs = current.updatedAt.toEpochMilli(),
                     updatedAtEpochMs = Instant.now().toEpochMilli(),
                     captureSessionId = current.sessionId,
+                    sessionTitle = current.sessionTitle,
+                    serverOrderId = current.orderId,
+                    orderTitle = current.orderTitle,
+                    orderAddress = current.orderAddress,
+                    bindingId = current.bindingId,
+                    uploadAppSessionUuid = current.uploadAppSessionUuid,
+                    serverCaptureSessionId = current.serverCaptureSessionId,
                     status = status.name,
                     retryCount = current.retryCount,
                     progressPercent = current.progressPercent,
@@ -912,6 +1009,13 @@ class RoomUploadQueueRepository(
                     createdAtEpochMs = current.updatedAt.toEpochMilli(),
                     updatedAtEpochMs = Instant.now().toEpochMilli(),
                     captureSessionId = current.sessionId,
+                    sessionTitle = current.sessionTitle,
+                    serverOrderId = current.orderId,
+                    orderTitle = current.orderTitle,
+                    orderAddress = current.orderAddress,
+                    bindingId = current.bindingId,
+                    uploadAppSessionUuid = current.uploadAppSessionUuid,
+                    serverCaptureSessionId = current.serverCaptureSessionId,
                     status = current.status.name,
                     retryCount = current.retryCount,
                     progressPercent = progressPercent.coerceIn(0, 100),
@@ -935,6 +1039,13 @@ class RoomUploadQueueRepository(
                     createdAtEpochMs = current.updatedAt.toEpochMilli(),
                     updatedAtEpochMs = now,
                     captureSessionId = current.sessionId,
+                    sessionTitle = current.sessionTitle,
+                    serverOrderId = current.orderId,
+                    orderTitle = current.orderTitle,
+                    orderAddress = current.orderAddress,
+                    bindingId = current.bindingId,
+                    uploadAppSessionUuid = current.uploadAppSessionUuid,
+                    serverCaptureSessionId = current.serverCaptureSessionId,
                     status = current.status.name,
                     retryCount = current.retryCount + 1,
                     progressPercent = current.progressPercent,
@@ -957,6 +1068,13 @@ class RoomUploadQueueRepository(
                     createdAtEpochMs = current.updatedAt.toEpochMilli(),
                     updatedAtEpochMs = Instant.now().toEpochMilli(),
                     captureSessionId = current.sessionId,
+                    sessionTitle = current.sessionTitle,
+                    serverOrderId = current.orderId,
+                    orderTitle = current.orderTitle,
+                    orderAddress = current.orderAddress,
+                    bindingId = current.bindingId,
+                    uploadAppSessionUuid = current.uploadAppSessionUuid,
+                    serverCaptureSessionId = current.serverCaptureSessionId,
                     status = UploadStatus.Uploading.name,
                     retryCount = current.retryCount,
                     progressPercent = 0,
@@ -979,6 +1097,13 @@ class RoomUploadQueueRepository(
                     createdAtEpochMs = current.updatedAt.toEpochMilli(),
                     updatedAtEpochMs = Instant.now().toEpochMilli(),
                     captureSessionId = current.sessionId,
+                    sessionTitle = current.sessionTitle,
+                    serverOrderId = current.orderId,
+                    orderTitle = current.orderTitle,
+                    orderAddress = current.orderAddress,
+                    bindingId = current.bindingId,
+                    uploadAppSessionUuid = current.uploadAppSessionUuid,
+                    serverCaptureSessionId = current.serverCaptureSessionId,
                     status = UploadStatus.Queued.name,
                     retryCount = current.retryCount,
                     progressPercent = 0,
@@ -986,6 +1111,35 @@ class RoomUploadQueueRepository(
                     bytesTotal = 0L,
                     currentFileName = null,
                     currentStep = "Order changed, upload required",
+                )
+            )
+        }
+    }
+
+    override fun updateServerCaptureSessionId(uploadId: String, serverCaptureSessionId: Long) {
+        val current = queue.value.firstOrNull { it.id == uploadId } ?: return
+        scope.launch {
+            uploadItemDao.upsert(
+                UploadItemEntity(
+                    id = current.id,
+                    syncState = SyncState.PENDING_UPDATE.name,
+                    createdAtEpochMs = current.updatedAt.toEpochMilli(),
+                    updatedAtEpochMs = Instant.now().toEpochMilli(),
+                    captureSessionId = current.sessionId,
+                    sessionTitle = current.sessionTitle,
+                    serverOrderId = current.orderId,
+                    orderTitle = current.orderTitle,
+                    orderAddress = current.orderAddress,
+                    bindingId = current.bindingId,
+                    uploadAppSessionUuid = current.uploadAppSessionUuid,
+                    serverCaptureSessionId = serverCaptureSessionId,
+                    status = current.status.name,
+                    retryCount = current.retryCount,
+                    progressPercent = current.progressPercent,
+                    bytesUploaded = current.bytesUploaded,
+                    bytesTotal = current.bytesTotal,
+                    currentFileName = current.currentFileName,
+                    currentStep = current.currentStep,
                 )
             )
         }
@@ -1016,6 +1170,13 @@ private fun CapturePointEntity.toDomain(): CapturePoint = CapturePoint(
 private fun UploadItemEntity.toDomain(): UploadItem = UploadItem(
     id = id,
     sessionId = captureSessionId,
+    sessionTitle = sessionTitle,
+    orderId = serverOrderId,
+    orderTitle = orderTitle,
+    orderAddress = orderAddress,
+    bindingId = bindingId,
+    uploadAppSessionUuid = uploadAppSessionUuid,
+    serverCaptureSessionId = serverCaptureSessionId,
     status = runCatching { UploadStatus.valueOf(status) }.getOrDefault(UploadStatus.Queued),
     retryCount = retryCount,
     updatedAt = Instant.ofEpochMilli(updatedAtEpochMs),

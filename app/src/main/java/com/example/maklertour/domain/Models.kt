@@ -88,6 +88,13 @@ enum class UploadStatus {
 data class UploadItem(
     val id: String = UUID.randomUUID().toString(),
     val sessionId: String,
+    val sessionTitle: String? = null,
+    val orderId: Long? = null,
+    val orderTitle: String? = null,
+    val orderAddress: String? = null,
+    val bindingId: String? = null,
+    val uploadAppSessionUuid: String? = null,
+    val serverCaptureSessionId: Long? = null,
     val status: UploadStatus = UploadStatus.Queued,
     val retryCount: Int = 0,
     val updatedAt: Instant = Instant.now(),

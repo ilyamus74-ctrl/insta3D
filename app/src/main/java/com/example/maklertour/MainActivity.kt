@@ -1791,9 +1791,14 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
             if (!uploadError.isNullOrBlank()) {
                 Text("Ошибка upload: $uploadError", color = MaterialTheme.colorScheme.error)
             }
+            Text("Фильтр очереди: $filter")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("Новые", "В процессе", "Ошибки", "Успешные", "Все").forEach {
-                    TextButton(onClick = { filter = it }) { Text(it) }
+                    if (filter == it) {
+                        Button(onClick = { filter = it }) { Text(it) }
+                    } else {
+                        OutlinedButton(onClick = { filter = it }) { Text(it) }
+                    }
                 }
             }
             Button(
@@ -1823,21 +1828,26 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(filteredQueue) { _, item ->
                     val session = sessions.firstOrNull { it.id == item.sessionId }
-                    val orderLabel = if (session?.serverOrderId != null) {
-                        "Заявка #${session.serverOrderId} — ${session.orderTitle ?: "без названия"}"
+                    val inferredLegacyOrderLabel = if (item.orderId == null && session?.serverOrderId != null) {
+                        "Заявка #${session.serverOrderId} — ${session.orderTitle ?: "без названия"} (legacy item: order inferred from session)"
+                    } else null
+                    val orderLabel = if (item.orderId != null) {
+                        "Заявка #${item.orderId} — ${item.orderTitle ?: "без названия"}"
+                    } else if (inferredLegacyOrderLabel != null) {
+                        inferredLegacyOrderLabel
                     } else {
-                        "Заявка: не привязана"
+                        "Заявка: не выбрана"
                     }
-                    val sessionLabel = session?.name ?: "Сессия ${item.sessionId.take(8)}"
+                    val sessionLabel = item.sessionTitle ?: session?.name ?: "Сессия ${item.sessionId.take(8)}"
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(orderLabel, style = MaterialTheme.typography.titleSmall)
+                            Text(orderLabel, style = MaterialTheme.typography.titleMedium)
                             Text("Сессия: $sessionLabel")
-                            if (!session?.orderAddress.isNullOrBlank()) {
-                                Text("Адрес: ${session.orderAddress}")
+                            if (!item.orderAddress.isNullOrBlank()) {
+                                Text("Адрес: ${item.orderAddress}")
                             }
                             Text("Статус: ${item.status}")
                             Text("Попыток: ${item.retryCount}")
@@ -1870,6 +1880,13 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                             Text("Файл: ${item.currentFileName ?: "—"}")
                             Text("Bytes: ${item.bytesUploaded}/${item.bytesTotal}")
                             Text("Обновлено: ${item.updatedAt}")
+
+                            if (item.orderId == null) {
+                                Text(
+                                    "Эта загрузка создана старой версией APP или без выбранной заявки. Повторно добавьте сессию в очередь из заявки.",
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
                     }
                 }
