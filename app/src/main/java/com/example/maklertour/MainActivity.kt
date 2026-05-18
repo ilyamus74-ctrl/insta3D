@@ -547,6 +547,7 @@ private fun MaklerTourApp() {
                         queue = state.uploadQueue,
                         onEnqueue = viewModel::enqueueUpload,
                         onUpload = viewModel::processUpload,
+                        onResetQueueItem = viewModel::resetUploadQueueItem,
                         onDeleteQueueItem = viewModel::deleteUploadQueueItem,
                         uploadError = state.uploadError,
                         onExportDiagnostics = { viewModel.exportDiagnosticJson(debugMode) },
@@ -1766,6 +1767,7 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
         onEnqueue: () -> EnqueueUploadResult,
         onUpload: (String) -> Unit,
         uploadError: String?,
+        onResetQueueItem: (String) -> Unit,
         onDeleteQueueItem: (String) -> Unit,
         onExportDiagnostics: () -> String,
     ) {
@@ -1826,6 +1828,9 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                     val inferredLegacyOrderLabel = if (item.orderId == null && session?.serverOrderId != null) {
                         "Заявка #${session.serverOrderId} — ${session.orderTitle ?: "без названия"} (legacy item: order inferred from session)"
                     } else null
+                    val isLegacyItem = item.orderId == null
+                    val isStaleUploading = item.status == com.maklertour.domain.UploadStatus.Uploading &&
+                            java.time.Duration.between(item.updatedAt, java.time.Instant.now()).toMinutes() > 10
                     val orderLabel = if (item.orderId != null) {
                         "Заявка #${item.orderId} — ${item.orderTitle ?: "без названия"}"
                     } else if (inferredLegacyOrderLabel != null) {
@@ -1859,19 +1864,28 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                                             onUpload(item.id)
                                         }
                                     },
-                                    enabled = item.status != com.maklertour.domain.UploadStatus.Uploading
+                                    enabled = item.status != com.maklertour.domain.UploadStatus.Uploading && !isLegacyItem
                                 ) {
                                     Text(
                                         when (item.status) {
                                             com.maklertour.domain.UploadStatus.Uploading -> "Отправляется..."
                                             com.maklertour.domain.UploadStatus.Queued -> "Отправить на сервер"
-                                            else -> "Отправить на сервер повторно"
+                                            com.maklertour.domain.UploadStatus.Error -> "Отправить повторно"
+                                            com.maklertour.domain.UploadStatus.Success -> "Отправить повторно"
                                         }
                                     )
                                 }
+                                if (item.status == com.maklertour.domain.UploadStatus.Uploading ||
+                                    item.status == com.maklertour.domain.UploadStatus.Error ||
+                                    item.status == com.maklertour.domain.UploadStatus.Success
+                                ) {
+                                    Button(onClick = { onResetQueueItem(item.id) }) {
+                                        Text("Сбросить в новые")
+                                    }
+                                }
                                 Button(
                                     onClick = { onDeleteQueueItem(item.id) },
-                                    enabled = item.status != com.maklertour.domain.UploadStatus.Uploading
+
                                 ) {
                                     Text("Удалить из очереди")
                                 }
@@ -1882,9 +1896,15 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                             Text("Bytes: ${item.bytesUploaded}/${item.bytesTotal}")
                             Text("Обновлено: ${item.updatedAt}")
 
-                            if (item.orderId == null) {
+                            if (isLegacyItem) {
                                 Text(
-                                    "Эта загрузка создана без выбранной заявки. Удалите и добавьте сессию в очередь из нужной заявки.",
+                                    "Эта загрузка создана старой версией APP или без выбранной заявки. Удалите её и добавьте сессию в очередь из нужной заявки.",
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            if (isStaleUploading) {
+                                Text(
+                                    "Загрузка давно в статусе Uploading. Можно сбросить или удалить.",
                                     color = MaterialTheme.colorScheme.error
                                 )
                             }

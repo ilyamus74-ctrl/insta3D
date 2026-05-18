@@ -95,6 +95,7 @@ interface UploadQueueRepository {
     )
     fun incrementRetry(uploadId: String)
     fun resetForRetry(uploadId: String)
+    fun resetQueueItem(uploadId: String)
     fun resetSessionQueueItem(sessionId: String)
     fun updateServerCaptureSessionId(uploadId: String, serverCaptureSessionId: Long)
     fun delete(uploadId: String)
@@ -492,6 +493,24 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
         }
     }
 
+    override fun resetQueueItem(uploadId: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(
+                        status = UploadStatus.Queued,
+                        progressPercent = 0,
+                        bytesUploaded = 0L,
+                        bytesTotal = 0L,
+                        currentFileName = null,
+                        currentStep = "Reset by user",
+                        updatedAt = Instant.now(),
+                    )
+                } else item
+            }
+        }
+    }
+
     override fun resetSessionQueueItem(sessionId: String) {
         _queue.update { items ->
             items.map { item ->
@@ -610,6 +629,25 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
                         bytesTotal = 0L,
                         currentStep = "Preparing upload",
                         currentFileName = null,
+                        updatedAt = Instant.now(),
+                    )
+                } else item
+            }
+        }
+        persist()
+    }
+
+    override fun resetQueueItem(uploadId: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(
+                        status = UploadStatus.Queued,
+                        progressPercent = 0,
+                        bytesUploaded = 0L,
+                        bytesTotal = 0L,
+                        currentFileName = null,
+                        currentStep = "Reset by user",
                         updatedAt = Instant.now(),
                     )
                 } else item
@@ -1091,6 +1129,35 @@ class RoomUploadQueueRepository(
                     bytesTotal = 0L,
                     currentFileName = null,
                     currentStep = "Preparing upload",
+                )
+            )
+        }
+    }
+
+    override fun resetQueueItem(uploadId: String) {
+        val current = queue.value.firstOrNull { it.id == uploadId } ?: return
+        scope.launch {
+            uploadItemDao.upsert(
+                UploadItemEntity(
+                    id = current.id,
+                    syncState = SyncState.PENDING_UPDATE.name,
+                    createdAtEpochMs = current.updatedAt.toEpochMilli(),
+                    updatedAtEpochMs = Instant.now().toEpochMilli(),
+                    captureSessionId = current.sessionId,
+                    sessionTitle = current.sessionTitle,
+                    serverOrderId = current.orderId,
+                    orderTitle = current.orderTitle,
+                    orderAddress = current.orderAddress,
+                    bindingId = current.bindingId,
+                    uploadAppSessionUuid = current.uploadAppSessionUuid,
+                    serverCaptureSessionId = current.serverCaptureSessionId,
+                    status = UploadStatus.Queued.name,
+                    retryCount = current.retryCount,
+                    progressPercent = 0,
+                    bytesUploaded = 0L,
+                    bytesTotal = 0L,
+                    currentFileName = null,
+                    currentStep = "Reset by user",
                 )
             )
         }
