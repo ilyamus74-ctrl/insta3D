@@ -186,13 +186,6 @@
                       <div class="small"><a href="{$p.original_url|escape}" target="_blank">Original</a> (uploaded original) · {$p.original_size_human}</div>
                       <div class="small mt-2"><code>{$p.preview_effective_path|default:'-'|escape}</code></div>
                       <div class="small"><code>{$p.original_effective_path|default:'-'|escape}</code></div>
-                      {if $canDeletePhoto}
-                      <form method="post" action="/order.php?id={$order.id}" class="mt-2" onsubmit="return confirm('Удалить этот снимок из заявки? Снимок исчезнет из тура и карты.');">
-                        <input type="hidden" name="action" value="delete_photo_point">
-                        <input type="hidden" name="photo_point_id" value="{$p.id}">
-                        <button type="submit" class="btn btn-sm btn-danger">Удалить снимок</button>
-                      </form>
-                      {/if}
                     </div>
                   </div>
                 </div>

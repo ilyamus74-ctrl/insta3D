@@ -96,7 +96,7 @@ function process_one_job(mysqli $dbcnx): bool {
 $rawRel = str_replace('/photos/originals/', '/photos/raw_dualfisheye/', $origRel);
 $rawAbs = abs_storage_path($rawRel);
 
-$isLikelyX4Raw = ($w >= 5800 && $h >= 2900);
+$isKnownX4Raw = ($w === 5888 && $h === 2944);
 $isAlreadyStitched = is_file($rawAbs) && ($w === 4096 && $h === 2048);
 
 if (!$isKnownX4Raw || $isAlreadyStitched) {
@@ -112,7 +112,7 @@ if (!$isKnownX4Raw || $isAlreadyStitched) {
             return true;
         }
     }
-    $derivSummary = tour_ensure_session_media_derivatives($dbcnx, $sessionId, true, $stitchedAny);
+    $derivSummary = tour_ensure_session_media_derivatives($dbcnx, $sessionId, true, false);
     if (!$derivSummary['ok']) {
         append_log(APP_STORAGE_DIR . '/logs/marker_worker_cron.log', 'derivatives warning session_id=' . $sessionId . ' summary=' . json_encode($derivSummary, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
     }
