@@ -122,7 +122,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
        $st->bind_param('ii',$captureSessionId,$orderId); $st->execute(); $sess=$st->get_result()->fetch_assoc(); $st->close();
        if(!$sess){ throw new RuntimeException('Сессия уже удалена или не найдена'); }
        $appSessionUuid=(string)($sess['app_session_uuid'] ?? '');
-       $set=["deleted_at = NOW(6)","deleted_by = ?","delete_reason = 'deleted_from_order_web'"]; if(column_exists($dbcnx,'capture_sessions','status')){$set[]="status = 'DELETED'";} if(column_exists($dbcnx,'capture_sessions','updated_at')){$set[]="updated_at = NOW(6)";}
+       $set=["deleted_at = NOW(6)","deleted_by = ?","delete_reason = 'deleted_from_order_web'"]; if(column_exists($dbcnx,'capture_sessions','updated_at')){$set[]="updated_at = NOW(6)";}
        $st=$dbcnx->prepare("UPDATE capture_sessions SET ".implode(', ',$set)." WHERE id = ?"); if(!$st){ throw new RuntimeException('prepare failed'); } $st->bind_param('ii',$userId,$captureSessionId); $st->execute(); $st->close();
        $ppSet=["deleted_at = NOW(6)","deleted_by = ?","delete_reason = 'session_deleted_from_order_web'"]; if(column_exists($dbcnx,'photo_points','upload_state')){$ppSet[]="upload_state = 'DELETED'";} if(column_exists($dbcnx,'photo_points','updated_at')){$ppSet[]="updated_at = NOW(6)";}
        $st=$dbcnx->prepare("UPDATE photo_points SET ".implode(', ',$ppSet)." WHERE session_id = ? AND deleted_at IS NULL"); if($st){$st->bind_param('ii',$userId,$captureSessionId);$st->execute();$st->close();}
