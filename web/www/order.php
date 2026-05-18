@@ -200,7 +200,7 @@ if($stmt){
 $processingJobsBySession = [];
 $stmt=$dbcnx->prepare("SELECT * FROM processing_jobs WHERE order_id = ? AND session_id IN (SELECT id FROM capture_sessions WHERE order_id = ? AND deleted_at IS NULL) ORDER BY created_at DESC, id DESC");
 if($stmt){
-  $stmt->bind_param('ii',$orderId);
+  $stmt->bind_param('ii',$orderId,$orderId);
   $stmt->execute();
   $rs=$stmt->get_result();
   while($job=$rs->fetch_assoc()){
