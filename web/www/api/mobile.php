@@ -5,6 +5,7 @@ require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/../../libs/tour_media_derivatives_lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
+$maklerConfig = require __DIR__ . '/../../configs/maklertour_config.php';
 
 function api_json(array $data, int $code = 200): void {
     http_response_code($code);
@@ -278,7 +279,7 @@ if ($action === 'orders') {
         $stmt = $dbcnx->prepare("
             SELECT *
             FROM tour_orders
-            WHERE status NOT IN ('READY','CLOSED')
+            WHERE status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
             ORDER BY updated_at DESC
             LIMIT 200
         ");
@@ -286,7 +287,7 @@ if ($action === 'orders') {
     $stmt = $dbcnx->prepare("
         SELECT *
         FROM tour_orders
-        WHERE status NOT IN ('READY','CLOSED')
+        WHERE status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
           AND (
                broker_id = ?
                OR operator_id = ?
@@ -303,7 +304,7 @@ if ($action === 'orders') {
             SELECT *
             FROM tour_orders
             WHERE broker_id = ?
-              AND status NOT IN ('READY','CLOSED')
+              AND status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
             ORDER BY updated_at DESC
             LIMIT 200
         ");
@@ -330,6 +331,7 @@ if ($action === 'orders') {
 }
 
 if ($action === 'take_order') {
+    global $maklerConfig;
     $user = api_require_mobile_user($dbcnx);
     $userId = (int)$user['id'];
     $role = $user['role'] ?? 'BROKER';
@@ -388,7 +390,7 @@ if ($action === 'create_session') {
           OR operator_id = ?
           OR broker_id = ?
       )
-      AND status NOT IN ('READY','CLOSED')
+      AND status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
     LIMIT 1
     ");
 
@@ -500,7 +502,7 @@ if ($action === 'upload_video_scan') {
          OR o.operator_id = ?
          OR o.broker_id = ?
      )
-      AND o.status NOT IN ('READY','CLOSED')
+      AND o.status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
    LIMIT 1
     ");
 
@@ -821,7 +823,7 @@ if ($action === 'create_processing_job') {
               OR o.operator_id = ?
               OR o.broker_id = ?
           )
-          AND o.status NOT IN ('READY','CLOSED')
+          AND o.status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
         LIMIT 1
     ");
 
@@ -934,7 +936,7 @@ if ($action === 'upload_photo_point') {
           OR o.operator_id = ?
           OR o.broker_id = ?
       )
-      AND o.status NOT IN ('READY','CLOSED')
+      AND o.status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
     LIMIT 1
     ");
 

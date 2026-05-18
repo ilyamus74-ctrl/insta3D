@@ -1,127 +1,31 @@
 {include file="maklertour_header.html"}
 {include file="maklertour_sidebar.html"}
+<main id="main" class="main"><div class="pagetitle"><h1>Заявки</h1></div>
+{if $error}<div class="alert alert-danger">{$error}</div>{/if}
+{if $success}<div class="alert alert-success">{$success}</div>{/if}
+<section class="section">
+<div class="card"><div class="card-body pt-3">
+<form method="get" class="row g-2">
+<div class="col-md-2"><select name="scope" class="form-select"><option value="active" {if $filters.scope=='active'}selected{/if}>active</option><option value="available" {if $filters.scope=='available'}selected{/if}>available</option><option value="mine" {if $filters.scope=='mine'}selected{/if}>mine</option><option value="ready" {if $filters.scope=='ready'}selected{/if}>ready</option><option value="completed" {if $filters.scope=='completed'}selected{/if}>completed</option><option value="all" {if $filters.scope=='all'}selected{/if}>all</option></select></div>
+<div class="col-md-2"><input class="form-control" name="status" value="{$filters.status|escape}" placeholder="status"></div>
+<div class="col-md-2"><select name="is_published" class="form-select"><option value="">published</option><option value="1" {if $filters.is_published==='1'}selected{/if}>1</option><option value="0" {if $filters.is_published==='0'}selected{/if}>0</option></select></div>
+<div class="col-md-2"><input class="form-control" name="customer" value="{$filters.customer|escape}" placeholder="customer"></div>
+<div class="col-md-1"><input class="form-control" name="area_min" value="{$filters.area_min|escape}" placeholder="min"></div><div class="col-md-1"><input class="form-control" name="area_max" value="{$filters.area_max|escape}" placeholder="max"></div>
+<div class="col-md-2"><button class="btn btn-primary">Apply</button> <a href="/orders.php" class="btn btn-light">Reset</a></div></form>
+</div></div>
+<div class="mb-2"><button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#createOrderModal">+ Добавить заявку</button></div>
+<div class="card"><div class="card-body"><table class="table table-striped"><thead><tr><th>ID</th><th>Object/title</th><th>Client</th><th>Address</th><th>Area</th><th>Broker</th><th>Operator</th><th>Status</th><th>Operator closed</th><th>Broker closed</th><th>Published</th><th>Created</th><th>Updated</th><th>Actions</th></tr></thead><tbody>
+{foreach from=$orders item=o}<tr><td>{$o.id}</td><td>{$o.title|escape}</td><td>{$o.customer_name|escape}</td><td>{$o.address|escape}</td><td>{$o.area_m2}</td><td>{$o.broker_name|escape}</td><td>{$o.operator_name|default:'-'|escape}</td><td><span class="badge {$o.status_meta.class}">{$o.status_meta.label}</span></td><td>{$o.operator_closed_at|default:'-'}</td><td>{$o.broker_closed_at|default:'-'}</td><td>{if $o.is_published==1}Yes{else}No{/if}</td><td>{$o.created_at}</td><td>{$o.updated_at}</td><td><a class="btn btn-sm btn-outline-primary" href="/order.php?id={$o.id}">Open</a>
+{if $current_user.role == 'ADMIN' || $current_user.role == 'OPERATOR'}{if $o.status=='NEW' && !$o.operator_id && $o.is_published==1}<form method="post" style="display:inline"><input type="hidden" name="action" value="take_order"><input type="hidden" name="order_id" value="{$o.id}"><button class="btn btn-sm btn-outline-success">Take</button></form>{/if}{/if}
+<form method="post" style="display:inline"><input type="hidden" name="order_id" value="{$o.id}">{if ($current_user.role == 'ADMIN') || ($current_user.role == 'OPERATOR' && $o.operator_id == $current_user.id && !$o.operator_closed_at)}<button name="action" value="operator_close_order" class="btn btn-sm btn-outline-warning">Operator close</button>{/if}{if ($current_user.role == 'ADMIN') || ($o.broker_id == $current_user.id && !$o.broker_closed_at)}<button name="action" value="broker_close_order" class="btn btn-sm btn-outline-secondary">Broker close</button>{/if}{if $current_user.role == 'ADMIN' || $o.broker_id == $current_user.id}<button name="action" value="reopen_order" class="btn btn-sm btn-outline-dark">Reopen</button>{/if}</form>
+</td></tr>{foreachelse}<tr><td colspan="14">Нет заявок</td></tr>{/foreach}
+</tbody></table></div></div>
+</section></main>
 
-<main id="main" class="main">
-
-  <div class="pagetitle">
-    <h1>Заявки</h1>
-    <nav>
-      <ol class="breadcrumb">
-        <li class="breadcrumb-item">MaklerTour</li>
-        <li class="breadcrumb-item active">Заявки</li>
-      </ol>
-    </nav>
-  </div>
-
-  {if $error}
-    <div class="alert alert-danger">{$error}</div>
-  {/if}
-
-  {if $success}
-    <div class="alert alert-success">{$success}</div>
-  {/if}
-
-  <section class="section">
-
-    <div class="card">
-      <div class="card-body">
-        <h5 class="card-title">Создать заявку</h5>
-
-        <form method="post" action="/orders.php">
-          <input type="hidden" name="action" value="create_order">
-          <input type="hidden" name="form_token" value="{$createOrderToken}">
-
-          <div class="row mb-3">
-            <div class="col-md-6">
-              <label class="form-label">Название объекта</label>
-              <input type="text" name="title" class="form-control" placeholder="Квартира на Hauptstraße">
-            </div>
-
-            <div class="col-md-3">
-              <label class="form-label">Площадь, м²</label>
-              <input type="number" step="0.01" name="area_m2" class="form-control" placeholder="250">
-            </div>
-          </div>
-
-          <div class="row mb-3">
-            <div class="col-md-9">
-              <label class="form-label">Адрес</label>
-              <input type="text" name="address" class="form-control" placeholder="Город, улица, дом">
-            </div>
-          </div>
-
-          <div class="row mb-3">
-            <div class="col-md-3">
-              <label class="form-label">Клиент</label>
-              <input type="text" name="customer_name" class="form-control">
-            </div>
-
-            <div class="col-md-3">
-              <label class="form-label">Телефон клиента</label>
-              <input type="text" name="customer_phone" class="form-control">
-            </div>
-
-            <div class="col-md-3">
-              <label class="form-label">Email клиента</label>
-              <input type="email" name="customer_email" class="form-control">
-            </div>
-          </div>
-           <div class="form-check form-switch mb-3">
-            <input class="form-check-input" type="checkbox" name="is_published" id="is_published" value="1">
-            <label class="form-check-label" for="is_published">Опубликовать</label>
-          </div>
-          <button type="submit" class="btn btn-primary" >
-            Создать заявку
-           </button>
-        </form>
-
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-body">
-        <h5 class="card-title">Список заявок</h5>
-
-        <table class="table table-striped">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Объект</th>
-              <th>Адрес</th>
-              <th>Площадь</th>
-              <th>Статус</th>
-              <th>Публикация</th>
-              <th>Брокер</th>
-              <th>Оператор</th>
-              <th>Создано</th>
-            </tr>
-          </thead>
-          <tbody>
-            {foreach from=$orders item=o}
-              <tr>
-                <td><a href="/order.php?id={$o.id}">{$o.title|escape}</a></td>
-                <td>{$o.title|escape}</td>
-                <td>{$o.address|escape}</td>
-                <td>{$o.area_m2}</td>
-                <td><span class="badge {$o.status_meta.class}"><i class="bi {$o.status_meta.icon}"></i> {$o.status_meta.label}</span></td>
-                <td>{if $o.is_published == 1}<span class="badge bg-success">Опубликована</span>{else}<span class="badge bg-light text-dark">Черновик</span>{/if}</td>
-                <td>{$o.broker_name|escape}</td>
-                <td>{$o.operator_name|default:'-'|escape}</td>
-                <td>{$o.created_at}</td>
-              </tr>
-            {foreachelse}
-              <tr>
-                <td colspan="9">Заявок пока нет</td>
-              </tr>
-            {/foreach}
-          </tbody>
-        </table>
-
-      </div>
-    </div>
-
-  </section>
-
-</main>
-
+<div class="modal fade" id="createOrderModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><form method="post"><div class="modal-header"><h5 class="modal-title">Создать заявку</h5></div><div class="modal-body"><input type="hidden" name="action" value="create_order"><input type="hidden" name="form_token" value="{$createOrderToken}">
+<input class="form-control mb-2" name="title" placeholder="Название объекта" required>
+<input class="form-control mb-2" name="address" placeholder="Адрес" required>
+<input class="form-control mb-2" name="area_m2" placeholder="Площадь">
+<input class="form-control mb-2" name="customer_name" placeholder="Клиент"><input class="form-control mb-2" name="customer_phone" placeholder="Телефон"><input class="form-control mb-2" name="customer_email" placeholder="Email"><label><input type="checkbox" name="is_published" value="1"> Опубликовать</label>
+</div><div class="modal-footer"><button class="btn btn-primary">Создать</button></div></form></div></div></div>
 {include file="maklertour_footer.html"}

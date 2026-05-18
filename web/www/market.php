@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/bootstrap.php';
+$config = require __DIR__ . '/../configs/maklertour_config.php';
 
 auth_require_login();
 
@@ -27,7 +28,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($orderId <= 0) {
             $error = 'Некорректная заявка';
         } else {
-            $stmt = $dbcnx->prepare("
+            $limit=(int)($config['max_active_orders_per_operator']??3);
+            $stL=$dbcnx->prepare("SELECT COUNT(*) c FROM tour_orders WHERE operator_id=? AND operator_closed_at IS NULL AND status NOT IN ('COMPLETED','CLOSED')");
+            $stL->bind_param('i',$userId);$stL->execute();$active=(int)($stL->get_result()->fetch_assoc()['c']??0);$stL->close();
+            if($active >= $limit){ $error='Достигнут лимит активных заявок оператора'; } else $stmt = $dbcnx->prepare("
                 UPDATE tour_orders
                 SET operator_id = ?, status = 'ASSIGNED'
                 WHERE id = ?
