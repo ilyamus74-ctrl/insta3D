@@ -97,6 +97,7 @@ interface UploadQueueRepository {
     fun resetForRetry(uploadId: String)
     fun resetSessionQueueItem(sessionId: String)
     fun updateServerCaptureSessionId(uploadId: String, serverCaptureSessionId: Long)
+    fun delete(uploadId: String)
 }
 
 class InMemorySessionRepository : SessionRepository {
@@ -416,7 +417,7 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
         serverCaptureSessionId: Long?,
     ) {
         if (_queue.value.any { it.sessionId == sessionId && it.orderId == orderId }) {
-            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId")
+            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId")
             return
         }
         _queue.update {
@@ -514,6 +515,9 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
                 if (item.id == uploadId) item.copy(serverCaptureSessionId = serverCaptureSessionId, updatedAt = Instant.now()) else item
             }
         }
+    }
+    override fun delete(uploadId: String) {
+        _queue.update { items -> items.filterNot { it.id == uploadId } }
     }
 }
 
@@ -534,7 +538,7 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
         serverCaptureSessionId: Long?,
     ) {
         if (_queue.value.any { it.sessionId == sessionId && it.orderId == orderId }) {
-            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId")
+            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId")
             return
         }
         _queue.update {
@@ -640,6 +644,11 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
                 if (item.id == uploadId) item.copy(serverCaptureSessionId = serverCaptureSessionId, updatedAt = Instant.now()) else item
             }
         }
+        persist()
+    }
+
+    override fun delete(uploadId: String) {
+        _queue.update { items -> items.filterNot { it.id == uploadId } }
         persist()
     }
 
@@ -1142,6 +1151,11 @@ class RoomUploadQueueRepository(
                     currentStep = current.currentStep,
                 )
             )
+        }
+    }
+    override fun delete(uploadId: String) {
+        scope.launch {
+            uploadItemDao.deleteById(uploadId)
         }
     }
 }

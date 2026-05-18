@@ -25,4 +25,7 @@ interface UploadItemDao {
 
     @Query("UPDATE upload_items SET syncState = 'SYNC_ERROR', lastSyncError = :error, updatedAtEpochMs = :updatedAtEpochMs WHERE id = :id")
     suspend fun markSyncError(id: String, error: String, updatedAtEpochMs: Long)
+
+    @Query("DELETE FROM upload_items WHERE id = :id")
+    suspend fun deleteById(id: String)
 }

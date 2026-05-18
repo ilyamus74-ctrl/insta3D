@@ -462,6 +462,10 @@ class AppStateViewModel(
         viewModelScope.launch { processUploadInternal(uploadId) }
     }
 
+    fun deleteUploadQueueItem(uploadId: String) {
+        uploadQueueRepository.delete(uploadId)
+    }
+
     fun processQueuedUploadsOnWifi() {
         if (isAutoUploadRunning.value) return
         viewModelScope.launch {

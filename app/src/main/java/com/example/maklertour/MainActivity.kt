@@ -547,6 +547,7 @@ private fun MaklerTourApp() {
                         queue = state.uploadQueue,
                         onEnqueue = viewModel::enqueueUpload,
                         onUpload = viewModel::processUpload,
+                        onDeleteQueueItem = viewModel::deleteUploadQueueItem,
                         uploadError = state.uploadError,
                         onExportDiagnostics = { viewModel.exportDiagnosticJson(debugMode) },
                     )
@@ -1765,6 +1766,7 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
         onEnqueue: () -> EnqueueUploadResult,
         onUpload: (String) -> Unit,
         uploadError: String?,
+        onDeleteQueueItem: (String) -> Unit,
         onExportDiagnostics: () -> String,
     ) {
         val clipboardManager = LocalClipboardManager.current
@@ -1797,6 +1799,7 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                 options = listOf("Новые", "В процессе", "Ошибки", "Успешные", "Все"),
                 onSelected = { filter = it }
             )
+            Text("Фильтр очереди: $filter")
             Button(
                 onClick = {
                     when (val result = onEnqueue()) {
@@ -1866,6 +1869,12 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                                         }
                                     )
                                 }
+                                Button(
+                                    onClick = { onDeleteQueueItem(item.id) },
+                                    enabled = item.status != com.maklertour.domain.UploadStatus.Uploading
+                                ) {
+                                    Text("Удалить из очереди")
+                                }
                             }
                             Text("Прогресс: ${if (item.status == com.maklertour.domain.UploadStatus.Success) 100 else item.progressPercent}%")
                             Text("Шаг: ${item.currentStep ?: "—"}")
@@ -1875,7 +1884,7 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
 
                             if (item.orderId == null) {
                                 Text(
-                                    "Эта загрузка создана старой версией APP или без выбранной заявки. Повторно добавьте сессию в очередь из заявки.",
+                                    "Эта загрузка создана без выбранной заявки. Удалите и добавьте сессию в очередь из нужной заявки.",
                                     color = MaterialTheme.colorScheme.error
                                 )
                             }
