@@ -434,15 +434,15 @@ class AppStateViewModel(
 
         val selectedOrderSnapshot = selectedOrder.value
 
-        val targetOrderId = selectedOrderSnapshot?.id
-            ?: session.serverOrderId
+        val targetOrderId = session.serverOrderId
+            ?: selectedOrderSnapshot?.id
             ?: return EnqueueUploadResult.Rejected("Выберите заявку для загрузки этой сессии.")
 
-        val targetOrderTitle = selectedOrderSnapshot?.title ?: session.orderTitle
-        val targetOrderAddress = selectedOrderSnapshot?.address ?: session.orderAddress
+        val targetOrderTitle = session.orderTitle ?: selectedOrderSnapshot?.title
+        val targetOrderAddress = session.orderAddress ?: selectedOrderSnapshot?.address
 
         if (
-            selectedOrderSnapshot != null &&
+            selectedOrderSnapshot.id == targetOrderId &&
             (
                     selectedOrderSnapshot.status.uppercase() in setOf("READY", "COMPLETED", "CLOSED") ||
                             selectedOrderSnapshot.operatorClosedAt != null

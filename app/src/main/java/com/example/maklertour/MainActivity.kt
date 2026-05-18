@@ -32,6 +32,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Assignment
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -54,6 +62,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -117,6 +126,15 @@ private enum class AppTab(val route: String, val titleRes: Int) {
     Draft("draft", R.string.tab_draft),
     Queue("queue", R.string.tab_queue),
     Settings("settings", R.string.tab_settings)
+}
+
+private fun iconForTab(tab: AppTab): ImageVector = when (tab) {
+    AppTab.Sessions -> Icons.Filled.List
+    AppTab.Orders -> Icons.Filled.Assignment
+    AppTab.Camera -> Icons.Filled.CameraAlt
+    AppTab.Draft -> Icons.Filled.EditNote
+    AppTab.Queue -> Icons.Filled.CloudUpload
+    AppTab.Settings -> Icons.Filled.Settings
 }
 
 @Composable
@@ -200,7 +218,11 @@ private fun MaklerTourApp() {
         val manager = context.applicationContext.getSystemService(ConnectivityManager::class.java)
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                if (networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                if (
+                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+                    networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                ) {
                     viewModel.processQueuedUploadsOnWifi()
                 }
             }
@@ -295,7 +317,7 @@ private fun MaklerTourApp() {
                                     restoreState = true
                                 }
                             },
-                            icon = { Text("•") },
+                            icon = { Icon(iconForTab(tab), contentDescription = stringResource(tab.titleRes)) },
                             label = { Text(stringResource(tab.titleRes)) }
                         )
                     }
@@ -1854,10 +1876,10 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = {
-                                        if (!hasAnyInternet(context)) {
+                                        if (!hasValidatedInternet(context)) {
                                             Toast.makeText(
                                                 context,
-                                                "Нет подключения к интернету",
+                                                "Нет интернет-соединения для отправки на сервер",
                                                 Toast.LENGTH_SHORT
                                             ).show()
                                         } else {
@@ -1955,11 +1977,14 @@ private fun SimpleFilterDropdown(
         }
     }
 }
-    private fun hasAnyInternet(context: android.content.Context): Boolean {
+private fun hasValidatedInternet(context: android.content.Context): Boolean {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
         val network = manager.activeNetwork ?: return false
         val caps = manager.getNetworkCapabilities(network) ?: return false
-        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(
-            NetworkCapabilities.TRANSPORT_CELLULAR
-        )
+    return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+            (
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                    )
     }
