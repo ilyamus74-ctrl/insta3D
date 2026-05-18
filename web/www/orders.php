@@ -10,6 +10,9 @@ $user = auth_current_user();
 $userId = (int)$user['id'];
 $role = $user['role'] ?? 'BROKER';
 
+$showClosed = (($_GET['show_closed'] ?? '') === '1');
+$closedWhere = $showClosed ? "1=1" : "o.status <> 'CLOSED'";
+
 function mt_order_status_meta(string $status): array {
     $map = [
         'NEW' => ['bg-secondary', 'bi-circle', 'Новая'],
@@ -118,13 +121,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $sql = "SELECT o.*, b.full_name AS broker_name, op.full_name AS operator_name FROM tour_orders o LEFT JOIN users b ON b.id=o.broker_id LEFT JOIN users op ON op.id=o.operator_id";
 
 if ($role === 'ADMIN') {
-    $sql .= " ORDER BY o.created_at DESC LIMIT 200";
+    $sql .= " WHERE {$closedWhere} ORDER BY o.created_at DESC LIMIT 200";
     $stmt = $dbcnx->prepare($sql);
 } elseif ($role === 'OPERATOR') {
     $sql .= "
-        WHERE o.broker_id = ?
-           OR o.operator_id = ?
-           OR (o.is_published = 1 AND o.status = 'NEW' AND o.operator_id IS NULL)
+        WHERE {$closedWhere}
+          AND (
+               o.broker_id = ?
+               OR o.operator_id = ?
+               OR (o.is_published = 1 AND o.status = 'NEW' AND o.operator_id IS NULL)
+          )
         ORDER BY o.created_at DESC
         LIMIT 200
     ";
@@ -133,7 +139,7 @@ if ($role === 'ADMIN') {
         $stmt->bind_param("ii", $userId, $userId);
     }
 } else {
-    $sql .= " WHERE o.broker_id=? ORDER BY o.created_at DESC LIMIT 200";
+    $sql .= " WHERE {$closedWhere} AND o.broker_id=? ORDER BY o.created_at DESC LIMIT 200";
     $stmt = $dbcnx->prepare($sql);
     if ($stmt) { $stmt->bind_param("i", $userId); }
 }
@@ -146,6 +152,7 @@ try { $createOrderToken = mt_create_form_token($dbcnx, $userId, 'create_order');
 $smarty->assign('createOrderToken', $createOrderToken);
 $smarty->assign('current_user', $user);
 $smarty->assign('orders', $orders);
+$smarty->assign('showClosed', $showClosed);
 $smarty->assign('error', $error);
 $smarty->assign('success', $success);
 

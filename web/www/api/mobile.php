@@ -278,6 +278,7 @@ if ($action === 'orders') {
         $stmt = $dbcnx->prepare("
             SELECT *
             FROM tour_orders
+            WHERE status <> 'CLOSED'
             ORDER BY updated_at DESC
             LIMIT 200
         ");
@@ -285,9 +286,12 @@ if ($action === 'orders') {
     $stmt = $dbcnx->prepare("
         SELECT *
         FROM tour_orders
-        WHERE broker_id = ?
-           OR operator_id = ?
-           OR (status = 'NEW' AND operator_id IS NULL AND is_published = 1)
+        WHERE status <> 'CLOSED'
+          AND (
+               broker_id = ?
+               OR operator_id = ?
+               OR (status = 'NEW' AND operator_id IS NULL AND is_published = 1)
+          )
         ORDER BY updated_at DESC
         LIMIT 200
     ");
@@ -299,6 +303,7 @@ if ($action === 'orders') {
             SELECT *
             FROM tour_orders
             WHERE broker_id = ?
+              AND status <> 'CLOSED'
             ORDER BY updated_at DESC
             LIMIT 200
         ");
