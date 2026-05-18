@@ -87,7 +87,7 @@ if (!can_view_order($orderForAccess, $userId, $role)) api_json(['ok'=>false,'err
 
 $photoPoints = [];
 
-$stmt = $dbcnx->prepare("SELECT id,session_id,app_point_uuid,name,room_name,sequence_number,preview_storage_path,original_storage_path,preview_size_bytes,original_size_bytes,upload_state,initial_yaw_deg,initial_pitch_deg,initial_hfov,created_at FROM photo_points WHERE session_id = ? ORDER BY COALESCE(sequence_number, 999999) ASC, created_at ASC, id ASC");
+$stmt = $dbcnx->prepare("SELECT id,session_id,app_point_uuid,name,room_name,sequence_number,preview_storage_path,original_storage_path,preview_size_bytes,original_size_bytes,upload_state,initial_yaw_deg,initial_pitch_deg,initial_hfov,created_at FROM photo_points WHERE session_id = ? AND deleted_at IS NULL AND COALESCE(upload_state, '') <> 'DELETED' ORDER BY COALESCE(sequence_number, 999999) ASC, created_at ASC, id ASC");
 if (!$stmt) api_json(['ok'=>false,'error'=>'db_prepare_photo_points_failed'],500);
 
 $stmt->bind_param('i', $sessionId);
@@ -198,6 +198,7 @@ if ($stmt) {
     $stmt->execute();
     $rs = $stmt->get_result();
     while ($row = $rs->fetch_assoc()) {
+        if (!isset($photoPointSet[(int)$row['from_photo_point_id']]) || !isset($photoPointSet[(int)$row['to_photo_point_id']])) { continue; }
         $links[] = [
             'id' => (int)$row['id'],
             'session_id' => $sessionId,
@@ -226,6 +227,7 @@ if ($stmt) {
     $rs = $stmt->get_result();
     while ($row = $rs->fetch_assoc()) {
         $photoPointId = (int)$row['photo_point_id'];
+        if (!isset($photoPointSet[$photoPointId])) { continue; }
         $positions[(string)$photoPointId] = [
             'photo_point_id' => $photoPointId,
             'x_m' => isset($row['x_m']) ? (float)$row['x_m'] : 0.0,

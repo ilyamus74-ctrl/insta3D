@@ -13,8 +13,9 @@ $order=load_order($dbcnx,$orderId); if(!$order){http_response_code(404);exit('Or
 $canView = $role==='ADMIN' || ((int)$order['broker_id']===$userId) || ($role==='OPERATOR' && ((int)$order['operator_id']===$userId || ((int)$order['is_published']===1 && $order['status']==='NEW' && $order['operator_id']===null)));
 if(!$canView){http_response_code(403);exit('Forbidden');}
 $canEdit = $role==='ADMIN' || (int)$order['broker_id']===$userId;
+$canDeletePhoto = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
 $canCreatePublicLink = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
-$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':null)));
+$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['photo_deleted'])?'Снимок удалён':null))));
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
  $action=$_POST['action']??'';
@@ -59,6 +60,40 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      }
    }
  }
+
+
+ if($action==='delete_photo_point' && $canDeletePhoto){
+   $photoPointId=(int)($_POST['photo_point_id']??0);
+   if($photoPointId<=0){ $error='Не выбран снимок для удаления'; }
+   else {
+     $st=$dbcnx->prepare("SELECT pp.id,pp.session_id FROM photo_points pp JOIN capture_sessions cs ON cs.id=pp.session_id WHERE pp.id=? AND cs.order_id=? LIMIT 1");
+     if(!$st){ $error='DB prepare error: '.$dbcnx->error; }
+     else {
+       $st->bind_param('ii',$photoPointId,$orderId); $st->execute(); $pp=$st->get_result()->fetch_assoc()?:null; $st->close();
+       if(!$pp){ $error='Снимок не найден для этой заявки'; }
+       else {
+         $sessionId=(int)$pp['session_id'];
+         $dbcnx->begin_transaction();
+         try {
+           $st=$dbcnx->prepare("UPDATE photo_points SET deleted_at=NOW(6), deleted_by=?, delete_reason='deleted_from_order_web', upload_state='DELETED' WHERE id=? AND (deleted_at IS NULL) AND (upload_state IS NULL OR upload_state<>'DELETED')");
+           if(!$st){ throw new RuntimeException('DB prepare soft delete failed: '.$dbcnx->error); }
+           $st->bind_param('ii',$userId,$photoPointId); $st->execute(); $st->close();
+           $st=$dbcnx->prepare("DELETE FROM marker_detections WHERE session_id=? AND source_type='PHOTO_POINT' AND source_id=?");
+           if($st){ $st->bind_param('ii',$sessionId,$photoPointId); $st->execute(); $st->close(); }
+           $st=$dbcnx->prepare("DELETE FROM tour_point_links WHERE session_id=? AND (from_photo_point_id=? OR to_photo_point_id=?)");
+           if($st){ $st->bind_param('iii',$sessionId,$photoPointId,$photoPointId); $st->execute(); $st->close(); }
+           $st=$dbcnx->prepare("DELETE FROM tour_point_positions WHERE session_id=? AND photo_point_id=?");
+           if($st){ $st->bind_param('ii',$sessionId,$photoPointId); $st->execute(); $st->close(); }
+           $st=$dbcnx->prepare("UPDATE processing_jobs SET status='QUEUED', metric_status='UNKNOWN', warning_text='photo point deleted, recalculation required', error_text=NULL, updated_at=NOW(6) WHERE session_id=? AND job_type='MARKER_DETECTION'");
+           if($st){ $st->bind_param('i',$sessionId); $st->execute(); $st->close(); }
+           audit_log($userId,'PHOTO_POINT_DELETED','PHOTO_POINT',$photoPointId,'Снимок удалён из заявки',['order_id'=>$orderId,'session_id'=>$sessionId]);
+           $dbcnx->commit();
+           header('Location: /order.php?id='.$orderId.'&photo_deleted=1'); exit;
+         } catch(Throwable $e){ $dbcnx->rollback(); $error='Ошибка удаления снимка: '.$e->getMessage(); }
+       }
+     }
+   }
+ }
  if($action==='close_order' && $canEdit){
    $st=$dbcnx->prepare("UPDATE tour_orders SET status='CLOSED', closed_at=NOW(6), closed_by=? WHERE id=?"); if($st){$st->bind_param('ii',$userId,$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_CLOSED','TOUR_ORDER',$orderId,'Заявка закрыта');header('Location: /order.php?id='.$orderId.'&closed=1');exit;}
  }
@@ -87,7 +122,7 @@ if($stmt){
 $sessionById=[];
 foreach($captureSessions as $k=>$s){$sessionById[(int)$s['id']]=$k;}
 
-$stmt=$dbcnx->prepare("SELECT pp.*, cs.app_session_uuid FROM photo_points pp JOIN capture_sessions cs ON cs.id = pp.session_id WHERE cs.order_id = ? ORDER BY cs.created_at DESC, pp.sequence_number ASC, pp.created_at ASC, pp.id ASC");
+$stmt=$dbcnx->prepare("SELECT pp.*, cs.app_session_uuid FROM photo_points pp JOIN capture_sessions cs ON cs.id = pp.session_id WHERE cs.order_id = ? AND pp.deleted_at IS NULL AND COALESCE(pp.upload_state, '') <> 'DELETED' ORDER BY cs.created_at DESC, pp.sequence_number ASC, pp.created_at ASC, pp.id ASC");
 if($stmt){
   $stmt->bind_param('i',$orderId);
   $stmt->execute();
@@ -212,6 +247,7 @@ $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),
 $smarty->assign('current_user',$user);
 $smarty->assign('order',$order);
 $smarty->assign('canEdit',$canEdit);
+$smarty->assign('canDeletePhoto', $canDeletePhoto);
 $smarty->assign('canCreatePublicLink', $canCreatePublicLink);
 $smarty->assign('captureSessions',$captureSessions);
 $smarty->assign('photoPoints',$photoPoints);

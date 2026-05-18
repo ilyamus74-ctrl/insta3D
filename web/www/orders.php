@@ -28,6 +28,7 @@ function mt_order_status_meta(string $status): array {
 
 
 $error = null;
+$showClosed = (($_GET['show_closed'] ?? '0') === '1');
 $success = isset($_GET['created']) ? 'Заявка создана' : (isset($_GET['updated']) ? 'Заявка обновлена' : null);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -116,24 +117,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $sql = "SELECT o.*, b.full_name AS broker_name, op.full_name AS operator_name FROM tour_orders o LEFT JOIN users b ON b.id=o.broker_id LEFT JOIN users op ON op.id=o.operator_id";
+$whereParts = [];
+if (!$showClosed) { $whereParts[] = "o.status <> 'CLOSED'"; }
 
 if ($role === 'ADMIN') {
+    if (!empty($whereParts)) { $sql .= " WHERE " . implode(" AND ", $whereParts); }
     $sql .= " ORDER BY o.created_at DESC LIMIT 200";
     $stmt = $dbcnx->prepare($sql);
 } elseif ($role === 'OPERATOR') {
-    $sql .= "
-        WHERE o.broker_id = ?
-           OR o.operator_id = ?
-           OR (o.is_published = 1 AND o.status = 'NEW' AND o.operator_id IS NULL)
-        ORDER BY o.created_at DESC
-        LIMIT 200
-    ";
+    $whereParts[] = "(o.broker_id = ? OR o.operator_id = ? OR (o.is_published = 1 AND o.status = 'NEW' AND o.operator_id IS NULL))";
+    $sql .= " WHERE " . implode(" AND ", $whereParts) . " ORDER BY o.created_at DESC LIMIT 200";
     $stmt = $dbcnx->prepare($sql);
     if ($stmt) {
         $stmt->bind_param("ii", $userId, $userId);
     }
 } else {
-    $sql .= " WHERE o.broker_id=? ORDER BY o.created_at DESC LIMIT 200";
+    $whereParts[] = "o.broker_id=?";
+    $sql .= " WHERE " . implode(" AND ", $whereParts) . " ORDER BY o.created_at DESC LIMIT 200";
     $stmt = $dbcnx->prepare($sql);
     if ($stmt) { $stmt->bind_param("i", $userId); }
 }
@@ -148,5 +148,6 @@ $smarty->assign('current_user', $user);
 $smarty->assign('orders', $orders);
 $smarty->assign('error', $error);
 $smarty->assign('success', $success);
+$smarty->assign('showClosed', $showClosed);
 
 $smarty->display('maklertour_orders.html');

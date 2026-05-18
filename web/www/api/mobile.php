@@ -278,6 +278,7 @@ if ($action === 'orders') {
         $stmt = $dbcnx->prepare("
             SELECT *
             FROM tour_orders
+            WHERE status <> 'CLOSED'
             ORDER BY updated_at DESC
             LIMIT 200
         ");
@@ -285,9 +286,12 @@ if ($action === 'orders') {
     $stmt = $dbcnx->prepare("
         SELECT *
         FROM tour_orders
-        WHERE broker_id = ?
-           OR operator_id = ?
-           OR (status = 'NEW' AND operator_id IS NULL AND is_published = 1)
+        WHERE status <> 'CLOSED'
+          AND (
+               broker_id = ?
+            OR operator_id = ?
+            OR (status = 'NEW' AND operator_id IS NULL AND is_published = 1)
+          )
         ORDER BY updated_at DESC
         LIMIT 200
     ");
@@ -299,6 +303,7 @@ if ($action === 'orders') {
             SELECT *
             FROM tour_orders
             WHERE broker_id = ?
+              AND status <> 'CLOSED'
             ORDER BY updated_at DESC
             LIMIT 200
         ");
@@ -374,10 +379,22 @@ if ($action === 'create_session') {
         api_json(['ok' => false, 'error' => 'missing order_id or app_session_uuid'], 400);
     }
 
+    $stOrderStatus = $dbcnx->prepare("SELECT status FROM tour_orders WHERE id = ? LIMIT 1");
+    if ($stOrderStatus) {
+        $stOrderStatus->bind_param("i", $orderId);
+        $stOrderStatus->execute();
+        $orderStatusRow = $stOrderStatus->get_result()->fetch_assoc() ?: null;
+        $stOrderStatus->close();
+        if ($orderStatusRow && ($orderStatusRow['status'] ?? '') === 'CLOSED') {
+            api_json(['ok' => false, 'error' => 'order_closed'], 409);
+        }
+    }
+
     $stmt = $dbcnx->prepare("
     SELECT id
     FROM tour_orders
     WHERE id = ?
+      AND status <> 'CLOSED'
       AND (
           ? = 'ADMIN'
           OR operator_id = ?
@@ -484,7 +501,7 @@ if ($action === 'upload_video_scan') {
     }
 
     $stmt = $dbcnx->prepare("
-    SELECT cs.id, cs.app_session_uuid
+    SELECT cs.id, cs.app_session_uuid, o.status AS order_status
     FROM capture_sessions cs
     JOIN tour_orders o ON o.id = cs.order_id
     WHERE cs.id = ?
@@ -509,6 +526,10 @@ if ($action === 'upload_video_scan') {
 
     if (!$session) {
         api_json(['ok' => false, 'error' => 'capture session not found or access denied'], 403);
+    }
+
+    if (($session['order_status'] ?? '') === 'CLOSED') {
+        api_json(['ok' => false, 'error' => 'order_closed'], 409);
     }
 $safeSessionUuid = preg_replace('/[^a-zA-Z0-9._-]+/', '_', (string)$session['app_session_uuid']);
 if ($safeSessionUuid === '') {
@@ -804,7 +825,7 @@ if ($action === 'create_processing_job') {
     }
 
     $stmt = $dbcnx->prepare("
-        SELECT cs.id
+        SELECT cs.id, o.status AS order_status
         FROM capture_sessions cs
         JOIN tour_orders o ON o.id = cs.order_id
         WHERE cs.id = ?
@@ -830,6 +851,9 @@ if ($action === 'create_processing_job') {
         api_json(['ok' => false, 'error' => 'capture session not found or access denied'], 403);
     }
 
+    if (($session['order_status'] ?? '') === 'CLOSED') {
+        api_json(['ok' => false, 'error' => 'order_closed'], 409);
+    }
     $stmt = $dbcnx->prepare("
         INSERT INTO processing_jobs
             (session_id, order_id, job_type, status, metric_status, marker_expected, marker_kit_id, marker_dictionary, marker_size_m)
@@ -916,7 +940,7 @@ if ($action === 'upload_photo_point') {
     }
 
     $stmt = $dbcnx->prepare("
-    SELECT cs.id, cs.app_session_uuid
+    SELECT cs.id, cs.app_session_uuid, o.status AS order_status
     FROM capture_sessions cs
     JOIN tour_orders o ON o.id = cs.order_id
     WHERE cs.id = ?
@@ -936,6 +960,9 @@ if ($action === 'upload_photo_point') {
     $session = $res->fetch_assoc();
     $stmt->close();
     if (!$session) api_json(['ok' => false, 'error' => 'capture session not found or access denied'], 403);
+    if (($session['order_status'] ?? '') === 'CLOSED') {
+        api_json(['ok' => false, 'error' => 'order_closed'], 409);
+    }
 
     $safeSessionUuid = preg_replace('/[^a-zA-Z0-9._-]+/', '_', (string)$session['app_session_uuid']);
     if ($safeSessionUuid === '') $safeSessionUuid = 'session_' . $captureSessionId;
