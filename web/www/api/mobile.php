@@ -1075,8 +1075,25 @@ if ($action === 'upload_photo_point') {
     $cameraLocalPathVal = $cameraLocalPath !== '' ? $cameraLocalPath : null;
     $stmt->bind_param("isssissssii", $captureSessionId, $appPointUuid, $pointName, $roomNameVal, $sequenceVal, $cameraFileUrlVal, $cameraLocalPathVal, $previewStoragePath, $originalStoragePath, $previewSizeBytes, $originalSizeBytes);
     if (!$stmt->execute()) api_json(['ok' => false, 'error' => 'db photo insert execute error: ' . $stmt->error], 500);
+    $photoUpsertAffectedRows = $stmt->affected_rows;
     $stmt->close();
 
+    $stmt = $dbcnx->prepare("
+        SELECT id
+        FROM photo_points
+        WHERE session_id = ?
+          AND app_point_uuid = ?
+        LIMIT 1
+    ");
+    if (!$stmt) api_json(['ok' => false, 'error' => 'db photo select prepare error: ' . $dbcnx->error], 500);
+    $stmt->bind_param("is", $captureSessionId, $appPointUuid);
+    if (!$stmt->execute()) api_json(['ok' => false, 'error' => 'db photo select execute error: ' . $stmt->error], 500);
+    $photoPointRow = $stmt->get_result()->fetch_assoc() ?: null;
+    $stmt->close();
+
+    if (!$photoPointRow || !isset($photoPointRow['id'])) {
+        api_json(['ok' => false, 'error' => 'db photo select returned no row'], 500);
+    }
     // Optional quality flag update (only if schema already has media_quality_status).
     $q = $dbcnx->query("SHOW COLUMNS FROM photo_points LIKE 'media_quality_status'");
     if ($q && $q->num_rows > 0) {
@@ -1103,7 +1120,20 @@ if ($action === 'upload_photo_point') {
     api_upsert_marker_processing_job($dbcnx, $orderId, $captureSessionId);
 
     audit_log($userId, 'PHOTO_UPLOADED', 'TOUR_ORDER', $orderId, 'Загружен photo point', api_request_meta(['capture_session_id'=>$captureSessionId, 'app_point_uuid'=>$appPointUuid, 'preview_storage_path'=>$previewStoragePath, 'original_storage_path'=>$originalStoragePath]));
-    $resp=['ok'=>true,'preview_storage_path'=>$previewStoragePath,'original_storage_path'=>$originalStoragePath,'preview_size_bytes'=>$previewSizeBytes,'original_size_bytes'=>$originalSizeBytes,'media_quality_status'=>$mediaQualityStatus]; if($previewWarning!==null){$resp['preview_warning']=$previewWarning;} api_json($resp);
+    $resp = [
+        'ok' => true,
+        'photo_point_id' => (int)$photoPointRow['id'],
+        'preview_storage_path' => $previewStoragePath,
+        'original_storage_path' => $originalStoragePath,
+        'preview_size_bytes' => $previewSizeBytes,
+        'original_size_bytes' => $originalSizeBytes,
+        'media_quality_status' => $mediaQualityStatus,
+        'idempotent' => ($photoUpsertAffectedRows === 2),
+    ];
+    if ($previewWarning !== null) {
+        $resp['preview_warning'] = $previewWarning;
+    }
+    api_json($resp);
 }
 
 if ($action === 'ping') {
