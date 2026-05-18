@@ -1,11 +1,11 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-15 07:59:47
+/* Smarty version 5.3.1, created on 2026-05-16 19:35:54
   from 'file:cells_login.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a06d2732f9271_22369903',
+  'unifunc' => 'content_6a08c71a2100e3_70649105',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
@@ -20,7 +20,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   array (
   ),
 ))) {
-function content_6a06d2732f9271_22369903 (\Smarty\Template $_smarty_tpl) {
+function content_6a08c71a2100e3_70649105 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 ?>
   <main>

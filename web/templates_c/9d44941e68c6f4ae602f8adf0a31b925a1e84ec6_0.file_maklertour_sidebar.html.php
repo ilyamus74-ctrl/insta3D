@@ -1,11 +1,11 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-14 18:52:12
+/* Smarty version 5.3.1, created on 2026-05-16 19:35:57
   from 'file:maklertour_sidebar.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a0619dc21e424_60180367',
+  'unifunc' => 'content_6a08c71d5c16c9_00737673',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
@@ -20,7 +20,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   array (
   ),
 ))) {
-function content_6a0619dc21e424_60180367 (\Smarty\Template $_smarty_tpl) {
+function content_6a08c71d5c16c9_00737673 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 ?><aside id="sidebar" class="sidebar">
   <ul class="sidebar-nav" id="sidebar-nav">

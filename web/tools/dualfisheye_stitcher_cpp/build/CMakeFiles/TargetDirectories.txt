@@ -1,0 +1,3 @@
+/home/makler/web/tools/dualfisheye_stitcher_cpp/build/CMakeFiles/dualfisheye_stitch.dir
+/home/makler/web/tools/dualfisheye_stitcher_cpp/build/CMakeFiles/edit_cache.dir
+/home/makler/web/tools/dualfisheye_stitcher_cpp/build/CMakeFiles/rebuild_cache.dir

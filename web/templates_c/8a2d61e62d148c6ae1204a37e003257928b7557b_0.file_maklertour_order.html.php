@@ -1,18 +1,18 @@
 <?php
-/* Smarty version 5.3.1, created on 2026-05-16 16:32:42
+/* Smarty version 5.3.1, created on 2026-05-16 19:36:01
   from 'file:maklertour_order.html' */
 
 /* @var \Smarty\Template $_smarty_tpl */
 if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
   'version' => '5.3.1',
-  'unifunc' => 'content_6a089c2a9dc115_81819874',
+  'unifunc' => 'content_6a08c7210a6cd4_80073942',
   'has_nocache_code' => false,
   'file_dependency' => 
   array (
     '8a2d61e62d148c6ae1204a37e003257928b7557b' => 
     array (
       0 => 'maklertour_order.html',
-      1 => 1778948876,
+      1 => 1778960025,
       2 => 'file',
     ),
   ),
@@ -23,7 +23,7 @@ if ($_smarty_tpl->getCompiled()->isFresh($_smarty_tpl, array (
     'file:maklertour_footer.html' => 1,
   ),
 ))) {
-function content_6a089c2a9dc115_81819874 (\Smarty\Template $_smarty_tpl) {
+function content_6a08c7210a6cd4_80073942 (\Smarty\Template $_smarty_tpl) {
 $_smarty_current_dir = '/home/makler/web/templates';
 $_smarty_tpl->renderSubTemplate("file:maklertour_header.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
 $_smarty_tpl->renderSubTemplate("file:maklertour_sidebar.html", $_smarty_tpl->cache_id, $_smarty_tpl->compile_id, 0, $_smarty_tpl->cache_lifetime, array(), (int) 0, $_smarty_current_dir);
@@ -209,7 +209,8 @@ $foreach0DoElse = false;
   Открыть 3D тур
 </a>
 <?php }?>
-          <div class="mb-2">
+          <div class="mb-2" id="publicLinkState<?php echo $_smarty_tpl->getValue('s')['id'];?>
+">
             <?php if ($_smarty_tpl->getValue('s')['public_link'] && $_smarty_tpl->getValue('s')['public_link']['is_active'] == 1) {?>
               <span class="badge bg-success">Публичная ссылка активна</span>
               <div class="input-group input-group-sm mt-2" style="max-width:720px;">
@@ -456,9 +457,26 @@ $_smarty_tpl->getSmarty()->getRuntime('Foreach')->restore($_smarty_tpl, 1);?>
 
 <?php echo '<script'; ?>
 >
-async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка создания ссылки');const el=document.getElementById('pubLink'+sessionId);if(el){el.value=d.url||'';}location.reload();}
-async function copyPublicLink(sessionId){const el=document.getElementById('pubLink'+sessionId);const v=(el&&el.value?el.value:'').trim();if(!v)return;try{await navigator.clipboard.writeText(location.origin+v);}catch(e){alert('Не удалось скопировать ссылку');}}
-async function disablePublicLink(sessionId){const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка отключения ссылки');location.reload();}
+function publicLinkBlockHtml(sessionId, relativeUrl, isActive, canManage){
+  if(isActive){
+    return '<span class="badge bg-success">Публичная ссылка активна</span>'+
+      '<div class="input-group input-group-sm mt-2" style="max-width:720px;">'+
+      '<input id="pubLink'+sessionId+'" class="form-control form-control-sm" readonly value="'+relativeUrl+'">'+
+      '<button type="button" class="btn btn-sm btn-outline-primary" onclick="window.open(document.getElementById(\'pubLink'+sessionId+'\').value,\'_blank\')">Открыть</button>'+
+      (canManage?'<button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyPublicLink('+sessionId+')">Скопировать</button><button type="button" class="btn btn-sm btn-outline-danger" onclick="disablePublicLink('+sessionId+')">Отключить</button>':'')+
+      '</div>';
+  }
+  return '<span class="badge bg-secondary">Публичная ссылка не создана</span>'+
+    '<input type="hidden" id="pubLink'+sessionId+'" value="">'+
+    (canManage?'<button type="button" class="btn btn-sm btn-outline-primary ms-2" onclick="createPublicLink('+sessionId+')">Создать публичную ссылку</button>':'');
+}
+function renderPublicLinkState(sessionId, relativeUrl, isActive){
+  var box=document.getElementById('publicLinkState'+sessionId); if(!box) return;
+  box.innerHTML=publicLinkBlockHtml(sessionId, relativeUrl||'', !!isActive, true);
+}
+async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка');renderPublicLinkState(sessionId,d.url||'',true);}
+function copyPublicLink(sessionId){const el=document.getElementById('pubLink'+sessionId);if(!el||!el.value)return;const abs=location.origin+el.value;(navigator.clipboard&&navigator.clipboard.writeText)?navigator.clipboard.writeText(abs).then(()=>{}):window.prompt('Скопируйте ссылку',abs);}
+async function disablePublicLink(sessionId){if(!confirm('Отключить публичную ссылку?'))return;const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка');renderPublicLinkState(sessionId,'',false);}
 <?php echo '</script'; ?>
 >
 
