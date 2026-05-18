@@ -22,6 +22,10 @@ data class MobileOrder(
     val customerPhone: String?,
     val customerEmail: String?,
     val status: String,
+    val operatorClosedAt: String?,
+    val brokerClosedAt: String?,
+    val operatorClosedBy: Long?,
+    val brokerClosedBy: Long?,
     val createdAt: String?,
     val updatedAt: String?,
 )
@@ -29,8 +33,8 @@ data class MobileOrder(
 class MobileOrdersApi(context: Context) {
     private val client = OkHttpClient.Builder().build()
 
-    suspend fun getOrders(token: String): OrdersResponse = withContext(Dispatchers.IO) {
-        val url = "${ApiConfig.mobileApiUrl}?action=orders"
+    suspend fun getOrders(token: String, scope: String = "active"): OrdersResponse = withContext(Dispatchers.IO) {
+        val url = "${ApiConfig.mobileApiUrl}?action=orders&scope=$scope"
         Log.d("MobileOrdersApi", "getOrders url=$url tokenPresent=${token.isNotBlank()}")
 
         val request = Request.Builder()
@@ -80,6 +84,10 @@ class MobileOrdersApi(context: Context) {
                                 customerPhone = item.optString("customer_phone").ifBlank { null },
                                 customerEmail = item.optString("customer_email").ifBlank { null },
                                 status = item.optString("status", "UNKNOWN"),
+                                operatorClosedAt = item.optString("operator_closed_at").ifBlank { null },
+                                brokerClosedAt = item.optString("broker_closed_at").ifBlank { null },
+                                operatorClosedBy = item.optNullableLong("operator_closed_by"),
+                                brokerClosedBy = item.optNullableLong("broker_closed_by"),
                                 createdAt = item.optString("created_at").ifBlank { null },
                                 updatedAt = item.optString("updated_at").ifBlank { null },
                             )
@@ -140,6 +148,29 @@ class MobileOrdersApi(context: Context) {
             TakeOrderResponse.Error(e.message ?: "network error")
         }
     }
+
+    suspend fun operatorCloseOrder(token: String, orderId: Long): OperatorCloseOrderResponse = withContext(Dispatchers.IO) {
+        val url = "${ApiConfig.mobileApiUrl}?action=operator_close_order"
+        val formBody = FormBody.Builder().add("order_id", orderId.toString()).build()
+        val request = Request.Builder().url(url).header("Authorization", "Bearer $token").post(formBody).build()
+        try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.code == 401) return@withContext OperatorCloseOrderResponse.Unauthorized
+                if (response.code == 403) return@withContext OperatorCloseOrderResponse.Forbidden
+                if (!response.isSuccessful) return@withContext OperatorCloseOrderResponse.Error("http ${response.code}: $body")
+                val json = JSONObject(body)
+                if (!json.optBoolean("ok", false)) return@withContext OperatorCloseOrderResponse.Error(json.optString("error", "api error"))
+                OperatorCloseOrderResponse.Success(
+                    status = json.optString("status", "UNKNOWN"),
+                    operatorClosedAt = json.optString("operator_closed_at").ifBlank { null },
+                )
+            }
+        } catch (e: Exception) {
+            OperatorCloseOrderResponse.Error(e.message ?: "network error")
+        }
+    }
+
 }
 
 private fun JSONObject.optNullableLong(name: String): Long? {
@@ -163,4 +194,11 @@ sealed interface TakeOrderResponse {
     data object Unauthorized : TakeOrderResponse
     data class Conflict(val message: String) : TakeOrderResponse
     data class Error(val message: String) : TakeOrderResponse
+}
+
+sealed interface OperatorCloseOrderResponse {
+    data class Success(val status: String, val operatorClosedAt: String?) : OperatorCloseOrderResponse
+    data object Unauthorized : OperatorCloseOrderResponse
+    data object Forbidden : OperatorCloseOrderResponse
+    data class Error(val message: String) : OperatorCloseOrderResponse
 }

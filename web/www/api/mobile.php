@@ -275,23 +275,31 @@ if ($action === 'orders') {
     $userId = (int)$user['id'];
     $role = $user['role'] ?? 'BROKER';
 
+    $scope = strtolower(trim((string)($_GET['scope'] ?? 'active')));
+    if (!in_array($scope, ['active', 'closed', 'all'], true)) $scope = 'active';
+
+    $activeCond = "status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL";
+    $closedCond = "(status IN ('READY','COMPLETED','CLOSED') OR operator_closed_at IS NOT NULL)";
+    $scopeCond = $scope === 'closed' ? $closedCond : ($scope === 'all' ? "(($activeCond) OR ($closedCond))" : $activeCond);
+    $selectFields = "id, broker_id, operator_id, is_published, title, address, area_m2, customer_name, customer_phone, customer_email, status, operator_closed_at, operator_closed_by, broker_closed_at, broker_closed_by, created_at, updated_at";
+
     if ($role === 'ADMIN') {
         $stmt = $dbcnx->prepare("
-            SELECT *
+            SELECT $selectFields
             FROM tour_orders
-            WHERE status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
+            WHERE $scopeCond
             ORDER BY updated_at DESC
             LIMIT 200
         ");
     } elseif ($role === 'OPERATOR') {
     $stmt = $dbcnx->prepare("
-        SELECT *
+        SELECT $selectFields
         FROM tour_orders
-        WHERE status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
+        WHERE $scopeCond
           AND (
                broker_id = ?
                OR operator_id = ?
-               OR (status = 'NEW' AND operator_id IS NULL AND is_published = 1)
+               OR (status = 'NEW' AND operator_id IS NULL AND is_published = 1 AND '$scope' <> 'closed')
           )
         ORDER BY updated_at DESC
         LIMIT 200
@@ -301,10 +309,10 @@ if ($action === 'orders') {
     }
     } else {
         $stmt = $dbcnx->prepare("
-            SELECT *
+            SELECT $selectFields
             FROM tour_orders
             WHERE broker_id = ?
-              AND status NOT IN ('READY','COMPLETED','CLOSED') AND operator_closed_at IS NULL
+              AND $scopeCond
             ORDER BY updated_at DESC
             LIMIT 200
         ");
@@ -366,6 +374,48 @@ if ($action === 'take_order') {
     }
 
     api_json(['ok' => false, 'error' => 'order already taken or unavailable'], 409);
+}
+
+
+
+if ($action === 'operator_close_order') {
+    $user = api_require_mobile_user($dbcnx);
+    $userId = (int)$user['id'];
+    $role = $user['role'] ?? 'BROKER';
+    $orderId = (int)($_POST['order_id'] ?? 0);
+    if ($orderId <= 0) api_json(['ok' => false, 'error' => 'invalid order_id'], 400);
+
+    $stmt = $dbcnx->prepare("SELECT id, operator_id, operator_closed_at, broker_closed_at, status FROM tour_orders WHERE id = ? LIMIT 1");
+    if (!$stmt) api_json(['ok' => false, 'error' => 'db prepare error'], 500);
+    $stmt->bind_param("i", $orderId);
+    $stmt->execute();
+    $order = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$order) api_json(['ok' => false, 'error' => 'not_found'], 404);
+
+    $allowed = $role === 'ADMIN' || ($role === 'OPERATOR' && (int)$order['operator_id'] === $userId);
+    if (!$allowed) api_json(['ok' => false, 'error' => 'forbidden'], 403);
+
+    if (!empty($order['operator_closed_at'])) {
+        api_json(['ok' => true, 'status' => (string)$order['status'], 'operator_closed_at' => $order['operator_closed_at']]);
+    }
+
+    $newStatus = !empty($order['broker_closed_at']) ? 'COMPLETED' : 'READY';
+    $stmt = $dbcnx->prepare("UPDATE tour_orders SET operator_closed_at = NOW(6), operator_closed_by = ?, status = ?, updated_at = NOW(6) WHERE id = ?");
+    if (!$stmt) api_json(['ok' => false, 'error' => 'db prepare error'], 500);
+    $stmt->bind_param("isi", $userId, $newStatus, $orderId);
+    if (!$stmt->execute()) api_json(['ok' => false, 'error' => 'db execute error'], 500);
+    $stmt->close();
+
+    audit_log($userId, 'ORDER_OPERATOR_CLOSED', 'TOUR_ORDER', $orderId, 'Заявка закрыта оператором');
+
+    $stmt = $dbcnx->prepare("SELECT status, operator_closed_at FROM tour_orders WHERE id = ? LIMIT 1");
+    $stmt->bind_param("i", $orderId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    api_json(['ok' => true, 'status' => (string)$row['status'], 'operator_closed_at' => $row['operator_closed_at']]);
 }
 
 if ($action === 'create_session') {
