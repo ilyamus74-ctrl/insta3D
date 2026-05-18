@@ -955,7 +955,7 @@ if ($action === 'upload_photo_point') {
     if (!is_dir($previewsDir) && !mkdir($previewsDir, 0775, true)) api_json(['ok' => false, 'error' => 'failed to create previews dir'], 500);
     if (!is_dir($originalsDir) && !mkdir($originalsDir, 0775, true)) api_json(['ok' => false, 'error' => 'failed to create originals dir'], 500);
 
-    $previewStoragePath = null; $originalStoragePath = null; $previewSizeBytes = null; $originalSizeBytes = null; $previewWarning = null;
+    $previewStoragePath = null; $originalStoragePath = null; $previewSizeBytes = null; $originalSizeBytes = null; $previewWarning = null; $mediaQualityStatus = 'OK';
     foreach ([['key'=>'preview','dir'=>$previewsDir,'sub'=>'previews'], ['key'=>'original','dir'=>$originalsDir,'sub'=>'originals']] as $spec) {
         $key = $spec['key'];
         if (!empty($_FILES[$key]) && $_FILES[$key]['error'] === UPLOAD_ERR_OK) {
@@ -973,6 +973,14 @@ if ($action === 'upload_photo_point') {
     }
 
     if ($originalStoragePath !== null && $originalStoragePath !== '') {
+        $absoluteOriginalPath = $base . '/' . $originalStoragePath;
+        $imgSize = @getimagesize($absoluteOriginalPath);
+        if (is_array($imgSize) && isset($imgSize[0], $imgSize[1]) && (int)$imgSize[1] > 0) {
+            $ratio = ((float)$imgSize[0]) / ((float)$imgSize[1]);
+            if ($ratio < 1.8 || $ratio > 2.2) {
+                $mediaQualityStatus = 'BAD_PROJECTION_DUAL_FISHEYE';
+            }
+        }
         $genPreview = tour_ensure_photo_preview_from_original($originalStoragePath, true);
         if ($genPreview['ok']) {
             $previewStoragePath = $genPreview['preview_path'];
@@ -1008,6 +1016,17 @@ if ($action === 'upload_photo_point') {
     if (!$stmt->execute()) api_json(['ok' => false, 'error' => 'db photo insert execute error: ' . $stmt->error], 500);
     $stmt->close();
 
+    // Optional quality flag update (only if schema already has media_quality_status).
+    $q = $dbcnx->query("SHOW COLUMNS FROM photo_points LIKE 'media_quality_status'");
+    if ($q && $q->num_rows > 0) {
+        $u = $dbcnx->prepare("UPDATE photo_points SET media_quality_status=? WHERE session_id=? AND app_point_uuid=?");
+        if ($u) {
+            $u->bind_param("sis", $mediaQualityStatus, $captureSessionId, $appPointUuid);
+            $u->execute();
+            $u->close();
+        }
+    }
+
     $stmt = $dbcnx->prepare("
         UPDATE tour_orders
         SET status = 'UPLOADED'
@@ -1023,7 +1042,7 @@ if ($action === 'upload_photo_point') {
     api_upsert_marker_processing_job($dbcnx, $orderId, $captureSessionId);
 
     audit_log($userId, 'PHOTO_UPLOADED', 'TOUR_ORDER', $orderId, 'Загружен photo point', api_request_meta(['capture_session_id'=>$captureSessionId, 'app_point_uuid'=>$appPointUuid, 'preview_storage_path'=>$previewStoragePath, 'original_storage_path'=>$originalStoragePath]));
-    $resp=['ok'=>true,'preview_storage_path'=>$previewStoragePath,'original_storage_path'=>$originalStoragePath,'preview_size_bytes'=>$previewSizeBytes,'original_size_bytes'=>$originalSizeBytes]; if($previewWarning!==null){$resp['preview_warning']=$previewWarning;} api_json($resp);
+    $resp=['ok'=>true,'preview_storage_path'=>$previewStoragePath,'original_storage_path'=>$originalStoragePath,'preview_size_bytes'=>$previewSizeBytes,'original_size_bytes'=>$originalSizeBytes,'media_quality_status'=>$mediaQualityStatus]; if($previewWarning!==null){$resp['preview_warning']=$previewWarning;} api_json($resp);
 }
 
 if ($action === 'ping') {

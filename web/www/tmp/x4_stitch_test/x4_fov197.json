@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "input": "/home/makler/web/storage/orders/6/sessions/4713d186-d294-4f56-9593-87e364dc442d/photos/originals/cf5a7507-a63c-46cb-95e1-68968315c7ea_cf5a7507-a63c-46cb-95e1-68968315c7ea.jpg",
+  "output": "/tmp/x4_stitch_test/x4_fov197.jpg",
+  "source_width": 5888,
+  "source_height": 2944,
+  "output_width": 4096,
+  "output_height": 2048,
+  "left": {
+    "cx": 1472.0,
+    "cy": 1472.0,
+    "r": 1442.56,
+    "area": 0,
+    "source": "fallback"
+  },
+  "right": {
+    "cx": 4416.0,
+    "cy": 1472.0,
+    "r": 1442.56,
+    "area": 0,
+    "source": "fallback"
+  },
+  "params": {
+    "fov": 197.0,
+    "blend_width": 22.0,
+    "left_yaw": 180.0,
+    "right_yaw": 0.0,
+    "left_roll": 0.0,
+    "right_roll": 0.0,
+    "jpeg_quality": 92
+  },
+  "output_size_bytes": 1056252
+}
