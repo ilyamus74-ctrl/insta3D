@@ -442,7 +442,7 @@ class AppStateViewModel(
         val targetOrderAddress = session.orderAddress ?: selectedOrderSnapshot?.address
 
         if (
-            selectedOrderSnapshot.id == targetOrderId &&
+            selectedOrderSnapshot?.id == targetOrderId &&
             (
                     selectedOrderSnapshot.status.uppercase() in setOf("READY", "COMPLETED", "CLOSED") ||
                             selectedOrderSnapshot.operatorClosedAt != null

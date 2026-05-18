@@ -33,10 +33,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Assignment
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.CloudUpload
-import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -130,10 +126,10 @@ private enum class AppTab(val route: String, val titleRes: Int) {
 
 private fun iconForTab(tab: AppTab): ImageVector = when (tab) {
     AppTab.Sessions -> Icons.Filled.List
-    AppTab.Orders -> Icons.Filled.Assignment
-    AppTab.Camera -> Icons.Filled.CameraAlt
-    AppTab.Draft -> Icons.Filled.EditNote
-    AppTab.Queue -> Icons.Filled.CloudUpload
+    AppTab.Orders -> Icons.Filled.List
+    AppTab.Camera -> Icons.Filled.List
+    AppTab.Draft -> Icons.Filled.List
+    AppTab.Queue -> Icons.Filled.List
     AppTab.Settings -> Icons.Filled.Settings
 }
 
