@@ -60,7 +60,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
    }
  }
  if($action==='close_order' && $canEdit){
-   $st=$dbcnx->prepare("UPDATE tour_orders SET status='CLOSED', closed_at=NOW(6), closed_by=? WHERE id=?"); if($st){$st->bind_param('ii',$userId,$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_CLOSED','TOUR_ORDER',$orderId,'Заявка закрыта');header('Location: /order.php?id='.$orderId.'&closed=1');exit;}
+   $st=$dbcnx->prepare("UPDATE tour_orders SET status='READY', closed_at=NOW(6), closed_by=? WHERE id=?"); if($st){$st->bind_param('ii',$userId,$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_CLOSED','TOUR_ORDER',$orderId,'Заявка закрыта');header('Location: /order.php?id='.$orderId.'&closed=1');exit;}
  }
  if($action==='reopen_order' && $canEdit){
    $st=$dbcnx->prepare("UPDATE tour_orders SET status='NEW', closed_at=NULL, closed_by=NULL WHERE id=?"); if($st){$st->bind_param('i',$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_REOPENED','TOUR_ORDER',$orderId,'Заявка переоткрыта');header('Location: /order.php?id='.$orderId.'&reopened=1');exit;}

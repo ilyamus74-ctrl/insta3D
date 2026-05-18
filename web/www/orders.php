@@ -11,7 +11,7 @@ $userId = (int)$user['id'];
 $role = $user['role'] ?? 'BROKER';
 
 $showClosed = (($_GET['show_closed'] ?? '') === '1');
-$closedWhere = $showClosed ? "1=1" : "o.status <> 'CLOSED'";
+$closedWhere = $showClosed ? "1=1" : "o.status NOT IN ('READY','CLOSED')";
 
 function mt_order_status_meta(string $status): array {
     $map = [

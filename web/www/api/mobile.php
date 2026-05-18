@@ -278,7 +278,7 @@ if ($action === 'orders') {
         $stmt = $dbcnx->prepare("
             SELECT *
             FROM tour_orders
-            WHERE status <> 'CLOSED'
+            WHERE status NOT IN ('READY','CLOSED')
             ORDER BY updated_at DESC
             LIMIT 200
         ");
@@ -286,7 +286,7 @@ if ($action === 'orders') {
     $stmt = $dbcnx->prepare("
         SELECT *
         FROM tour_orders
-        WHERE status <> 'CLOSED'
+        WHERE status NOT IN ('READY','CLOSED')
           AND (
                broker_id = ?
                OR operator_id = ?
@@ -303,7 +303,7 @@ if ($action === 'orders') {
             SELECT *
             FROM tour_orders
             WHERE broker_id = ?
-              AND status <> 'CLOSED'
+              AND status NOT IN ('READY','CLOSED')
             ORDER BY updated_at DESC
             LIMIT 200
         ");
@@ -388,6 +388,7 @@ if ($action === 'create_session') {
           OR operator_id = ?
           OR broker_id = ?
       )
+      AND status NOT IN ('READY','CLOSED')
     LIMIT 1
     ");
 
@@ -402,7 +403,7 @@ if ($action === 'create_session') {
     $stmt->close();
 
     if (!$order) {
-        api_json(['ok' => false, 'error' => 'order not assigned to this operator'], 403);
+        api_json(['ok' => false, 'error' => 'order_closed_or_not_available'], 409);
     }
 
     $stmt = $dbcnx->prepare("
@@ -499,6 +500,7 @@ if ($action === 'upload_video_scan') {
          OR o.operator_id = ?
          OR o.broker_id = ?
      )
+      AND o.status NOT IN ('READY','CLOSED')
    LIMIT 1
     ");
 
@@ -513,7 +515,7 @@ if ($action === 'upload_video_scan') {
     $stmt->close();
 
     if (!$session) {
-        api_json(['ok' => false, 'error' => 'capture session not found or access denied'], 403);
+        api_json(['ok' => false, 'error' => 'order_closed_or_not_available'], 409);
     }
 $safeSessionUuid = preg_replace('/[^a-zA-Z0-9._-]+/', '_', (string)$session['app_session_uuid']);
 if ($safeSessionUuid === '') {
@@ -819,6 +821,7 @@ if ($action === 'create_processing_job') {
               OR o.operator_id = ?
               OR o.broker_id = ?
           )
+          AND o.status NOT IN ('READY','CLOSED')
         LIMIT 1
     ");
 
@@ -832,7 +835,7 @@ if ($action === 'create_processing_job') {
     $stmt->close();
 
     if (!$session) {
-        api_json(['ok' => false, 'error' => 'capture session not found or access denied'], 403);
+        api_json(['ok' => false, 'error' => 'order_closed_or_not_available'], 409);
     }
 
     $stmt = $dbcnx->prepare("
@@ -931,6 +934,7 @@ if ($action === 'upload_photo_point') {
           OR o.operator_id = ?
           OR o.broker_id = ?
       )
+      AND o.status NOT IN ('READY','CLOSED')
     LIMIT 1
     ");
 
@@ -940,7 +944,7 @@ if ($action === 'upload_photo_point') {
     $res = $stmt->get_result();
     $session = $res->fetch_assoc();
     $stmt->close();
-    if (!$session) api_json(['ok' => false, 'error' => 'capture session not found or access denied'], 403);
+    if (!$session) api_json(['ok' => false, 'error' => 'order_closed_or_not_available'], 409);
 
     $safeSessionUuid = preg_replace('/[^a-zA-Z0-9._-]+/', '_', (string)$session['app_session_uuid']);
     if ($safeSessionUuid === '') $safeSessionUuid = 'session_' . $captureSessionId;
