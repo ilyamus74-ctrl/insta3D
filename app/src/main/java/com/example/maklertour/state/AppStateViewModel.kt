@@ -429,27 +429,53 @@ class AppStateViewModel(
     fun deleteConnection(connectionId: String) = sessionRepository.deleteConnection(connectionId)
 
     fun enqueueUpload(): EnqueueUploadResult {
-        val order = selectedOrder.value ?: return EnqueueUploadResult.Rejected("Выберите заявку для загрузки этой сессии.")
         val session = uiState.value.sessions.firstOrNull { it.id == uiState.value.selectedSessionId }
             ?: return EnqueueUploadResult.Rejected("Сессия не выбрана.")
-        if (order.status.uppercase() in setOf("READY", "COMPLETED", "CLOSED") || order.operatorClosedAt != null) {
+
+        val selectedOrderSnapshot = selectedOrder.value
+
+        val targetOrderId = selectedOrderSnapshot?.id
+            ?: session.serverOrderId
+            ?: return EnqueueUploadResult.Rejected("Выберите заявку для загрузки этой сессии.")
+
+        val targetOrderTitle = selectedOrderSnapshot?.title ?: session.orderTitle
+        val targetOrderAddress = selectedOrderSnapshot?.address ?: session.orderAddress
+
+        if (
+            selectedOrderSnapshot != null &&
+            (
+                    selectedOrderSnapshot.status.uppercase() in setOf("READY", "COMPLETED", "CLOSED") ||
+                            selectedOrderSnapshot.operatorClosedAt != null
+                    )
+        ) {
             return EnqueueUploadResult.Rejected("Заявка закрыта для загрузки.")
         }
-        val existing = uiState.value.uploadQueue.firstOrNull { it.sessionId == session.id && it.orderId == order.id }
-        if (existing != null) {
-            Log.d("UploadQueue", "enqueue duplicate rejected sessionId=${session.id} orderId=${order.id}")
-            return EnqueueUploadResult.Rejected("Эта сессия уже есть в очереди для заявки #${order.id}")
+
+        val existing = uiState.value.uploadQueue.firstOrNull {
+            it.sessionId == session.id && it.orderId == targetOrderId
         }
 
-        val uploadAppSessionUuid = "${session.id}_${order.id}"
+        if (existing != null) {
+            Log.d(
+                "UploadQueue",
+                "enqueue duplicate rejected sessionId=${session.id} orderId=$targetOrderId"
+            )
+            return EnqueueUploadResult.Rejected("Эта сессия уже есть в очереди для заявки #$targetOrderId")
+        }
 
-        Log.d("UploadQueue", "enqueue requested sessionId=${session.id} orderId=${order.id}")
+        val uploadAppSessionUuid = "${session.id}_${targetOrderId}"
+
+        Log.d(
+            "UploadQueue",
+            "enqueue requested sessionId=${session.id} orderId=$targetOrderId"
+        )
+
         uploadQueueRepository.enqueue(
             sessionId = session.id,
             sessionTitle = session.name,
-            orderId = order.id,
-            orderTitle = order.title,
-            orderAddress = order.address,
+            orderId = targetOrderId,
+            orderTitle = targetOrderTitle,
+            orderAddress = targetOrderAddress,
             bindingId = null,
             uploadAppSessionUuid = uploadAppSessionUuid,
             serverCaptureSessionId = null,
