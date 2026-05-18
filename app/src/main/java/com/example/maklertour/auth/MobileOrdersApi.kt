@@ -79,17 +79,17 @@ class MobileOrdersApi(context: Context) {
                                 isPublished = item.optInt("is_published", 0) == 1,
                                 title = item.optString("title", ""),
                                 address = item.optString("address", ""),
-                                areaM2 = item.optString("area_m2").ifBlank { null },
-                                customerName = item.optString("customer_name").ifBlank { null },
-                                customerPhone = item.optString("customer_phone").ifBlank { null },
-                                customerEmail = item.optString("customer_email").ifBlank { null },
+                                areaM2 = item.optNullableString("area_m2"),
+                                customerName = item.optNullableString("customer_name"),
+                                customerPhone = item.optNullableString("customer_phone"),
+                                customerEmail = item.optNullableString("customer_email"),
                                 status = item.optString("status", "UNKNOWN"),
-                                operatorClosedAt = item.optString("operator_closed_at").ifBlank { null },
-                                brokerClosedAt = item.optString("broker_closed_at").ifBlank { null },
+                                operatorClosedAt = item.optNullableString("operator_closed_at"),
+                                brokerClosedAt = item.optNullableString("broker_closed_at"),
                                 operatorClosedBy = item.optNullableLong("operator_closed_by"),
                                 brokerClosedBy = item.optNullableLong("broker_closed_by"),
-                                createdAt = item.optString("created_at").ifBlank { null },
-                                updatedAt = item.optString("updated_at").ifBlank { null },
+                                createdAt = item.optNullableString("created_at"),
+                                updatedAt = item.optNullableString("updated_at"),
                             )
                         )
                     }
@@ -163,7 +163,7 @@ class MobileOrdersApi(context: Context) {
                 if (!json.optBoolean("ok", false)) return@withContext OperatorCloseOrderResponse.Error(json.optString("error", "api error"))
                 OperatorCloseOrderResponse.Success(
                     status = json.optString("status", "UNKNOWN"),
-                    operatorClosedAt = json.optString("operator_closed_at").ifBlank { null },
+                    operatorClosedAt = json.optNullableString("operator_closed_at"),
                 )
             }
         } catch (e: Exception) {
@@ -183,6 +183,17 @@ private fun JSONObject.optNullableLong(name: String): Long? {
     }.getOrNull()
 }
 
+private fun JSONObject.optNullableString(name: String): String? {
+    if (!has(name) || isNull(name)) {
+        return null
+    }
+
+    val value = optString(name, "")
+        .trim()
+        .takeIf { it.isNotBlank() && it.lowercase() != "null" }
+
+    return value
+}
 sealed interface OrdersResponse {
     data class Success(val orders: List<MobileOrder>) : OrdersResponse
     data object Unauthorized : OrdersResponse
