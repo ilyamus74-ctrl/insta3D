@@ -112,7 +112,7 @@ if (!$isKnownX4Raw || $isAlreadyStitched) {
             return true;
         }
     }
-    $derivSummary = tour_ensure_session_media_derivatives($dbcnx, $sessionId, true, false);
+    $derivSummary = tour_ensure_session_media_derivatives($dbcnx, $sessionId, true, true);
     if (!$derivSummary['ok']) {
         append_log(APP_STORAGE_DIR . '/logs/marker_worker_cron.log', 'derivatives warning session_id=' . $sessionId . ' summary=' . json_encode($derivSummary, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
     }
