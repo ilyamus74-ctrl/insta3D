@@ -138,7 +138,14 @@
       <div class="card">
         <div class="card-body">
           <h5 class="card-title">Capture session #{$s.id}</h5>
-
+          {if $canDeleteMedia}
+            <form method="post" action="/order.php?id={$order.id}" class="mb-2" onsubmit="return confirm('Удалить всю сессию? Будут скрыты все фото, видео, метки, переходы и публичные ссылки этой сессии.');">
+              <input type="hidden" name="action" value="delete_capture_session">
+              <input type="hidden" name="capture_session_id" value="{$s.id}">
+              <button type="submit" class="btn btn-sm btn-danger">Удалить сессию</button>
+            </form>
+          {/if}
+          
 {if $s.photo_count|default:0 > 0}
 <a class="btn btn-sm btn-outline-primary mb-2" href="/tour.php?session_id={$s.id}">
   Открыть 3D тур
@@ -187,6 +194,13 @@
                       <div class="small"><a href="{$p.original_url|escape}" target="_blank">Original</a> (uploaded original) · {$p.original_size_human}</div>
                       <div class="small mt-2"><code>{$p.preview_effective_path|default:'-'|escape}</code></div>
                       <div class="small"><code>{$p.original_effective_path|default:'-'|escape}</code></div>
+                      {if $canDeleteMedia}
+                        <form method="post" action="/order.php?id={$order.id}" class="mt-2" onsubmit="return confirm('Удалить этот снимок из заявки? Он исчезнет из тура и карты.');">
+                          <input type="hidden" name="action" value="delete_photo_point">
+                          <input type="hidden" name="photo_point_id" value="{$p.id}">
+                          <button type="submit" class="btn btn-sm btn-outline-danger">Удалить снимок</button>
+                        </form>
+                      {/if}
                     </div>
                   </div>
                 </div>
