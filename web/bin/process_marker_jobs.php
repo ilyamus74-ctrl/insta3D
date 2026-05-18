@@ -9,6 +9,7 @@ require_once __DIR__ . '/../www/bootstrap.php';
 require_once __DIR__ . '/../libs/tour_media_derivatives_lib.php';
 require_once __DIR__ . '/../libs/tour_auto_map_lib.php';
 require_once __DIR__ . '/../libs/tour_auto_links_lib.php';
+require_once __DIR__ . '/../libs/tour_stitching_lib.php';
 
 const DETECTOR_BINARY = '/home/makler/web/tools/apriltag_detector_cpp/build/detect_markers';
 
@@ -77,6 +78,34 @@ function process_one_job(mysqli $dbcnx): bool {
         return true;
     }
 
+
+    $photoStmt = $dbcnx->prepare("SELECT id, original_storage_path FROM photo_points WHERE session_id = ? AND upload_state = 'UPLOADED'");
+    $photoStmt->bind_param('i', $sessionId);
+    $photoStmt->execute();
+    $photoRows = $photoStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $photoStmt->close();
+
+    foreach ($photoRows as $pp) {
+        $origRel = trim((string)($pp['original_storage_path'] ?? ''));
+        if ($origRel === '') { continue; }
+        $origAbs = abs_storage_path($origRel);
+        if (!is_file($origAbs)) { continue; }
+        $imgInfo = @getimagesize($origAbs);
+        $w = (int)($imgInfo[0] ?? 0);
+        $h = (int)($imgInfo[1] ?? 0);
+        $looksDual = ($w > 0 && $h > 0) ? (abs(($w / max(1, $h)) - 2.0) > 0.2) : true;
+        if (!$looksDual) { continue; }
+        $rawRel = str_replace('/photos/originals/', '/photos/raw_dualfisheye/', $origRel);
+        $rawAbs = abs_storage_path($rawRel);
+        if (!is_dir(dirname($rawAbs))) { @mkdir(dirname($rawAbs), 0775, true); }
+        if (!is_file($rawAbs)) { @copy($origAbs, $rawAbs); }
+        $st = tour_stitch_dualfisheye_to_equirect($rawAbs, $origAbs);
+        if (!$st['ok']) {
+            fail_job($dbcnx, $jobId, 'Dual-fisheye stitching failed');
+            append_log(APP_STORAGE_DIR . '/logs/marker_worker_cron.log', 'stitch failed session_id=' . $sessionId . ' photo_point_id=' . (int)$pp['id'] . ' details=' . json_encode($st, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+            return true;
+        }
+    }
     $derivSummary = tour_ensure_session_media_derivatives($dbcnx, $sessionId, true, false);
     if (!$derivSummary['ok']) {
         append_log(APP_STORAGE_DIR . '/logs/marker_worker_cron.log', 'derivatives warning session_id=' . $sessionId . ' summary=' . json_encode($derivSummary, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
