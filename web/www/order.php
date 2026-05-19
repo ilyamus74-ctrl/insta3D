@@ -38,12 +38,14 @@ function move_session_to_trash(int $orderId,string $appSessionUuid): ?string {
 }
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
- if($action==='update_order' && $canEditOrderInfo){
- if($action==='update_order' && $canEdit){
-   if($role!=='ADMIN' && $order['status']==='CLOSED'){ $error='Закрытую заявку редактировать нельзя'; }
-   else {
+ $action=$_POST['action']??'';
+
+ if($action==='update_order'){
+   if(!$canEditOrderInfo){
+     $error='Информация заявки доступна только для просмотра. После закрытия заявки изменение данных заблокировано.';
+   } else {
     $title=trim($_POST['title']??''); $address=trim($_POST['address']??''); $area=trim($_POST['area_m2']??''); $cn=trim($_POST['customer_name']??''); $cp=trim($_POST['customer_phone']??''); $ce=trim($_POST['customer_email']??''); $pub=isset($_POST['is_published'])?1:0; $areaV=$area!==''?(float)$area:null;
-    $st=$dbcnx->prepare("UPDATE tour_orders SET title=?,address=?,area_m2=?,customer_name=?,customer_phone=?,customer_email=?,is_published=? WHERE id=?");
+    $st=$dbcnx->prepare("UPDATE tour_orders SET title=?,address=?,area_m2=?,customer_name=?,customer_phone=?,customer_email=?,is_published=?,updated_at=NOW(6) WHERE id=?");
     if($st){$st->bind_param('ssdsssii',$title,$address,$areaV,$cn,$cp,$ce,$pub,$orderId); if($st->execute()){audit_log($userId,'ORDER_UPDATED','TOUR_ORDER',$orderId,'Заявка обновлена');$st->close();header('Location: /order.php?id='.$orderId.'&updated=1');exit;} $error='DB execute error: '.$st->error; $st->close();}
    }
  }
