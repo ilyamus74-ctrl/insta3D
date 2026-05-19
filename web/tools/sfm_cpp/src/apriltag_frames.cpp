@@ -51,11 +51,14 @@ nlohmann::json detect_apriltags_in_frames(const std::string& frames_dir,
         if (img.empty()) continue;
         cv::Mat gray;
         cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
-        image_u8_t im;
-        im.width = gray.cols;
-        im.height = gray.rows;
-        im.stride = gray.cols;
-        im.buf = gray.data;
+
+        image_u8_t im = {
+            gray.cols,
+            gray.rows,
+            static_cast<int32_t>(gray.step),
+            gray.data
+        };
+
         zarray_t* detections = apriltag_detector_detect(td, &im);
 
         for (int i = 0; i < zarray_size(detections); i++) {
