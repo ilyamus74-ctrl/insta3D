@@ -1024,8 +1024,9 @@ $BASE/trajectory/camera_poses.json
 2. Добавить tools/sfm:
    - extract_frames.sh
    - run_colmap_sparse.sh
-   - parse_colmap_images.py
-   - rough_scale_from_markers.py
+   - sfm_tool parse-colmap-images
+   - sfm_tool rough-scale
+   - sfm_tool detect-apriltag-frames
 ```
 
 ### Этап 2 — ручной CLI прогон
