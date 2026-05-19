@@ -61,8 +61,14 @@ nlohmann::json detect_apriltags_in_frames(const std::string& frames_dir,
                 corners.push_back({det->p[c][0], det->p[c][1]});
             }
 
-            double h = marker_size_m / 2.0;
-            std::vector<cv::Point3f> obj = {{-h, -h, 0}, {h, -h, 0}, {h, h, 0}, {-h, h, 0}};
+            float h = static_cast<float>(marker_size_m / 2.0);
+
+            std::vector<cv::Point3f> obj = {
+                {-h, -h, 0.0f},
+                { h, -h, 0.0f},
+                { h,  h, 0.0f},
+                {-h,  h, 0.0f}
+            };
             cv::Mat rvec, tvec;
             bool ok = cv::solvePnP(obj, corners2d, cameraMatrix, distCoeffs, rvec, tvec, false, cv::SOLVEPNP_IPPE_SQUARE);
             if (!ok) continue;

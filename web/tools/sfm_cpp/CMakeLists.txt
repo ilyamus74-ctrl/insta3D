@@ -16,6 +16,9 @@ add_executable(sfm_tool
   src/apriltag_frames.cpp
   src/camera_profile.cpp
 )
+set_target_properties(sfm_tool PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 
 target_include_directories(sfm_tool PRIVATE src ${OPENCV4_INCLUDE_DIRS} ${APRILTAG_INCLUDE_DIRS})
 target_link_directories(sfm_tool PRIVATE ${OPENCV4_LIBRARY_DIRS} ${APRILTAG_LIBRARY_DIRS})

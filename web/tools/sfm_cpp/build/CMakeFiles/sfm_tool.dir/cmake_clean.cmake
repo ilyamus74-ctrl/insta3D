@@ -9,8 +9,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/sfm_tool.dir/src/main.cpp.o.d"
   "CMakeFiles/sfm_tool.dir/src/trajectory_scale.cpp.o"
   "CMakeFiles/sfm_tool.dir/src/trajectory_scale.cpp.o.d"
-  "sfm_tool"
-  "sfm_tool.pdb"
+  "bin/sfm_tool"
+  "bin/sfm_tool.pdb"
 )
 
 # Per-language clean rules from dependency scanning.
