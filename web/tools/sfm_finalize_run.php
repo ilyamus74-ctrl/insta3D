@@ -488,7 +488,8 @@ foreach ($keyframes as $kfPath) {
         $distanceFromPrevM = sqrt($dx * $dx + $dz * $dz);
     }
 
-    $segmentBreak = $frameDelta > 15 || $distanceFromPrevM > 3.0;
+    $hasPreviousPoint = ($prevX !== null && $prevZ !== null);
+    $segmentBreak = $hasPreviousPoint && ($frameDelta > 15 || $distanceFromPrevM > 3.0);
 
     $trajectoryPathLengthM += $distanceFromPrevM;
     if ($distanceFromPrevM > $trajectoryMaxJumpM) {
