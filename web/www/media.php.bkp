@@ -74,6 +74,123 @@ if (!$order) {
 
 $canView = maklertour_can_view_order_media($order, $userId, $role);
 
+function maklertour_media_candidate_paths(string $path): array {
+    $paths = [$path];
+
+    foreach (['viewer', 'viewer_light', 'viewer_hd', 'previews', 'raw_dualfisheye'] as $variant) {
+        $needle = '/photos/' . $variant . '/';
+        if (strpos($path, $needle) !== false) {
+            $paths[] = str_replace($needle, '/photos/originals/', $path);
+        }
+    }
+
+    return array_values(array_unique(array_filter($paths, static fn($v) => is_string($v) && $v !== '')));
+}
+
+function maklertour_load_order_by_stored_media_path(mysqli $dbcnx, string $path): ?array {
+    $candidates = maklertour_media_candidate_paths($path);
+    if (!$candidates) {
+        return null;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($candidates), '?'));
+
+    $sql = "
+        SELECT o.*
+        FROM photo_points pp
+        JOIN capture_sessions cs ON cs.id = pp.session_id
+        JOIN tour_orders o ON o.id = cs.order_id
+        WHERE cs.deleted_at IS NULL
+          AND pp.deleted_at IS NULL
+          AND COALESCE(pp.upload_state,'') <> 'DELETED'
+          AND (
+              pp.preview_storage_path IN ($placeholders)
+              OR pp.original_storage_path IN ($placeholders)
+          )
+        ORDER BY pp.id DESC
+        LIMIT 1
+    ";
+
+    $stmt = $dbcnx->prepare($sql);
+    if ($stmt) {
+        $types = str_repeat('s', count($candidates) * 2);
+        $params = array_merge($candidates, $candidates);
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $order = $stmt->get_result()->fetch_assoc() ?: null;
+        $stmt->close();
+
+        if ($order) {
+            return $order;
+        }
+    }
+
+    $stmt = $dbcnx->prepare("
+        SELECT o.*
+        FROM video_scans vs
+        JOIN capture_sessions cs ON cs.id = vs.session_id
+        JOIN tour_orders o ON o.id = cs.order_id
+        WHERE cs.deleted_at IS NULL
+          AND vs.deleted_at IS NULL
+          AND COALESCE(vs.upload_state,'') <> 'DELETED'
+          AND vs.storage_path = ?
+        ORDER BY vs.id DESC
+        LIMIT 1
+    ");
+
+    if ($stmt) {
+        $stmt->bind_param('s', $path);
+        $stmt->execute();
+        $order = $stmt->get_result()->fetch_assoc() ?: null;
+        $stmt->close();
+
+        if ($order) {
+            return $order;
+        }
+    }
+
+    return null;
+}
+
+/*
+ * Fallback access by DB media ownership.
+ * If path starts with orders/<old_id>/ but the file belongs to a photo/video row
+ * attached to another capture_session/order, authorize by that real order.
+ */
+if (!$canView) {
+    $realOrder = maklertour_load_order_by_stored_media_path($dbcnx, $path);
+    if ($realOrder && maklertour_can_view_order_media($realOrder, $userId, $role)) {
+        $canView = true;
+    }
+}
+
+/*
+ * Last fallback by app_session_uuid from path.
+ */
+if (!$canView && preg_match('~^orders/[0-9]+/sessions/([^/]+)/~', $path, $sm)) {
+    $appSessionUuid = (string)$sm[1];
+
+    $stmt = $dbcnx->prepare("
+        SELECT o.*
+        FROM capture_sessions cs
+        JOIN tour_orders o ON o.id = cs.order_id
+        WHERE cs.app_session_uuid = ?
+          AND cs.deleted_at IS NULL
+        ORDER BY cs.id DESC
+        LIMIT 1
+    ");
+
+    if ($stmt) {
+        $stmt->bind_param('s', $appSessionUuid);
+        $stmt->execute();
+        $realOrder = $stmt->get_result()->fetch_assoc() ?: null;
+        $stmt->close();
+
+        if ($realOrder && maklertour_can_view_order_media($realOrder, $userId, $role)) {
+            $canView = true;
+        }
+    }
+}
 
 if (!$canView) {
     error_log('MEDIA_FORBIDDEN path=' . $path . ' user_id=' . $userId . ' role=' . $role . ' path_order_id=' . $orderId);

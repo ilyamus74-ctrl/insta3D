@@ -542,7 +542,7 @@ if ($action === 'upload_video_scan') {
     }
 
     $stmt = $dbcnx->prepare("
-    SELECT cs.id, cs.app_session_uuid
+    SELECT cs.id, cs.order_id, cs.app_session_uuid
     FROM capture_sessions cs
     JOIN tour_orders o ON o.id = cs.order_id
     WHERE cs.id = ?
@@ -569,6 +569,13 @@ if ($action === 'upload_video_scan') {
     if (!$session) {
         api_json(['ok' => false, 'error' => 'order_closed_or_not_available'], 409);
     }
+
+    $dbOrderId = (int)($session['order_id'] ?? 0);
+    if ($dbOrderId <= 0) {
+        api_json(['ok' => false, 'error' => 'invalid_session_order'], 409);
+    }
+    $orderId = $dbOrderId;
+
 $safeSessionUuid = preg_replace('/[^a-zA-Z0-9._-]+/', '_', (string)$session['app_session_uuid']);
 if ($safeSessionUuid === '') {
     $safeSessionUuid = 'session_' . $captureSessionId;
@@ -976,7 +983,7 @@ if ($action === 'upload_photo_point') {
     }
 
     $stmt = $dbcnx->prepare("
-    SELECT cs.id, cs.app_session_uuid
+    SELECT cs.id, cs.order_id, cs.app_session_uuid
     FROM capture_sessions cs
     JOIN tour_orders o ON o.id = cs.order_id
     WHERE cs.id = ?
@@ -997,6 +1004,10 @@ if ($action === 'upload_photo_point') {
     $session = $res->fetch_assoc();
     $stmt->close();
     if (!$session) api_json(['ok' => false, 'error' => 'order_closed_or_not_available'], 409);
+
+    $dbOrderId = (int)($session['order_id'] ?? 0);
+    if ($dbOrderId <= 0) api_json(['ok' => false, 'error' => 'invalid_session_order'], 409);
+    $orderId = $dbOrderId;
 
     $safeSessionUuid = preg_replace('/[^a-zA-Z0-9._-]+/', '_', (string)$session['app_session_uuid']);
     if ($safeSessionUuid === '') $safeSessionUuid = 'session_' . $captureSessionId;
