@@ -1,0 +1,3 @@
+/home/makler/web/tools/sfm_cpp/build/CMakeFiles/sfm_tool.dir
+/home/makler/web/tools/sfm_cpp/build/CMakeFiles/edit_cache.dir
+/home/makler/web/tools/sfm_cpp/build/CMakeFiles/rebuild_cache.dir
