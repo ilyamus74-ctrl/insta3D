@@ -172,6 +172,9 @@
   Открыть 3D тур
 </a>
 {/if}
+<a class="btn btn-sm btn-outline-success mb-2 ms-1" href="/sfm_viewer.php?order_id={$order.id}&session_id={$s.id}">
+  View SfM trajectory
+</a>
           <div class="mb-2" id="publicLinkState{$s.id}">
             {if $s.public_link && $s.public_link.is_active == 1}
               <span class="badge bg-success">Публичная ссылка активна</span>
