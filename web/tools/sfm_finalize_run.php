@@ -458,6 +458,12 @@ if ($fh === false) {
 }
 
 $keyframeLinksCount = 0;
+$prevX = null;
+$prevZ = null;
+$trajectoryPathLengthM = 0.0;
+$trajectoryMaxJumpM = 0.0;
+$trajectorySegmentBreaks = 0;
+
 foreach ($keyframes as $kfPath) {
     $kfName = basename($kfPath);
     if (preg_match('/keyframe_(\d+)\.jpg$/', $kfName, $m) !== 1) {
@@ -469,17 +475,47 @@ foreach ($keyframes as $kfPath) {
     $best = isset($poseMap[$target]) ? $target : nearestIndex($poseIndexes, $target);
     $pose = $poseMap[$best];
 
+    $nearestFrameIndex = parseFrameIndex($pose['frame_name']);
+    if ($nearestFrameIndex === null) {
+        $nearestFrameIndex = $best;
+    }
+    $frameDelta = abs($nearestFrameIndex - $target);
+
+    $distanceFromPrevM = 0.0;
+    if ($prevX !== null && $prevZ !== null) {
+        $dx = $pose['x_scaled'] - $prevX;
+        $dz = $pose['z_scaled'] - $prevZ;
+        $distanceFromPrevM = sqrt($dx * $dx + $dz * $dz);
+    }
+
+    $segmentBreak = $frameDelta > 15 || $distanceFromPrevM > 3.0;
+
+    $trajectoryPathLengthM += $distanceFromPrevM;
+    if ($distanceFromPrevM > $trajectoryMaxJumpM) {
+        $trajectoryMaxJumpM = $distanceFromPrevM;
+    }
+    if ($segmentBreak) {
+        $trajectorySegmentBreaks++;
+    }
+
     $line = [
         'keyframe_index' => $kfIndex,
         'keyframe_name' => $kfName,
+        'target_frame_index' => $target,
+        'nearest_frame_index' => $nearestFrameIndex,
         'nearest_frame_name' => $pose['frame_name'],
+        'frame_delta' => $frameDelta,
         'x_scaled' => $pose['x_scaled'],
         'y_scaled' => $pose['y_scaled'],
         'z_scaled' => $pose['z_scaled'],
+        'distance_from_prev_m' => $distanceFromPrevM,
+        'segment_break' => $segmentBreak,
     ];
 
     fwrite($fh, json_encode($line, JSON_UNESCAPED_SLASHES) . "\n");
     $keyframeLinksCount++;
+    $prevX = $pose['x_scaled'];
+    $prevZ = $pose['z_scaled'];
 }
 fclose($fh);
 
@@ -494,6 +530,9 @@ $summary = [
     'scale_factor' => $scaleFactor,
     'scale_samples' => $scaleSamples,
     'keyframe_links_count' => $keyframeLinksCount,
+    'trajectory_path_length_m' => $trajectoryPathLengthM,
+    'trajectory_max_jump_m' => $trajectoryMaxJumpM,
+    'trajectory_segment_breaks' => $trajectorySegmentBreaks,
     'status' => $status,
     'metric_status' => $metricStatus,
     'markers_path' => 'sfm/markers/marker_observations.json',

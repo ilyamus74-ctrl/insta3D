@@ -202,10 +202,15 @@ foreach ($lines as $line) {
     $trajectory[] = [
         'keyframe_index' => isset($row['keyframe_index']) ? (int)$row['keyframe_index'] : null,
         'keyframe_name' => $row['keyframe_name'] ?? null,
+        'target_frame_index' => isset($row['target_frame_index']) ? (int)$row['target_frame_index'] : null,
+        'nearest_frame_index' => isset($row['nearest_frame_index']) ? (int)$row['nearest_frame_index'] : null,
         'nearest_frame_name' => $row['nearest_frame_name'] ?? null,
+        'frame_delta' => isset($row['frame_delta']) ? (int)$row['frame_delta'] : null,
         'x_scaled' => isset($row['x_scaled']) ? (float)$row['x_scaled'] : null,
         'y_scaled' => isset($row['y_scaled']) ? (float)$row['y_scaled'] : null,
         'z_scaled' => isset($row['z_scaled']) ? (float)$row['z_scaled'] : null,
+        'distance_from_prev_m' => isset($row['distance_from_prev_m']) ? (float)$row['distance_from_prev_m'] : null,
+        'segment_break' => isset($row['segment_break']) ? (bool)$row['segment_break'] : false,
         'preview_url' => $previewUrl,
     ];
 }
@@ -237,6 +242,9 @@ $respSummary = [
     'keyframe_links_count' => count($trajectory),
     'status' => (string)($summary['status'] ?? ($run['status'] ?? '')),
     'metric_status' => (string)($summary['metric_status'] ?? ($run['metric_status'] ?? '')),
+    'trajectory_path_length_m' => isset($summary['trajectory_path_length_m']) ? (float)$summary['trajectory_path_length_m'] : null,
+    'trajectory_max_jump_m' => isset($summary['trajectory_max_jump_m']) ? (float)$summary['trajectory_max_jump_m'] : null,
+    'trajectory_segment_breaks' => isset($summary['trajectory_segment_breaks']) ? (int)$summary['trajectory_segment_breaks'] : null,
 ];
 
 api_json(['ok' => true, 'run' => $respRun, 'summary' => $respSummary, 'trajectory' => $trajectory]);
