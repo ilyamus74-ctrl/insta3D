@@ -5,6 +5,10 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <array>
+#include <string>
+#include <vector>
+#include <cstddef>
 
 namespace sfm {
 
