@@ -46,8 +46,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
    if($title===''||$address===''){ $error='Заполните название и адрес объекта'; }
    else {
     $areaM2=trim($_POST['area_m2']??''); $areaValue=$areaM2!==''?(float)$areaM2:null; $cn=trim($_POST['customer_name']??''); $cp=trim($_POST['customer_phone']??''); $ce=trim($_POST['customer_email']??''); $pub=isset($_POST['is_published'])?1:0; $token=bin2hex(random_bytes(16));
-    $st=$dbcnx->prepare("INSERT INTO tour_orders (broker_id,title,address,area_m2,customer_name,customer_phone,customer_email,status,is_published,public_token) VALUES (?,?,?,?,?,?,?,'NEW',?,?)");
-    if($st){$st->bind_param('issdsssis',$userId,$title,$address,$areaValue,$cn,$cp,$ce,$pub,$token); if($st->execute()){ $id=(int)$st->insert_id; audit_log($userId,'ORDER_CREATED','TOUR_ORDER',$id,'Создана заявка'); $st->close(); header('Location: /orders.php?created=1'); exit;} $error='DB execute error: '.$st->error; $st->close();}
+    $createdOperatorId = $role === 'OPERATOR' ? $userId : null;
+    $createdStatus = $role === 'OPERATOR' ? 'ASSIGNED' : 'NEW';
+    $st=$dbcnx->prepare("INSERT INTO tour_orders (broker_id,operator_id,title,address,area_m2,customer_name,customer_phone,customer_email,status,is_published,public_token) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+    if($st){$st->bind_param('iissdssssis',$userId,$createdOperatorId,$title,$address,$areaValue,$cn,$cp,$ce,$createdStatus,$pub,$token); if($st->execute()){ $id=(int)$st->insert_id; audit_log($userId,'ORDER_CREATED','TOUR_ORDER',$id,'Создана заявка'); $st->close(); header('Location: /orders.php?created=1'); exit;} $error='DB execute error: '.$st->error; $st->close();}
    }
   }
  }
@@ -60,7 +62,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   $st=$dbcnx->prepare("SELECT broker_closed_at, operator_id FROM tour_orders WHERE id=? LIMIT 1"); $st->bind_param('i',$oid); $st->execute(); $o=$st->get_result()->fetch_assoc(); $st->close();
   if($o && ($role==='ADMIN' || ($role==='OPERATOR' && (int)$o['operator_id']===$userId))) {
     $status = !empty($o['broker_closed_at']) ? 'COMPLETED' : 'READY';
-    $st=$dbcnx->prepare("UPDATE tour_orders SET operator_closed_at=NOW(6), operator_closed_by=?, status=? WHERE id=?"); $st->bind_param('isi',$userId,$status,$oid); $st->execute(); $st->close(); audit_log($userId,'ORDER_OPERATOR_CLOSED','TOUR_ORDER',$oid,'Оператор закрыл свою часть'); header('Location: /orders.php'); exit;
+    $st=$dbcnx->prepare("UPDATE tour_orders SET operator_closed_at=NOW(6), operator_closed_by=?, status=? WHERE id=?");
+    if($st){
+        $st->bind_param('isi',$userId,$status,$oid);
+        if($st->execute()){ $st->close(); audit_log($userId,'ORDER_OPERATOR_CLOSED','TOUR_ORDER',$oid,'Оператор закрыл свою часть'); header('Location: /orders.php'); exit; }
+        $error='DB execute error: '.$st->error;
+        $st->close();
+    } else {
+        $error='DB prepare error: '.$dbcnx->error;
+    }
   }
  }
  if ($action==='broker_close_order') {
@@ -68,7 +78,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
   $st=$dbcnx->prepare("SELECT operator_closed_at, broker_id, status FROM tour_orders WHERE id=? LIMIT 1"); $st->bind_param('i',$oid); $st->execute(); $o=$st->get_result()->fetch_assoc(); $st->close();
   if($o && ($role==='ADMIN' || (int)$o['broker_id']===$userId)) {
     $status = !empty($o['operator_closed_at']) ? 'COMPLETED' : (string)$o['status'];
-    $st=$dbcnx->prepare("UPDATE tour_orders SET broker_closed_at=NOW(6), broker_closed_by=?, status=? WHERE id=?"); $st->bind_param('isi',$userId,$status,$oid); $st->execute(); $st->close(); audit_log($userId,'ORDER_BROKER_CLOSED','TOUR_ORDER',$oid,'Брокер закрыл свою часть'); header('Location: /orders.php'); exit;
+    $st=$dbcnx->prepare("UPDATE tour_orders SET broker_closed_at=NOW(6), broker_closed_by=?, status=? WHERE id=?");
+    if($st){
+        $st->bind_param('isi',$userId,$status,$oid);
+        if($st->execute()){ $st->close(); audit_log($userId,'ORDER_BROKER_CLOSED','TOUR_ORDER',$oid,'Брокер закрыл свою часть'); header('Location: /orders.php'); exit; }
+        $error='DB execute error: '.$st->error;
+        $st->close();
+    } else {
+        $error='DB prepare error: '.$dbcnx->error;
+    }
   }
  }
  if ($action==='reopen_order') {
@@ -88,7 +106,7 @@ if(!$scopeParts){$scopeParts=['active'];}
 
 $conds=[];$types='';$vals=[];
 if($role==='ADMIN'){ $base='1=1'; }
-elseif($role==='OPERATOR'){ $base="(o.operator_id=? OR (o.is_published=1 AND o.status='NEW' AND o.operator_id IS NULL))"; $types.='i'; $vals[]=$userId; }
+elseif($role==='OPERATOR'){ $base="(o.operator_id=? OR o.broker_id=? OR (o.is_published=1 AND o.status='NEW' AND o.operator_id IS NULL))"; $types.='ii'; $vals[]=$userId; $vals[]=$userId; }
 else { $base='o.broker_id=?'; $types.='i'; $vals[]=$userId; }
 $scopeConds=[]; foreach($scopeParts as $s){ if($s==='all'){ $scopeConds=['1=1']; break; } if($s==='active')$scopeConds[]="(o.status NOT IN ('READY','COMPLETED','CLOSED') AND (o.operator_closed_at IS NULL OR o.broker_closed_at IS NULL))"; if($s==='available')$scopeConds[]="(o.status='NEW' AND o.operator_id IS NULL AND o.is_published=1)"; if($s==='mine')$scopeConds[]="(o.broker_id={$userId} OR o.operator_id={$userId})"; if($s==='ready')$scopeConds[]="(o.status='READY' OR o.operator_closed_at IS NOT NULL)"; if($s==='completed')$scopeConds[]="(o.status='COMPLETED')"; }
 $conds[]='('.implode(' OR ',$scopeConds).')';
