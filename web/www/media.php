@@ -29,41 +29,85 @@ if (!preg_match('~^orders/([0-9]+)/~', $path, $m)) {
 
 $orderId = (int)$m[1];
 
-$stmt = $dbcnx->prepare("
-    SELECT *
-    FROM tour_orders
-    WHERE id = ?
-    LIMIT 1
-");
-
-if (!$stmt) {
-    http_response_code(500);
-    exit('DB error');
+function maklertour_can_view_order_media(array $order, int $userId, string $role): bool {
+    return $role === 'ADMIN'
+        || ((int)$order['broker_id'] === $userId)
+        || (
+            $role === 'OPERATOR'
+            && (
+                (int)$order['operator_id'] === $userId
+                || (
+                    (int)$order['is_published'] === 1
+                    && (string)$order['status'] === 'NEW'
+                    && $order['operator_id'] === null
+                )
+            )
+        );
 }
 
-$stmt->bind_param('i', $orderId);
-$stmt->execute();
-$order = $stmt->get_result()->fetch_assoc();
-$stmt->close();
+function maklertour_load_order_for_media(mysqli $dbcnx, int $orderId): ?array {
+    $stmt = $dbcnx->prepare("
+        SELECT *
+        FROM tour_orders
+        WHERE id = ?
+        LIMIT 1
+    ");
+
+    if (!$stmt) {
+        return null;
+    }
+
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $order = $stmt->get_result()->fetch_assoc() ?: null;
+    $stmt->close();
+
+    return $order;
+}
+
+$order = maklertour_load_order_for_media($dbcnx, $orderId);
 
 if (!$order) {
     http_response_code(404);
     exit('Order not found');
 }
 
-$canView = $role === 'ADMIN'
-    || ((int)$order['broker_id'] === $userId)
-    || (
-        $role === 'OPERATOR'
-        && (
-            (int)$order['operator_id'] === $userId
-            || (
-                (int)$order['is_published'] === 1
-                && (string)$order['status'] === 'NEW'
-                && $order['operator_id'] === null
-            )
-        )
-    );
+$canView = maklertour_can_view_order_media($order, $userId, $role);
+
+/*
+ * Legacy/fallback access:
+ * Older uploads may have media paths like:
+ *   orders/<old_order_id>/sessions/<app_session_uuid>/...
+ * while the capture_session with this app_session_uuid belongs to another order.
+ *
+ * In that case authorize by the real order attached to capture_sessions.app_session_uuid.
+ * Do not move files here; this is access-control compatibility only.
+ */
+if (!$canView && preg_match('~^orders/[0-9]+/sessions/([^/]+)/~', $path, $sm)) {
+    $appSessionUuid = (string)$sm[1];
+
+    $stmt = $dbcnx->prepare("
+        SELECT
+            o.*
+        FROM capture_sessions cs
+        JOIN tour_orders o ON o.id = cs.order_id
+        WHERE cs.app_session_uuid = ?
+          AND cs.deleted_at IS NULL
+        ORDER BY cs.id DESC
+        LIMIT 1
+    ");
+
+    if ($stmt) {
+        $stmt->bind_param('s', $appSessionUuid);
+        $stmt->execute();
+        $realOrder = $stmt->get_result()->fetch_assoc() ?: null;
+        $stmt->close();
+
+        if ($realOrder && maklertour_can_view_order_media($realOrder, $userId, $role)) {
+            $canView = true;
+        }
+    }
+}
 
 if (!$canView) {
     http_response_code(403);
