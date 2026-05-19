@@ -12,11 +12,13 @@ function bytes_human($bytes): string { $b=(float)$bytes; if($b<=0){return '0 B';
 $order=load_order($dbcnx,$orderId); if(!$order){http_response_code(404);exit('Order not found');}
 $canView = $role==='ADMIN' || ((int)$order['broker_id']===$userId) || ($role==='OPERATOR' && ((int)$order['operator_id']===$userId || ((int)$order['is_published']===1 && $order['status']==='NEW' && $order['operator_id']===null)));
 if(!$canView){http_response_code(403);exit('Forbidden');}
+$isOrderClosedForEditing = in_array((string)$order['status'], ['READY','COMPLETED','CLOSED'], true) || !empty($order['operator_closed_at']) || !empty($order['broker_closed_at']);
 $canEdit = $role==='ADMIN' || (int)$order['broker_id']===$userId;
+$canEditOrderInfo = $role==='ADMIN' || ((int)$order['broker_id']===$userId && !$isOrderClosedForEditing);
 $canDeleteMedia = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
 $canOperatorClose = $role==='ADMIN' || ($role==='OPERATOR' && (int)$order['operator_id']===$userId && empty($order['operator_closed_at']));
 $canBrokerClose = $role==='ADMIN' || ((int)$order['broker_id']===$userId && empty($order['broker_closed_at']));
-$canReopen = $role==='ADMIN' || (int)$order['broker_id']===$userId;
+$canReopen = $role==='ADMIN' || ((int)$order['broker_id']===$userId && (string)$order['status']!=='COMPLETED');
 $canCreatePublicLink = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
 $error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['photo_deleted'])?'Снимок удалён':(isset($_GET['session_deleted'])?'Сессия удалена':null)))));
 
@@ -36,7 +38,7 @@ function move_session_to_trash(int $orderId,string $appSessionUuid): ?string {
 }
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
- $action=$_POST['action']??'';
+ if($action==='update_order' && $canEditOrderInfo){
  if($action==='update_order' && $canEdit){
    if($role!=='ADMIN' && $order['status']==='CLOSED'){ $error='Закрытую заявку редактировать нельзя'; }
    else {
@@ -47,7 +49,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
  }
 
 
- if($action==='create_processing_job_web' && $canEdit){
+ if($action==='create_processing_job_web' && ($canDeleteMedia || ($role==='OPERATOR' && (int)$order['operator_id']===$userId) || $role==='ADMIN')){
    $captureSessionId=(int)($_POST['capture_session_id']??0);
    if($captureSessionId<=0){
      $error='Не выбрана capture session для обработки';
@@ -79,10 +81,10 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
    }
  }
  if($action==='operator_close_order' && $canOperatorClose){
-   $st=$dbcnx->prepare("UPDATE tour_orders SET operator_closed_at=NOW(6), operator_closed_by=?, status=IF(broker_closed_at IS NULL,'READY','COMPLETED') WHERE id=?"); if($st){$st->bind_param('ii',$userId,$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_OPERATOR_CLOSED','TOUR_ORDER',$orderId,'Закрытие со стороны оператора');header('Location: /order.php?id='.$orderId.'&closed=1');exit;}
+   $st=$dbcnx->prepare("UPDATE tour_orders SET operator_closed_at=NOW(6), operator_closed_by=?, status=IF(broker_closed_at IS NULL,'READY','COMPLETED'), updated_at=NOW(6) WHERE id=?"); if($st){$st->bind_param('ii',$userId,$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_OPERATOR_CLOSED','TOUR_ORDER',$orderId,'Закрытие со стороны оператора');header('Location: /order.php?id='.$orderId.'&closed=1');exit;}
  }
  if($action==='broker_close_order' && $canBrokerClose){
-   $st=$dbcnx->prepare("UPDATE tour_orders SET broker_closed_at=NOW(6), broker_closed_by=?, status=IF(operator_closed_at IS NULL,status,'COMPLETED') WHERE id=?"); if($st){$st->bind_param('ii',$userId,$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_BROKER_CLOSED','TOUR_ORDER',$orderId,'Закрытие со стороны брокера');header('Location: /order.php?id='.$orderId.'&closed=1');exit;}
+   $st=$dbcnx->prepare("UPDATE tour_orders SET broker_closed_at=NOW(6), broker_closed_by=?, status=IF(operator_closed_at IS NULL,status,'COMPLETED'), updated_at=NOW(6) WHERE id=?"); if($st){$st->bind_param('ii',$userId,$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_BROKER_CLOSED','TOUR_ORDER',$orderId,'Закрытие со стороны брокера');header('Location: /order.php?id='.$orderId.'&closed=1');exit;}
  }
  if($action==='reopen_order' && $canReopen){
    $st=$dbcnx->prepare("UPDATE tour_orders SET operator_closed_at=NULL,operator_closed_by=NULL,broker_closed_at=NULL,broker_closed_by=NULL,status=IF(operator_id IS NULL,'NEW','ASSIGNED') WHERE id=?"); if($st){$st->bind_param('i',$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_REOPENED','TOUR_ORDER',$orderId,'Заявка переоткрыта');header('Location: /order.php?id='.$orderId.'&reopened=1');exit;}
@@ -229,7 +231,13 @@ if($stmt){
 foreach($captureSessions as $idx=>$session){
   $sid=(int)$session['id'];
   $captureSessions[$idx]['processing_job']=$processingJobsBySession[$sid] ?? null;
-
+  $job = $captureSessions[$idx]['processing_job'] ?? null;
+  $jobStatus = strtoupper((string)($job['status'] ?? ''));
+  $isProcessing = in_array($jobStatus, ['QUEUED','PROCESSING'], true);
+  $captureSessions[$idx]['is_processing'] = $isProcessing;
+  $captureSessions[$idx]['processing_label'] = $jobStatus === 'QUEUED' ? 'Ожидает обработки' : ($jobStatus === 'PROCESSING' ? 'Обрабатывается' : '');
+  $captureSessions[$idx]['processing_failed'] = $jobStatus === 'FAILED';
+  
   $detections = $markerDetectionsBySession[$sid] ?? [];
   $unique=[];
   $sourceCounts=['PHOTO_POINT'=>0,'VIDEO_FRAME'=>0];
@@ -283,11 +291,13 @@ $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),
 $smarty->assign('current_user',$user);
 $smarty->assign('order',$order);
 $smarty->assign('canEdit',$canEdit);
+$smarty->assign('canEditOrderInfo',$canEditOrderInfo);
 $smarty->assign('canDeleteMedia',$canDeleteMedia);
 $smarty->assign('canCreatePublicLink', $canCreatePublicLink);
 $smarty->assign('canOperatorClose',$canOperatorClose);
 $smarty->assign('canBrokerClose',$canBrokerClose);
 $smarty->assign('canReopen',$canReopen);
+$smarty->assign('isOrderClosedForEditing',$isOrderClosedForEditing);
 $smarty->assign('captureSessions',$captureSessions);
 $smarty->assign('photoPoints',$photoPoints);
 $smarty->assign('capturePoints',$capturePoints);
