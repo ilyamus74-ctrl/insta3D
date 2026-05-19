@@ -104,11 +104,64 @@ if ($runSessionDir === '' || !preg_match('/^[a-zA-Z0-9_-]+$/', $runSessionDir)) 
 }
 
 $storageRoot = '/home/makler/web/storage/orders';
-$sessionBase = $storageRoot . '/' . $orderId . '/sessions/' . $runSessionDir;
-$realSessionBase = realpath($sessionBase);
-if ($realSessionBase === false || strpos($realSessionBase, $storageRoot . '/') !== 0) {
-    api_json(['ok' => false, 'error' => 'session path missing'], 404);
+$realStorageRoot = realpath($storageRoot);
+if ($realStorageRoot === false) {
+    api_json(['ok' => false, 'error' => 'storage root missing'], 500);
 }
+
+$candidateSessionBases = [];
+
+// Primary path from order_id + session_dir.
+$candidateSessionBases[] = $storageRoot . '/' . $orderId . '/sessions/' . $runSessionDir;
+
+// Fallback from absolute video_path stored in video_sfm_runs.
+// Expected: /home/makler/web/storage/orders/<id>/sessions/<session_dir>/videos/<file>.mp4
+$runVideoPath = (string)($run['video_path'] ?? '');
+if ($runVideoPath !== '' && $runVideoPath[0] === '/' && is_file($runVideoPath)) {
+    $candidateSessionBases[] = dirname(dirname($runVideoPath));
+}
+
+// Fallback from absolute sfm_base_path if it ever stores full path.
+// Expected: /home/makler/web/storage/orders/<id>/sessions/<session_dir>/sfm
+$runSfmBasePath = (string)($run['sfm_base_path'] ?? '');
+if ($runSfmBasePath !== '' && $runSfmBasePath[0] === '/') {
+    $candidateSessionBases[] = basename($runSfmBasePath) === 'sfm'
+        ? dirname($runSfmBasePath)
+        : $runSfmBasePath;
+}
+
+$candidateSessionBases = array_values(array_unique($candidateSessionBases));
+$realSessionBase = false;
+$storagePrefix = rtrim($realStorageRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+
+foreach ($candidateSessionBases as $candidate) {
+    $realCandidate = realpath($candidate);
+    if ($realCandidate === false) {
+        continue;
+    }
+    if (strpos($realCandidate, $storagePrefix) !== 0) {
+        continue;
+    }
+    if (!is_dir($realCandidate . '/sfm')) {
+        continue;
+    }
+    $realSessionBase = $realCandidate;
+    break;
+}
+
+if ($realSessionBase === false) {
+    api_json([
+        'ok' => false,
+        'error' => 'session path missing',
+        'debug' => [
+            'session_dir' => $runSessionDir,
+            'checked' => $candidateSessionBases,
+        ],
+    ], 404);
+}
+
+// Use resolved real directory name for filesystem-backed URLs.
+$runSessionDir = basename($realSessionBase);
 
 $summaryPath = $realSessionBase . '/sfm/sfm_result_summary.json';
 $keyframeLinksPath = $realSessionBase . '/sfm/keyframe_links.jsonl';
