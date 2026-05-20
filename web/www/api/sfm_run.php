@@ -45,20 +45,27 @@ function sfm_media_url(int $orderId, string $sessionDir, string $subdir, string 
     return '/media.php?path=' . rawurlencode($relativePath);
 }
 
-function sfm_preview_payload(string $sessionBase, int $orderId, string $sessionDir, string $keyframeName): array {
+function sfm_preview_payload(string $sessionBase, int $orderId, string $sessionDir, string $keyframeName, string $cameraType): array {
     $rawUrl = sfm_media_url($orderId, $sessionDir, 'keyframes', $keyframeName);
     if ($rawUrl === '') {
         return ['preview_url' => '', 'raw_preview_url' => '', 'preview_type' => 'fisheye'];
     }
     $viewerPath = $sessionBase . '/sfm/viewer_keyframes/' . $keyframeName;
     if (is_file($viewerPath)) {
+        $previewType = 'equirectangular';
+        $viewerSummaryPath = $sessionBase . '/sfm/viewer_keyframes_summary.json';
+        $viewerSummary = is_file($viewerSummaryPath) ? json_decode((string)file_get_contents($viewerSummaryPath), true) : null;
+        if (is_array($viewerSummary) && (($viewerSummary['preview_type'] ?? '') === 'perspective' || ($viewerSummary['source'] ?? '') === 'phone_video')) {
+            $previewType = 'perspective';
+        }
         return [
             'preview_url' => sfm_media_url($orderId, $sessionDir, 'viewer_keyframes', $keyframeName),
             'raw_preview_url' => $rawUrl,
-            'preview_type' => 'equirectangular',
+            'preview_type' => $previewType,
         ];
     }
-    return ['preview_url' => $rawUrl, 'raw_preview_url' => $rawUrl, 'preview_type' => 'fisheye'];
+    $fallbackType = $cameraType === 'PHONE_VIDEO' ? 'perspective' : 'fisheye';
+    return ['preview_url' => $rawUrl, 'raw_preview_url' => $rawUrl, 'preview_type' => $fallbackType];
 }
 
 $orderIdRaw = $_GET['order_id'] ?? null;
@@ -222,7 +229,18 @@ foreach ($lines as $line) {
     if ($kfName !== '' && !preg_match('/^keyframe_[0-9]{6}\.jpg$/', $kfName)) {
         $kfName = '';
     }
-    $preview = $kfName !== '' ? sfm_preview_payload($realSessionBase, $orderId, $runSessionDir, $kfName) : ['preview_url' => '', 'raw_preview_url' => '', 'preview_type' => 'fisheye'];
+    $cameraType = strtoupper((string)($run['camera_type'] ?? ''));
+    if ($cameraType === '') {
+        $viewerSummaryPath = $realSessionBase . '/sfm/viewer_keyframes_summary.json';
+        $viewerSummary = is_file($viewerSummaryPath) ? json_decode((string)file_get_contents($viewerSummaryPath), true) : null;
+        if (is_array($viewerSummary) && ($viewerSummary['source'] ?? '') === 'phone_video') {
+            $cameraType = 'PHONE_VIDEO';
+        } else {
+            $cameraType = 'INSTA360_DUAL_VIDEO';
+        }
+    }
+    $emptyPreviewType = $cameraType === 'PHONE_VIDEO' ? 'perspective' : 'fisheye';
+    $preview = $kfName !== '' ? sfm_preview_payload($realSessionBase, $orderId, $runSessionDir, $kfName, $cameraType) : ['preview_url' => '', 'raw_preview_url' => '', 'preview_type' => $emptyPreviewType];
     $trajectory[] = [
         'keyframe_index' => isset($row['keyframe_index']) ? (int)$row['keyframe_index'] : null,
         'keyframe_name' => $row['keyframe_name'] ?? null,

@@ -39,6 +39,10 @@ function runStepSoft(string $name, string $cmd, string $log): bool {
         return false;
     }
 }
+function countJpgFiles(string $dir, string $pattern = '*.jpg'): int {
+    $files = glob(rtrim($dir, '/') . '/' . $pattern);
+    return is_array($files) ? count($files) : 0;
+}
 
 $opts=getopt('', ['limit::','job-id::']); $limit=max(1,(int)($opts['limit']??1)); $jobIdFilter=isset($opts['job-id'])?(int)$opts['job-id']:0;
 $processed=0;
@@ -56,6 +60,14 @@ while($processed<$limit){
         $orderId=(int)$job['order_id']; $sessionId=(int)$job['session_id']; if($orderId<=0||$sessionId<=0) throw new RuntimeException('invalid order/session');
         $payload=json_decode((string)($job['warning_text']??''), true); if(!is_array($payload)) $payload=[];
         $videoPath=(string)($payload['video_path']??''); if($videoPath===''||!is_file($videoPath)) throw new RuntimeException('video_path missing or not found');
+        $cameraType = strtoupper((string)($payload['camera_type'] ?? 'INSTA360_DUAL_VIDEO'));
+
+        if (!in_array($cameraType, ['INSTA360_DUAL_VIDEO', 'PHONE_VIDEO'], true)) throw new RuntimeException('unsupported camera_type');
+        $sfmFps = isset($payload['sfm_fps']) ? (float)$payload['sfm_fps'] : 3.0;
+        $keyframeFps = isset($payload['keyframe_fps']) ? (float)$payload['keyframe_fps'] : 0.33;
+        $frameWidth = isset($payload['frame_width']) ? (int)$payload['frame_width'] : 1920;
+        $markerSize = isset($payload['marker_size_m']) ? (float)$payload['marker_size_m'] : 0.16;
+        $markerFamily = isset($payload['marker_family']) ? (string)$payload['marker_family'] : 'tag36h11';
 
         $st=$dbcnx->prepare('SELECT app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? LIMIT 1'); $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $sess=$st->get_result()->fetch_assoc(); $st->close();
         if(!$sess) throw new RuntimeException('capture_session not found');
@@ -66,27 +78,47 @@ while($processed<$limit){
         $log=$sfmBase.'/logs/sfm_pipeline_job_'.$jobId.'_'.date('Ymd_His').'.log';
 
         runStep('prepare_video', 'test -f '.escapeshellarg($videoPath), $log);
-        runStep('extract_sfm_frames', 'rm -rf '.escapeshellarg($sfmBase.'/frames').' && mkdir -p '.escapeshellarg($sfmBase.'/frames').' && ffmpeg -y -i '.escapeshellarg($videoPath).' -vf '.escapeshellarg('fps=3,scale=1920:-1').' -q:v 2 '.escapeshellarg($sfmBase.'/frames/frame_%06d.jpg'), $log);
-        runStep('extract_project_keyframes', 'rm -rf '.escapeshellarg($sfmBase.'/keyframes').' && mkdir -p '.escapeshellarg($sfmBase.'/keyframes').' && ffmpeg -y -i '.escapeshellarg($videoPath).' -vf '.escapeshellarg('fps=0.33,scale=1920:-1').' -q:v 2 '.escapeshellarg($sfmBase.'/keyframes/keyframe_%06d.jpg'), $log);
+        $fpsFilterSfm = sprintf('fps=%s,scale=%d:-1', rtrim(rtrim(sprintf('%.6F', $sfmFps), '0'), '.'), $frameWidth);
+        $fpsFilterKf = sprintf('fps=%s,scale=%d:-1', rtrim(rtrim(sprintf('%.6F', $keyframeFps), '0'), '.'), $frameWidth);
+        $mapArg = $cameraType === 'PHONE_VIDEO' ? ' -map 0:v:0' : '';
+        runStep('extract_sfm_frames', 'rm -rf '.escapeshellarg($sfmBase.'/frames').' && mkdir -p '.escapeshellarg($sfmBase.'/frames').' && ffmpeg -y -i '.escapeshellarg($videoPath).$mapArg.' -vf '.escapeshellarg($fpsFilterSfm).' -q:v 2 '.escapeshellarg($sfmBase.'/frames/frame_%06d.jpg'), $log);
+        runStep('extract_project_keyframes', 'rm -rf '.escapeshellarg($sfmBase.'/keyframes').' && mkdir -p '.escapeshellarg($sfmBase.'/keyframes').' && ffmpeg -y -i '.escapeshellarg($videoPath).$mapArg.' -vf '.escapeshellarg($fpsFilterKf).' -q:v 2 '.escapeshellarg($sfmBase.'/keyframes/keyframe_%06d.jpg'), $log);
 
-        runStepSoft(
-            'build_viewer_keyframes',
-            'php ' . escapeshellarg(__DIR__ . '/sfm_build_viewer_keyframes.php')
-            . ' --order-id=' . $orderId
-            . ' --session-id=' . $sessionId
-            . ' --video-path=' . escapeshellarg($videoPath)
-            . ' --keyframe-fps=0.33 --frame-size=1920 --output-width=4096 --output-height=2048',
-            $log
-        );
-        file_put_contents($sfmBase.'/camera_profile.json', json_encode(['name'=>'insta360_video_test_1920','image_width'=>1920,'image_height'=>1920,'camera_model'=>'OPENCV','fx'=>960.0,'fy'=>960.0,'cx'=>960.0,'cy'=>960.0,'dist'=>[0,0,0,0,0]], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
-        runStep('detect_apriltags', escapeshellarg(SFM_TOOL_BIN).' detect-apriltag-frames --frames '.escapeshellarg($sfmBase.'/frames').' --camera-profile '.escapeshellarg($sfmBase.'/camera_profile.json').' --marker-size-m 0.16 --family tag36h11 --out '.escapeshellarg($sfmBase.'/markers/marker_observations.json'), $log);
+        if ($cameraType === 'INSTA360_DUAL_VIDEO') {
+            runStepSoft(
+                'build_viewer_keyframes',
+                'php ' . escapeshellarg(__DIR__ . '/sfm_build_viewer_keyframes.php')
+                . ' --order-id=' . $orderId
+                . ' --session-id=' . $sessionId
+                . ' --video-path=' . escapeshellarg($videoPath)
+                . ' --keyframe-fps=' . escapeshellarg((string)$keyframeFps) . ' --frame-size=' . $frameWidth . ' --output-width=4096 --output-height=2048',
+                $log
+            );
+            file_put_contents($sfmBase.'/camera_profile.json', json_encode(['name'=>'insta360_video_test_1920','image_width'=>1920,'image_height'=>1920,'camera_model'=>'OPENCV','fx'=>960.0,'fy'=>960.0,'cx'=>960.0,'cy'=>960.0,'dist'=>[0,0,0,0,0]], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+        } else {
+            runStep('build_viewer_keyframes_phone', 'rm -rf ' . escapeshellarg($sfmBase.'/viewer_keyframes') . ' && mkdir -p ' . escapeshellarg($sfmBase.'/viewer_keyframes') . ' && bash -lc ' . escapeshellarg('shopt -s nullglob; cp ' . escapeshellarg($sfmBase.'/keyframes') . '/keyframe_*.jpg ' . escapeshellarg($sfmBase.'/viewer_keyframes/') ), $log);
+            $viewerSummary = [
+                'ok' => true,
+                'viewer_keyframes_count' => countJpgFiles($sfmBase . '/viewer_keyframes', 'keyframe_*.jpg'),
+                'source' => 'phone_video',
+                'preview_type' => 'perspective',
+            ];
+            file_put_contents($sfmBase.'/viewer_keyframes_summary.json', json_encode($viewerSummary, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+            $firstFrame = $sfmBase . '/frames/frame_000001.jpg';
+            $size = is_file($firstFrame) ? @getimagesize($firstFrame) : false;
+            $w = (is_array($size) && isset($size[0]) && (int)$size[0] > 0) ? (int)$size[0] : 1920;
+            $h = (is_array($size) && isset($size[1]) && (int)$size[1] > 0) ? (int)$size[1] : 1080;
+            $f = max($w, $h) * 0.8;
+            file_put_contents($sfmBase.'/camera_profile.json', json_encode(['name'=>'phone_video_'.$w,'image_width'=>$w,'image_height'=>$h,'camera_model'=>'OPENCV','fx'=>$f,'fy'=>$f,'cx'=>$w/2.0,'cy'=>$h/2.0,'dist'=>[0,0,0,0,0]], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+        }
+        runStep('detect_apriltags', escapeshellarg(SFM_TOOL_BIN).' detect-apriltag-frames --frames '.escapeshellarg($sfmBase.'/frames').' --camera-profile '.escapeshellarg($sfmBase.'/camera_profile.json').' --marker-size-m '.escapeshellarg((string)$markerSize).' --family '.escapeshellarg($markerFamily).' --out '.escapeshellarg($sfmBase.'/markers/marker_observations.json'), $log);
         runStep('colmap_feature_extractor', escapeshellarg(COLMAP_BIN).' feature_extractor --database_path '.escapeshellarg($sfmBase.'/colmap/database.db').' --image_path '.escapeshellarg($sfmBase.'/frames').' --ImageReader.single_camera 1', $log);
         runStep('colmap_sequential_matcher', escapeshellarg(COLMAP_BIN).' sequential_matcher --database_path '.escapeshellarg($sfmBase.'/colmap/database.db').' --SequentialMatching.overlap 20', $log);
         runStep('colmap_mapper', 'rm -rf '.escapeshellarg($sfmBase.'/colmap/sparse').' && mkdir -p '.escapeshellarg($sfmBase.'/colmap/sparse').' && '.escapeshellarg(COLMAP_BIN).' mapper --database_path '.escapeshellarg($sfmBase.'/colmap/database.db').' --image_path '.escapeshellarg($sfmBase.'/frames').' --output_path '.escapeshellarg($sfmBase.'/colmap/sparse'), $log);
         runStep('colmap_model_converter', 'mkdir -p '.escapeshellarg($sfmBase.'/colmap/sparse/0_txt').' && '.escapeshellarg(COLMAP_BIN).' model_converter --input_path '.escapeshellarg($sfmBase.'/colmap/sparse/0').' --output_path '.escapeshellarg($sfmBase.'/colmap/sparse/0_txt').' --output_type TXT', $log);
         runStep('parse_colmap_images', escapeshellarg(SFM_TOOL_BIN).' parse-colmap-images --images '.escapeshellarg($sfmBase.'/colmap/sparse/0_txt/images.txt').' --out '.escapeshellarg($sfmBase.'/trajectory/camera_poses.json'), $log);
         runStep('rough_scale', escapeshellarg(SFM_TOOL_BIN).' rough-scale --poses '.escapeshellarg($sfmBase.'/trajectory/camera_poses.json').' --markers '.escapeshellarg($sfmBase.'/markers/marker_observations.json').' --out '.escapeshellarg($sfmBase.'/trajectory/trajectory_scaled.json'), $log);
-        runStep('sfm_finalize_run.php', 'php '.escapeshellarg(__DIR__.'/sfm_finalize_run.php').' --order-id='.$orderId.' --session-dir='.escapeshellarg($sessionDir).' --video-path='.escapeshellarg($videoPath).' --sfm-fps=3 --keyframe-fps=0.33', $log);
+        runStep('sfm_finalize_run.php', 'php '.escapeshellarg(__DIR__.'/sfm_finalize_run.php').' --order-id='.$orderId.' --session-dir='.escapeshellarg($sessionDir).' --video-path='.escapeshellarg($videoPath).' --sfm-fps='.escapeshellarg((string)$sfmFps).' --keyframe-fps='.escapeshellarg((string)$keyframeFps), $log);
         runStep('sfm_materialize_keyframes.php', 'php '.escapeshellarg(__DIR__.'/sfm_materialize_keyframes.php').' --order-id='.$orderId.' --session-id='.$sessionId, $log);
 
         $summary=json_decode((string)@file_get_contents($sfmBase.'/sfm_result_summary.json'),true)?:[];

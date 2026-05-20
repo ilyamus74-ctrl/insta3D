@@ -169,6 +169,9 @@ function selectPoint(idx){
   if (p.preview_type === 'equirectangular') {
     previewTypeBadge.className = 'badge text-bg-success';
     previewTypeBadge.textContent = '360 stitched keyframe';
+  } else if (p.preview_type === 'perspective') {
+    previewTypeBadge.className = 'badge text-bg-primary';
+    previewTypeBadge.textContent = 'phone video keyframe';
   } else {
     previewTypeBadge.className = 'badge text-bg-warning';
     previewTypeBadge.textContent = 'raw fisheye fallback';

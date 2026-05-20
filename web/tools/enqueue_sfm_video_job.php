@@ -20,7 +20,7 @@ if (!isset($dbcnx) || !($dbcnx instanceof mysqli)) {
 
 function fail(string $m): void { fwrite(STDERR, "ERROR: {$m}\n"); exit(1); }
 
-$options = getopt('', ['order-id:', 'session-id:', 'video-path:', 'sfm-fps::', 'keyframe-fps::', 'frame-width::', 'marker-size-m::', 'marker-family::']);
+$options = getopt('', ['order-id:', 'session-id:', 'video-path:', 'camera-type::', 'sfm-fps::', 'keyframe-fps::', 'frame-width::', 'marker-size-m::', 'marker-family::']);
 if (!isset($options['order-id'], $options['session-id'], $options['video-path'])) {
     fail('Usage: php enqueue_sfm_video_job.php --order-id=18 --session-id=42 --video-path=/abs/path.mp4');
 }
@@ -35,9 +35,15 @@ $keyframeFps = isset($options['keyframe-fps']) ? (float)$options['keyframe-fps']
 $frameWidth = isset($options['frame-width']) ? (int)$options['frame-width'] : 1920;
 $markerSize = isset($options['marker-size-m']) ? (float)$options['marker-size-m'] : 0.16;
 $markerFamily = isset($options['marker-family']) ? trim((string)$options['marker-family']) : 'tag36h11';
+$cameraType = isset($options['camera-type']) ? strtoupper(trim((string)$options['camera-type'])) : 'INSTA360_DUAL_VIDEO';
+$allowedCameraTypes = ['INSTA360_DUAL_VIDEO', 'PHONE_VIDEO'];
+if (!in_array($cameraType, $allowedCameraTypes, true)) {
+    fail('camera-type must be one of: INSTA360_DUAL_VIDEO, PHONE_VIDEO');
+}
 
 $payload = json_encode([
     'video_path' => $videoPath,
+    'camera_type' => $cameraType,
     'sfm_fps' => $sfmFps,
     'keyframe_fps' => $keyframeFps,
     'frame_width' => $frameWidth,
