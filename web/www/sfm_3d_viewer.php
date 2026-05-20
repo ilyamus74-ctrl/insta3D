@@ -36,8 +36,16 @@ body,html{height:100%}
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleAxes" checked><label class="form-check-label" for="toggleAxes">Show axes</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleGrid" checked><label class="form-check-label" for="toggleGrid">Show floor grid</label></div>
     <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="toggleOutlierFilter"><label class="form-check-label" for="toggleOutlierFilter">Use outlier filter</label></div>
-    <label for="pointSize" class="form-label mb-1">Point size: <span id="pointSizeValue">0.02</span></label>
-    <input type="range" class="form-range" id="pointSize" min="0.005" max="0.1" step="0.001" value="0.02">
+    <label for="pointSize" class="form-label mb-1">Point size: <span id="pointSizeValue">0.025</span></label>
+    <input type="range" class="form-range" id="pointSize" min="0.005" max="0.12" step="0.001" value="0.025">
+    <div class="d-grid gap-1 mt-2">
+      <button class="btn btn-outline-light btn-sm" id="fitAllBtn">Fit all</button>
+      <button class="btn btn-outline-light btn-sm" id="fitRouteBtn">Fit route</button>
+      <button class="btn btn-outline-light btn-sm" id="fitCloudBtn">Fit cloud</button>
+      <button class="btn btn-outline-light btn-sm" id="topViewBtn">Top view</button>
+      <button class="btn btn-outline-light btn-sm" id="sideViewBtn">Side view</button>
+      <button class="btn btn-outline-info btn-sm" id="cloudBeautyBtn">Cloud beauty</button>
+    </div>
     <div class="d-flex gap-2 mt-2">
       <button class="btn btn-outline-warning btn-sm" id="hideOutliersBtn">Hide far outliers</button>
       <button class="btn btn-outline-light btn-sm" id="resetViewBtn">Reset view</button>
@@ -83,28 +91,31 @@ scene.add(new THREE.AmbientLight(0xffffff,1.0));
 
 const axes = new THREE.AxesHelper(2.0);
 scene.add(axes);
-const grid = new THREE.GridHelper(20, 40);
-grid.rotation.x = 0;
-scene.add(grid);
 
-let modelOffset=new THREE.Vector3(0,0,0);
+const rootGroup = new THREE.Group();
+scene.add(rootGroup);
+let grid = null;
+
 let pointsMesh=null;
-let pointsMaterial=new THREE.PointsMaterial({size:0.02,vertexColors:true});
+let pointsMaterial=new THREE.PointsMaterial({size:0.025,vertexColors:true});
 let originalPointGeometry=null;
 let filteredPointGeometry=null;
 let trajectoryLine=null;
 const keyframeGroup = new THREE.Group();
-scene.add(keyframeGroup);
+rootGroup..add(keyframeGroup);
 const spheres=[];
 
 let resetCameraPos=new THREE.Vector3(0,5,10);
 let resetTarget=new THREE.Vector3(0,0,0);
 let selected=null;
+let latestCombinedBox = null;
+let latestRadius = 5;
+let currentViewMode = 'Fit all';
 
 const formatNum=(v)=>typeof v==='number'?v.toLocaleString():v;
 function updateSummary(){
   const selectedText=selected ? selected.userData.keyframe_index : 'none';
-  summaryEl.innerHTML=`<b>Summary</b><br>points_count: ${formatNum(data.summary.points_count)}<br>camera_poses_count: ${formatNum(data.summary.camera_poses_count)}<br>keyframe_points_count: ${formatNum(data.summary.keyframe_points_count)}<br>point_size: ${pointsMaterial.size.toFixed(3)}<br>selected keyframe: ${selectedText}<br><span class="text-warning">Raw cloud may include outliers.</span>`;
+  summaryEl.innerHTML=`<b>Summary</b><br>view mode: ${currentViewMode}<br>points_count: ${formatNum(data.summary.points_count)}<br>camera_poses_count: ${formatNum(data.summary.camera_poses_count)}<br>keyframe_points_count: ${formatNum(data.summary.keyframe_points_count)}<br>point_size: ${pointsMaterial.size.toFixed(3)}<br>selected keyframe: ${selectedText}<br><span class="text-warning">Raw cloud may include outliers.</span>`;
 }
 
 function percentile(sorted, p){
@@ -149,30 +160,135 @@ function applyOutlierFilter(on){
   }
 }
 
+function getBoxFromObject(obj){
+  if(!obj) return null;
+  const box=new THREE.Box3().setFromObject(obj);
+  return box.isEmpty() ? null : box;
+}
+
+function computeCombinedBox(includePoints=true, includeRoute=true, includeKeyframes=true){
+  const box = new THREE.Box3();
+  let hasAny = false;
+  if(includePoints && pointsMesh){
+    const pointBox=getBoxFromObject(pointsMesh);
+    if(pointBox){ box.union(pointBox); hasAny=true; }
+  }
+  if(includeRoute && trajectoryLine){
+    const routeBox=getBoxFromObject(trajectoryLine);
+    if(routeBox){ box.union(routeBox); hasAny=true; }
+  }
+  if(includeKeyframes && keyframeGroup.children.length){
+    const keyBox=getBoxFromObject(keyframeGroup);
+    if(keyBox){ box.union(keyBox); hasAny=true; }
+  }
+  return hasAny ? box : null;
+}
+
+function recreateGrid(box, center, radius){
+  if(grid) scene.remove(grid);
+  const gridSize=Math.max(10, radius * 2);
+  const floorY=box.min.y;
+  grid=new THREE.GridHelper(gridSize, 40);
+  grid.position.set(0, floorY - center.y, 0);
+  grid.visible=document.getElementById('toggleGrid').checked;
+  scene.add(grid);
+}
+
+function fitBox(box){
+  if(!box) return;
+  const center=new THREE.Vector3();
+  box.getCenter(center);
+  const size=box.getSize(new THREE.Vector3());
+  const radius=Math.max(size.length()*0.5,0.1);
+  latestRadius=radius;
+  camera.near=Math.max(0.001, radius/1000);
+  camera.far=Math.max(1000, radius*20);
+  camera.updateProjectionMatrix();
+  controls.target.copy(center);
+  camera.position.set(center.x + radius*1.3, center.y + radius*0.7, center.z + radius*1.8);
+  controls.minDistance=radius*0.02;
+  controls.maxDistance=radius*20;
+  controls.zoomSpeed=0.6;
+  controls.panSpeed=0.6;
+  resetCameraPos.copy(camera.position);
+  resetTarget.copy(center);
+  controls.update();
+}
+
+function updateSceneBoundsAndCenter(){
+  const box=computeCombinedBox(true, true, true);
+  if(!box) return;
+  latestCombinedBox=box.clone();
+  const center=box.getCenter(new THREE.Vector3());
+  const size=box.getSize(new THREE.Vector3());
+  const radius=Math.max(size.length()*0.5,0.1);
+  rootGroup.position.copy(center.clone().multiplyScalar(-1));
+  const centeredBox=box.clone().translate(center.clone().multiplyScalar(-1));
+  latestCombinedBox=centeredBox.clone();
+  recreateGrid(centeredBox, new THREE.Vector3(0,0,0), radius);
+  fitBox(centeredBox);
+}
+
+function setViewMode(name){
+  currentViewMode=name;
+  updateSummary();
+}
+
+function fitAll(){ const box=computeCombinedBox(true,true,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit all'); }
+function fitRoute(){ const box=computeCombinedBox(false,true,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit route'); }
+function fitCloud(){ const box=computeCombinedBox(true,false,false); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit cloud'); }
+
+function topView(){
+  if(!latestCombinedBox) return;
+  const center=latestCombinedBox.getCenter(new THREE.Vector3());
+  const radius=latestRadius;
+  controls.target.copy(center);
+  camera.position.set(center.x, center.y + radius*2, center.z + 0.001);
+  camera.up.set(0,0,-1);
+  camera.lookAt(center);
+  controls.update();
+
+  setViewMode('Top view');
+}
+
+function sideView(){
+  if(!latestCombinedBox) return;
+  const center=latestCombinedBox.getCenter(new THREE.Vector3());
+  const radius=latestRadius;
+  controls.target.copy(center);
+  camera.position.set(center.x + radius*2, center.y + radius*0.5, center.z + radius*2);
+  camera.up.set(0,1,0);
+  camera.lookAt(center);
+  controls.update();
+  setViewMode('Side view');
+}
+
+function cloudBeauty(){
+  document.getElementById('togglePoints').checked=true;
+  document.getElementById('togglePath').checked=false;
+  document.getElementById('toggleKeyframes').checked=false;
+  document.getElementById('toggleAxes').checked=false;
+  document.getElementById('toggleGrid').checked=false;
+  if(pointsMesh) pointsMesh.visible=true;
+  if(trajectoryLine) trajectoryLine.visible=false;
+  keyframeGroup.visible=false;
+  axes.visible=false;
+  if(grid) grid.visible=false;
+  pointsMaterial.size=0.035;
+  pointSizeSlider.value='0.035';
+  pointSizeValue.textContent='0.035';
+  fitCloud();
+  setViewMode('Cloud beauty');
+}
+
 new PLYLoader().load(data.artifacts.sparse_points_ply_url,(g)=>{
   originalPointGeometry=g;
   g.computeBoundingBox();
-  const box=g.boundingBox;
-  const center=new THREE.Vector3();
-  box.getCenter(center);
-  modelOffset=center.clone().negate();
-
   pointsMesh=new THREE.Points(g,pointsMaterial);
-  pointsMesh.position.copy(modelOffset);
-  scene.add(pointsMesh);
-
-  if(trajectoryLine) trajectoryLine.position.copy(modelOffset);
-  keyframeGroup.position.copy(modelOffset);
-
-  g.computeBoundingSphere();
-  const radius=Math.max(g.boundingSphere?.radius||5,0.1);
-  resetCameraPos.set(0,radius*0.8,radius*2.0);
-  resetTarget.set(0,0,0);
-  camera.position.copy(resetCameraPos);
-  controls.target.copy(resetTarget);
-  controls.update();
+  rootGroup.add(pointsMesh);
 
   applyOutlierFilter(document.getElementById('toggleOutlierFilter').checked);
+  updateSceneBoundsAndCenter();
   updateSummary();
 });
 
@@ -180,8 +296,7 @@ const traj=await (await fetch(data.artifacts.camera_trajectory_url)).json();
 const pts=traj.map(p=>new THREE.Vector3(p.x,p.y,p.z));
 if(pts.length>1){
   trajectoryLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x00aaff}));
-  trajectoryLine.position.copy(modelOffset);
-  scene.add(trajectoryLine);
+  rootGroup.add(trajectoryLine);
 }
 
 const key=await (await fetch(data.artifacts.keyframe_points_url)).json();
@@ -192,6 +307,7 @@ key.forEach((k,i)=>{
   keyframeGroup.add(s);
   spheres.push(s);
 });
+updateSceneBoundsAndCenter();
 
 const ray=new THREE.Raycaster();
 const mouse=new THREE.Vector2();
@@ -222,7 +338,7 @@ document.getElementById('togglePoints').addEventListener('change',(e)=>{if(point
 document.getElementById('togglePath').addEventListener('change',(e)=>{if(trajectoryLine) trajectoryLine.visible=e.target.checked;});
 document.getElementById('toggleKeyframes').addEventListener('change',(e)=>{keyframeGroup.visible=e.target.checked;});
 document.getElementById('toggleAxes').addEventListener('change',(e)=>{axes.visible=e.target.checked;});
-document.getElementById('toggleGrid').addEventListener('change',(e)=>{grid.visible=e.target.checked;});
+document.getElementById('toggleGrid').addEventListener('change',(e)=>{if(grid) grid.visible=e.target.checked;});
 document.getElementById('toggleOutlierFilter').addEventListener('change',(e)=>applyOutlierFilter(e.target.checked));
 document.getElementById('hideOutliersBtn').addEventListener('click',()=>{
   const cb=document.getElementById('toggleOutlierFilter');
@@ -230,9 +346,14 @@ document.getElementById('hideOutliersBtn').addEventListener('click',()=>{
   applyOutlierFilter(true);
 });
 document.getElementById('resetViewBtn').addEventListener('click',()=>{
-  camera.position.copy(resetCameraPos);
-  controls.target.copy(resetTarget);
-  controls.update();
+  fitAll();
+});
+document.getElementById('fitAllBtn').addEventListener('click',()=>fitAll());
+document.getElementById('fitRouteBtn').addEventListener('click',()=>fitRoute());
+document.getElementById('fitCloudBtn').addEventListener('click',()=>fitCloud());
+document.getElementById('topViewBtn').addEventListener('click',()=>topView());
+document.getElementById('sideViewBtn').addEventListener('click',()=>sideView());
+document.getElementById('cloudBeautyBtn').addEventListener('click',()=>cloudBeauty());
 });
 
 updateSummary();
