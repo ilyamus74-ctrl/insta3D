@@ -49,6 +49,14 @@ $summary = json_decode((string)file_get_contents($summaryPath), true);
 if (!is_array($summary)) api3d_json(['ok'=>false,'error'=>'bad_summary'],500);
 
 $prefix = 'orders/' . $orderId . '/sessions/' . $sessionDir . '/sfm/3d/';
+$densePrefix = 'orders/' . $orderId . '/sessions/' . $sessionDir . '/sfm/';
+$denseSummaryPath = '/home/makler/web/storage/' . $densePrefix . 'mesh/dense_model_summary.json';
+$denseSummary = null;
+$denseAvailable = is_file('/home/makler/web/storage/' . $densePrefix . 'dense/fused.ply') && is_file('/home/makler/web/storage/' . $densePrefix . 'mesh/poisson_mesh.ply');
+if ($denseAvailable && is_file($denseSummaryPath)) {
+    $denseSummary = json_decode((string)file_get_contents($denseSummaryPath), true);
+    if (!is_array($denseSummary)) $denseSummary = null;
+}
 api3d_json([
     'ok' => true,
     'summary' => $summary,
@@ -56,5 +64,14 @@ api3d_json([
         'sparse_points_ply_url' => '/media.php?path=' . rawurlencode($prefix . 'sparse_points.ply'),
         'camera_trajectory_url' => '/media.php?path=' . rawurlencode($prefix . 'camera_trajectory.json'),
         'keyframe_points_url' => '/media.php?path=' . rawurlencode($prefix . 'keyframe_points_3d.json'),
+    ],
+
+    'dense' => $denseAvailable ? [
+        'available' => true,
+        'summary' => $denseSummary,
+        'fused_ply_url' => '/media.php?path=' . rawurlencode($densePrefix . 'dense/fused.ply'),
+        'mesh_ply_url' => '/media.php?path=' . rawurlencode($densePrefix . 'mesh/poisson_mesh.ply'),
+    ] : [
+        'available' => false,
     ],
 ]);

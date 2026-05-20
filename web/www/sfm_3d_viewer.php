@@ -30,7 +30,9 @@ body,html{height:100%}
 <div class="controls-panel card">
   <div class="card-body small">
     <div class="mb-2"><b>Display</b></div>
-    <div class="form-check"><input class="form-check-input" type="checkbox" id="togglePoints" checked><label class="form-check-label" for="togglePoints">Show sparse points</label></div>
+    <div class="form-check"><input class="form-check-input" type="checkbox" id="togglePoints" checked><label class="form-check-label" for="togglePoints">Show sparse cloud</label></div>
+    <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleDenseCloud"><label class="form-check-label" for="toggleDenseCloud">Show dense cloud</label></div>
+    <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleMesh"><label class="form-check-label" for="toggleMesh">Show mesh</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="togglePath" checked><label class="form-check-label" for="togglePath">Show camera path</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleKeyframes" checked><label class="form-check-label" for="toggleKeyframes">Show keyframes</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleAxes" checked><label class="form-check-label" for="toggleAxes">Show axes</label></div>
@@ -101,6 +103,8 @@ let pointsMaterial=new THREE.PointsMaterial({size:0.025,vertexColors:true});
 let originalPointGeometry=null;
 let filteredPointGeometry=null;
 let trajectoryLine=null;
+let denseObject=null;
+let meshObject=null;
 const keyframeGroup = new THREE.Group();
 rootGroup.add(keyframeGroup);
 const spheres=[];
@@ -232,6 +236,7 @@ function updateSceneBoundsAndCenter(){
 function setViewMode(name){
   currentViewMode=name;
   updateSummary();
+  if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
 }
 
 function fitAll(){ const box=computeCombinedBox(true,true,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit all'); }
@@ -263,6 +268,23 @@ function sideView(){
   setViewMode('Side view');
 }
 
+function addPlyAsObject(url, target){
+  return new Promise((resolve)=>{
+    new PLYLoader().load(url,(g)=>{
+      g.computeVertexNormals();
+      let obj;
+      if(g.index || (g.getAttribute('position') && g.getAttribute('position').count % 3 === 0 && g.getAttribute('normal'))){
+        obj = new THREE.Mesh(g, new THREE.MeshStandardMaterial({color:0xbfbfbf, metalness:0.1, roughness:0.8, side:THREE.DoubleSide}));
+      } else {
+        obj = new THREE.Points(g, new THREE.PointsMaterial({size:0.01,color:0x77ddff}));
+      }
+      obj.visible=false;
+      rootGroup.add(obj);
+      resolve(obj);
+    },undefined,()=>resolve(null));
+  });
+}
+
 function cloudBeauty(){
   document.getElementById('togglePoints').checked=true;
   document.getElementById('togglePath').checked=false;
@@ -290,6 +312,7 @@ new PLYLoader().load(data.artifacts.sparse_points_ply_url,(g)=>{
   applyOutlierFilter(document.getElementById('toggleOutlierFilter').checked);
   updateSceneBoundsAndCenter();
   updateSummary();
+  if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
 });
 
 const traj=await (await fetch(data.artifacts.camera_trajectory_url)).json();
@@ -307,6 +330,11 @@ key.forEach((k,i)=>{
   keyframeGroup.add(s);
   spheres.push(s);
 });
+
+if(data.dense && data.dense.available){
+  denseObject = await addPlyAsObject(data.dense.fused_ply_url, 'dense');
+  meshObject = await addPlyAsObject(data.dense.mesh_ply_url, 'mesh');
+}
 updateSceneBoundsAndCenter();
 
 const ray=new THREE.Raycaster();
@@ -324,6 +352,7 @@ renderer.domElement.addEventListener('click',(ev)=>{
   const k=selected.userData;
   selectionEl.innerHTML=`<b>Keyframe ${k.keyframe_index}</b><br>${k.keyframe_name}<br>${k.preview_url?`<a href="${k.preview_url}" target="_blank">Preview</a><br>`:''}<a href="/sfm_tour_viewer.php?order_id=${orderId}&session_id=${sessionId}">Open in SfM tour</a>`;
   updateSummary();
+  if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
 });
 
 const pointSizeSlider=document.getElementById('pointSize');
@@ -332,6 +361,7 @@ pointSizeSlider.addEventListener('input',()=>{
   pointsMaterial.size=parseFloat(pointSizeSlider.value);
   pointSizeValue.textContent=pointsMaterial.size.toFixed(3);
   updateSummary();
+  if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
 });
 
 document.getElementById('togglePoints').addEventListener('change',(e)=>{if(pointsMesh) pointsMesh.visible=e.target.checked;});

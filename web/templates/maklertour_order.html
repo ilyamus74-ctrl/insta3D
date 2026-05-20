@@ -192,6 +192,9 @@
                 <a class="btn btn-sm btn-outline-primary" data-sfm-link="tour" href="/sfm_tour_viewer.php?order_id={$order.id}&session_id={$s.id}" target="_blank" style="display:none">View SfM tour</a>
                 <a class="btn btn-sm btn-outline-success" data-sfm-link="diag" href="/sfm_viewer.php?order_id={$order.id}&session_id={$s.id}" target="_blank" style="display:none">View diagnostics</a>
                 <a class="btn btn-sm btn-outline-dark" data-sfm-link="model" href="/sfm_3d_viewer.php?order_id={$order.id}&session_id={$s.id}" target="_blank" style="display:none">View 3D model</a>
+                <button type="button" class="btn btn-sm btn-outline-primary" data-sfm-dense-action="run" disabled>Run dense 3D model</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-sfm-dense-action="refresh">Refresh dense</button>
+                <span class="small text-muted" data-sfm-dense="status">Dense model not generated</span>
               </div>
             </div>
           </div>
@@ -407,6 +410,33 @@ async function sfmRefresh(block, orderId, sessionId){
   const d=await r.json(); if(!r.ok||!d.ok){ throw new Error(d.error||'status_error'); }
   sfmApply(block,d);
 }
+
+
+function sfmDenseApply(block, data){
+  const job=data.latest_job||null;
+  const status=job&&job.status?job.status:'NOT_STARTED';
+  const active=['NOT_STARTED','QUEUED','PENDING','RUNNING'].includes(status);
+  const sparseReady=!!data.sparse_ready;
+  const denseAvail=!!(data.dense&&data.dense.available);
+  const runBtn=block.querySelector('[data-sfm-dense-action="run"]');
+  const statusEl=block.querySelector('[data-sfm-dense="status"]');
+  runBtn.disabled=(!sparseReady)||active||denseAvail;
+  if(!sparseReady){ statusEl.textContent='Dense unavailable: sparse SfM artifacts missing'; }
+  else if(denseAvail){ statusEl.textContent='Dense model ready'; }
+  else if(active){ statusEl.textContent='Dense job already queued/running'; }
+  else { statusEl.textContent='Dense model not generated'; }
+}
+async function sfmDenseRefresh(block, orderId, sessionId){
+  const r=await fetch(`/api/sfm_dense_pipeline.php?order_id=${orderId}&session_id=${sessionId}`);
+  const d=await r.json(); if(!r.ok||!d.ok) throw new Error(d.error||'dense_status_error');
+  sfmDenseApply(block,d);
+}
+async function sfmDenseRun(block, orderId, sessionId){
+  const r=await fetch('/api/sfm_dense_pipeline.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:Number(orderId),session_id:Number(sessionId),quality:'LOW',max_image_size:1024})});
+  const d=await r.json(); if(!r.ok||!d.ok) throw new Error(d.error||'dense_enqueue_error');
+  await sfmDenseRefresh(block,orderId,sessionId);
+}
+
 async function sfmRun(block, orderId, sessionId){
   const r=await fetch('/api/sfm_video_pipeline.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:Number(orderId),session_id:Number(sessionId)})});
   const d=await r.json(); if(!r.ok||!d.ok){ throw new Error(d.error||'enqueue_error'); }

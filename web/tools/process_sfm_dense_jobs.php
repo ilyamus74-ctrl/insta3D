@@ -1,0 +1,42 @@
+<?php
+declare(strict_types=1);
+if (PHP_SAPI !== 'cli') { fwrite(STDERR, "CLI only\n"); exit(1); }
+$connectCandidates = ['/home/makler/web/configs/connectDB.php', __DIR__ . '/../configs/connectDB.php'];
+foreach ($connectCandidates as $f) { if (is_file($f)) { require_once $f; break; } }
+if (!isset($dbcnx) || !($dbcnx instanceof mysqli)) { fwrite(STDERR, "DB init failed\n"); exit(1); }
+const COLMAP_BIN='/usr/local/bin/colmap'; const STORAGE_ROOT='/home/makler/web/storage/orders';
+function logl(string $f,string $m): void { file_put_contents($f, '['.date('Y-m-d H:i:s')."] {$m}\n", FILE_APPEND); }
+function step(string $name,string $cmd,string $log): void { logl($log,"===== START: {$name} ====="); $o=[];$rc=0; exec($cmd.' 2>&1',$o,$rc); if($o) file_put_contents($log,implode("\n",$o)."\n",FILE_APPEND); if($rc!==0) throw new RuntimeException("{$name} failed"); logl($log,"===== DONE: {$name} ====="); }
+function hasOpt(string $sub, string $needle): bool { $o=[];$rc=0; exec(escapeshellarg(COLMAP_BIN).' '.escapeshellarg($sub).' -h 2>&1',$o,$rc); return stripos(implode("\n",$o),$needle)!==false; }
+function fail(mysqli $db,int $id,string $err): void { $s=$db->prepare("UPDATE processing_jobs SET status='FAILED', metric_status='FAILED', error_text=?, updated_at=NOW(6) WHERE id=?"); $s->bind_param('si',$err,$id); $s->execute(); $s->close(); }
+$opts=getopt('', ['limit::','job-id::']); $limit=max(1,(int)($opts['limit']??1)); $jobIdFilter=(int)($opts['job-id']??0); $done=0;
+while($done<$limit){
+ $sql=$jobIdFilter>0?"SELECT * FROM processing_jobs WHERE id={$jobIdFilter} AND job_type='SFM_DENSE_MODEL' LIMIT 1":"SELECT * FROM processing_jobs WHERE job_type='SFM_DENSE_MODEL' AND status IN ('NOT_STARTED','QUEUED','PENDING') ORDER BY id ASC LIMIT 1";
+ $job=$dbcnx->query($sql)->fetch_assoc(); if(!$job) break; $jobId=(int)$job['id'];
+ $u=$dbcnx->prepare("UPDATE processing_jobs SET status='RUNNING',updated_at=NOW(6) WHERE id=? AND status IN ('NOT_STARTED','QUEUED','PENDING')"); $u->bind_param('i',$jobId); $u->execute(); $locked=$u->affected_rows>0; $u->close(); if(!$locked){ if($jobIdFilter>0) break; continue; }
+ try{
+  if(!is_file(COLMAP_BIN)) throw new RuntimeException('colmap missing');
+  $orderId=(int)$job['order_id']; $sessionId=(int)$job['session_id'];
+  $payload=json_decode((string)($job['warning_text']??''),true)?:[]; $quality=strtoupper((string)($payload['quality']??'LOW')); if(!in_array($quality,['LOW','MEDIUM','HIGH'],true)) $quality='LOW'; $maxImageSize=max(256,(int)($payload['max_image_size']??1024));
+  $st=$dbcnx->prepare('SELECT session_dir FROM video_sfm_runs WHERE order_id=? AND session_id=? ORDER BY id DESC LIMIT 1'); $st->bind_param('ii',$orderId,$sessionId); $st->execute(); $row=$st->get_result()->fetch_assoc(); $st->close();
+  $sessionDir=trim((string)($row['session_dir']??'')); if($sessionDir===''||!preg_match('/^[a-zA-Z0-9_-]+$/',$sessionDir)) throw new RuntimeException('session_dir missing');
+  $sfmBase=STORAGE_ROOT."/{$orderId}/sessions/{$sessionDir}/sfm";
+  if(!is_dir($sfmBase.'/frames')) throw new RuntimeException('frames missing'); if(!is_dir($sfmBase.'/colmap/sparse/0')) throw new RuntimeException('sparse model missing');
+  @mkdir($sfmBase.'/dense',0775,true); @mkdir($sfmBase.'/mesh',0775,true); @mkdir($sfmBase.'/logs',0775,true);
+  $ts=date('Ymd_His'); $log=$sfmBase.'/logs/sfm_dense_job_'.$jobId.'_'.$ts.'.log';
+  step('image_undistorter', escapeshellarg(COLMAP_BIN).' image_undistorter --image_path '.escapeshellarg($sfmBase.'/frames').' --input_path '.escapeshellarg($sfmBase.'/colmap/sparse/0').' --output_path '.escapeshellarg($sfmBase.'/dense').' --output_type COLMAP --max_image_size '.(int)$maxImageSize, $log);
+  $pm=escapeshellarg(COLMAP_BIN).' patch_match_stereo --workspace_path '.escapeshellarg($sfmBase.'/dense').' --workspace_format COLMAP --PatchMatchStereo.geom_consistency true';
+  if($quality==='LOW' && hasOpt('patch_match_stereo','PatchMatchStereo.max_image_size')) $pm .= ' --PatchMatchStereo.max_image_size 1024';
+  step('patch_match_stereo',$pm,$log);
+  step('stereo_fusion', escapeshellarg(COLMAP_BIN).' stereo_fusion --workspace_path '.escapeshellarg($sfmBase.'/dense').' --workspace_format COLMAP --input_type geometric --output_path '.escapeshellarg($sfmBase.'/dense/fused.ply'),$log);
+  try { step('poisson_mesher', escapeshellarg(COLMAP_BIN).' poisson_mesher --input_path '.escapeshellarg($sfmBase.'/dense/fused.ply').' --output_path '.escapeshellarg($sfmBase.'/mesh/poisson_mesh.ply'),$log); }
+  catch(Throwable $e){ if(hasOpt('delaunay_mesher','delaunay_mesher')) { step('delaunay_mesher', escapeshellarg(COLMAP_BIN).' delaunay_mesher --input_path '.escapeshellarg($sfmBase.'/dense').' --output_path '.escapeshellarg($sfmBase.'/mesh/poisson_mesh.ply'),$log);} else { throw $e; } }
+  $summary=['ok'=>true,'job_id'=>$jobId,'quality'=>$quality,'max_image_size'=>$maxImageSize,'dense_fused_exists'=>is_file($sfmBase.'/dense/fused.ply'),'mesh_exists'=>is_file($sfmBase.'/mesh/poisson_mesh.ply'),'fused_ply_path'=>'sfm/dense/fused.ply','mesh_ply_path'=>'sfm/mesh/poisson_mesh.ply','log_path'=>'sfm/logs/'.basename($log)];
+  file_put_contents($sfmBase.'/mesh/dense_model_summary.json', json_encode($summary, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+  $warn=json_encode(['dense_summary_path'=>$sfmBase.'/mesh/dense_model_summary.json','fused_ply_path'=>$sfmBase.'/dense/fused.ply','mesh_ply_path'=>$sfmBase.'/mesh/poisson_mesh.ply','log_path'=>$log], JSON_UNESCAPED_SLASHES);
+  $up=$dbcnx->prepare("UPDATE processing_jobs SET status='PROCESSED', metric_status='METRIC_READY', warning_text=?, error_text=NULL, updated_at=NOW(6) WHERE id=?"); $up->bind_param('si',$warn,$jobId); $up->execute(); $up->close();
+  echo "OK job_id={$jobId}\n"; $done++;
+ } catch(Throwable $e){ fail($dbcnx,$jobId,$e->getMessage()); echo "ERROR job_id={$jobId} {$e->getMessage()}\n"; $done++; }
+ if($jobIdFilter>0) break;
+}
+if($done===0) echo "OK\nprocessed_jobs=0\n";
