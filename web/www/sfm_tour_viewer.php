@@ -36,6 +36,7 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary btn-sm" href="/order.php?id=<?php echo $orderId; ?>">← Back to order</a>
       <a class="btn btn-outline-success btn-sm" href="/sfm_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open diagnostics</a>
+      <a class="btn btn-outline-primary btn-sm" href="/sfm_3d_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open 3D model</a>
     </div>
     <div id="statusBox" class="alert alert-secondary mb-0 py-2 px-3">Loading…</div>
   </div>
