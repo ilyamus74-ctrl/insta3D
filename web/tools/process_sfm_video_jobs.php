@@ -2,7 +2,17 @@
 declare(strict_types=1);
 
 if (PHP_SAPI !== 'cli') { fwrite(STDERR, "CLI only\n"); exit(1); }
-require_once __DIR__ . '/../configs/secure.php';
+$connectCandidates = ['/home/makler/web/configs/connectDB.php', __DIR__ . '/../configs/connectDB.php'];
+foreach ($connectCandidates as $connectFile) {
+    if (is_file($connectFile)) {
+        require_once $connectFile;
+        break;
+    }
+}
+if (!isset($dbcnx) || !($dbcnx instanceof mysqli)) {
+    fwrite(STDERR, "ERROR: failed to initialize mysqli via connectDB.php\n");
+    exit(1);
+}
 
 const COLMAP_BIN = '/usr/local/bin/colmap';
 const SFM_TOOL_BIN = '/home/makler/web/tools/sfm_cpp/build/bin/sfm_tool';
@@ -28,7 +38,7 @@ while($processed<$limit){
         : "SELECT * FROM processing_jobs WHERE job_type='SFM_VIDEO_PIPELINE' AND status IN ('NOT_STARTED','QUEUED','PENDING') ORDER BY id ASC LIMIT 1";
     $job=$dbcnx->query($sql)->fetch_assoc(); if(!$job) break;
     $jobId=(int)$job['id'];
-    $u=$dbcnx->prepare("UPDATE processing_jobs SET status='RUNNING',updated_at=NOW(6) WHERE id=? AND status IN ('NOT_STARTED','QUEUED','PENDING','RUNNING')");
+    $u=$dbcnx->prepare("UPDATE processing_jobs SET status='RUNNING',updated_at=NOW(6) WHERE id=? AND status IN ('NOT_STARTED','QUEUED','PENDING')");
     $u->bind_param('i',$jobId); $u->execute(); $locked=$u->affected_rows>0; $u->close(); if(!$locked){ if($jobIdFilter>0) break; continue; }
 
     try {

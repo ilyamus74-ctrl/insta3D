@@ -6,7 +6,17 @@ if (PHP_SAPI !== 'cli') {
     exit(1);
 }
 
-require_once __DIR__ . '/../configs/secure.php';
+$connectCandidates = ['/home/makler/web/configs/connectDB.php', __DIR__ . '/../configs/connectDB.php'];
+foreach ($connectCandidates as $connectFile) {
+    if (is_file($connectFile)) {
+        require_once $connectFile;
+        break;
+    }
+}
+if (!isset($dbcnx) || !($dbcnx instanceof mysqli)) {
+    fwrite(STDERR, "ERROR: failed to initialize mysqli via connectDB.php\n");
+    exit(1);
+}
 
 function fail(string $m): void { fwrite(STDERR, "ERROR: {$m}\n"); exit(1); }
 
