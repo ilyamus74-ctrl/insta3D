@@ -27,7 +27,7 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
 <body class="p-3">
 <div class="container">
   <h3 class="mb-3">SfM / Video reconstruction</h3>
-  <div class="mb-3"><a class="btn btn-outline-secondary btn-sm" href="/order.php?id=<?php echo $orderId; ?>">← Back to order</a></div>
+  <div class="mb-3 d-flex gap-2"><a class="btn btn-outline-secondary btn-sm" href="/order.php?id=<?php echo $orderId; ?>">← Back to order</a><a class="btn btn-outline-success btn-sm" href="/sfm_tour_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open SfM tour viewer</a></div>
   <div id="statusBox" class="alert alert-secondary">Loading…</div>
   <div id="summary" class="row g-2 mb-3"></div>
   <div class="d-flex flex-wrap gap-3 mb-2">
