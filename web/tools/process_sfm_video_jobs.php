@@ -69,9 +69,36 @@ while($processed<$limit){
         $markerSize = isset($payload['marker_size_m']) ? (float)$payload['marker_size_m'] : 0.16;
         $markerFamily = isset($payload['marker_family']) ? (string)$payload['marker_family'] : 'tag36h11';
 
-        $st=$dbcnx->prepare('SELECT app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? LIMIT 1'); $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $sess=$st->get_result()->fetch_assoc(); $st->close();
-        if(!$sess) throw new RuntimeException('capture_session not found');
-        $sessionDir=preg_replace('/[^a-zA-Z0-9_-]/','_',trim((string)$sess['app_session_uuid'])) . '_' . $orderId;
+        $sessionDir = '';
+        $st=$dbcnx->prepare('SELECT session_dir FROM video_sfm_runs WHERE order_id=? AND session_id=? ORDER BY id DESC LIMIT 1');
+        $st->bind_param('ii',$orderId,$sessionId);
+        $st->execute();
+        $runRow=$st->get_result()->fetch_assoc();
+        $st->close();
+
+        if ($runRow && isset($runRow['session_dir'])) {
+            $candidate = trim((string)$runRow['session_dir']);
+            if ($candidate !== '' && preg_match('/^[a-zA-Z0-9_-]+$/', $candidate)) {
+                $sessionDir = $candidate;
+            }
+        }
+
+        if ($sessionDir === '') {
+            $st=$dbcnx->prepare('SELECT app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? LIMIT 1');
+            $st->bind_param('ii',$sessionId,$orderId);
+            $st->execute();
+            $sess=$st->get_result()->fetch_assoc();
+            $st->close();
+            if(!$sess) throw new RuntimeException('capture_session not found');
+
+            $uuid=preg_replace('/[^a-zA-Z0-9_-]/','_',trim((string)$sess['app_session_uuid']));
+            if (preg_match('/_' . preg_quote((string)$orderId, '/') . '$/', $uuid)) {
+                $sessionDir = $uuid;
+            } else {
+                $sessionDir = $uuid . '_' . $orderId;
+            }
+        }
+
         $sessionBase=STORAGE_ROOT."/{$orderId}/sessions/{$sessionDir}"; $realRoot=realpath(STORAGE_ROOT); @mkdir($sessionBase,0775,true);
         $realSession=realpath($sessionBase); if($realRoot===false||$realSession===false||strpos($realSession,$realRoot)!==0) throw new RuntimeException('session path outside storage');
         $sfmBase=$sessionBase.'/sfm'; foreach(['','/frames','/keyframes','/markers','/colmap/sparse','/trajectory','/logs'] as $d){ @mkdir($sfmBase.$d,0775,true); }
