@@ -48,15 +48,39 @@ if ($keyframeFps <= 0 || $frameSize <= 0 || $outputWidth <= 0 || $outputHeight <
 if (!is_file($videoPath)) { fail('video-path not found: ' . $videoPath); }
 if (!is_file($stitcherBin)) { fail('stitcher binary not found: ' . $stitcherBin); }
 
-$stmt = $dbcnx->prepare('SELECT app_session_uuid FROM capture_sessions WHERE id = ? AND order_id = ? LIMIT 1');
-if (!$stmt) { fail('failed to prepare capture session query: ' . $dbcnx->error); }
-$stmt->bind_param('ii', $sessionId, $orderId);
-$stmt->execute();
-$sess = $stmt->get_result()->fetch_assoc();
-$stmt->close();
-if (!$sess) { fail('capture_session not found'); }
+$sessionDir = '';
 
-$sessionDir = preg_replace('/[^a-zA-Z0-9_-]/', '_', trim((string)$sess['app_session_uuid'])) . '_' . $orderId;
+$stmt = $dbcnx->prepare('SELECT session_dir FROM video_sfm_runs WHERE order_id = ? AND session_id = ? ORDER BY id DESC LIMIT 1');
+if (!$stmt) { fail('failed to prepare video_sfm_runs query: ' . $dbcnx->error); }
+$stmt->bind_param('ii', $orderId, $sessionId);
+$stmt->execute();
+$run = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+
+if ($run && isset($run['session_dir'])) {
+    $candidate = trim((string)$run['session_dir']);
+    if ($candidate !== '' && preg_match('/^[a-zA-Z0-9_-]+$/', $candidate)) {
+        $sessionDir = $candidate;
+    }
+}
+
+if ($sessionDir === '') {
+    $stmt = $dbcnx->prepare('SELECT app_session_uuid FROM capture_sessions WHERE id = ? AND order_id = ? LIMIT 1');
+    if (!$stmt) { fail('failed to prepare capture session query: ' . $dbcnx->error); }
+    $stmt->bind_param('ii', $sessionId, $orderId);
+    $stmt->execute();
+    $sess = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$sess) { fail('capture_session not found'); }
+
+    $uuid = preg_replace('/[^a-zA-Z0-9_-]/', '_', trim((string)$sess['app_session_uuid']));
+    if (preg_match('/_' . preg_quote((string)$orderId, '/') . '$/', $uuid)) {
+        $sessionDir = $uuid;
+    } else {
+        $sessionDir = $uuid . '_' . $orderId;
+    }
+}
+
 $sessionBase = STORAGE_ROOT . '/' . $orderId . '/sessions/' . $sessionDir;
 $sfmBase = $sessionBase . '/sfm';
 $realRoot = realpath(STORAGE_ROOT);
