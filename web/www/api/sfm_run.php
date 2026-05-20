@@ -320,7 +320,18 @@ if ($hasSfmKeyframeTable) {
         $res = $stmt->get_result();
         while ($res && ($row = $res->fetch_assoc())) {
             $kfName = (string)($row['keyframe_name'] ?? '');
-            $preview = $kfName !== '' ? sfm_preview_payload($realSessionBase, $orderId, $runSessionDir, $kfName) : ['preview_url' => '', 'raw_preview_url' => '', 'preview_type' => 'fisheye'];
+            $cameraType = strtoupper((string)($run['camera_type'] ?? ''));
+            if ($cameraType === '') {
+                $viewerSummaryPath = $realSessionBase . '/sfm/viewer_keyframes_summary.json';
+                $viewerSummary = is_file($viewerSummaryPath) ? json_decode((string)file_get_contents($viewerSummaryPath), true) : null;
+                if (is_array($viewerSummary) && ($viewerSummary['source'] ?? '') === 'phone_video') {
+                    $cameraType = 'PHONE_VIDEO';
+                } else {
+                    $cameraType = 'INSTA360_DUAL_VIDEO';
+                }
+            }
+            $emptyPreviewType = $cameraType === 'PHONE_VIDEO' ? 'perspective' : 'fisheye';
+            $preview = $kfName !== '' ? sfm_preview_payload($realSessionBase, $orderId, $runSessionDir, $kfName, $cameraType) : ['preview_url' => '', 'raw_preview_url' => '', 'preview_type' => $emptyPreviewType];
             $keyframePoints[] = [
                 'id' => isset($row['id']) ? (int)$row['id'] : null,
                 'keyframe_index' => isset($row['keyframe_index']) ? (int)$row['keyframe_index'] : null,
