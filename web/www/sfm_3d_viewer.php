@@ -345,16 +345,18 @@ document.getElementById('hideOutliersBtn').addEventListener('click',()=>{
   cb.checked=true;
   applyOutlierFilter(true);
 });
-document.getElementById('resetViewBtn').addEventListener('click',()=>{
-  fitAll();
-});
-document.getElementById('fitAllBtn').addEventListener('click',()=>fitAll());
-document.getElementById('fitRouteBtn').addEventListener('click',()=>fitRoute());
-document.getElementById('fitCloudBtn').addEventListener('click',()=>fitCloud());
-document.getElementById('topViewBtn').addEventListener('click',()=>topView());
-document.getElementById('sideViewBtn').addEventListener('click',()=>sideView());
-document.getElementById('cloudBeautyBtn').addEventListener('click',()=>cloudBeauty());
+const bindClick=(id,handler)=>{
+  const btn=document.getElementById(id);
+  if(btn) btn.addEventListener('click',handler);
+};
 
+bindClick('resetViewBtn',fitAll);
+bindClick('fitAllBtn',fitAll);
+bindClick('fitRouteBtn',fitRoute);
+bindClick('fitCloudBtn',fitCloud);
+bindClick('topViewBtn',topView);
+bindClick('sideViewBtn',sideView);
+bindClick('cloudBeautyBtn',cloudBeauty);
 
 updateSummary();
 addEventListener('resize',()=>{camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();renderer.setSize(el.clientWidth,el.clientHeight);});
