@@ -26,6 +26,8 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
     .key-dot.active { fill: #dc3545; stroke: #111; stroke-width: 2; }
     .thumb-btn.active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
     #thumbStrip { white-space: nowrap; }
+    .sfm-hotspot-dot { width: 22px; height: 22px; border-radius: 50%; background: rgba(13, 110, 253, 0.95); border: 2px solid #fff; box-shadow: 0 0 8px rgba(0,0,0,.45); cursor: pointer; }
+    .sfm-hotspot-label { position: absolute; left: 26px; top: -4px; white-space: nowrap; background: rgba(0,0,0,.7); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
   </style>
 </head>
 <body class="p-3">
@@ -180,13 +182,66 @@ function showImageFallback(url) {
   mainPreview.src = url || '';
 }
 
-function showPano(url, rawFallbackUrl) {
+
+function hotspotTooltip(hotSpotDiv, args) {
+  hotSpotDiv.classList.add('sfm-hotspot-dot');
+  const span = document.createElement('span');
+  span.textContent = args.label || '';
+  span.className = 'sfm-hotspot-label';
+  hotSpotDiv.appendChild(span);
+}
+
+function yawToPoint(cur, target) {
+  if (!cur || !target) return 0;
+  const dx = target.x_scaled - cur.x_scaled;
+  const dz = target.z_scaled - cur.z_scaled;
+  return Math.atan2(dx, dz) * 180 / Math.PI;
+}
+
+function buildHotspots(pointIdx) {
+  const spots = [];
+  const cur = keyPoints[pointIdx];
+  if (!cur) return spots;
+
+  if (pointIdx > 0) {
+    const prev = keyPoints[pointIdx - 1];
+    spots.push({
+      pitch: 0,
+      yaw: yawToPoint(cur, prev),
+      type: 'custom',
+      text: '← Previous',
+      cssClass: 'sfm-hotspot sfm-hotspot-prev',
+      createTooltipFunc: hotspotTooltip,
+      createTooltipArgs: { label: '← Previous' },
+      clickHandlerFunc: () => selectPoint(pointIdx - 1)
+    });
+  }
+
+  if (pointIdx < keyPoints.length - 1) {
+    const next = keyPoints[pointIdx + 1];
+    spots.push({
+      pitch: 0,
+      yaw: yawToPoint(cur, next),
+      type: 'custom',
+      text: 'Next →',
+      cssClass: 'sfm-hotspot sfm-hotspot-next',
+      createTooltipFunc: hotspotTooltip,
+      createTooltipArgs: { label: 'Next →' },
+      clickHandlerFunc: () => selectPoint(pointIdx + 1)
+    });
+  }
+
+  return spots;
+}
+
+function showPano(url, rawFallbackUrl, pointIdx) {
   mainPreview.style.display = 'none';
   previewError.style.display = 'none';
   panoViewer.style.display = 'block';
   destroyPano();
 
   try {
+    const hotSpots = buildHotspots(pointIdx);
     panoInstance = pannellum.viewer('panoViewer', {
       type: 'equirectangular',
       panorama: url,
@@ -195,7 +250,8 @@ function showPano(url, rawFallbackUrl) {
       compass: false,
       hfov: 110,
       pitch: 0,
-      yaw: 0
+      yaw: 0,
+      hotSpots
     });
   } catch (e) {
     showImageFallback(rawFallbackUrl || url);
@@ -212,7 +268,7 @@ function selectPoint(idx){
     mainPreview.style.display = 'none';
     previewError.style.display = 'block';
   } else if (p.preview_type === 'equirectangular' && p.preview_url) {
-    showPano(p.preview_url, p.raw_preview_url);
+    showPano(p.preview_url, p.raw_preview_url, selectedIdx);
   } else {
     showImageFallback(p.preview_url || p.raw_preview_url || '');
   }
