@@ -255,6 +255,45 @@ foreach ($cameraTrajectoryRows as $row) {
 }
 $yRange = ($yMin !== null && $yMax !== null) ? ($yMax - $yMin) : null;
 
+$keyframePoints = [];
+$hasSfmKeyframeTable = false;
+$check = $dbcnx->query("SHOW TABLES LIKE 'sfm_keyframe_points'");
+if ($check instanceof mysqli_result && $check->num_rows > 0) {
+    $hasSfmKeyframeTable = true;
+}
+if ($check instanceof mysqli_result) {
+    $check->free();
+}
+
+if ($hasSfmKeyframeTable) {
+    $stmt = $dbcnx->prepare('SELECT id, keyframe_index, keyframe_name, nearest_frame_name, x_scaled, y_scaled, z_scaled, segment_break FROM sfm_keyframe_points WHERE order_id = ? AND session_id = ? AND is_active = 1 ORDER BY keyframe_index ASC');
+    if ($stmt) {
+        $effectiveSessionId = isset($run['session_id']) ? (int)$run['session_id'] : 0;
+        $stmt->bind_param('ii', $orderId, $effectiveSessionId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($res && ($row = $res->fetch_assoc())) {
+            $kfName = (string)($row['keyframe_name'] ?? '');
+            $previewUrl = '';
+            if ($kfName !== '') {
+                $previewUrl = '/storage/orders/' . $orderId . '/sessions/' . rawurlencode($runSessionDir) . '/sfm/keyframes/' . rawurlencode($kfName);
+            }
+            $keyframePoints[] = [
+                'id' => isset($row['id']) ? (int)$row['id'] : null,
+                'keyframe_index' => isset($row['keyframe_index']) ? (int)$row['keyframe_index'] : null,
+                'keyframe_name' => $row['keyframe_name'] ?? null,
+                'nearest_frame_name' => $row['nearest_frame_name'] ?? null,
+                'preview_url' => $previewUrl,
+                'x_scaled' => isset($row['x_scaled']) ? (float)$row['x_scaled'] : null,
+                'y_scaled' => isset($row['y_scaled']) ? (float)$row['y_scaled'] : null,
+                'z_scaled' => isset($row['z_scaled']) ? (float)$row['z_scaled'] : null,
+                'segment_break' => isset($row['segment_break']) ? ((int)$row['segment_break'] === 1) : false,
+            ];
+        }
+        $stmt->close();
+    }
+}
+
 $respRun = [
     'id' => isset($run['id']) ? (int)$run['id'] : null,
     'order_id' => (int)$run['order_id'],
@@ -297,4 +336,5 @@ api_json([
     'summary' => $respSummary,
     'trajectory' => $trajectory,
     'camera_trajectory' => $cameraTrajectory,
+    'keyframe_points' => $keyframePoints,
 ]);

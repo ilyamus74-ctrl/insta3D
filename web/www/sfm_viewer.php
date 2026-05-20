@@ -44,6 +44,22 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
       <img id="pointPreview" alt="keyframe" style="max-width:220px;max-height:140px;display:none;" class="mt-2 border rounded">
     </div>
   </div>
+
+  <div class="card mt-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Video-derived keyframe points</h6>
+        <a id="toggleKeyframeList" href="#" class="small">Open keyframe list</a>
+      </div>
+      <div class="small mb-2">Total materialized points: <span id="materializedCount">0</span></div>
+      <div id="keyframeListWrap" style="display:none; max-height:280px; overflow:auto;">
+        <table class="table table-sm table-striped align-middle">
+          <thead><tr><th>#</th><th>Keyframe</th><th>Nearest frame</th><th>x</th><th>y</th><th>z</th><th>Preview</th></tr></thead>
+          <tbody id="keyframeListBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
 <script>
 const orderId = <?php echo json_encode($orderId); ?>;
@@ -57,6 +73,10 @@ const pointText = document.getElementById('pointText');
 const pointPreview = document.getElementById('pointPreview');
 const toggleFullTrajectory = document.getElementById('toggleFullTrajectory');
 const toggleBreaks = document.getElementById('toggleBreaks');
+const materializedCount = document.getElementById('materializedCount');
+const keyframeListWrap = document.getElementById('keyframeListWrap');
+const keyframeListBody = document.getElementById('keyframeListBody');
+const toggleKeyframeList = document.getElementById('toggleKeyframeList');
 const toggleCrossBreaks = document.getElementById('toggleCrossBreaks');
 let keyframePointEls = [];
 let breakEls = [];
@@ -146,6 +166,23 @@ function drawScene(fullPts, keyPts, yMin, yRange){
   });
   applyToggles();
 }
+
+function renderMaterializedPoints(rows){
+  const items = Array.isArray(rows) ? rows : [];
+  materializedCount.textContent = String(items.length);
+  keyframeListBody.innerHTML = items.map((p)=>{
+    const preview = p.preview_url ? `<a href="${p.preview_url}" target="_blank" rel="noopener">open</a>` : '-';
+    return `<tr><td>${p.keyframe_index ?? '-'}</td><td>${p.keyframe_name ?? '-'}</td><td>${p.nearest_frame_name ?? '-'}</td><td>${fmt(Number(p.x_scaled),3)}</td><td>${fmt(Number(p.y_scaled),3)}</td><td>${fmt(Number(p.z_scaled),3)}</td><td>${preview}</td></tr>`;
+  }).join('');
+}
+
+toggleKeyframeList.addEventListener('click', (e)=>{
+  e.preventDefault();
+  const opened = keyframeListWrap.style.display !== 'none';
+  keyframeListWrap.style.display = opened ? 'none' : '';
+  toggleKeyframeList.textContent = opened ? 'Open keyframe list' : 'Hide keyframe list';
+});
+
 async function load(){
   if (!orderId || !sessionId) { statusBox.textContent = 'Missing order_id/session_id'; statusBox.className='alert alert-danger'; return; }
   const r = await fetch(`/api/sfm_run.php?order_id=${encodeURIComponent(orderId)}&session_id=${encodeURIComponent(sessionId)}`);
@@ -156,6 +193,7 @@ async function load(){
   if (j.run.metric_status !== 'METRIC_READY') warn.innerHTML = '<div class="alert alert-warning">Metric status is not METRIC_READY</div>';
   const fullPts = (j.camera_trajectory || []).filter(p => Number.isFinite(p.x_scaled) && Number.isFinite(p.z_scaled));
   const keyPts = (j.trajectory || []).filter(p => Number.isFinite(p.x_scaled) && Number.isFinite(p.z_scaled));
+  renderMaterializedPoints(j.keyframe_points || []);
   if (!fullPts.length || !keyPts.length) { warn.innerHTML += '<div class="alert alert-secondary">No valid trajectory points</div>'; return; }
   drawScene(fullPts, keyPts, j.summary.y_min, j.summary.y_range_m);
 }
