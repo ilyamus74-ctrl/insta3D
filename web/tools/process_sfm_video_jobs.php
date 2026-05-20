@@ -148,11 +148,24 @@ while($processed<$limit){
         runStep('sfm_finalize_run.php', 'php '.escapeshellarg(__DIR__.'/sfm_finalize_run.php').' --order-id='.$orderId.' --session-dir='.escapeshellarg($sessionDir).' --video-path='.escapeshellarg($videoPath).' --sfm-fps='.escapeshellarg((string)$sfmFps).' --keyframe-fps='.escapeshellarg((string)$keyframeFps), $log);
         runStep('sfm_materialize_keyframes.php', 'php '.escapeshellarg(__DIR__.'/sfm_materialize_keyframes.php').' --order-id='.$orderId.' --session-id='.$sessionId, $log);
 
+        logLine($log, '===== START: export_sparse_3d =====');
+        $exportSparseOk = runStepSoft('export_sparse_3d', 'php '.escapeshellarg(__DIR__.'/sfm_export_sparse_3d.php').' --order-id='.$orderId.' --session-id='.$sessionId, $log);
+        if ($exportSparseOk) {
+            logLine($log, '===== DONE: export_sparse_3d =====');
+        } else {
+            logLine($log, '===== WARNING: export_sparse_3d failed, continuing =====');
+        }
+
         $summary=json_decode((string)@file_get_contents($sfmBase.'/sfm_result_summary.json'),true)?:[];
         $markerData=json_decode((string)@file_get_contents($sfmBase.'/markers/marker_observations.json'),true)?:[];
         $markerCount = isset($markerData['observations'])&&is_array($markerData['observations'])?count($markerData['observations']):(is_array($markerData)?count($markerData):0);
         $metric=((string)($summary['metric_status']??''))==='METRIC_READY'?'METRIC_READY':'NOT_READY';
-        $warn=json_encode(['session_dir'=>$sessionDir,'video_path'=>$videoPath,'sfm_base'=>$sfmBase,'log_path'=>$log,'frames_count'=>(int)($summary['frames_count']??0),'keyframes_count'=>(int)($summary['keyframes_count']??0),'marker_count'=>$markerCount,'poses_count'=>(int)($summary['poses_count']??0)], JSON_UNESCAPED_SLASHES);
+                $warnPayload = ['session_dir'=>$sessionDir,'video_path'=>$videoPath,'sfm_base'=>$sfmBase,'log_path'=>$log,'frames_count'=>(int)($summary['frames_count']??0),'keyframes_count'=>(int)($summary['keyframes_count']??0),'marker_count'=>$markerCount,'poses_count'=>(int)($summary['poses_count']??0)];
+        $sparseSummaryPath = $sfmBase . '/3d/sfm_3d_summary.json';
+        if (is_file($sparseSummaryPath)) {
+            $warnPayload['sparse_3d_summary_path'] = $sparseSummaryPath;
+        }
+        $warn=json_encode($warnPayload, JSON_UNESCAPED_SLASHES);
         $up=$dbcnx->prepare("UPDATE processing_jobs SET status='PROCESSED', metric_status=?, markers_detected_count=?, warning_text=?, error_text=NULL, updated_at=NOW(6) WHERE id=?");
         $up->bind_param('sisi',$metric,$markerCount,$warn,$jobId); $up->execute(); $up->close();
         echo "OK\nprocessed_jobs=1\njob_id={$jobId}\nstatus=PROCESSED\nmetric_status={$metric}\n";
