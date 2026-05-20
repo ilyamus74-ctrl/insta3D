@@ -25,18 +25,10 @@ body,html{height:100%} #viewer{height:80vh;background:#111;border-radius:8px} .o
 <div id="viewer"></div>
 <div class="overlay card"><div class="card-body small"><div id="summary">Loading...</div><hr><div id="selection">Click keyframe sphere.</div></div></div>
 </div>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-  }
-}
-</script>
 <script type="module">
-import * as THREE from 'three';
-import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
+import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+import {OrbitControls} from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+import {PLYLoader} from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/PLYLoader.js';
 const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>;
 const r=await fetch(`/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}`); const data=await r.json(); if(!data.ok) throw new Error(data.error||'load failed');
 document.getElementById('summary').innerHTML=`<b>Summary</b><br>points_count: ${data.summary.points_count}<br>camera_poses_count: ${data.summary.camera_poses_count}<br>keyframe_points_count: ${data.summary.keyframe_points_count}`;

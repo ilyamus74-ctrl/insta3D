@@ -107,33 +107,16 @@ foreach ($lines as $line) {
     if (!is_array($row)) continue;
     $kfName = (string)($row['keyframe_name'] ?? '');
     if ($kfName === '') continue;
-    $frameName = (string)($row['nearest_frame_name'] ?? $row['frame_name'] ?? '');
+    $frameName = (string)($row['frame_name'] ?? '');
     $pose = $poseByFrame[$frameName] ?? null;
-
-    if (!$pose && isset($row['nearest_frame_index'])) {
-        $idx = (int)$row['nearest_frame_index'];
-        foreach ($cameraTrajectory as $p) {
-            if ((int)$p['frame_index'] === $idx) {
-                $pose = $p;
-                break;
-            }
-        }
+    if (!$pose && isset($row['frame_index'])) {
+        $idx = (int)$row['frame_index'];
+        foreach ($cameraTrajectory as $p) { if ((int)$p['frame_index'] === $idx) { $pose = $p; break; } }
     }
-
-    if (!$pose && isset($row['x_scaled'], $row['y_scaled'], $row['z_scaled'])) {
-        $pose = [
-            'x' => (float)$row['x_scaled'],
-            'y' => (float)$row['y_scaled'],
-            'z' => (float)$row['z_scaled'],
-        ];
-    }
-
     if (!$pose) continue;
-
     $keyframePoints[] = [
         'keyframe_index' => (int)($row['keyframe_index'] ?? count($keyframePoints) + 1),
         'keyframe_name' => $kfName,
-        'nearest_frame_name' => $frameName !== '' ? $frameName : null,
         'x' => (float)$pose['x'],
         'y' => (float)$pose['y'],
         'z' => (float)$pose['z'],
