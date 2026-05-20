@@ -164,7 +164,7 @@ function upsertPoint(mysqli $dbcnx, int $orderId, int $sessionId, int $runId, st
     $segmentBreak = !empty($row['segment_break']) ? 1 : 0;
 
     $stmt->bind_param(
-        'iiisisssiiiddddii',
+        'iiisisssiiiddddi',
         $orderId,
         $sessionId,
         $runId,
