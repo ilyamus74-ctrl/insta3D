@@ -13,9 +13,11 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SfM Tour Viewer</title>
   <link href="/assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
   <style>
     #planSvg { width: 100%; height: 420px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; }
     .viewer-shell { background: #111; border-radius: 10px; border: 1px solid #222; min-height: 320px; }
+    #panoViewer { width: 100%; height: 65vh; min-height: 320px; display: none; border-radius: 10px; overflow: hidden; }
     #mainPreview { width: 100%; max-height: 65vh; object-fit: contain; display: none; }
     #previewError { display: none; min-height: 220px; }
     .traj-line { fill: none; stroke: #6c757d; stroke-width: 1.2; opacity: .85; }
@@ -39,6 +41,7 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
   <div class="row g-3">
     <div class="col-12 col-lg-8">
       <div class="viewer-shell d-flex flex-column justify-content-center align-items-center p-2">
+        <div id="panoViewer"></div>
         <img id="mainPreview" alt="Selected keyframe" src="">
         <div id="previewError" class="text-danger fw-semibold text-center py-4">Keyframe image failed to load</div>
       </div>
@@ -79,11 +82,13 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
       <div id="thumbStrip" class="d-flex gap-2 overflow-auto"></div>
     </div></div>
 
+<script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
 <script>
 const orderId = <?php echo json_encode($orderId); ?>;
 const sessionId = <?php echo json_encode($sessionId); ?>;
 const statusBox = document.getElementById('statusBox');
 const planSvg = document.getElementById('planSvg');
+const panoViewer = document.getElementById('panoViewer');
 const mainPreview = document.getElementById('mainPreview');
 const pointMeta = document.getElementById('pointMeta');
 const segmentWarn = document.getElementById('segmentWarn');
@@ -100,6 +105,7 @@ let cameraTrajectory = [];
 let selectedIdx = 0;
 let pointEls = [];
 let thumbEls = [];
+let panoInstance = null;
 
 function fmt(n, d=3){ return Number.isFinite(n) ? Number(n).toFixed(d) : '-'; }
 function linePath(pts, sx, sy){ return pts.map((p, i)=>`${i?'L':'M'}${sx(p.x_scaled).toFixed(1)} ${sy(p.z_scaled).toFixed(1)}`).join(' '); }
@@ -158,11 +164,58 @@ function buildThumbStrip(){
   });
 }
 
+function destroyPano() {
+  if (panoInstance && typeof panoInstance.destroy === 'function') {
+    panoInstance.destroy();
+  }
+  panoInstance = null;
+  panoViewer.innerHTML = '';
+}
+
+function showImageFallback(url) {
+  destroyPano();
+  panoViewer.style.display = 'none';
+  mainPreview.style.display = 'block';
+  previewError.style.display = 'none';
+  mainPreview.src = url || '';
+}
+
+function showPano(url, rawFallbackUrl) {
+  mainPreview.style.display = 'none';
+  previewError.style.display = 'none';
+  panoViewer.style.display = 'block';
+  destroyPano();
+
+  try {
+    panoInstance = pannellum.viewer('panoViewer', {
+      type: 'equirectangular',
+      panorama: url,
+      autoLoad: true,
+      showControls: true,
+      compass: false,
+      hfov: 110,
+      pitch: 0,
+      yaw: 0
+    });
+  } catch (e) {
+    showImageFallback(rawFallbackUrl || url);
+  }
+}
+
 function selectPoint(idx){
   if (!keyPoints.length) return;
   selectedIdx = Math.max(0, Math.min(keyPoints.length - 1, idx));
   const p = keyPoints[selectedIdx];
-  mainPreview.src = p.preview_url || '';
+  if (!(p.preview_url || p.raw_preview_url)) {
+    destroyPano();
+    panoViewer.style.display = 'none';
+    mainPreview.style.display = 'none';
+    previewError.style.display = 'block';
+  } else if (p.preview_type === 'equirectangular' && p.preview_url) {
+    showPano(p.preview_url, p.raw_preview_url);
+  } else {
+    showImageFallback(p.preview_url || p.raw_preview_url || '');
+  }
   pointMeta.innerHTML = `keyframe_index=${p.keyframe_index ?? '-'}<br>keyframe_name=${p.keyframe_name ?? '-'}<br>nearest_frame_name=${p.nearest_frame_name ?? '-'}<br>x_scaled=${fmt(p.x_scaled)} · y_scaled=${fmt(p.y_scaled)} · z_scaled=${fmt(p.z_scaled)}<br>segment_break=${p.segment_break ? 'true' : 'false'}`;
   keyframeCounter.textContent = `Keyframe ${selectedIdx + 1} / ${keyPoints.length}`;
   keyframeName.textContent = p.keyframe_name ?? '';
