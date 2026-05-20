@@ -178,6 +178,23 @@
 <a class="btn btn-sm btn-outline-primary mb-2 ms-1" href="/sfm_tour_viewer.php?order_id={$order.id}&session_id={$s.id}">
   View SfM tour
 </a>
+
+          <div class="card border-light bg-light-subtle mb-3 mt-2" id="sfmVideoBlock{$s.id}" data-session-id="{$s.id}">
+            <div class="card-body py-2">
+              <div class="fw-semibold">SfM Video Reconstruction</div>
+              <div class="small">Status: <span data-sfm="status">NOT_STARTED</span></div>
+              <div class="small">Metric: <span data-sfm="metric">NOT_READY</span></div>
+              <div class="small">Frames: <span data-sfm="frames">0</span> · Keyframes: <span data-sfm="keyframes">0</span> · Markers: <span data-sfm="markers">0</span> · Poses: <span data-sfm="poses">0</span></div>
+              <div class="small">Scale: <span data-sfm="scale">-</span></div>
+              <div class="d-flex gap-2 mt-2 flex-wrap">
+                <button type="button" class="btn btn-sm btn-primary" data-sfm-action="run">Run SfM pipeline</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-sfm-action="refresh">Refresh status</button>
+                <a class="btn btn-sm btn-outline-primary" data-sfm-link="tour" href="/sfm_tour_viewer.php?order_id={$order.id}&session_id={$s.id}" target="_blank" style="display:none">View SfM tour</a>
+                <a class="btn btn-sm btn-outline-success" data-sfm-link="diag" href="/sfm_viewer.php?order_id={$order.id}&session_id={$s.id}" target="_blank" style="display:none">View diagnostics</a>
+                <a class="btn btn-sm btn-outline-dark" data-sfm-link="model" href="/sfm_3d_viewer.php?order_id={$order.id}&session_id={$s.id}" target="_blank" style="display:none">View 3D model</a>
+              </div>
+            </div>
+          </div>
           <div class="mb-2" id="publicLinkState{$s.id}">
             {if $s.public_link && $s.public_link.is_active == 1}
               <span class="badge bg-success">Публичная ссылка активна</span>
@@ -365,6 +382,42 @@ function renderPublicLinkState(sessionId, relativeUrl, isActive){
 async function createPublicLink(sessionId){const r=await fetch('/api/public_tour_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка');renderPublicLinkState(sessionId,d.url||'',true);}
 function copyPublicLink(sessionId){const el=document.getElementById('pubLink'+sessionId);if(!el||!el.value)return;const abs=location.origin+el.value;(navigator.clipboard&&navigator.clipboard.writeText)?navigator.clipboard.writeText(abs).then(()=>{}):window.prompt('Скопируйте ссылку',abs);}
 async function disablePublicLink(sessionId){if(!confirm('Отключить публичную ссылку?'))return;const r=await fetch('/api/public_tour_link_disable.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})});const d=await r.json();if(!r.ok||!d.ok)return alert(d.error||'Ошибка');renderPublicLinkState(sessionId,'',false);}
+function sfmScaleText(run){ if(!run || !run.scale_ok) return '-'; return (Number(run.scale_factor||0).toFixed(6))+' (samples: '+(run.scale_samples||0)+')'; }
+function sfmApply(block, data){
+  const job=data.latest_job||null, run=data.latest_run||null;
+  const status=(job&&job.status)?job.status:(run&&run.status?run.status:'NOT_STARTED');
+  const metric=(job&&job.metric_status)?job.metric_status:(run&&run.metric_status?run.metric_status:'NOT_READY');
+  block.querySelector('[data-sfm=\"status\"]').textContent=status;
+  block.querySelector('[data-sfm=\"metric\"]').textContent=metric;
+  block.querySelector('[data-sfm=\"frames\"]').textContent=(run&&run.frames_count)||0;
+  block.querySelector('[data-sfm=\"keyframes\"]').textContent=(run&&run.keyframes_count)||0;
+  block.querySelector('[data-sfm=\"markers\"]').textContent=(run&&run.marker_count)||((job&&job.markers_detected_count)||0);
+  block.querySelector('[data-sfm=\"poses\"]').textContent=(run&&run.poses_count)||0;
+  block.querySelector('[data-sfm=\"scale\"]').textContent=sfmScaleText(run);
+  const active=['NOT_STARTED','QUEUED','PENDING','RUNNING'].includes(status);
+  const runBtn=block.querySelector('[data-sfm-action=\"run\"]');
+  runBtn.disabled=active;
+  runBtn.textContent=active?'SfM job already queued/running':'Run SfM pipeline';
+  block.querySelector('[data-sfm-link=\"tour\"]').style.display=(data.artifacts&&data.artifacts.sfm_summary&&data.artifacts.viewer_keyframes)?'':'none';
+  block.querySelector('[data-sfm-link=\"model\"]').style.display=(data.artifacts&&data.artifacts.sparse_3d)?'':'none';
+  block.querySelector('[data-sfm-link=\"diag\"]').style.display=run?'':'none';
+}
+async function sfmRefresh(block, orderId, sessionId){
+  const r=await fetch(`/api/sfm_video_pipeline.php?order_id=${orderId}&session_id=${sessionId}`);
+  const d=await r.json(); if(!r.ok||!d.ok){ throw new Error(d.error||'status_error'); }
+  sfmApply(block,d);
+}
+async function sfmRun(block, orderId, sessionId){
+  const r=await fetch('/api/sfm_video_pipeline.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:Number(orderId),session_id:Number(sessionId)})});
+  const d=await r.json(); if(!r.ok||!d.ok){ throw new Error(d.error||'enqueue_error'); }
+  await sfmRefresh(block,orderId,sessionId);
+}
+document.querySelectorAll('[id^=\"sfmVideoBlock\"]').forEach((block)=>{
+  const sessionId=Number(block.getAttribute('data-session-id')); const orderId=Number({/literal}{$order.id}{literal});
+  sfmRefresh(block,orderId,sessionId).catch(()=>{});
+  block.querySelector('[data-sfm-action=\"refresh\"]').addEventListener('click',()=>sfmRefresh(block,orderId,sessionId).catch((e)=>alert('SfM status error: '+e.message)));
+  block.querySelector('[data-sfm-action=\"run\"]').addEventListener('click',()=>sfmRun(block,orderId,sessionId).catch((e)=>alert('SfM enqueue error: '+e.message)));
+});
 </script>
 {/literal}
 {include file="maklertour_footer.html"}
