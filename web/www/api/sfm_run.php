@@ -32,6 +32,18 @@ function can_view_order(array $order, int $userId, string $role): bool {
         );
 }
 
+function sfm_keyframe_media_url(int $orderId, string $sessionDir, string $keyframeName): string {
+    if (!preg_match('/^keyframe_[0-9]{6}\.jpg$/', $keyframeName)) {
+        return '';
+    }
+
+    $relativePath = 'orders/' . $orderId
+        . '/sessions/' . $sessionDir
+        . '/sfm/keyframes/' . $keyframeName;
+
+    return '/media.php?path=' . rawurlencode($relativePath);
+}
+
 $orderIdRaw = $_GET['order_id'] ?? null;
 if (!is_string($orderIdRaw) && !is_int($orderIdRaw)) {
     api_json(['ok' => false, 'error' => 'bad_order_id'], 400);
@@ -193,19 +205,7 @@ foreach ($lines as $line) {
     if ($kfName !== '' && !preg_match('/^keyframe_[0-9]{6}\.jpg$/', $kfName)) {
         $kfName = '';
     }
-    $previewUrl = '';
-    if ($kfName !== '') {
-        $effectiveSessionId = isset($run['session_id']) ? (int)$run['session_id'] : 0;
-        if ($effectiveSessionId > 0) {
-            $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
-                . '&session_id=' . $effectiveSessionId
-                . '&keyframe=' . rawurlencode($kfName);
-        } else {
-            $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
-                . '&session_dir=' . rawurlencode($runSessionDir)
-                . '&keyframe=' . rawurlencode($kfName);
-        }
-    }
+    $previewUrl = $kfName !== '' ? sfm_keyframe_media_url($orderId, $runSessionDir, $kfName) : '';
     $trajectory[] = [
         'keyframe_index' => isset($row['keyframe_index']) ? (int)$row['keyframe_index'] : null,
         'keyframe_name' => $row['keyframe_name'] ?? null,
@@ -283,18 +283,7 @@ if ($hasSfmKeyframeTable) {
         $res = $stmt->get_result();
         while ($res && ($row = $res->fetch_assoc())) {
             $kfName = (string)($row['keyframe_name'] ?? '');
-            $previewUrl = '';
-            if ($kfName !== '') {
-                if ($effectiveSessionId > 0) {
-                    $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
-                        . '&session_id=' . $effectiveSessionId
-                        . '&keyframe=' . rawurlencode($kfName);
-                } else {
-                    $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
-                        . '&session_dir=' . rawurlencode($runSessionDir)
-                        . '&keyframe=' . rawurlencode($kfName);
-                }
-            }
+            $previewUrl = $kfName !== '' ? sfm_keyframe_media_url($orderId, $runSessionDir, $kfName) : '';
             $keyframePoints[] = [
                 'id' => isset($row['id']) ? (int)$row['id'] : null,
                 'keyframe_index' => isset($row['keyframe_index']) ? (int)$row['keyframe_index'] : null,
