@@ -15,11 +15,15 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
   <link href="/assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
   <style>
     #planSvg { width: 100%; height: 420px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; }
-    #mainPreview { width: 100%; max-height: 62vh; object-fit: contain; background: #111; border-radius: 8px; }
+    .viewer-shell { background: #111; border-radius: 10px; border: 1px solid #222; min-height: 320px; }
+    #mainPreview { width: 100%; max-height: 65vh; object-fit: contain; display: none; }
+    #previewError { display: none; min-height: 220px; }
     .traj-line { fill: none; stroke: #6c757d; stroke-width: 1.2; opacity: .85; }
     .key-dot { fill: #0d6efd; stroke: #fff; stroke-width: 1; cursor: pointer; }
     .key-dot.break { fill: #fd7e14; stroke: #842029; }
     .key-dot.active { fill: #dc3545; stroke: #111; stroke-width: 2; }
+    .thumb-btn.active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+    #thumbStrip { white-space: nowrap; }
   </style>
 </head>
 <body class="p-3">
@@ -34,13 +38,26 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
 
   <div class="row g-3">
     <div class="col-12 col-lg-8">
-      <img id="mainPreview" alt="Selected keyframe" src="">
+      <div class="viewer-shell d-flex flex-column justify-content-center align-items-center p-2">
+        <img id="mainPreview" alt="Selected keyframe" src="">
+        <div id="previewError" class="text-danger fw-semibold text-center py-4">Keyframe image failed to load</div>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mt-2 small">
+        <div id="keyframeCounter" class="fw-semibold">Keyframe - / -</div>
+        <div id="keyframeName" class="text-muted"></div>
+      </div>
       <div class="card mt-2">
         <div class="card-body small" id="pointMeta">No point selected.</div>
       </div>
     </div>
     <div class="col-12 col-lg-4">
       <svg id="planSvg" viewBox="0 0 1000 420" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="small mt-2">
+        <span class="badge text-bg-secondary me-1">gray</span> camera trajectory
+        <span class="badge text-bg-primary ms-2 me-1">blue</span> keyframe
+        <span class="badge text-bg-warning ms-2 me-1">orange</span> segment break
+        <span class="badge text-bg-danger ms-2 me-1">red</span> selected
+      </div>
       <div id="segmentWarn" class="alert alert-warning small mt-2 d-none">Segment break / possible jump</div>
     </div>
   </div>
@@ -50,9 +67,14 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
       <button id="prevBtn" class="btn btn-primary btn-sm">Prev</button>
       <button id="nextBtn" class="btn btn-primary btn-sm">Next</button>
     </div>
-    <div class="small text-muted">Use ArrowLeft / ArrowRight for navigation.</div>
+
   </div>
-</div>
+    <div class="small text-muted">Use ArrowLeft / ArrowRight / Home / End for navigation.</div>
+  </div>
+  <div class="card mt-2">
+    <div class="card-body py-2">
+      <div id="thumbStrip" class="d-flex gap-2 overflow-auto"></div>
+    </div></div>
 
 <script>
 const orderId = <?php echo json_encode($orderId); ?>;
@@ -62,6 +84,10 @@ const planSvg = document.getElementById('planSvg');
 const mainPreview = document.getElementById('mainPreview');
 const pointMeta = document.getElementById('pointMeta');
 const segmentWarn = document.getElementById('segmentWarn');
+const keyframeCounter = document.getElementById('keyframeCounter');
+const keyframeName = document.getElementById('keyframeName');
+const previewError = document.getElementById('previewError');
+const thumbStrip = document.getElementById('thumbStrip');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 
@@ -69,6 +95,7 @@ let keyPoints = [];
 let cameraTrajectory = [];
 let selectedIdx = 0;
 let pointEls = [];
+let thumbEls = [];
 
 function fmt(n, d=3){ return Number.isFinite(n) ? Number(n).toFixed(d) : '-'; }
 function linePath(pts, sx, sy){ return pts.map((p, i)=>`${i?'L':'M'}${sx(p.x_scaled).toFixed(1)} ${sy(p.z_scaled).toFixed(1)}`).join(' '); }
@@ -106,13 +133,38 @@ function drawPlan(){
   });
 }
 
+function preloadNeighbors(){
+  const nextUrl = keyPoints[selectedIdx + 1]?.preview_url;
+  const prevUrl = keyPoints[selectedIdx - 1]?.preview_url;
+  if (nextUrl) { const im = new Image(); im.src = nextUrl; }
+  if (prevUrl) { const im = new Image(); im.src = prevUrl; }
+}
+
+function buildThumbStrip(){
+  thumbStrip.innerHTML = '';
+  thumbEls = [];
+  keyPoints.forEach((pt, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-outline-secondary btn-sm thumb-btn';
+    btn.textContent = String(pt.keyframe_index ?? (idx + 1));
+    btn.addEventListener('click', () => selectPoint(idx));
+    thumbStrip.appendChild(btn);
+    thumbEls.push(btn);
+  });
+}
+
 function selectPoint(idx){
   if (!keyPoints.length) return;
   selectedIdx = Math.max(0, Math.min(keyPoints.length - 1, idx));
   const p = keyPoints[selectedIdx];
   mainPreview.src = p.preview_url || '';
-  pointMeta.innerHTML = `keyframe_index=${p.keyframe_index ?? '-'}<br>nearest_frame_name=${p.nearest_frame_name ?? '-'}<br>x_scaled=${fmt(p.x_scaled)} · y_scaled=${fmt(p.y_scaled)} · z_scaled=${fmt(p.z_scaled)}<br>segment_break=${p.segment_break ? 'true' : 'false'}`;
+  pointMeta.innerHTML = `keyframe_index=${p.keyframe_index ?? '-'}<br>keyframe_name=${p.keyframe_name ?? '-'}<br>nearest_frame_name=${p.nearest_frame_name ?? '-'}<br>x_scaled=${fmt(p.x_scaled)} · y_scaled=${fmt(p.y_scaled)} · z_scaled=${fmt(p.z_scaled)}<br>segment_break=${p.segment_break ? 'true' : 'false'}`;
+  keyframeCounter.textContent = `Keyframe ${selectedIdx + 1} / ${keyPoints.length}`;
+  keyframeName.textContent = p.keyframe_name ?? '';
+  thumbEls.forEach((el, i) => el.classList.toggle('active', i === selectedIdx));
   segmentWarn.classList.toggle('d-none', !p.segment_break);
+  preloadNeighbors();
   drawPlan();
 }
 
@@ -124,6 +176,18 @@ nextBtn.addEventListener('click', goNext);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
   if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
+
+  if (e.key === 'Home') { e.preventDefault(); selectPoint(0); }
+  if (e.key === 'End') { e.preventDefault(); selectPoint(keyPoints.length - 1); }
+});
+
+mainPreview.addEventListener('load', () => {
+  previewError.style.display = 'none';
+  mainPreview.style.display = 'block';
+});
+mainPreview.addEventListener('error', () => {
+  mainPreview.style.display = 'none';
+  previewError.style.display = 'block';
 });
 
 async function load(){
@@ -150,6 +214,7 @@ async function load(){
     drawPlan();
     return;
   }
+  buildThumbStrip();
   selectPoint(0);
 }
 
