@@ -149,4 +149,33 @@ photos/originals/     originals for detector/archive/future reconstruction
 photos/originals используются для detector и будущей реконструкции.
 viewer_light/viewer_hd используются только для web tour viewer.
 
+
 EOF
+## SfM video worker
+
+Новый CLI pipeline для video-only SfM через `processing_jobs`.
+
+Enqueue job:
+
+```bash
+php /home/makler/web/tools/enqueue_sfm_video_job.php \
+  --order-id=18 \
+  --session-id=42 \
+  --video-path=/home/makler/web/storage/orders/18/sessions/a4295f07-6aed-466f-8169-06bb0e6ed587_18/videos/89dcaa37-c6b2-4652-9d6c-5fc039497e69_VID_20260519_171531_00_164.mp4
+```
+
+Process queue:
+
+```bash
+php /home/makler/web/tools/process_sfm_video_jobs.php --limit=1
+```
+
+Optional single-job mode:
+
+```bash
+php /home/makler/web/tools/process_sfm_video_jobs.php --job-id=123
+```
+
+`process_sfm_video_jobs.php` берет `job_type=SFM_VIDEO_PIPELINE`, запускает ffmpeg + sfm_tool + colmap + `sfm_finalize_run.php` + `sfm_materialize_keyframes.php` и пишет per-job лог:
+
+`/home/makler/web/storage/orders/<order_id>/sessions/<session_dir>/sfm/logs/sfm_pipeline_job_<job_id>_<timestamp>.log`
