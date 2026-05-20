@@ -44,7 +44,10 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
       </div>
       <div class="d-flex justify-content-between align-items-center mt-2 small">
         <div id="keyframeCounter" class="fw-semibold">Keyframe - / -</div>
-        <div id="keyframeName" class="text-muted"></div>
+        <div class="d-flex align-items-center gap-2">
+          <span id="previewTypeBadge" class="badge text-bg-secondary">-</span>
+          <div id="keyframeName" class="text-muted"></div>
+        </div>
       </div>
       <div class="card mt-2">
         <div class="card-body small" id="pointMeta">No point selected.</div>
@@ -86,6 +89,7 @@ const pointMeta = document.getElementById('pointMeta');
 const segmentWarn = document.getElementById('segmentWarn');
 const keyframeCounter = document.getElementById('keyframeCounter');
 const keyframeName = document.getElementById('keyframeName');
+const previewTypeBadge = document.getElementById('previewTypeBadge');
 const previewError = document.getElementById('previewError');
 const thumbStrip = document.getElementById('thumbStrip');
 const prevBtn = document.getElementById('prevBtn');
@@ -162,6 +166,13 @@ function selectPoint(idx){
   pointMeta.innerHTML = `keyframe_index=${p.keyframe_index ?? '-'}<br>keyframe_name=${p.keyframe_name ?? '-'}<br>nearest_frame_name=${p.nearest_frame_name ?? '-'}<br>x_scaled=${fmt(p.x_scaled)} · y_scaled=${fmt(p.y_scaled)} · z_scaled=${fmt(p.z_scaled)}<br>segment_break=${p.segment_break ? 'true' : 'false'}`;
   keyframeCounter.textContent = `Keyframe ${selectedIdx + 1} / ${keyPoints.length}`;
   keyframeName.textContent = p.keyframe_name ?? '';
+  if (p.preview_type === 'equirectangular') {
+    previewTypeBadge.className = 'badge text-bg-success';
+    previewTypeBadge.textContent = '360 stitched keyframe';
+  } else {
+    previewTypeBadge.className = 'badge text-bg-warning';
+    previewTypeBadge.textContent = 'raw fisheye fallback';
+  }
   thumbEls.forEach((el, i) => el.classList.toggle('active', i === selectedIdx));
   segmentWarn.classList.toggle('d-none', !p.segment_break);
   preloadNeighbors();

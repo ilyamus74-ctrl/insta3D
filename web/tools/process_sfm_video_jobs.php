@@ -30,6 +30,16 @@ function runStep(string $name, string $cmd, string $log): void {
     logLine($log, sprintf('DONE %s elapsed=%.3fs',$name,microtime(true)-$t));
 }
 
+function runStepSoft(string $name, string $cmd, string $log): bool {
+    try {
+        runStep($name, $cmd, $log);
+        return true;
+    } catch (Throwable $e) {
+        logLine($log, "WARNING {$name} failed: " . $e->getMessage());
+        return false;
+    }
+}
+
 $opts=getopt('', ['limit::','job-id::']); $limit=max(1,(int)($opts['limit']??1)); $jobIdFilter=isset($opts['job-id'])?(int)$opts['job-id']:0;
 $processed=0;
 while($processed<$limit){
@@ -58,6 +68,16 @@ while($processed<$limit){
         runStep('prepare_video', 'test -f '.escapeshellarg($videoPath), $log);
         runStep('extract_sfm_frames', 'rm -rf '.escapeshellarg($sfmBase.'/frames').' && mkdir -p '.escapeshellarg($sfmBase.'/frames').' && ffmpeg -y -i '.escapeshellarg($videoPath).' -vf '.escapeshellarg('fps=3,scale=1920:-1').' -q:v 2 '.escapeshellarg($sfmBase.'/frames/frame_%06d.jpg'), $log);
         runStep('extract_project_keyframes', 'rm -rf '.escapeshellarg($sfmBase.'/keyframes').' && mkdir -p '.escapeshellarg($sfmBase.'/keyframes').' && ffmpeg -y -i '.escapeshellarg($videoPath).' -vf '.escapeshellarg('fps=0.33,scale=1920:-1').' -q:v 2 '.escapeshellarg($sfmBase.'/keyframes/keyframe_%06d.jpg'), $log);
+
+        runStepSoft(
+            'build_viewer_keyframes',
+            'php ' . escapeshellarg(__DIR__ . '/sfm_build_viewer_keyframes.php')
+            . ' --order-id=' . $orderId
+            . ' --session-id=' . $sessionId
+            . ' --video-path=' . escapeshellarg($videoPath)
+            . ' --keyframe-fps=0.33 --frame-size=1920 --output-width=4096 --output-height=2048',
+            $log
+        );
         file_put_contents($sfmBase.'/camera_profile.json', json_encode(['name'=>'insta360_video_test_1920','image_width'=>1920,'image_height'=>1920,'camera_model'=>'OPENCV','fx'=>960.0,'fy'=>960.0,'cx'=>960.0,'cy'=>960.0,'dist'=>[0,0,0,0,0]], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
         runStep('detect_apriltags', escapeshellarg(SFM_TOOL_BIN).' detect-apriltag-frames --frames '.escapeshellarg($sfmBase.'/frames').' --camera-profile '.escapeshellarg($sfmBase.'/camera_profile.json').' --marker-size-m 0.16 --family tag36h11 --out '.escapeshellarg($sfmBase.'/markers/marker_observations.json'), $log);
         runStep('colmap_feature_extractor', escapeshellarg(COLMAP_BIN).' feature_extractor --database_path '.escapeshellarg($sfmBase.'/colmap/database.db').' --image_path '.escapeshellarg($sfmBase.'/frames').' --ImageReader.single_camera 1', $log);

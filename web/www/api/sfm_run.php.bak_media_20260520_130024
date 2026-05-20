@@ -32,35 +32,6 @@ function can_view_order(array $order, int $userId, string $role): bool {
         );
 }
 
-function sfm_media_url(int $orderId, string $sessionDir, string $subdir, string $keyframeName): string {
-    if (!preg_match('/^keyframe_[0-9]{6}\.jpg$/', $keyframeName)) {
-        return '';
-    }
-
-    $relativePath = 'orders/' . $orderId
-        . '/sessions/' . $sessionDir
-        . '/sfm/' . trim($subdir, '/')
-        . '/' . $keyframeName;
-
-    return '/media.php?path=' . rawurlencode($relativePath);
-}
-
-function sfm_preview_payload(string $sessionBase, int $orderId, string $sessionDir, string $keyframeName): array {
-    $rawUrl = sfm_media_url($orderId, $sessionDir, 'keyframes', $keyframeName);
-    if ($rawUrl === '') {
-        return ['preview_url' => '', 'raw_preview_url' => '', 'preview_type' => 'fisheye'];
-    }
-    $viewerPath = $sessionBase . '/sfm/viewer_keyframes/' . $keyframeName;
-    if (is_file($viewerPath)) {
-        return [
-            'preview_url' => sfm_media_url($orderId, $sessionDir, 'viewer_keyframes', $keyframeName),
-            'raw_preview_url' => $rawUrl,
-            'preview_type' => 'equirectangular',
-        ];
-    }
-    return ['preview_url' => $rawUrl, 'raw_preview_url' => $rawUrl, 'preview_type' => 'fisheye'];
-}
-
 $orderIdRaw = $_GET['order_id'] ?? null;
 if (!is_string($orderIdRaw) && !is_int($orderIdRaw)) {
     api_json(['ok' => false, 'error' => 'bad_order_id'], 400);
@@ -222,7 +193,19 @@ foreach ($lines as $line) {
     if ($kfName !== '' && !preg_match('/^keyframe_[0-9]{6}\.jpg$/', $kfName)) {
         $kfName = '';
     }
-    $preview = $kfName !== '' ? sfm_preview_payload($realSessionBase, $orderId, $runSessionDir, $kfName) : ['preview_url' => '', 'raw_preview_url' => '', 'preview_type' => 'fisheye'];
+    $previewUrl = '';
+    if ($kfName !== '') {
+        $effectiveSessionId = isset($run['session_id']) ? (int)$run['session_id'] : 0;
+        if ($effectiveSessionId > 0) {
+            $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
+                . '&session_id=' . $effectiveSessionId
+                . '&keyframe=' . rawurlencode($kfName);
+        } else {
+            $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
+                . '&session_dir=' . rawurlencode($runSessionDir)
+                . '&keyframe=' . rawurlencode($kfName);
+        }
+    }
     $trajectory[] = [
         'keyframe_index' => isset($row['keyframe_index']) ? (int)$row['keyframe_index'] : null,
         'keyframe_name' => $row['keyframe_name'] ?? null,
@@ -235,9 +218,7 @@ foreach ($lines as $line) {
         'z_scaled' => isset($row['z_scaled']) ? (float)$row['z_scaled'] : null,
         'distance_from_prev_m' => isset($row['distance_from_prev_m']) ? (float)$row['distance_from_prev_m'] : null,
         'segment_break' => isset($row['segment_break']) ? (bool)$row['segment_break'] : false,
-        'preview_url' => $preview['preview_url'],
-        'raw_preview_url' => $preview['raw_preview_url'],
-        'preview_type' => $preview['preview_type'],
+        'preview_url' => $previewUrl,
     ];
 }
 
@@ -302,15 +283,24 @@ if ($hasSfmKeyframeTable) {
         $res = $stmt->get_result();
         while ($res && ($row = $res->fetch_assoc())) {
             $kfName = (string)($row['keyframe_name'] ?? '');
-            $preview = $kfName !== '' ? sfm_preview_payload($realSessionBase, $orderId, $runSessionDir, $kfName) : ['preview_url' => '', 'raw_preview_url' => '', 'preview_type' => 'fisheye'];
+            $previewUrl = '';
+            if ($kfName !== '') {
+                if ($effectiveSessionId > 0) {
+                    $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
+                        . '&session_id=' . $effectiveSessionId
+                        . '&keyframe=' . rawurlencode($kfName);
+                } else {
+                    $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
+                        . '&session_dir=' . rawurlencode($runSessionDir)
+                        . '&keyframe=' . rawurlencode($kfName);
+                }
+            }
             $keyframePoints[] = [
                 'id' => isset($row['id']) ? (int)$row['id'] : null,
                 'keyframe_index' => isset($row['keyframe_index']) ? (int)$row['keyframe_index'] : null,
                 'keyframe_name' => $row['keyframe_name'] ?? null,
                 'nearest_frame_name' => $row['nearest_frame_name'] ?? null,
-                'preview_url' => $preview['preview_url'],
-                'raw_preview_url' => $preview['raw_preview_url'],
-                'preview_type' => $preview['preview_type'],
+                'preview_url' => $previewUrl,
                 'x_scaled' => isset($row['x_scaled']) ? (float)$row['x_scaled'] : null,
                 'y_scaled' => isset($row['y_scaled']) ? (float)$row['y_scaled'] : null,
                 'z_scaled' => isset($row['z_scaled']) ? (float)$row['z_scaled'] : null,
