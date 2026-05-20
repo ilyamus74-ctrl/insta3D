@@ -111,18 +111,13 @@ if ($realStorageRoot === false) {
 
 $candidateSessionBases = [];
 
-// Primary path from order_id + session_dir.
 $candidateSessionBases[] = $storageRoot . '/' . $orderId . '/sessions/' . $runSessionDir;
 
-// Fallback from absolute video_path stored in video_sfm_runs.
-// Expected: /home/makler/web/storage/orders/<id>/sessions/<session_dir>/videos/<file>.mp4
 $runVideoPath = (string)($run['video_path'] ?? '');
 if ($runVideoPath !== '' && $runVideoPath[0] === '/' && is_file($runVideoPath)) {
     $candidateSessionBases[] = dirname(dirname($runVideoPath));
 }
 
-// Fallback from absolute sfm_base_path if it ever stores full path.
-// Expected: /home/makler/web/storage/orders/<id>/sessions/<session_dir>/sfm
 $runSfmBasePath = (string)($run['sfm_base_path'] ?? '');
 if ($runSfmBasePath !== '' && $runSfmBasePath[0] === '/') {
     $candidateSessionBases[] = basename($runSfmBasePath) === 'sfm'
@@ -160,16 +155,19 @@ if ($realSessionBase === false) {
     ], 404);
 }
 
-// Use resolved real directory name for filesystem-backed URLs.
 $runSessionDir = basename($realSessionBase);
 
 $summaryPath = $realSessionBase . '/sfm/sfm_result_summary.json';
 $keyframeLinksPath = $realSessionBase . '/sfm/keyframe_links.jsonl';
+$cameraTrajectoryPath = $realSessionBase . '/sfm/trajectory/trajectory_scaled.json';
 if (!is_file($summaryPath)) {
     api_json(['ok' => false, 'error' => 'summary file missing'], 404);
 }
 if (!is_file($keyframeLinksPath)) {
     api_json(['ok' => false, 'error' => 'keyframe_links file missing'], 404);
+}
+if (!is_file($cameraTrajectoryPath)) {
+    api_json(['ok' => false, 'error' => 'camera_trajectory file missing'], 404);
 }
 
 $summaryJson = file_get_contents($summaryPath);
@@ -215,6 +213,48 @@ foreach ($lines as $line) {
     ];
 }
 
+
+$cameraTrajectoryJson = file_get_contents($cameraTrajectoryPath);
+if ($cameraTrajectoryJson === false) {
+    api_json(['ok' => false, 'error' => 'camera_trajectory file unreadable'], 500);
+}
+$cameraTrajectoryRaw = json_decode($cameraTrajectoryJson, true);
+if (!is_array($cameraTrajectoryRaw)) {
+    api_json(['ok' => false, 'error' => 'camera_trajectory file invalid'], 500);
+}
+
+$cameraTrajectoryRows = [];
+if (isset($cameraTrajectoryRaw['trajectory_scaled']) && is_array($cameraTrajectoryRaw['trajectory_scaled'])) {
+    $cameraTrajectoryRows = $cameraTrajectoryRaw['trajectory_scaled'];
+} elseif (array_is_list($cameraTrajectoryRaw)) {
+    $cameraTrajectoryRows = $cameraTrajectoryRaw;
+}
+
+$cameraTrajectory = [];
+$yMin = null;
+$yMax = null;
+foreach ($cameraTrajectoryRows as $row) {
+    if (!is_array($row)) {
+        continue;
+    }
+    $x = isset($row['x_scaled']) ? (float)$row['x_scaled'] : null;
+    $y = isset($row['y_scaled']) ? (float)$row['y_scaled'] : null;
+    $z = isset($row['z_scaled']) ? (float)$row['z_scaled'] : null;
+    if (!is_finite((float)$x) || !is_finite((float)$y) || !is_finite((float)$z)) {
+        continue;
+    }
+    $cameraTrajectory[] = [
+        'frame_name' => isset($row['frame_name']) ? (string)$row['frame_name'] : null,
+        'frame_index' => isset($row['frame_index']) ? (int)$row['frame_index'] : null,
+        'x_scaled' => $x,
+        'y_scaled' => $y,
+        'z_scaled' => $z,
+    ];
+    $yMin = $yMin === null ? $y : min($yMin, $y);
+    $yMax = $yMax === null ? $y : max($yMax, $y);
+}
+$yRange = ($yMin !== null && $yMax !== null) ? ($yMax - $yMin) : null;
+
 $respRun = [
     'id' => isset($run['id']) ? (int)$run['id'] : null,
     'order_id' => (int)$run['order_id'],
@@ -245,6 +285,16 @@ $respSummary = [
     'trajectory_path_length_m' => isset($summary['trajectory_path_length_m']) ? (float)$summary['trajectory_path_length_m'] : null,
     'trajectory_max_jump_m' => isset($summary['trajectory_max_jump_m']) ? (float)$summary['trajectory_max_jump_m'] : null,
     'trajectory_segment_breaks' => isset($summary['trajectory_segment_breaks']) ? (int)$summary['trajectory_segment_breaks'] : null,
+    'camera_trajectory_count' => count($cameraTrajectory),
+    'y_min' => $yMin,
+    'y_max' => $yMax,
+    'y_range_m' => $yRange,
 ];
 
-api_json(['ok' => true, 'run' => $respRun, 'summary' => $respSummary, 'trajectory' => $trajectory]);
+api_json([
+    'ok' => true,
+    'run' => $respRun,
+    'summary' => $respSummary,
+    'trajectory' => $trajectory,
+    'camera_trajectory' => $cameraTrajectory,
+]);
