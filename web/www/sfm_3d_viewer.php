@@ -102,7 +102,7 @@ let originalPointGeometry=null;
 let filteredPointGeometry=null;
 let trajectoryLine=null;
 const keyframeGroup = new THREE.Group();
-rootGroup..add(keyframeGroup);
+rootGroup.add(keyframeGroup);
 const spheres=[];
 
 let resetCameraPos=new THREE.Vector3(0,5,10);
@@ -354,7 +354,7 @@ document.getElementById('fitCloudBtn').addEventListener('click',()=>fitCloud());
 document.getElementById('topViewBtn').addEventListener('click',()=>topView());
 document.getElementById('sideViewBtn').addEventListener('click',()=>sideView());
 document.getElementById('cloudBeautyBtn').addEventListener('click',()=>cloudBeauty());
-});
+
 
 updateSummary();
 addEventListener('resize',()=>{camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();renderer.setSize(el.clientWidth,el.clientHeight);});
