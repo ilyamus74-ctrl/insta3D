@@ -195,7 +195,16 @@ foreach ($lines as $line) {
     }
     $previewUrl = '';
     if ($kfName !== '') {
-        $previewUrl = '/storage/orders/' . $orderId . '/sessions/' . rawurlencode($runSessionDir) . '/sfm/keyframes/' . rawurlencode($kfName);
+        $effectiveSessionId = isset($run['session_id']) ? (int)$run['session_id'] : 0;
+        if ($effectiveSessionId > 0) {
+            $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
+                . '&session_id=' . $effectiveSessionId
+                . '&keyframe=' . rawurlencode($kfName);
+        } else {
+            $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
+                . '&session_dir=' . rawurlencode($runSessionDir)
+                . '&keyframe=' . rawurlencode($kfName);
+        }
     }
     $trajectory[] = [
         'keyframe_index' => isset($row['keyframe_index']) ? (int)$row['keyframe_index'] : null,
@@ -276,7 +285,15 @@ if ($hasSfmKeyframeTable) {
             $kfName = (string)($row['keyframe_name'] ?? '');
             $previewUrl = '';
             if ($kfName !== '') {
-                $previewUrl = '/storage/orders/' . $orderId . '/sessions/' . rawurlencode($runSessionDir) . '/sfm/keyframes/' . rawurlencode($kfName);
+                if ($effectiveSessionId > 0) {
+                    $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
+                        . '&session_id=' . $effectiveSessionId
+                        . '&keyframe=' . rawurlencode($kfName);
+                } else {
+                    $previewUrl = '/api/sfm_keyframe_image.php?order_id=' . $orderId
+                        . '&session_dir=' . rawurlencode($runSessionDir)
+                        . '&keyframe=' . rawurlencode($kfName);
+                }
             }
             $keyframePoints[] = [
                 'id' => isset($row['id']) ? (int)$row['id'] : null,
