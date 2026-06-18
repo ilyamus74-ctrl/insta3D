@@ -22,6 +22,9 @@ source "$CONFIG"
 : "${STATION_USER:?missing STATION_USER}"
 : "${STATION_SSH_KEY:?missing STATION_SSH_KEY}"
 : "${STATION_BASE:?missing STATION_BASE}"
+COLMAP_MODE="${COLMAP_MODE:-native}"
+COLMAP_BIN="${COLMAP_BIN:-colmap}"
+COLMAP_IMAGE="${COLMAP_IMAGE:-}"
 
 SSH_OPTS=(-i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new)
 SSH=(ssh "${SSH_OPTS[@]}" "${STATION_USER}@${STATION_HOST}")
@@ -34,7 +37,10 @@ printf -v Q_BASE '%q' "$STATION_BASE"
 printf -v Q_JOB '%q' "$JOB_ID"
 printf -v Q_OUTPUT '%q' "$REMOTE_OUTPUT"
 printf -v Q_LOG '%q' "$REMOTE_LOG"
-
+printf -v Q_STATION_BASE '%q' "$STATION_BASE"
+printf -v Q_COLMAP_MODE '%q' "$COLMAP_MODE"
+printf -v Q_COLMAP_BIN '%q' "$COLMAP_BIN"
+printf -v Q_COLMAP_IMAGE '%q' "$COLMAP_IMAGE"
 REMOTE_CMD="test -d $Q_FRAMES"
 
 echo "==> Check remote frames directory"
@@ -47,7 +53,7 @@ echo "==> Prepare station dirs"
 "${SSH[@]}" "mkdir -p $Q_OUTPUT $Q_BASE/logs $Q_BASE/status"
 
 echo "==> Start COLMAP sparse reconstruction job $JOB_ID"
-"${SSH[@]}" "nohup $Q_BASE/scripts/process_colmap_sparse.sh $Q_JOB $Q_FRAMES $Q_OUTPUT > $Q_LOG 2>&1 &"
+"${SSH[@]}" "STATION_BASE=$Q_STATION_BASE COLMAP_MODE=$Q_COLMAP_MODE COLMAP_BIN=$Q_COLMAP_BIN COLMAP_IMAGE=$Q_COLMAP_IMAGE nohup $Q_BASE/scripts/process_colmap_sparse.sh $Q_JOB $Q_FRAMES $Q_OUTPUT > $Q_LOG 2>&1 &"
 
 echo "==> Started"
 echo "Status:"
