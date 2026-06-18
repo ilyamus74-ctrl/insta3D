@@ -13,4 +13,7 @@ STATION_BASE="/home/makler_storage"
 INSTALL_PACKAGES="1"
 
 # Fail install_station.sh if COLMAP is unavailable after package installation/checks.
+COLMAP_MODE="podman"
+COLMAP_BIN="colmap"
+COLMAP_IMAGE="docker.io/colmap/colmap:latest"
 REQUIRE_COLMAP="1"
