@@ -26,8 +26,10 @@ SSH=(ssh -i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new "${STATION_US
 SCP=(scp -i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new)
 LOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ ! -f "$LOCAL_DIR/scripts/process_extract_frames.sh" ]]; then
-  echo "ERROR: local script not found: $LOCAL_DIR/scripts/process_extract_frames.sh" >&2
+shopt -s nullglob
+SCRIPTS=("$LOCAL_DIR"/scripts/*.sh)
+if (( ${#SCRIPTS[@]} == 0 )); then
+  echo "ERROR: no scripts found in $LOCAL_DIR/scripts" >&2
   exit 1
 fi
 
@@ -43,11 +45,11 @@ echo "==> Create station directories under $STATION_BASE"
   '$STATION_BASE/logs' \
   '$STATION_BASE/status' \
   '$STATION_BASE/scripts'"
-echo "==> Upload process_extract_frames.sh"
-"${SCP[@]}" "$LOCAL_DIR/scripts/process_extract_frames.sh" "${STATION_USER}@${STATION_HOST}:$STATION_BASE/scripts/process_extract_frames.sh"
+echo "==> Upload station processing scripts"
+"${SCP[@]}" "${SCRIPTS[@]}" "${STATION_USER}@${STATION_HOST}:$STATION_BASE/scripts/"
 
 echo "==> chmod scripts"
-"${SSH[@]}" "chmod +x '$STATION_BASE/scripts/process_extract_frames.sh'"
+"${SSH[@]}" "chmod +x '$STATION_BASE'/scripts/*.sh"
 echo "==> Check station tools"
 "${SSH[@]}" 'set -u
 for tool in ffmpeg ffprobe nvidia-smi; do

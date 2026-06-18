@@ -2,7 +2,7 @@
 
 `web/remote_station` contains the web-server-side scripts used to control a GPU station over SSH through WireGuard.
 
-The station does **not** poll the API. The web server copies input files to the station, starts processing over SSH, reads `status.json`, and fetches output files back.
+The station does **not** poll the API. The web server copies or references input data on the station, starts processing over SSH, reads `status.json`, and fetches output files back.
 
 ## Files
 
@@ -13,10 +13,12 @@ web/remote_station/
 ├── install_station.sh
 ├── deploy_station.sh
 ├── run_extract_frames_job.sh
+├── run_colmap_sparse_job.sh
 ├── get_station_status.sh
 ├── fetch_job_result.sh
 └── scripts/
-    └── process_extract_frames.sh
+    ├── process_extract_frames.sh
+    └── process_colmap_sparse.sh
 ```
 
 ## Station config
@@ -48,7 +50,7 @@ Run once from the web server:
 ./install_station.sh ./stations.conf
 ```
 
-The installer checks SSH access, creates this remote directory layout, uploads `scripts/process_extract_frames.sh`, marks it executable, and checks `ffmpeg`, `ffprobe`, `nvidia-smi`, plus optional `colmap`:
+The installer checks SSH access, creates this remote directory layout, uploads all `scripts/*.sh`, marks them executable, and checks `ffmpeg`, `ffprobe`, `nvidia-smi`, plus optional `colmap`. Missing `colmap` prints a warning but does not fail installation.
 
 ```text
 /home/makler_storage/
@@ -70,52 +72,70 @@ After changing local scripts, deploy them to the station:
 
 This copies `scripts/*.sh` into `$STATION_BASE/scripts/` and runs `chmod +x` remotely.
 
-## Run a test extract-frames job
+## Extract frames test
+
+Start an extract-frames job from a local video file:
 
 ```bash
-./run_extract_frames_job.sh ./stations.conf test001 /path/to/video.mp4
+./run_extract_frames_job.sh ./stations.conf 1 /path/to/video.mp4
+watch -n 2 './get_station_status.sh ./stations.conf 1'
+./fetch_job_result.sh ./stations.conf 1 ./output
 ```
 
-The runner copies the video to:
+The runner copies the video to `$STATION_BASE/incoming/`, starts `$STATION_BASE/scripts/process_extract_frames.sh` with `nohup`, and writes frames to `$STATION_BASE/output/job_1/frames` as `frame_000001.jpg`, `frame_000002.jpg`, etc.
+
+## COLMAP sparse reconstruction test
+
+After frames are extracted, start sparse reconstruction against the remote frames directory:
+
+```bash
+./run_colmap_sparse_job.sh ./stations.conf 2 /home/makler_storage/output/job_1/frames
+watch -n 2 './get_station_status.sh ./stations.conf 2'
+./fetch_job_result.sh ./stations.conf 2 ./output
+```
+
+The runner verifies the remote frames directory exists, then starts `$STATION_BASE/scripts/process_colmap_sparse.sh` with `nohup`. COLMAP output is written to `$STATION_BASE/output/job_2/colmap`:
 
 ```text
-$STATION_BASE/incoming/job_test001_video.mp4
+/home/makler_storage/output/job_2/colmap/
+├── database.db
+├── sparse/
+├── logs/
+└── result.json
 ```
 
-Then it starts the remote job with `nohup`:
+During COLMAP feature extraction and matching, check GPU activity on the station with:
 
-```text
-$STATION_BASE/scripts/process_extract_frames.sh test001 <remote_input> $STATION_BASE/output/job_test001/frames
+```bash
+watch -n 1 nvidia-smi
 ```
-
-Frames are written as `frame_000001.jpg`, `frame_000002.jpg`, etc.
 
 ## Check status
 
 ```bash
-./get_station_status.sh ./stations.conf test001
+./get_station_status.sh ./stations.conf 1
 ```
 
-The command prints `$STATION_BASE/status/job_test001.json`. If it is not present yet, it returns:
+The command prints `$STATION_BASE/status/job_<job_id>.json`. If it is not present yet, it returns:
 
 ```json
 {"status":"UNKNOWN"}
 ```
 
-Statuses include `RUNNING`, `DONE`, and `ERROR`, with `progress_percent` and `eta_sec` while the job is running.
+Statuses include `RUNNING`, `DONE`, and `ERROR`, with `progress_percent` and `eta_sec` while the job is running. COLMAP stages currently use `eta_sec: -1` because exact ETA is not estimated yet.
 
 ## Fetch result
 
 ```bash
-./fetch_job_result.sh ./stations.conf test001 ./results
+./fetch_job_result.sh ./stations.conf 1 ./output
 ```
 
-This creates `./results/job_test001/` and fetches:
+This creates `./output/job_<job_id>/` and fetches:
 
-- `$STATION_BASE/output/job_test001/`
-- `$STATION_BASE/status/job_test001.json`
-- `$STATION_BASE/logs/job_test001.log`
-- `$STATION_BASE/logs/job_test001.nohup.log`
+- `$STATION_BASE/output/job_<job_id>/`
+- `$STATION_BASE/status/job_<job_id>.json`
+- `$STATION_BASE/logs/job_<job_id>.log`
+- `$STATION_BASE/logs/job_<job_id>.nohup.log`
 
 ## Notes
 
