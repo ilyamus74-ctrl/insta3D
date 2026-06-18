@@ -19,6 +19,8 @@ COLMAP_LOG_DIR="$OUTPUT_DIR/logs"
 COLMAP_MODE="${COLMAP_MODE:-native}"
 COLMAP_BIN="${COLMAP_BIN:-colmap}"
 COLMAP_IMAGE="${COLMAP_IMAGE:-}"
+COLMAP_MATCHER="${COLMAP_MATCHER:-sequential}"
+COLMAP_SEQUENTIAL_OVERLAP="${COLMAP_SEQUENTIAL_OVERLAP:-10}"
 
 mkdir -p "$BASE/status" "$BASE/logs"
 
@@ -74,6 +76,17 @@ run_colmap() {
   esac
 }
 
+validate_colmap_matcher() {
+  case "$COLMAP_MATCHER" in
+    sequential|exhaustive)
+      ;;
+    *)
+      write_status "ERROR" 0 -1 "Unsupported COLMAP_MATCHER: $COLMAP_MATCHER"
+      exit 1
+      ;;
+  esac
+}
+
 validate_colmap() {
   case "$COLMAP_MODE" in
     native)
@@ -92,6 +105,7 @@ validate_colmap() {
       fi
 
       "$COLMAP_BIN" feature_extractor -h >/dev/null
+      "$COLMAP_BIN" sequential_matcher -h >/dev/null
       "$COLMAP_BIN" exhaustive_matcher -h >/dev/null
       "$COLMAP_BIN" mapper -h >/dev/null
       ;;
@@ -109,6 +123,7 @@ validate_colmap() {
 
       podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable "$COLMAP_IMAGE" colmap help >/dev/null
       podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable "$COLMAP_IMAGE" colmap feature_extractor -h >/dev/null
+      podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable "$COLMAP_IMAGE" colmap sequential_matcher -h >/dev/null
       podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable "$COLMAP_IMAGE" colmap exhaustive_matcher -h >/dev/null
       podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable "$COLMAP_IMAGE" colmap mapper -h >/dev/null
       ;;
@@ -123,6 +138,7 @@ validate_colmap() {
 exec 2>>"$LOG_FILE"
 
 write_status "RUNNING" 0 -1 "Starting COLMAP sparse reconstruction"
+validate_colmap_matcher
 validate_colmap
 
 if [[ ! -d "$FRAMES_DIR" ]]; then
@@ -147,14 +163,30 @@ write_status "RUNNING" 15 -1 "COLMAP feature extraction"
 run_colmap feature_extractor \
   --database_path "$DATABASE_PATH" \
   --image_path "$FRAMES_DIR" \
-  --FeatureExtraction.use_gpu 1
+  --FeatureExtraction.use_gpu 1 \
   > "$COLMAP_LOG_DIR/feature_extractor.log" 2>&1
 
-write_status "RUNNING" 45 -1 "COLMAP feature matching"
-run_colmap exhaustive_matcher \
-  --database_path "$DATABASE_PATH" \
-  --FeatureMatching.use_gpu 1
-  > "$COLMAP_LOG_DIR/exhaustive_matcher.log" 2>&1
+case "$COLMAP_MATCHER" in
+  sequential)
+    write_status "RUNNING" 45 -1 "COLMAP sequential feature matching"
+    run_colmap sequential_matcher \
+      --database_path "$DATABASE_PATH" \
+      --FeatureMatching.use_gpu 1 \
+      --SequentialMatching.overlap "$COLMAP_SEQUENTIAL_OVERLAP" \
+      > "$COLMAP_LOG_DIR/sequential_matcher.log" 2>&1
+    ;;
+  exhaustive)
+    write_status "RUNNING" 45 -1 "COLMAP exhaustive feature matching"
+    run_colmap exhaustive_matcher \
+      --database_path "$DATABASE_PATH" \
+      --FeatureMatching.use_gpu 1 \
+      > "$COLMAP_LOG_DIR/exhaustive_matcher.log" 2>&1
+    ;;
+  *)
+    write_status "ERROR" 0 -1 "Unsupported COLMAP_MATCHER: $COLMAP_MATCHER"
+    exit 1
+    ;;
+esac
 
 write_status "RUNNING" 70 -1 "COLMAP mapper"
 run_colmap mapper \
@@ -180,6 +212,8 @@ cat > "$OUTPUT_DIR/result.json" <<JSON
   "colmap_mode": "$COLMAP_MODE",
   "colmap_bin": "$COLMAP_BIN",
   "colmap_image": "$COLMAP_IMAGE",
+  "colmap_matcher": "$COLMAP_MATCHER",
+  "colmap_sequential_overlap": "$COLMAP_SEQUENTIAL_OVERLAP",
   "models": $MODEL_COUNT,
   "finished_at": "$(date -Iseconds)"
 }

@@ -25,6 +25,8 @@ source "$CONFIG"
 COLMAP_MODE="${COLMAP_MODE:-native}"
 COLMAP_BIN="${COLMAP_BIN:-colmap}"
 COLMAP_IMAGE="${COLMAP_IMAGE:-}"
+COLMAP_MATCHER="${COLMAP_MATCHER:-sequential}"
+COLMAP_SEQUENTIAL_OVERLAP="${COLMAP_SEQUENTIAL_OVERLAP:-10}"
 
 SSH_OPTS=(-i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new)
 SSH=(ssh "${SSH_OPTS[@]}" "${STATION_USER}@${STATION_HOST}")
@@ -41,6 +43,8 @@ printf -v Q_STATION_BASE '%q' "$STATION_BASE"
 printf -v Q_COLMAP_MODE '%q' "$COLMAP_MODE"
 printf -v Q_COLMAP_BIN '%q' "$COLMAP_BIN"
 printf -v Q_COLMAP_IMAGE '%q' "$COLMAP_IMAGE"
+printf -v Q_COLMAP_MATCHER '%q' "$COLMAP_MATCHER"
+printf -v Q_COLMAP_SEQUENTIAL_OVERLAP '%q' "$COLMAP_SEQUENTIAL_OVERLAP"
 REMOTE_CMD="test -d $Q_FRAMES"
 
 echo "==> Check remote frames directory"
@@ -53,7 +57,7 @@ echo "==> Prepare station dirs"
 "${SSH[@]}" "mkdir -p $Q_OUTPUT $Q_BASE/logs $Q_BASE/status"
 
 echo "==> Start COLMAP sparse reconstruction job $JOB_ID"
-"${SSH[@]}" "STATION_BASE=$Q_STATION_BASE COLMAP_MODE=$Q_COLMAP_MODE COLMAP_BIN=$Q_COLMAP_BIN COLMAP_IMAGE=$Q_COLMAP_IMAGE nohup $Q_BASE/scripts/process_colmap_sparse.sh $Q_JOB $Q_FRAMES $Q_OUTPUT > $Q_LOG 2>&1 &"
+"${SSH[@]}" "STATION_BASE=$Q_STATION_BASE COLMAP_MODE=$Q_COLMAP_MODE COLMAP_BIN=$Q_COLMAP_BIN COLMAP_IMAGE=$Q_COLMAP_IMAGE COLMAP_MATCHER=$Q_COLMAP_MATCHER COLMAP_SEQUENTIAL_OVERLAP=$Q_COLMAP_SEQUENTIAL_OVERLAP nohup $Q_BASE/scripts/process_colmap_sparse.sh $Q_JOB $Q_FRAMES $Q_OUTPUT > $Q_LOG 2>&1 &"
 
 echo "==> Started"
 echo "Status:"
