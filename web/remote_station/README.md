@@ -38,6 +38,8 @@ STATION_HOST="10.77.0.2"
 STATION_USER="root"
 STATION_SSH_KEY="/root/.ssh/makler_grafikstation_ed25519"
 STATION_BASE="/home/makler_storage"
+INSTALL_PACKAGES="1"
+REQUIRE_COLMAP="1"
 ```
 
 `STATION_HOST` should be the WireGuard/private address or DNS name reachable from the web server.
@@ -50,7 +52,7 @@ Run once from the web server:
 ./install_station.sh ./stations.conf
 ```
 
-The installer checks SSH access, creates this remote directory layout, uploads all `scripts/*.sh`, marks them executable, and checks `ffmpeg`, `ffprobe`, `nvidia-smi`, plus optional `colmap`. Missing `colmap` prints a warning but does not fail installation.
+The installer keeps the current SSH-control architecture: it connects from the web server to the station over SSH, checks `hostname && whoami`, detects the remote OS from `/etc/os-release`, optionally installs supported packages, creates the remote directory layout, uploads all `scripts/*.sh`, marks them executable, and runs a final health check. It does not install a systemd service, API polling worker, or anything on Android.
 
 ```text
 /home/makler_storage/
@@ -60,6 +62,39 @@ The installer checks SSH access, creates this remote directory layout, uploads a
 ├── logs/
 ├── status/
 └── scripts/
+```
+
+## Install dependencies
+
+`install_station.sh` supports Fedora, Debian, and Ubuntu stations. Configure dependency behavior in `stations.conf`:
+
+```bash
+INSTALL_PACKAGES="1"
+REQUIRE_COLMAP="1"
+```
+
+`INSTALL_PACKAGES` controls whether the installer attempts package installation on the remote station:
+
+- `INSTALL_PACKAGES="1"` runs the platform package manager. Fedora uses `dnf`; Debian and Ubuntu use `apt-get update` followed by `apt-get install`.
+- `INSTALL_PACKAGES="0"` skips package installation and only checks already installed tools.
+
+`REQUIRE_COLMAP` controls whether COLMAP is mandatory:
+
+- `REQUIRE_COLMAP="1"` fails `install_station.sh` if `colmap` is still unavailable after installation/checks.
+- `REQUIRE_COLMAP="0"` prints a warning if `colmap` is unavailable and continues.
+
+Package behavior by OS:
+
+- Fedora: installs/checks `ffmpeg` (including `ffprobe`), `rsync`, `python3`, and `colmap` via `dnf`. If `colmap` is not available in enabled repositories, the installer prints: `COLMAP package not found via dnf. Install COLMAP manually or enable required repository.`
+- Debian/Ubuntu: runs `apt-get update` and installs `ffmpeg` (including `ffprobe`), `colmap`, `rsync`, and `python3`.
+
+NVIDIA driver/CUDA are **not** installed automatically by this script. The NVIDIA driver must be installed on the station ahead of time and is checked with `nvidia-smi`. If `nvidia-smi` is missing, installation fails with an error.
+
+Typical setup/deploy sequence:
+
+```bash
+./install_station.sh ./stations.conf
+./deploy_station.sh ./stations.conf
 ```
 
 ## Deploy script updates

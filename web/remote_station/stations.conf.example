@@ -8,3 +8,9 @@ STATION_SSH_KEY="/root/.ssh/makler_grafikstation_ed25519"
 
 # Remote working directory on GPU station.
 STATION_BASE="/home/makler_storage"
+
+# Install missing station packages during install_station.sh (1=yes, 0=check only).
+INSTALL_PACKAGES="1"
+
+# Fail install_station.sh if COLMAP is unavailable after package installation/checks.
+REQUIRE_COLMAP="1"
