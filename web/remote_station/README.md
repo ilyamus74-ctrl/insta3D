@@ -39,6 +39,9 @@ STATION_USER="root"
 STATION_SSH_KEY="/root/.ssh/makler_grafikstation_ed25519"
 STATION_BASE="/home/makler_storage"
 INSTALL_PACKAGES="1"
+COLMAP_MODE="podman"
+COLMAP_BIN="colmap"
+COLMAP_IMAGE="docker.io/colmap/colmap:latest"
 REQUIRE_COLMAP="1"
 ```
 
@@ -78,10 +81,15 @@ REQUIRE_COLMAP="1"
 - `INSTALL_PACKAGES="1"` runs the platform package manager. Fedora uses `dnf`; Debian and Ubuntu use `apt-get update` followed by `apt-get install`.
 - `INSTALL_PACKAGES="0"` skips package installation and only checks already installed tools.
 
+`COLMAP_MODE` controls how sparse reconstruction runs COLMAP:
+
+- `COLMAP_MODE="podman"` runs photogrammetry COLMAP from `COLMAP_IMAGE` with GPU access through Podman.
+- `COLMAP_MODE="native"` runs the local binary configured by `COLMAP_BIN`.
+
 `REQUIRE_COLMAP` controls whether COLMAP is mandatory:
 
-- `REQUIRE_COLMAP="1"` fails `install_station.sh` if `colmap` is still unavailable after installation/checks.
-- `REQUIRE_COLMAP="0"` prints a warning if `colmap` is unavailable and continues.
+- `REQUIRE_COLMAP="1"` fails `install_station.sh` if the configured COLMAP mode is unavailable after installation/checks.
+- `REQUIRE_COLMAP="0"` prints a warning if the configured COLMAP mode is unavailable and continues.
 
 Package behavior by OS:
 
@@ -95,6 +103,49 @@ Typical setup/deploy sequence:
 ```bash
 ./install_station.sh ./stations.conf
 ./deploy_station.sh ./stations.conf
+```
+
+
+## COLMAP via Podman
+
+Use Podman on GrafikStation when the host OS does not provide photogrammetry COLMAP as `/usr/bin/colmap`. The verified image is:
+
+```text
+docker.io/colmap/colmap:latest
+```
+
+Recommended `stations.conf` settings:
+
+```bash
+COLMAP_MODE="podman"
+COLMAP_BIN="colmap"
+COLMAP_IMAGE="docker.io/colmap/colmap:latest"
+REQUIRE_COLMAP="1"
+```
+
+Manual verification commands on the station:
+
+```bash
+podman pull docker.io/colmap/colmap:latest
+
+podman run --rm \
+  --device nvidia.com/gpu=all \
+  --security-opt=label=disable \
+  -v /home/makler_storage:/home/makler_storage \
+  docker.io/colmap/colmap:latest \
+  colmap help
+```
+
+On Fedora, `/usr/bin/colmap` can belong to the `geomorph` package. That is not photogrammetry COLMAP. Check it with:
+
+```bash
+rpm -qf /usr/bin/colmap
+```
+
+If it shows `geomorph`, remove it before using native COLMAP:
+
+```bash
+dnf remove -y geomorph
 ```
 
 ## Deploy script updates
