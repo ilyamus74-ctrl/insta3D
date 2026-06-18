@@ -1,10 +1,10 @@
-# Station key
+# Station key/name used in logs and CLI output.
 STATION_NAME="grafikstation01"
 
-# WireGuard/private IP or hostname
+# WireGuard/private IP or hostname of the GPU station.
 STATION_HOST="10.77.0.2"
 STATION_USER="root"
 STATION_SSH_KEY="/root/.ssh/makler_grafikstation_ed25519"
 
-# Remote working directory on GPU station
+# Remote working directory on GPU station.
 STATION_BASE="/home/makler_storage"
