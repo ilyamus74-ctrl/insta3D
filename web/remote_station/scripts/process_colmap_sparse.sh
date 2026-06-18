@@ -147,13 +147,13 @@ write_status "RUNNING" 15 -1 "COLMAP feature extraction"
 run_colmap feature_extractor \
   --database_path "$DATABASE_PATH" \
   --image_path "$FRAMES_DIR" \
-  --SiftExtraction.use_gpu 1 \
+  --FeatureExtraction.use_gpu 1
   > "$COLMAP_LOG_DIR/feature_extractor.log" 2>&1
 
 write_status "RUNNING" 45 -1 "COLMAP feature matching"
 run_colmap exhaustive_matcher \
   --database_path "$DATABASE_PATH" \
-  --SiftMatching.use_gpu 1 \
+  --FeatureMatching.use_gpu 1
   > "$COLMAP_LOG_DIR/exhaustive_matcher.log" 2>&1
 
 write_status "RUNNING" 70 -1 "COLMAP mapper"
