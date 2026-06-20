@@ -159,11 +159,12 @@
       <div class="card">
         <div class="card-body">
           <h5 class="card-title">Capture session #{$s.id} {if $s.is_processing}<span class="badge bg-info">{$s.processing_label|escape}</span>{/if} {if $s.processing_failed}<span class="badge bg-danger">Ошибка обработки</span>{/if}</h5>
-          {if $canDeleteMedia}
-            <form method="post" action="/order.php?id={$order.id}" class="mb-2" onsubmit="return confirm('Удалить всю сессию? Будут скрыты все фото, видео, метки, переходы и публичные ссылки этой сессии.');">
+          {if $canDeleteCaptureSession}
+            <form method="post" action="/order.php?id={$order.id}" class="mb-2" onsubmit="return confirm('Удалить сессию, все видео/фото и связанные задания обработки из этой заявки? Это действие нельзя отменить. Remote outputs are not removed automatically.');">
               <input type="hidden" name="action" value="delete_capture_session">
               <input type="hidden" name="capture_session_id" value="{$s.id}">
               <button type="submit" class="btn btn-sm btn-danger">Удалить сессию</button>
+              <div class="form-text text-warning">Remote outputs are not removed automatically.</div>
             </form>
           {/if}
 

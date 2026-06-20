@@ -16,6 +16,7 @@ $isOrderClosedForEditing = in_array((string)$order['status'], ['READY','COMPLETE
 $canEdit = $role==='ADMIN' || (int)$order['broker_id']===$userId;
 $canEditOrderInfo = $role==='ADMIN' || ((int)$order['broker_id']===$userId && !$isOrderClosedForEditing);
 $canDeleteMedia = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
+$canDeleteCaptureSession = $role==='ADMIN' || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
 $canOperatorClose = $role==='ADMIN' || ($role==='OPERATOR' && (int)$order['operator_id']===$userId && empty($order['operator_closed_at']));
 $canBrokerClose = $role==='ADMIN' || ((int)$order['broker_id']===$userId && empty($order['broker_closed_at']));
 $canReopen = $role==='ADMIN' || ((int)$order['broker_id']===$userId && (string)$order['status']!=='COMPLETED');
@@ -36,17 +37,56 @@ function sfm_job_id(mysqli $dbcnx): int { do { $id=random_int(10000,999999999); 
 function sfm_session_for_order(mysqli $dbcnx,int $orderId,int $sessionId): ?array { $st=$dbcnx->prepare('SELECT id, app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1'); if(!$st){return null;} $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $row=$st->get_result()->fetch_assoc()?:null; $st->close(); return $row; }
 function sfm_resolve_video_path(mysqli $dbcnx,int $orderId,int $sessionId,string $videoInput): ?string { $sess=sfm_session_for_order($dbcnx,$orderId,$sessionId); if(!$sess){return null;} $safe=sfm_safe_uuid((string)$sess['app_session_uuid']); $dir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safe.'/videos'; $realDir=realpath($dir); if($realDir===false || !is_dir($realDir)){return null;} $candidate=(str_contains($videoInput,'/')?$videoInput:($realDir.'/'.$videoInput)); $real=realpath($candidate); if($real===false || !is_file($real) || strtolower(pathinfo($real,PATHINFO_EXTENSION))!=='mp4'){return null;} return (strpos($real,$realDir.'/')===0)?$real:null; }
 
-function move_session_to_trash(int $orderId,string $appSessionUuid): ?string {
-  $safeUuid=preg_replace('/[^a-zA-Z0-9._-]+/','_',$appSessionUuid);
-  $srcBase=realpath(APP_STORAGE_DIR.'/orders'); if($srcBase===false){return null;}
-  $src=$srcBase.'/'.$orderId.'/sessions/'.$safeUuid;
-  if(is_link($src) || !is_dir($src)){return null;}
-  $realSrc=realpath($src); if($realSrc===false || strpos($realSrc,$srcBase.'/')!==0){return null;}
-  $trashBase=APP_STORAGE_DIR.'/.trash/orders/'.$orderId.'/sessions';
-  if(!is_dir($trashBase) && !@mkdir($trashBase,0775,true) && !is_dir($trashBase)){ return null; }
-  $dst=$trashBase.'/'.$safeUuid.'.'.date('Ymd_His');
-  if(!@rename($realSrc,$dst)){ error_log('Failed to move deleted capture session to trash src='.$realSrc.' dst='.$dst); return null; }
-  return ltrim(str_replace(APP_STORAGE_DIR.'/','',$dst),'/');
+function safe_rrmdir(string $path,string $allowedBase): bool {
+  if($path==='' || $allowedBase===''){ error_log('safe_rrmdir refused empty path/base'); return false; }
+  $realBase=realpath($allowedBase);
+  if($realBase===false || !is_dir($realBase)){ error_log('safe_rrmdir allowed base missing: '.$allowedBase); return false; }
+  $realBase=rtrim($realBase,DIRECTORY_SEPARATOR);
+  if(!file_exists($path) && !is_link($path)){ return true; }
+  if(is_link($path)){ error_log('safe_rrmdir refused symlink root: '.$path); return false; }
+  $realPath=realpath($path);
+  if($realPath===false){ error_log('safe_rrmdir path realpath failed: '.$path); return false; }
+  $realPath=rtrim($realPath,DIRECTORY_SEPARATOR);
+  if($realPath===$realBase || strpos($realPath,$realBase.DIRECTORY_SEPARATOR)!==0){ error_log('safe_rrmdir refused outside base path='.$realPath.' base='.$realBase); return false; }
+  if(strlen($realPath) <= strlen($realBase)+1 || basename($realPath)===''){ error_log('safe_rrmdir refused suspicious short path: '.$realPath); return false; }
+  $ok=true;
+  $items=scandir($realPath);
+  if($items===false){ error_log('safe_rrmdir scandir failed: '.$realPath); return false; }
+  foreach($items as $item){
+    if($item==='.' || $item==='..'){ continue; }
+    $child=$realPath.DIRECTORY_SEPARATOR.$item;
+    if(is_link($child) || is_file($child)){
+      if(!@unlink($child)){ error_log('safe_rrmdir unlink failed: '.$child); $ok=false; }
+    } elseif(is_dir($child)){
+      if(!safe_rrmdir($child,$realBase)){ $ok=false; }
+    } elseif(file_exists($child)){
+      if(!@unlink($child)){ error_log('safe_rrmdir unlink special failed: '.$child); $ok=false; }
+    }
+  }
+  if(!@rmdir($realPath)){ error_log('safe_rrmdir rmdir failed: '.$realPath); $ok=false; }
+  return $ok;
+}
+function capture_session_storage_paths(int $orderId,string $appSessionUuid): array {
+  $safeUuid=sfm_safe_uuid($appSessionUuid);
+  $base=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions';
+  return [$base.'/'.$safeUuid,$base,$safeUuid];
+}
+function db_delete_or_soft_session_rows(mysqli $dbcnx,string $table,array $whereParts,string $types,array $params,int $userId,string $reason): int {
+  if(!table_exists($dbcnx,$table)){ return 0; }
+  $where=implode(' AND ',$whereParts);
+  if(column_exists($dbcnx,$table,'deleted_at')){
+    $set=['deleted_at = NOW(6)']; $setTypes=''; $setParams=[];
+    if(column_exists($dbcnx,$table,'deleted_by')){ $set[]='deleted_by = ?'; $setTypes.='i'; $setParams[]=$userId; }
+    if(column_exists($dbcnx,$table,'delete_reason')){ $set[]='delete_reason = ?'; $setTypes.='s'; $setParams[]=$reason; }
+    if(column_exists($dbcnx,$table,'updated_at')){ $set[]='updated_at = NOW(6)'; }
+    $sql='UPDATE `'.$table.'` SET '.implode(', ',$set).' WHERE '.$where;
+    $st=$dbcnx->prepare($sql); if(!$st){ error_log('prepare failed '.$table.': '.$dbcnx->error); return 0; }
+    $bindTypes=$setTypes.$types; $bindParams=array_merge($setParams,$params);
+    $st->bind_param($bindTypes,...$bindParams); $st->execute(); $rows=$st->affected_rows; $st->close(); return max(0,$rows);
+  }
+  $sql='DELETE FROM `'.$table.'` WHERE '.$where;
+  $st=$dbcnx->prepare($sql); if(!$st){ error_log('prepare failed '.$table.': '.$dbcnx->error); return 0; }
+  $st->bind_param($types,...$params); $st->execute(); $rows=$st->affected_rows; $st->close(); return max(0,$rows);
 }
 
 ensure_sfm_remote_jobs_table($dbcnx);
@@ -170,11 +210,11 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      }catch(Throwable $e){ $dbcnx->rollback(); $error=$e->getMessage(); }
    }
  }
- if($action==='delete_capture_session' && $canDeleteMedia){
+ if($action==='delete_capture_session' && $canDeleteCaptureSession){
    $captureSessionId=(int)($_POST['capture_session_id']??0);
    if($captureSessionId<=0){ $error='Неверная capture session'; }
    else{
-     $trashPath=null;$appSessionUuid='';
+     $appSessionUuid=''; $storagePath=''; $storageOk=false; $affected=[]; $remoteJobIds=[];
      $dbcnx->begin_transaction();
      try{
        $st=$dbcnx->prepare("SELECT id, order_id, app_session_uuid FROM capture_sessions WHERE id = ? AND order_id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE");
@@ -182,16 +222,42 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
        $st->bind_param('ii',$captureSessionId,$orderId); $st->execute(); $sess=$st->get_result()->fetch_assoc(); $st->close();
        if(!$sess){ throw new RuntimeException('Сессия уже удалена или не найдена'); }
        $appSessionUuid=(string)($sess['app_session_uuid'] ?? '');
-       $set=["deleted_at = NOW(6)","deleted_by = ?","delete_reason = 'deleted_from_order_web'"]; if(column_exists($dbcnx,'capture_sessions','updated_at')){$set[]="updated_at = NOW(6)";}
-       $st=$dbcnx->prepare("UPDATE capture_sessions SET ".implode(', ',$set)." WHERE id = ?"); if(!$st){ throw new RuntimeException('prepare failed'); } $st->bind_param('ii',$userId,$captureSessionId); $st->execute(); $st->close();
-       $ppSet=["deleted_at = NOW(6)","deleted_by = ?","delete_reason = 'session_deleted_from_order_web'"]; if(column_exists($dbcnx,'photo_points','upload_state')){$ppSet[]="upload_state = 'DELETED'";} if(column_exists($dbcnx,'photo_points','updated_at')){$ppSet[]="updated_at = NOW(6)";}
-       $st=$dbcnx->prepare("UPDATE photo_points SET ".implode(', ',$ppSet)." WHERE session_id = ? AND deleted_at IS NULL"); if($st){$st->bind_param('ii',$userId,$captureSessionId);$st->execute();$st->close();}
-       $vsSet=["deleted_at = NOW(6)","deleted_by = ?","delete_reason = 'session_deleted_from_order_web'"]; if(column_exists($dbcnx,'video_scans','upload_state')){$vsSet[]="upload_state = 'DELETED'";} if(column_exists($dbcnx,'video_scans','updated_at')){$vsSet[]="updated_at = NOW(6)";}
-       $st=$dbcnx->prepare("UPDATE video_scans SET ".implode(', ',$vsSet)." WHERE session_id = ? AND deleted_at IS NULL"); if($st){$st->bind_param('ii',$userId,$captureSessionId);$st->execute();$st->close();}
-       foreach(['marker_detections','tour_point_links','tour_point_positions','processing_jobs','public_tour_links'] as $tbl){ if(table_exists($dbcnx,$tbl)){ $st=$dbcnx->prepare("DELETE FROM ".$tbl." WHERE session_id = ?"); if($st){$st->bind_param('i',$captureSessionId);$st->execute();$st->close();} } }
+       [$storagePath,$allowedBase,$safeUuid]=capture_session_storage_paths($orderId,$appSessionUuid);
+       $realBase=realpath($allowedBase);
+       if($realBase===false || !is_dir($realBase)){ throw new RuntimeException('Session storage base not found'); }
+       if((file_exists($storagePath) || is_link($storagePath))){
+         if(is_link($storagePath)){ throw new RuntimeException('Session storage path is a symlink'); }
+         $realSession=realpath($storagePath);
+         if($realSession===false || strpos(rtrim($realSession,DIRECTORY_SEPARATOR),rtrim($realBase,DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR)!==0){ throw new RuntimeException('Session storage path is outside allowed base'); }
+       }
+       if(table_exists($dbcnx,'sfm_remote_jobs')){
+         $st=$dbcnx->prepare("SELECT remote_job_id, parent_remote_job_id FROM sfm_remote_jobs WHERE order_id=? AND capture_session_id=?");
+         if($st){ $st->bind_param('ii',$orderId,$captureSessionId); $st->execute(); $rs=$st->get_result(); while($r=$rs->fetch_assoc()){ if($r['remote_job_id']!==null){$remoteJobIds[]=(int)$r['remote_job_id'];} if($r['parent_remote_job_id']!==null){$remoteJobIds[]=(int)$r['parent_remote_job_id'];} } $st->close(); }
+       }
+       $set=["deleted_at = NOW(6)", "app_session_uuid = CONCAT('deleted-', id, '-', LEFT(app_session_uuid, 100))"]; $setTypes=''; $setParams=[]; $types='i'; $params=[$captureSessionId];
+       if(column_exists($dbcnx,'capture_sessions','deleted_by')){ $set[]='deleted_by = ?'; $setTypes.='i'; $setParams[]=$userId; }
+       if(column_exists($dbcnx,'capture_sessions','delete_reason')){ $set[]='delete_reason = ?'; $setTypes.='s'; $setParams[]='Deleted from order page for retest'; }
+       if(column_exists($dbcnx,'capture_sessions','updated_at')){$set[]="updated_at = NOW(6)";}
+       $st=$dbcnx->prepare("UPDATE capture_sessions SET ".implode(', ',$set)." WHERE id = ?"); if(!$st){ throw new RuntimeException('prepare failed'); } $bindTypes=$setTypes.$types; $bindParams=array_merge($setParams,$params); $st->bind_param($bindTypes,...$bindParams); $st->execute(); $affected['capture_sessions']=$st->affected_rows; $st->close();
+       $affected['marker_detections']=0;
+       if(table_exists($dbcnx,'marker_detections')){
+         if(column_exists($dbcnx,'marker_detections','session_id')){ $affected['marker_detections']+=db_delete_or_soft_session_rows($dbcnx,'marker_detections',['session_id = ?'],'i',[$captureSessionId],$userId,'session_deleted_from_order_web'); }
+         elseif(column_exists($dbcnx,'marker_detections','photo_point_id')){ $affected['marker_detections']+=db_delete_or_soft_session_rows($dbcnx,'marker_detections',['photo_point_id IN (SELECT id FROM photo_points WHERE session_id = ?)'],'i',[$captureSessionId],$userId,'session_deleted_from_order_web'); }
+       }
+       $affected['tour_point_links']=0;
+       if(table_exists($dbcnx,'tour_point_links')){
+         if(column_exists($dbcnx,'tour_point_links','session_id')){ $affected['tour_point_links']+=db_delete_or_soft_session_rows($dbcnx,'tour_point_links',['session_id = ?'],'i',[$captureSessionId],$userId,'session_deleted_from_order_web'); }
+         elseif(column_exists($dbcnx,'tour_point_links','from_photo_point_id')){ $affected['tour_point_links']+=db_delete_or_soft_session_rows($dbcnx,'tour_point_links',['(from_photo_point_id IN (SELECT id FROM photo_points WHERE session_id = ?) OR to_photo_point_id IN (SELECT id FROM photo_points WHERE session_id = ?))'],'ii',[$captureSessionId,$captureSessionId],$userId,'session_deleted_from_order_web'); }
+       }
+       $affected['tour_point_positions']=table_exists($dbcnx,'tour_point_positions') ? db_delete_or_soft_session_rows($dbcnx,'tour_point_positions',['session_id = ?'],'i',[$captureSessionId],$userId,'session_deleted_from_order_web') : 0;
+       $affected['public_tour_links']=table_exists($dbcnx,'public_tour_links') ? db_delete_or_soft_session_rows($dbcnx,'public_tour_links',['session_id = ?'],'i',[$captureSessionId],$userId,'session_deleted_from_order_web') : 0;
+       $affected['photo_points']=db_delete_or_soft_session_rows($dbcnx,'photo_points',['session_id = ?','deleted_at IS NULL'],'i',[$captureSessionId],$userId,'session_deleted_from_order_web');
+       $affected['video_scans']=db_delete_or_soft_session_rows($dbcnx,'video_scans',['session_id = ?','deleted_at IS NULL'],'i',[$captureSessionId],$userId,'session_deleted_from_order_web');
+       $affected['processing_jobs']=table_exists($dbcnx,'processing_jobs') ? db_delete_or_soft_session_rows($dbcnx,'processing_jobs',['order_id = ?','session_id = ?'],'ii',[$orderId,$captureSessionId],$userId,'session_deleted_from_order_web') : 0;
+       if(table_exists($dbcnx,'sfm_remote_jobs')){ $st=$dbcnx->prepare("UPDATE sfm_remote_jobs SET status='CANCELLED', message='Cancelled because capture session was deleted', updated_at=NOW(6) WHERE order_id=? AND capture_session_id=?"); if($st){$st->bind_param('ii',$orderId,$captureSessionId);$st->execute();$affected['sfm_remote_jobs']=$st->affected_rows;$st->close();} }
        $dbcnx->commit();
-       $trashPath=move_session_to_trash($orderId,$appSessionUuid);
-       audit_log($userId,'CAPTURE_SESSION_DELETED','TOUR_ORDER',$orderId,'Сессия удалена из web',['order_id'=>$orderId,'capture_session_id'=>$captureSessionId,'app_session_uuid'=>$appSessionUuid,'trash_path'=>$trashPath]);
+       $storageOk=safe_rrmdir($storagePath,$allowedBase);
+       audit_log($userId,'CAPTURE_SESSION_DELETED','TOUR_ORDER',$orderId,'Сессия удалена из web',['order_id'=>$orderId,'capture_session_id'=>$captureSessionId,'app_session_uuid'=>$appSessionUuid,'storage_path'=>$storagePath,'deleted_files_ok'=>$storageOk,'affected'=>$affected,'user_id'=>$userId,'remote_job_ids'=>array_values(array_unique($remoteJobIds)),'remote_outputs_removed'=>false]);
        header('Location: /order.php?id='.$orderId.'&session_deleted=1'); exit;
      }catch(Throwable $e){ $dbcnx->rollback(); $error=$e->getMessage(); }
    }
@@ -400,6 +466,7 @@ $smarty->assign('order',$order);
 $smarty->assign('canEdit',$canEdit);
 $smarty->assign('canEditOrderInfo',$canEditOrderInfo);
 $smarty->assign('canDeleteMedia',$canDeleteMedia);
+$smarty->assign('canDeleteCaptureSession',$canDeleteCaptureSession);
 $smarty->assign('canCreatePublicLink', $canCreatePublicLink);
 $smarty->assign('isAdminDebug', $role==='ADMIN');
 $smarty->assign('canOperatorClose',$canOperatorClose);
