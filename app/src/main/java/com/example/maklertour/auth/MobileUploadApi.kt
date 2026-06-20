@@ -2,6 +2,7 @@ package com.example.maklertour.auth
 
 import com.example.maklertour.network.ApiConfig
 import com.maklertour.domain.CapturePoint
+import com.maklertour.domain.ScanSource
 import com.maklertour.domain.ScanVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -91,7 +92,7 @@ class MobileUploadApi(
             .addFormDataPart("capture_session_id", captureSessionId.toString())
             .addFormDataPart("app_scan_uuid", scan.id)
             .addFormDataPart("duration_sec", (scan.durationSec ?: 0L).toString())
-            .addFormDataPart("local_camera_url", scan.cameraFileUrl ?: "")
+            .addFormDataPart("local_camera_url", if (scan.source == ScanSource.PHONE_CAMERA) "phone-camera" else scan.cameraFileUrl ?: "")
 
         bodyBuilder.addFormDataPart(
             "video",
@@ -133,7 +134,7 @@ class MobileUploadApi(
                     .addFormDataPart("capture_session_id", captureSessionId.toString())
                     .addFormDataPart("app_scan_uuid", scan.id)
                     .addFormDataPart("duration_sec", (scan.durationSec ?: 0L).toString())
-                    .addFormDataPart("local_camera_url", scan.cameraFileUrl ?: "")
+                    .addFormDataPart("local_camera_url", if (scan.source == ScanSource.PHONE_CAMERA) "phone-camera" else scan.cameraFileUrl ?: "")
                     .addFormDataPart("upload_id", uploadId)
                     .addFormDataPart("chunk_index", chunkIndex.toString())
                     .addFormDataPart("total_chunks", totalChunks.toString())

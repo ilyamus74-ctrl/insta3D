@@ -18,6 +18,7 @@ import com.maklertour.domain.FileLocalState
 import com.maklertour.domain.Session
 import com.maklertour.domain.ServerUploadState
 import com.maklertour.domain.RoomDraft
+import com.maklertour.domain.ScanSource
 import com.maklertour.domain.TourDraftConnection
 import com.maklertour.domain.UploadItem
 import com.maklertour.domain.UploadStatus
@@ -1280,7 +1281,7 @@ private fun ScanVideo.toEntity(): ScanVideoEntity = ScanVideoEntity(
     objectId=objectId, sessionId=sessionId, name=name, sequenceNumber=sequenceNumber, cameraFileUrl=cameraFileUrl, cameraLocalFileUrl=cameraLocalFileUrl,
     localPreviewPath=localPreviewPath, localVideoPath=localVideoPath, durationSec=durationSec, fileSizeBytes=fileSizeBytes, markerExpected=markerExpected,
     markerDetected=markerDetected, captureStatus=captureStatus.name, downloadState=downloadState.name, uploadState=uploadState.name,
-    serverProcessingState=serverProcessingState.name, notes=notes
+    serverProcessingState=serverProcessingState.name, source=source.name, notes=notes
 )
 
 private fun ScanVideoEntity.toDomain(): ScanVideo = ScanVideo(
@@ -1290,5 +1291,6 @@ private fun ScanVideoEntity.toDomain(): ScanVideo = ScanVideo(
     downloadState=runCatching{ScanVideoDownloadState.valueOf(downloadState)}.getOrDefault(ScanVideoDownloadState.CAMERA_ONLY),
     uploadState=runCatching{ScanVideoUploadState.valueOf(uploadState)}.getOrDefault(ScanVideoUploadState.LOCAL_ONLY),
     serverProcessingState=runCatching{ScanVideoProcessingState.valueOf(serverProcessingState)}.getOrDefault(ScanVideoProcessingState.NOT_STARTED),
+    source=runCatching{ScanSource.valueOf(source)}.getOrDefault(ScanSource.INSTA360),
     createdAt=Instant.ofEpochMilli(createdAtEpochMs), updatedAt=Instant.ofEpochMilli(updatedAtEpochMs), notes=notes
 )

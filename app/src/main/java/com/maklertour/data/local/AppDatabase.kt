@@ -30,7 +30,7 @@ import com.maklertour.data.local.entity.UploadItemEntity
         UploadItemEntity::class,
         DiagnosticLogEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
