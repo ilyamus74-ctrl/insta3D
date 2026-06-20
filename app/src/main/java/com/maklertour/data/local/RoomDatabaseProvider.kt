@@ -15,7 +15,7 @@ object RoomDatabaseProvider {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "maklertour-local.db",
-            ).addMigrations(MIGRATION_9_10).build().also { instance = it }
+            ).addMigrations(MIGRATION_9_10, MIGRATION_10_11).build().also { instance = it }
         }
     }
 
@@ -30,4 +30,11 @@ object RoomDatabaseProvider {
             db.execSQL("ALTER TABLE upload_items ADD COLUMN serverCaptureSessionId INTEGER")
         }
     }
+
+    private val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE scan_videos ADD COLUMN source TEXT NOT NULL DEFAULT 'INSTA360'")
+        }
+    }
 }
+

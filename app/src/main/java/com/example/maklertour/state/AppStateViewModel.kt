@@ -29,6 +29,8 @@ import com.maklertour.domain.CaptureStatus
 import com.maklertour.domain.VideoScanUiState
 import com.maklertour.domain.ServerUploadState
 import com.maklertour.domain.ScanVideoUploadState
+import com.maklertour.domain.ScanSource
+import com.maklertour.data.phonecamera.PhoneCameraScanProvider
 import com.example.maklertour.auth.MobileOrder
 import com.example.maklertour.auth.MobileUploadApi
 import org.json.JSONArray
@@ -85,6 +87,7 @@ class AppStateViewModel(
     private val sessionRepository: SessionRepository = InMemorySessionRepository(),
     private val uploadQueueRepository: UploadQueueRepository = InMemoryUploadQueueRepository(),
     private val cameraProvider: CameraProvider = MockCameraProvider(),
+    private val phoneCameraScanProvider: PhoneCameraScanProvider? = null,
     private val uploadApi: UploadApi = UploadApiFactory.create(NetworkConfigProvider.fromBuildConfig()),
     private val localOriginalManager: LocalOriginalManager? = null,
     private val syncRepository: SyncRepository? = null,
@@ -310,6 +313,56 @@ class AppStateViewModel(
         }
     }
 
+    fun startPhoneVideoScan(scanName: String) {
+        val sessionId = uiState.value.selectedSessionId
+        val provider = phoneCameraScanProvider
+        Log.d("AppStateViewModel", "startPhoneVideoScan(): selectedSessionId=$sessionId provider=${provider != null}")
+        if (sessionId == null || provider == null) return
+        if (videoScanUiState.value == VideoScanUiState.SWITCHING_MODE || videoScanUiState.value == VideoScanUiState.RECORDING || videoScanUiState.value == VideoScanUiState.STOPPING || isCapturing.value || currentRecordingScanVideo.value != null) return
+
+        viewModelScope.launch {
+            val now = java.time.Instant.now()
+            val scan = ScanVideo(
+                sessionId = sessionId,
+                name = scanName,
+                sequenceNumber = uiState.value.selectedSessionScanVideos.count { it.sessionId == sessionId } + 1,
+                captureStatus = ScanVideoCaptureStatus.RECORDING,
+                downloadState = ScanVideoDownloadState.DOWNLOADED,
+                uploadState = ScanVideoUploadState.LOCAL_ONLY,
+                source = ScanSource.PHONE_CAMERA,
+                createdAt = now,
+                updatedAt = now,
+            )
+            sessionRepository.addScanVideo(scan)
+            currentRecordingScanVideo.value = scan
+            isCapturing.value = true
+            videoScanUiState.value = VideoScanUiState.SWITCHING_MODE
+            try {
+                val result = provider.startVideoScan(scan.name, sessionId, scan.id, scan.sequenceNumber)
+                if (result.captureStatus == ScanVideoCaptureStatus.RECORDING) {
+                    isRecordingScanVideo.value = true
+                    videoScanUiState.value = VideoScanUiState.RECORDING
+                } else {
+                    sessionRepository.updateScanVideo(scan.copy(captureStatus = ScanVideoCaptureStatus.FAILED, updatedAt = java.time.Instant.now(), notes = result.notes ?: "startPhoneVideoScan failed"))
+                    currentRecordingScanVideo.value = null
+                    isRecordingScanVideo.value = false
+                    videoScanUiState.value = VideoScanUiState.FAILED
+                }
+            } catch (e: Throwable) {
+                sessionRepository.updateScanVideo(scan.copy(captureStatus = ScanVideoCaptureStatus.FAILED, updatedAt = java.time.Instant.now(), notes = e.message ?: "startPhoneVideoScan failed"))
+                currentRecordingScanVideo.value = null
+                isRecordingScanVideo.value = false
+                videoScanUiState.value = VideoScanUiState.FAILED
+            } finally {
+                isCapturing.value = false
+            }
+        }
+    }
+
+    fun stopPhoneVideoScan() {
+        stopVideoScan()
+    }
+
     fun stopVideoScan() {
         val current = currentRecordingScanVideo.value ?: return
         if (!isRecordingScanVideo.value || videoScanUiState.value == VideoScanUiState.STOPPING) return
@@ -317,7 +370,11 @@ class AppStateViewModel(
             Log.d("AppStateViewModel", "stopVideoScan()")
             videoScanUiState.value = VideoScanUiState.STOPPING
             val result = try {
-                cameraProvider.stopVideoScan()
+                if (current.source == ScanSource.PHONE_CAMERA && phoneCameraScanProvider != null) {
+                    phoneCameraScanProvider.stopVideoScan()
+                } else {
+                    cameraProvider.stopVideoScan()
+                }
             } catch (e: Throwable) {
                 ScanVideo(sessionId = current.sessionId, name = current.name, sequenceNumber = current.sequenceNumber, captureStatus = ScanVideoCaptureStatus.FAILED, notes = e.message ?: "stopVideoScan failed")
             }
@@ -330,8 +387,11 @@ class AppStateViewModel(
                     cameraFileUrl = result.cameraFileUrl,
                     cameraLocalFileUrl = result.cameraLocalFileUrl,
                     durationSec = result.durationSec ?: durationSec,
+                    fileSizeBytes = result.fileSizeBytes,
+                    localVideoPath = result.localVideoPath,
+                    source = result.source,
                     captureStatus = ScanVideoCaptureStatus.CAPTURED,
-                    downloadState = com.maklertour.domain.ScanVideoDownloadState.CAMERA_ONLY,
+                    downloadState = result.downloadState,
                     uploadState = com.maklertour.domain.ScanVideoUploadState.LOCAL_ONLY,
                     serverProcessingState = com.maklertour.domain.ScanVideoProcessingState.NOT_STARTED,
                     updatedAt = now,
