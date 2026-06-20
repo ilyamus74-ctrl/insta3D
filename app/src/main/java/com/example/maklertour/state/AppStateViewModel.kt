@@ -314,13 +314,19 @@ class AppStateViewModel(
         }
     }
 
-    fun bindPhoneCameraPreview(previewView: PreviewView) {
-        val provider = phoneCameraScanProvider ?: return
+    fun bindPhoneCameraPreview(previewView: PreviewView, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        val provider = phoneCameraScanProvider
+        if (provider == null) {
+            onResult(false, "camera provider unavailable")
+            return
+        }
         viewModelScope.launch {
             try {
                 provider.bindPreview(previewView)
+                onResult(true, null)
             } catch (e: Throwable) {
                 Log.e("AppStateViewModel", "bindPhoneCameraPreview() failed", e)
+                onResult(false, e.message ?: "preview bind failed")
             }
         }
     }
@@ -353,7 +359,7 @@ class AppStateViewModel(
                 val result = provider.startVideoScan(scan.name, sessionId, scan.id, scan.sequenceNumber)
                 if (result.captureStatus == ScanVideoCaptureStatus.RECORDING) {
                     isRecordingScanVideo.value = true
-                    Log.d("AppStateViewModel", "startPhoneVideoScan(): recording confirmed")
+                    Log.d("AppStateViewModel", "startPhoneVideoScan(): recording confirmed scanId=${scan.id}")
                     videoScanUiState.value = VideoScanUiState.RECORDING
                 } else {
                     sessionRepository.updateScanVideo(scan.copy(captureStatus = ScanVideoCaptureStatus.FAILED, updatedAt = java.time.Instant.now(), notes = result.notes ?: "startPhoneVideoScan failed"))
@@ -362,6 +368,7 @@ class AppStateViewModel(
                     videoScanUiState.value = VideoScanUiState.FAILED
                 }
             } catch (e: Throwable) {
+                Log.e("AppStateViewModel", "startPhoneVideoScan(): errors", e)
                 sessionRepository.updateScanVideo(scan.copy(captureStatus = ScanVideoCaptureStatus.FAILED, updatedAt = java.time.Instant.now(), notes = e.message ?: "startPhoneVideoScan failed"))
                 currentRecordingScanVideo.value = null
                 isRecordingScanVideo.value = false
@@ -415,7 +422,7 @@ class AppStateViewModel(
                 current.copy(captureStatus = ScanVideoCaptureStatus.FAILED, updatedAt = now, notes = result.notes)
             }
             sessionRepository.updateScanVideo(updated)
-            if (updated.source == ScanSource.PHONE_CAMERA) Log.d("AppStateViewModel", "stopVideoScan(): phone result localVideoPath=${updated.localVideoPath}")
+            if (updated.source == ScanSource.PHONE_CAMERA) Log.d("AppStateViewModel", "stopPhoneVideoScan(): saved localVideoPath=${updated.localVideoPath}, size=${updated.fileSizeBytes}, errors=${updated.notes}")
             Log.d("AppStateViewModel", "saved scanVideo sessionId=${updated.sessionId}, scanId=${updated.id}, status=${updated.captureStatus}")
             isRecordingScanVideo.value = false
             currentRecordingScanVideo.value = null

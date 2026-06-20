@@ -1,6 +1,8 @@
 package com.maklertour
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -9,7 +11,9 @@ import android.os.Bundle
 import android.widget.Toast
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.background
@@ -22,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.layout.ContentScale
@@ -44,6 +49,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -62,6 +68,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.camera.view.PreviewView
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -1177,7 +1184,7 @@ private fun CameraScreen(
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     onStartVideoScan: (String) -> Unit,
     onStartPhoneVideoScan: (String) -> Unit,
-    onBindPhoneCameraPreview: (PreviewView) -> Unit,
+    onBindPhoneCameraPreview: (PreviewView, (Boolean, String?) -> Unit) -> Unit,
     onStopVideoScan: () -> Unit,
     onCreateSessionRequested: () -> Unit,
     onDeleteVideoScan: (String) -> Unit,
@@ -1189,6 +1196,7 @@ private fun CameraScreen(
     var pointName by remember { mutableStateOf("") }
     var scanName by remember { mutableStateOf("") }
     var showNoSessionDialog by remember { mutableStateOf(false) }
+    var showPhoneCameraScan by remember { mutableStateOf(false) }
     val videoScanBusy = videoScanUiState in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.RECORDING, VideoScanUiState.STOPPING)
     val defaultPointName = stringResource(R.string.point_default_format, selectedSessionPointsCount + 1)
     val defaultScanName = stringResource(R.string.scan_video_default_name_format, scanVideos.size + 1)
@@ -1279,18 +1287,12 @@ private fun CameraScreen(
                             enabled = connected && !videoScanBusy && !isCapturing && scanName.isNotBlank(),
                         ) { Text(stringResource(R.string.start_video_scan)) }
                     }
-                    PhoneCameraPreviewCard(
-                        scanName = scanName,
-                        selectedSessionName = selectedSessionName,
-                        isCapturing = isCapturing,
-                        isRecordingScanVideo = isRecordingScanVideo,
-                        videoScanUiState = videoScanUiState,
-                        scanVideos = scanVideos,
-                        onBindPreview = onBindPhoneCameraPreview,
-                        onStartPhoneVideoScan = { name -> onStartPhoneVideoScan(name) },
-                        onStopPhoneVideoScan = onStopVideoScan,
-                        onNoSession = { showNoSessionDialog = true },
-                    )
+                    Button(
+                        onClick = {
+                            if (selectedSessionName == null) showNoSessionDialog = true else showPhoneCameraScan = true
+                        },
+                        enabled = selectedSessionName != null && !isCapturing && !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING && scanName.isNotBlank(),
+                    ) { Text("Снять видео на телефон") }
                     when (videoScanUiState) {
                         VideoScanUiState.SWITCHING_MODE, VideoScanUiState.RECORDING, VideoScanUiState.STOPPING -> {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1322,6 +1324,18 @@ private fun CameraScreen(
         if (isCapturing && !isRecordingScanVideo) {
             CaptureOverlay()
         }
+        if (showPhoneCameraScan) {
+            PhoneCameraScanScreen(
+                scanName = scanName,
+                isRecordingScanVideo = isRecordingScanVideo,
+                videoScanUiState = videoScanUiState,
+                scanVideos = scanVideos,
+                onBindPreview = onBindPhoneCameraPreview,
+                onStartPhoneVideoScan = { name -> onStartPhoneVideoScan(name) },
+                onStopPhoneVideoScan = onStopVideoScan,
+                onClose = { showPhoneCameraScan = false },
+            )
+        }
     }
     if (showNoSessionDialog) {
         AlertDialog(
@@ -1343,27 +1357,36 @@ private fun CameraScreen(
 }
 
 @Composable
-private fun PhoneCameraPreviewCard(
+private fun PhoneCameraScanScreen(
     scanName: String,
-    selectedSessionName: String?,
-    isCapturing: Boolean,
     isRecordingScanVideo: Boolean,
     videoScanUiState: VideoScanUiState,
     scanVideos: List<com.maklertour.domain.ScanVideo>,
-    onBindPreview: (PreviewView) -> Unit,
+    onBindPreview: (PreviewView, (Boolean, String?) -> Unit) -> Unit,
     onStartPhoneVideoScan: (String) -> Unit,
     onStopPhoneVideoScan: () -> Unit,
-    onNoSession: () -> Unit,
+    onClose: () -> Unit,
 ) {
+    val context = LocalContext.current
+    var hasCameraPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
+    var previewBound by remember { mutableStateOf(false) }
+    var bindError by remember { mutableStateOf<String?>(null) }
     var elapsedSec by remember { mutableStateOf(0L) }
-    val phoneScans = scanVideos.filter { it.source == com.maklertour.domain.ScanSource.PHONE_CAMERA }
-    val latestPhoneScan = phoneScans.maxByOrNull { it.updatedAt }
-    val status = when (videoScanUiState) {
-        VideoScanUiState.RECORDING -> "Recording"
-        VideoScanUiState.STOPPING -> "Stopping"
-        VideoScanUiState.CAPTURED -> "Captured"
-        VideoScanUiState.FAILED -> "Failed"
-        else -> "Ready"
+    var showCalibrationDialog by remember { mutableStateOf(false) }
+    var showCameraSettingsDialog by remember { mutableStateOf(false) }
+    val latestPhoneScan = scanVideos.filter { it.source == com.maklertour.domain.ScanSource.PHONE_CAMERA }.maxByOrNull { it.updatedAt }
+    val status = when {
+        !hasCameraPermission -> "Нет доступа"
+        bindError != null || videoScanUiState == VideoScanUiState.FAILED -> "Ошибка"
+        videoScanUiState == VideoScanUiState.RECORDING -> "Запись"
+        videoScanUiState == VideoScanUiState.STOPPING -> "Остановка"
+        videoScanUiState == VideoScanUiState.CAPTURED -> "Видео сохранено"
+        previewBound -> "Камера готова"
+        else -> "Камера готова"
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        hasCameraPermission = granted
+        bindError = if (granted) null else "Нет доступа к камере. Разрешите доступ к камере в настройках приложения."
     }
 
     LaunchedEffect(videoScanUiState) {
@@ -1378,37 +1401,71 @@ private fun PhoneCameraPreviewCard(
         }
     }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Phone camera scan", style = MaterialTheme.typography.titleMedium)
-            AndroidView(
-                modifier = Modifier.fillMaxWidth().height(280.dp),
-                factory = { context ->
-                    PreviewView(context).apply {
-                        scaleType = PreviewView.ScaleType.FILL_CENTER
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        onBindPreview(this)
-                    }
-                },
-            )
-            Text("Status: $status")
-            if (videoScanUiState == VideoScanUiState.RECORDING) Text("Timer: ${elapsedSec}s")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        if (selectedSessionName == null) onNoSession() else onStartPhoneVideoScan(scanName.trim())
-                    },
-                    enabled = selectedSessionName != null && !isCapturing && !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING && scanName.isNotBlank(),
-                ) { Text("Start phone scan") }
-                Button(onClick = onStopPhoneVideoScan, enabled = isRecordingScanVideo) {
-                    Text("Stop phone scan")
+    Surface(modifier = Modifier.fillMaxSize().zIndex(10f), color = Color.Black) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.75f)).padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onClose, enabled = !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING) { Text("Закрыть") }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Скан смартфоном", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text(status, color = if (status == "Ошибка" || status == "Нет доступа") Color(0xFFFFB4AB) else Color.White)
                 }
+                TextButton(onClick = onClose, enabled = !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING) { Text("Назад") }
             }
-            latestPhoneScan?.localVideoPath?.let { Text("localVideoPath=$it") }
-            latestPhoneScan?.fileSizeBytes?.let { Text("fileSizeBytes=$it") }
-            latestPhoneScan?.notes?.takeIf { latestPhoneScan.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.FAILED }?.let { Text("Error: $it") }
+
+            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                if (hasCameraPermission) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            PreviewView(ctx).apply {
+                                scaleType = PreviewView.ScaleType.FILL_CENTER
+                                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                                onBindPreview(this) { ok, error ->
+                                    previewBound = ok
+                                    bindError = if (ok) null else (error ?: "preview bind failed")
+                                }
+                            }
+                        },
+                    )
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(24.dp)) {
+                        Text("Нет доступа к камере. Разрешите доступ к камере в настройках приложения.", color = Color.White)
+                        Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) { Text("Запросить доступ") }
+                    }
+                }
+                bindError?.takeIf { hasCameraPermission }?.let { Text(it, color = Color(0xFFFFB4AB), modifier = Modifier.padding(16.dp)) }
+            }
+
+            Column(modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.85f)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (videoScanUiState == VideoScanUiState.RECORDING) Text("Таймер: ${elapsedSec}s", color = Color.White)
+                Button(
+                    onClick = { if (isRecordingScanVideo) onStopPhoneVideoScan() else onStartPhoneVideoScan(scanName.trim()) },
+                    enabled = hasCameraPermission && previewBound && scanName.isNotBlank() && videoScanUiState !in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.STOPPING),
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(containerColor = if (isRecordingScanVideo) Color.DarkGray else Color.Red),
+                    modifier = Modifier.size(76.dp),
+                ) { Text(if (isRecordingScanVideo) "■" else "●", color = Color.White) }
+                Text(if (isRecordingScanVideo) "Остановить" else "Начать запись", color = Color.White)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { showCalibrationDialog = true }) { Text("Калибровка") }
+                    Button(onClick = { showCameraSettingsDialog = true }) { Text("Настройки камеры") }
+                }
+                if (videoScanUiState == VideoScanUiState.CAPTURED && latestPhoneScan != null) {
+                    Text("localVideoPath=${latestPhoneScan.localVideoPath ?: "—"}", color = Color.White)
+                    Text("fileSizeBytes=${latestPhoneScan.fileSizeBytes ?: 0}", color = Color.White)
+                    Text("durationSec=${latestPhoneScan.durationSec ?: 0}", color = Color.White)
+                    Button(onClick = onClose) { Text("Готово") }
+                }
+                latestPhoneScan?.notes?.takeIf { videoScanUiState == VideoScanUiState.FAILED }?.let { Text("Ошибка: $it", color = Color(0xFFFFB4AB)) }
+            }
         }
     }
+    if (showCalibrationDialog) AlertDialog(onDismissRequest = { showCalibrationDialog = false }, title = { Text("Калибровка") }, text = { Text("Калибровка камеры будет добавлена следующим этапом. План: шахматка/AprilTag board, сохранение camera_matrix и distortion_coefficients.") }, confirmButton = { TextButton(onClick = { showCalibrationDialog = false }) { Text("ОК") } })
+    if (showCameraSettingsDialog) AlertDialog(onDismissRequest = { showCameraSettingsDialog = false }, title = { Text("Настройки камеры") }, text = { Text("Выбор объектива, разрешения и FPS будет добавлен следующим этапом.") }, confirmButton = { TextButton(onClick = { showCameraSettingsDialog = false }) { Text("ОК") } })
 }
 
 @Composable
