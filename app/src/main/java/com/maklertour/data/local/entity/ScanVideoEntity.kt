@@ -25,6 +25,5 @@ data class ScanVideoEntity(
     val downloadState: String,
     val uploadState: String,
     val serverProcessingState: String,
-    val source: String = "INSTA360",
     val notes: String?,
 )

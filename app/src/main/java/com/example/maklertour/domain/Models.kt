@@ -63,10 +63,6 @@ enum class FileLocalState { NOT_DOWNLOADED, DOWNLOADING, DOWNLOADED, DOWNLOAD_ER
 enum class ServerUploadState { NOT_QUEUED, QUEUED, UPLOADING, CONFIRMED, ERROR }
 enum class DeleteState { NOT_DELETED, DELETE_ALLOWED, DELETE_REQUESTED, DELETED, DELETE_ERROR }
 
-enum class ScanSource {
-    INSTA360,
-    PHONE_CAMERA,
-}
 
 enum class CaptureStatus {
     Draft,
@@ -129,7 +125,6 @@ data class ScanVideo(
     val downloadState: ScanVideoDownloadState = ScanVideoDownloadState.CAMERA_ONLY,
     val uploadState: ScanVideoUploadState = ScanVideoUploadState.LOCAL_ONLY,
     val serverProcessingState: ScanVideoProcessingState = ScanVideoProcessingState.NOT_STARTED,
-    val source: ScanSource = ScanSource.INSTA360,
     val createdAt: Instant = Instant.now(),
     val updatedAt: Instant = Instant.now(),
     val notes: String? = null,

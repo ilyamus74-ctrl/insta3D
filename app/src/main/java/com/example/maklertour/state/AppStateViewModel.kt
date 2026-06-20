@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscFileDownloader
 import com.maklertour.data.network.NetworkConfigProvider
-import com.maklertour.data.phonecamera.PhoneCameraScanProvider
 import com.maklertour.data.network.UploadApi
 import com.maklertour.data.network.UploadApiFactory
 import com.maklertour.data.repository.InMemorySessionRepository
@@ -23,7 +22,6 @@ import com.maklertour.domain.RoomDraft
 import com.maklertour.domain.UploadItem
 import com.maklertour.domain.UploadStatus
 import com.maklertour.domain.TourDraftConnection
-import com.maklertour.domain.ScanSource
 import com.maklertour.domain.ScanVideoCaptureStatus
 import com.maklertour.domain.ScanVideoDownloadState
 import com.maklertour.domain.ScanVideo
@@ -87,7 +85,6 @@ class AppStateViewModel(
     private val sessionRepository: SessionRepository = InMemorySessionRepository(),
     private val uploadQueueRepository: UploadQueueRepository = InMemoryUploadQueueRepository(),
     private val cameraProvider: CameraProvider = MockCameraProvider(),
-    private val phoneCameraProvider: PhoneCameraScanProvider? = null,
     private val uploadApi: UploadApi = UploadApiFactory.create(NetworkConfigProvider.fromBuildConfig()),
     private val localOriginalManager: LocalOriginalManager? = null,
     private val syncRepository: SyncRepository? = null,
@@ -263,21 +260,14 @@ class AppStateViewModel(
         }
     }
 
-    fun startVideoScan(scanName: String) = startVideoScanWithProvider(scanName, cameraProvider, ScanSource.INSTA360)
-
-    fun startPhoneVideoScan(scanName: String) {
-        val provider = phoneCameraProvider ?: return
-        startVideoScanWithProvider(scanName, provider, ScanSource.PHONE_CAMERA)
-    }
-
-    private fun startVideoScanWithProvider(scanName: String, provider: CameraProvider, source: ScanSource) {
+    fun startVideoScan(scanName: String) {
         val sessionId = uiState.value.selectedSessionId
-        Log.d("AppStateViewModel", "startVideoScan(): selectedSessionId=$sessionId source=$source")
+        Log.d("AppStateViewModel", "startVideoScan(): selectedSessionId=$sessionId")
         if (sessionId == null) return
         if (videoScanUiState.value == VideoScanUiState.SWITCHING_MODE || videoScanUiState.value == VideoScanUiState.RECORDING || videoScanUiState.value == VideoScanUiState.STOPPING || isCapturing.value || currentRecordingScanVideo.value != null) return
 
         viewModelScope.launch {
-            Log.d("AppStateViewModel", "startVideoScan(): sessionId=$sessionId, scanName=$scanName, source=$source")
+            Log.d("AppStateViewModel", "startVideoScan(): sessionId=$sessionId, scanName=$scanName")
 
             val now = java.time.Instant.now()
             val scan = ScanVideo(
@@ -285,13 +275,9 @@ class AppStateViewModel(
                 name = scanName,
                 sequenceNumber = uiState.value.selectedSessionScanVideos.count { it.sessionId == sessionId } + 1,
                 captureStatus = ScanVideoCaptureStatus.RECORDING,
-                source = source,
                 createdAt = now,
                 updatedAt = now,
             )
-            if (provider is PhoneCameraScanProvider) {
-                provider.nextScanContext = PhoneCameraScanProvider.PhoneScanContext(sessionId, scan.id, scan.sequenceNumber)
-            }
             Log.d("AppStateViewModel", "startVideoScan(): create recording scan, scanId=${scan.id}")
             sessionRepository.addScanVideo(scan)
             Log.d("AppStateViewModel", "saved scanVideo sessionId=${scan.sessionId}, scanId=${scan.id}")
@@ -301,7 +287,7 @@ class AppStateViewModel(
             videoScanUiState.value = VideoScanUiState.SWITCHING_MODE
 
             try {
-                val result = provider.startVideoScan(scanName)
+                val result = cameraProvider.startVideoScan(scanName)
                 if (result.captureStatus == ScanVideoCaptureStatus.RECORDING) {
                     Log.d("AppStateViewModel", "startVideoScan(): recording confirmed, scanId=${scan.id}")
 
@@ -331,7 +317,7 @@ class AppStateViewModel(
             Log.d("AppStateViewModel", "stopVideoScan()")
             videoScanUiState.value = VideoScanUiState.STOPPING
             val result = try {
-                if (current.source == ScanSource.PHONE_CAMERA) phoneCameraProvider?.stopVideoScan() ?: error("Phone camera provider is not configured") else cameraProvider.stopVideoScan()
+                cameraProvider.stopVideoScan()
             } catch (e: Throwable) {
                 ScanVideo(sessionId = current.sessionId, name = current.name, sequenceNumber = current.sequenceNumber, captureStatus = ScanVideoCaptureStatus.FAILED, notes = e.message ?: "stopVideoScan failed")
             }
@@ -343,11 +329,9 @@ class AppStateViewModel(
                 current.copy(
                     cameraFileUrl = result.cameraFileUrl,
                     cameraLocalFileUrl = result.cameraLocalFileUrl,
-                    localVideoPath = result.localVideoPath,
-                    fileSizeBytes = result.fileSizeBytes,
                     durationSec = result.durationSec ?: durationSec,
                     captureStatus = ScanVideoCaptureStatus.CAPTURED,
-                    downloadState = result.downloadState,
+                    downloadState = com.maklertour.domain.ScanVideoDownloadState.CAMERA_ONLY,
                     uploadState = com.maklertour.domain.ScanVideoUploadState.LOCAL_ONLY,
                     serverProcessingState = com.maklertour.domain.ScanVideoProcessingState.NOT_STARTED,
                     updatedAt = now,

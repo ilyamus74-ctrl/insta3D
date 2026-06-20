@@ -73,7 +73,6 @@ import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
 import com.maklertour.data.local.RoomDatabaseProvider
-import com.maklertour.data.phonecamera.PhoneCameraScanProvider
 import com.maklertour.data.network.ConnectivityState
 import com.maklertour.data.repository.RoomSessionRepository
 import com.maklertour.data.repository.RoomUploadQueueRepository
@@ -162,7 +161,6 @@ private fun MaklerTourApp() {
             connectivityManager = appConnectivityManager,
         )
         AppStateViewModel(
-            phoneCameraProvider = PhoneCameraScanProvider(baseContext.applicationContext),
             cameraProvider = if (BuildConfig.CAMERA_PROVIDER == "osc") {
                 Insta360OscProvider(
                     OscHttpClient(
@@ -512,7 +510,6 @@ private fun MaklerTourApp() {
                         videoScanUiState = state.videoScanUiState,
                         scanVideos = state.selectedSessionScanVideos,
                         onStartVideoScan = viewModel::startVideoScan,
-                        onStartPhoneVideoScan = viewModel::startPhoneVideoScan,
                         onStopVideoScan = viewModel::stopVideoScan,
                         onCreateSessionRequested = {
                             pendingSessionName = localizedContext.getString(R.string.quick_capture)
@@ -1171,7 +1168,6 @@ private fun CameraScreen(
     videoScanUiState: VideoScanUiState,
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     onStartVideoScan: (String) -> Unit,
-    onStartPhoneVideoScan: (String) -> Unit,
     onStopVideoScan: () -> Unit,
     onCreateSessionRequested: () -> Unit,
     onDeleteVideoScan: (String) -> Unit,
@@ -1272,17 +1268,7 @@ private fun CameraScreen(
                             },
                             enabled = connected && !videoScanBusy && !isCapturing && scanName.isNotBlank(),
                         ) { Text(stringResource(R.string.start_video_scan)) }
-                        Button(
-                            onClick = {
-                                if (selectedSessionName == null) {
-                                    showNoSessionDialog = true
-                                } else if (scanName.isNotBlank()) {
-                                    onStartPhoneVideoScan(scanName.trim())
-                                }
-                            },
-                            enabled = !videoScanBusy && !isCapturing && scanName.isNotBlank(),
-                        ) { Text("Скан смартфоном") }
-                        Button(onClick = onStopVideoScan, enabled = isRecordingScanVideo) {
+                        Button(onClick = onStopVideoScan, enabled = connected && isRecordingScanVideo) {
                             Text(stringResource(R.string.stop_video_scan))
                         }
                     }
@@ -1548,7 +1534,6 @@ private fun VideoScansBlock(
                             Text("createdAt=${scan.createdAt}")
                             Text("updatedAt=${scan.updatedAt}")
                             Text("captureStatus=${scan.captureStatus}")
-                            Text("source=${scan.source}")
                             Text("downloadState=${scan.downloadState}")
                             Text("uploadState=${scan.uploadState}")
                             Text("serverProcessingState=${scan.serverProcessingState}")
@@ -1952,7 +1937,6 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
     private enum class CaptureMode {
         PHOTO_POINT,
         VIDEO_SCAN,
-        PHONE_VIDEO_SCAN,
     }
 
 @Composable
