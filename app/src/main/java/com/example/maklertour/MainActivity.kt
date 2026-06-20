@@ -7,13 +7,12 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.provider.Settings
 import android.os.Bundle
 import android.widget.Toast
 import android.util.Log
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.background
@@ -61,6 +60,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
@@ -1368,6 +1369,7 @@ private fun PhoneCameraScanScreen(
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var hasCameraPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     var previewBound by remember { mutableStateOf(false) }
     var bindError by remember { mutableStateOf<String?>(null) }
@@ -1375,6 +1377,22 @@ private fun PhoneCameraScanScreen(
     var showCalibrationDialog by remember { mutableStateOf(false) }
     var showCameraSettingsDialog by remember { mutableStateOf(false) }
     val latestPhoneScan = scanVideos.filter { it.source == com.maklertour.domain.ScanSource.PHONE_CAMERA }.maxByOrNull { it.updatedAt }
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasCameraPermission = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.CAMERA,
+                ) == PackageManager.PERMISSION_GRANTED
+                if (!hasCameraPermission) {
+                    previewBound = false
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val status = when {
         !hasCameraPermission -> "Нет доступа"
         bindError != null || videoScanUiState == VideoScanUiState.FAILED -> "Ошибка"
@@ -1384,11 +1402,6 @@ private fun PhoneCameraScanScreen(
         previewBound -> "Камера готова"
         else -> "Камера готова"
     }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        hasCameraPermission = granted
-        bindError = if (granted) null else "Нет доступа к камере. Разрешите доступ к камере в настройках приложения."
-    }
-
     LaunchedEffect(videoScanUiState) {
         if (videoScanUiState == VideoScanUiState.RECORDING) {
             elapsedSec = 0L
@@ -1434,7 +1447,16 @@ private fun PhoneCameraScanScreen(
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(24.dp)) {
                         Text("Нет доступа к камере. Разрешите доступ к камере в настройках приложения.", color = Color.White)
-                        Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) { Text("Запросить доступ") }
+                        Button(
+                            onClick = {
+                                context.startActivity(
+                                    Intent(
+                                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        Uri.parse("package:${context.packageName}"),
+                                    )
+                                )
+                            }
+                        ) { Text("Открыть настройки приложения") }
                     }
                 }
                 bindError?.takeIf { hasCameraPermission }?.let { Text(it, color = Color(0xFFFFB4AB), modifier = Modifier.padding(16.dp)) }
