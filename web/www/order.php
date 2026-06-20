@@ -24,6 +24,18 @@ $error=null; $success=isset($_GET['updated'])?'Заявка обновлена':
 
 function table_exists(mysqli $dbcnx,string $table): bool { $t=$dbcnx->real_escape_string($table); $r=$dbcnx->query("SHOW TABLES LIKE '".$t."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
 function column_exists(mysqli $dbcnx,string $table,string $column): bool { $t=$dbcnx->real_escape_string($table); $c=$dbcnx->real_escape_string($column); $r=$dbcnx->query("SHOW COLUMNS FROM `".$t."` LIKE '".$c."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
+
+function ensure_sfm_remote_jobs_table(mysqli $dbcnx): void {
+  $dbcnx->query("CREATE TABLE IF NOT EXISTS sfm_remote_jobs (id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, capture_session_id BIGINT NOT NULL, job_type VARCHAR(64) NOT NULL, remote_job_id INT NOT NULL, parent_remote_job_id INT NULL, input_path TEXT NULL, output_path TEXT NULL, status VARCHAR(32) NOT NULL DEFAULT 'QUEUED', progress_percent INT DEFAULT 0, message TEXT NULL, result_json_path TEXT NULL, log_path TEXT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), KEY idx_sfm_remote_jobs_order_session (order_id, capture_session_id), KEY idx_sfm_remote_jobs_remote (remote_job_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+}
+function sfm_safe_uuid(string $uuid): string { return preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); }
+function sfm_remote_output_dir(int $remoteJobId): string { return '/home/makler/web/remote_station/output/job_'.$remoteJobId; }
+function sfm_job_id(mysqli $dbcnx): int { do { $id=random_int(10000,999999999); $st=$dbcnx->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1'); if(!$st){return $id;} $st->bind_param('i',$id); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); } while($exists); return $id; }
+function sfm_session_for_order(mysqli $dbcnx,int $orderId,int $sessionId): ?array { $st=$dbcnx->prepare('SELECT id, app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1'); if(!$st){return null;} $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $row=$st->get_result()->fetch_assoc()?:null; $st->close(); return $row; }
+function sfm_resolve_video_path(mysqli $dbcnx,int $orderId,int $sessionId,string $videoInput): ?string { $sess=sfm_session_for_order($dbcnx,$orderId,$sessionId); if(!$sess){return null;} $safe=sfm_safe_uuid((string)$sess['app_session_uuid']); $dir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safe.'/videos'; $realDir=realpath($dir); if($realDir===false || !is_dir($realDir)){return null;} $candidate=(str_contains($videoInput,'/')?$videoInput:($realDir.'/'.$videoInput)); $real=realpath($candidate); if($real===false || !is_file($real) || strtolower(pathinfo($real,PATHINFO_EXTENSION))!=='mp4'){return null;} return (strpos($real,$realDir.'/')===0)?$real:null; }
+function sfm_run_command(array $args): array { $cmd=implode(' ', array_map('escapeshellarg',$args)).' 2>&1'; $out=[]; $code=0; exec($cmd,$out,$code); return [$code,implode("
+",$out)]; }
+
 function move_session_to_trash(int $orderId,string $appSessionUuid): ?string {
   $safeUuid=preg_replace('/[^a-zA-Z0-9._-]+/','_',$appSessionUuid);
   $srcBase=realpath(APP_STORAGE_DIR.'/orders'); if($srcBase===false){return null;}
@@ -36,6 +48,8 @@ function move_session_to_trash(int $orderId,string $appSessionUuid): ?string {
   if(!@rename($realSrc,$dst)){ error_log('Failed to move deleted capture session to trash src='.$realSrc.' dst='.$dst); return null; }
   return ltrim(str_replace(APP_STORAGE_DIR.'/','',$dst),'/');
 }
+
+ensure_sfm_remote_jobs_table($dbcnx);
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
  $action=$_POST['action']??'';
@@ -82,6 +96,31 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      }
    }
  }
+
+ if(in_array($action,['sfm_extract_frames_web','sfm_colmap_sparse_web','sfm_export_ply_web'],true) && $canDeleteMedia){
+   try{
+     $remoteConf='/home/makler/web/remote_station/stations.conf'; $remoteBase='/home/makler/web/remote_station';
+     if($action==='sfm_extract_frames_web'){
+       $captureSessionId=(int)($_POST['capture_session_id']??0); $abs=sfm_resolve_video_path($dbcnx,$orderId,$captureSessionId,(string)($_POST['video_path']??($_POST['video_filename']??''))); if($abs===null){ throw new RuntimeException('Video path is invalid or outside session videos directory'); }
+       $rid=sfm_job_id($dbcnx); $out=sfm_remote_output_dir($rid); $result=$out.'/result.json'; $log=$out.'/logs'; $jt='EXTRACT_FRAMES';
+       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,input_path,output_path,status,result_json_path,log_path) VALUES (?,?,?,?,?,?,'RUNNING',?,?)"); $st->bind_param('iisissss',$orderId,$captureSessionId,$jt,$rid,$abs,$out,$result,$log); $st->execute(); $st->close();
+       [$code,$msg]=sfm_run_command([$remoteBase.'/run_extract_frames_job.sh',$remoteConf,(string)$rid,$abs]); $status=$code===0?'QUEUED':'ERROR'; $st=$dbcnx->prepare('UPDATE sfm_remote_jobs SET status=?, message=?, updated_at=NOW(6) WHERE remote_job_id=?'); $st->bind_param('ssi',$status,$msg,$rid); $st->execute(); $st->close();
+     } elseif($action==='sfm_colmap_sparse_web'){
+       $captureSessionId=(int)($_POST['capture_session_id']??0); if(!sfm_session_for_order($dbcnx,$orderId,$captureSessionId)){ throw new RuntimeException('Capture session not found'); } $parent=(int)($_POST['extract_job_id']??0); if($parent<=0){throw new RuntimeException('Bad extract job id');}
+       $rid=sfm_job_id($dbcnx); $input='/home/makler_storage/output/job_'.$parent.'/frames'; $out=sfm_remote_output_dir($rid); $result=$out.'/result.json'; $log=$out.'/logs'; $jt='COLMAP_SPARSE';
+       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,result_json_path,log_path) VALUES (?,?,?,?,?,?,?,'RUNNING',?,?)"); $st->bind_param('iisiissss',$orderId,$captureSessionId,$jt,$rid,$parent,$input,$out,$result,$log); $st->execute(); $st->close();
+       [$code,$msg]=sfm_run_command([$remoteBase.'/run_colmap_sparse_job.sh',$remoteConf,(string)$rid,$input]); $status=$code===0?'QUEUED':'ERROR'; $st=$dbcnx->prepare('UPDATE sfm_remote_jobs SET status=?, message=?, updated_at=NOW(6) WHERE remote_job_id=?'); $st->bind_param('ssi',$status,$msg,$rid); $st->execute(); $st->close();
+     } else {
+       $colmap=(int)($_POST['colmap_job_id']??0); $model=(int)($_POST['model_id']??0); if($colmap<=0||$model<0){throw new RuntimeException('Bad COLMAP job or model id');}
+       $st=$dbcnx->prepare("SELECT capture_session_id FROM sfm_remote_jobs WHERE order_id=? AND remote_job_id=? AND job_type='COLMAP_SPARSE' LIMIT 1"); $st->bind_param('ii',$orderId,$colmap); $st->execute(); $parentJob=$st->get_result()->fetch_assoc(); $st->close(); if(!$parentJob){throw new RuntimeException('COLMAP job not found');}
+       $captureSessionId=(int)$parentJob['capture_session_id']; $out=sfm_remote_output_dir($colmap).'/sparse_'.$model.'.ply'; $log=sfm_remote_output_dir($colmap).'/logs'; $jt='EXPORT_PLY';
+       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,log_path) VALUES (?,?,?,?,?,?,'RUNNING',?)"); $st->bind_param('iisiiss',$orderId,$captureSessionId,$jt,$colmap,$colmap,$out,$log); $st->execute(); $webId=$dbcnx->insert_id; $st->close();
+       [$code,$msg]=sfm_run_command([$remoteBase.'/export_sparse_ply.sh',$remoteConf,(string)$colmap,(string)$model,$remoteBase.'/output']); $status=$code===0?'DONE':'ERROR'; $st=$dbcnx->prepare('UPDATE sfm_remote_jobs SET status=?, message=?, updated_at=NOW(6) WHERE id=?'); $st->bind_param('ssi',$status,$msg,$webId); $st->execute(); $st->close();
+     }
+     header('Location: /order.php?id='.$orderId.'&sfm_job=1'); exit;
+   }catch(Throwable $e){ $error=$e->getMessage(); }
+ }
+
  if($action==='operator_close_order' && $canOperatorClose){
    $st=$dbcnx->prepare("UPDATE tour_orders SET operator_closed_at=NOW(6), operator_closed_by=?, status=IF(broker_closed_at IS NULL,'READY','COMPLETED'), updated_at=NOW(6) WHERE id=?"); if($st){$st->bind_param('ii',$userId,$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_OPERATOR_CLOSED','TOUR_ORDER',$orderId,'Закрытие со стороны оператора');header('Location: /order.php?id='.$orderId.'&closed=1');exit;}
  }
@@ -230,7 +269,20 @@ if($stmt){
   $stmt->close();
 }
 
+$sfmJobsBySession=[];
+$stmt=$dbcnx->prepare("SELECT * FROM sfm_remote_jobs WHERE order_id=? ORDER BY created_at DESC, id DESC");
+if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($j=$rs->fetch_assoc()){ $sid=(int)$j['capture_session_id']; if(!isset($sfmJobsBySession[$sid])){$sfmJobsBySession[$sid]=[];} $j['status_url']='/api/sfm_remote_job_status.php?job_id='.(int)$j['id']; $j['status_json_url']=$j['status_url'].'&file=status'; $j['result_json_url']=$j['status_url'].'&file=result'; $j['logs_url']=$j['status_url'].'&file=logs'; $j['ply_url']=$j['status_url'].'&file=ply'; $sfmJobsBySession[$sid][]=$j; } $stmt->close(); }
+
 foreach($captureSessions as $idx=>$session){
+  $safeUuid=sfm_safe_uuid((string)($session['app_session_uuid'] ?? ''));
+  $videoDir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safeUuid.'/videos';
+  $diskVideos=[];
+  $realVideoDir=realpath($videoDir);
+  if($realVideoDir!==false && is_dir($realVideoDir)){
+    foreach(glob($realVideoDir.'/*.mp4') ?: [] as $vf){ $rv=realpath($vf); if($rv!==false && strpos($rv,$realVideoDir.'/')===0){ $diskVideos[]=['filename'=>basename($rv),'path'=>$rv,'size_human'=>bytes_human((float)filesize($rv)),'modified_at'=>date('Y-m-d H:i:s',(int)filemtime($rv))]; } }
+  }
+  $captureSessions[$idx]['sfm_disk_videos']=$diskVideos;
+  $captureSessions[$idx]['sfm_remote_jobs']=$sfmJobsBySession[(int)$session['id']] ?? [];
   $sid=(int)$session['id'];
   $captureSessions[$idx]['processing_job']=$processingJobsBySession[$sid] ?? null;
   $job = $captureSessions[$idx]['processing_job'] ?? null;
@@ -296,6 +348,7 @@ $smarty->assign('canEdit',$canEdit);
 $smarty->assign('canEditOrderInfo',$canEditOrderInfo);
 $smarty->assign('canDeleteMedia',$canDeleteMedia);
 $smarty->assign('canCreatePublicLink', $canCreatePublicLink);
+$smarty->assign('isAdminDebug', $role==='ADMIN');
 $smarty->assign('canOperatorClose',$canOperatorClose);
 $smarty->assign('canBrokerClose',$canBrokerClose);
 $smarty->assign('canReopen',$canReopen);
