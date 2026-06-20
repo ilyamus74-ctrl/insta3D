@@ -29,6 +29,60 @@ function api_get_bearer_token(): ?string {
 }
 
 
+
+function api_column_exists(mysqli $dbcnx, string $table, string $column): bool {
+    $t = $dbcnx->real_escape_string($table);
+    $c = $dbcnx->real_escape_string($column);
+    $res = $dbcnx->query("SHOW COLUMNS FROM `" . $t . "` LIKE '" . $c . "'");
+    $ok = $res && $res->num_rows > 0;
+    if ($res) {
+        $res->close();
+    }
+    return $ok;
+}
+
+function api_safe_storage_name(string $value, string $fallback): string {
+    $safe = preg_replace('/[^a-zA-Z0-9._-]+/', '_', $value);
+    return $safe !== '' ? $safe : $fallback;
+}
+
+function api_store_optional_video_metadata(string $field, string $targetDir, string $relativeDir, string $safeScanUuid, string $suffix, array &$warnings): ?string {
+    if (!isset($_FILES[$field])) {
+        return null;
+    }
+
+    $file = $_FILES[$field];
+    $error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($error === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+    if ($error !== UPLOAD_ERR_OK) {
+        $warnings[] = $field . ' upload skipped: upload error ' . $error;
+        return null;
+    }
+
+    $originalName = basename((string)($file['name'] ?? ''));
+    $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+    if (!in_array($ext, ['json', 'jsonl'], true)) {
+        $warnings[] = $field . ' upload skipped: only json/jsonl files are allowed';
+        return null;
+    }
+
+    if (!is_dir($targetDir) || !is_writable($targetDir)) {
+        $warnings[] = $field . ' upload skipped: target directory is not writable';
+        return null;
+    }
+
+    $filename = $safeScanUuid . $suffix;
+    $targetPath = $targetDir . '/' . $filename;
+    if (!move_uploaded_file((string)$file['tmp_name'], $targetPath)) {
+        $warnings[] = $field . ' upload skipped: failed to store metadata file';
+        return null;
+    }
+
+    return $relativeDir . '/' . $filename;
+}
+
 function api_request_meta(array $extra = []): array {
     return array_merge([
         'ip' => $_SERVER['REMOTE_ADDR'] ?? null,
@@ -576,15 +630,8 @@ if ($action === 'upload_video_scan') {
     }
     $orderId = $dbOrderId;
 
-$safeSessionUuid = preg_replace('/[^a-zA-Z0-9._-]+/', '_', (string)$session['app_session_uuid']);
-if ($safeSessionUuid === '') {
-    $safeSessionUuid = 'session_' . $captureSessionId;
-}
-
-$safeScanUuid = preg_replace('/[^a-zA-Z0-9._-]+/', '_', $appScanUuid);
-if ($safeScanUuid === '') {
-    $safeScanUuid = 'scan_' . time();
-}
+$safeSessionUuid = api_safe_storage_name((string)$session['app_session_uuid'], 'session_' . $captureSessionId);
+$safeScanUuid = api_safe_storage_name($appScanUuid, 'scan_' . time());
 
 $base = realpath(__DIR__ . '/../../storage');
 
@@ -639,8 +686,15 @@ if (!is_writable($orderDir)) {
 
     $finalName = $safeScanUuid . '_' . $safeName;
     $targetPath = $orderDir . '/' . $finalName;
-    $relativePath = 'orders/' . $orderId . '/sessions/' . $safeSessionUuid . '/videos/' . $finalName;
+    $relativeDir = 'orders/' . $orderId . '/sessions/' . $safeSessionUuid . '/videos';
+    $relativePath = $relativeDir . '/' . $finalName;
     $sizeBytes = null;
+    $metadataWarnings = [];
+    $metadataPaths = [
+        'camera_info' => null,
+        'manifest' => null,
+        'imu' => null,
+    ];
 
     if ($isChunkMode) {
         $chunkIndex = (int)($_POST['chunk_index'] ?? -1);
@@ -781,17 +835,46 @@ if (!is_writable($orderDir)) {
         $sizeBytes = filesize($targetPath) ?: null;
     }
 
+    $metadataPaths['camera_info'] = api_store_optional_video_metadata('camera_info', $orderDir, $relativeDir, $safeScanUuid, '_camera_info.json', $metadataWarnings);
+    $metadataPaths['manifest'] = api_store_optional_video_metadata('manifest', $orderDir, $relativeDir, $safeScanUuid, '_manifest.json', $metadataWarnings);
+    $metadataPaths['imu'] = api_store_optional_video_metadata('imu', $orderDir, $relativeDir, $safeScanUuid, '_imu.jsonl', $metadataWarnings);
+
+    $metadataDbColumns = [
+        'camera_info' => ['camera_info_path', 'camera_info_storage_path'],
+        'manifest' => ['manifest_path', 'manifest_storage_path'],
+        'imu' => ['imu_path', 'imu_storage_path'],
+    ];
+    $metadataInsertColumns = [];
+    $metadataInsertValues = [];
+    $metadataUpdateAssignments = [];
+    $metadataBindTypes = '';
+    $metadataBindValues = [];
+    foreach ($metadataDbColumns as $key => $candidates) {
+        foreach ($candidates as $column) {
+            if (api_column_exists($dbcnx, 'video_scans', $column)) {
+                $metadataInsertColumns[] = $column;
+                $metadataInsertValues[] = '?';
+                $metadataUpdateAssignments[] = $column . ' = VALUES(' . $column . ')';
+                $metadataBindTypes .= 's';
+                $metadataBindValues[] = $metadataPaths[$key];
+                break;
+            }
+        }
+    }
+
     $stmt = $dbcnx->prepare("
         INSERT INTO video_scans
-        (session_id, app_scan_uuid, filename, local_camera_url, storage_path, size_bytes, duration_sec, upload_state, processing_state)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'UPLOADED', 'NOT_STARTED')
+        (session_id, app_scan_uuid, filename, local_camera_url, storage_path, size_bytes, duration_sec" . ($metadataInsertColumns ? ', ' . implode(', ', $metadataInsertColumns) : '') . ", upload_state, processing_state)
+        VALUES (?, ?, ?, ?, ?, ?, ?" . ($metadataInsertValues ? ', ' . implode(', ', $metadataInsertValues) : '') . ", 'UPLOADED', 'NOT_STARTED')
         ON DUPLICATE KEY UPDATE
             filename = VALUES(filename),
             local_camera_url = VALUES(local_camera_url),
             storage_path = VALUES(storage_path),
             size_bytes = VALUES(size_bytes),
             duration_sec = VALUES(duration_sec),
-            upload_state = 'UPLOADED',
+            " . ($metadataUpdateAssignments ? implode(",
+            ", $metadataUpdateAssignments) . ",
+            " : "") . "upload_state = 'UPLOADED',
             updated_at = NOW(6)
     ");
 
@@ -799,16 +882,21 @@ if (!is_writable($orderDir)) {
         api_json(['ok' => false, 'error' => 'db video insert prepare error: ' . $dbcnx->error], 500);
     }
 
-    $stmt->bind_param(
-        "issssii",
+    $bindTypes = "issssii" . $metadataBindTypes;
+    $bindValues = array_merge([
         $captureSessionId,
         $appScanUuid,
         $finalName,
         $localCameraUrl,
         $relativePath,
         $sizeBytes,
-        $durationSec
-    );
+        $durationSec,
+    ], $metadataBindValues);
+    $bindRefs = [];
+    foreach ($bindValues as $idx => $value) {
+        $bindRefs[$idx] = &$bindValues[$idx];
+    }
+    $stmt->bind_param($bindTypes, ...$bindRefs);
 
     if (!$stmt->execute()) {
         api_json(['ok' => false, 'error' => 'db video insert execute error: ' . $stmt->error], 500);
@@ -842,6 +930,8 @@ if ($stmt) {
             'size_bytes' => $sizeBytes,
             'duration_sec' => $durationSec,
             'local_camera_url' => $localCameraUrl,
+            'metadata' => $metadataPaths,
+            'metadata_warnings' => $metadataWarnings,
         ])
     );
 
@@ -850,6 +940,8 @@ if ($stmt) {
         'upload_complete' => true,
         'storage_path' => $relativePath,
         'size_bytes' => $sizeBytes,
+        'metadata' => $metadataPaths,
+        'metadata_warnings' => $metadataWarnings,
     ]);
 }
 

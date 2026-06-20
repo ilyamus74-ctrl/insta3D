@@ -190,6 +190,16 @@
                 {foreach from=$s.sfm_disk_videos item=dv}
                   <div class="border rounded p-2 mb-2 bg-white">
                     <div><strong>{$dv.filename|escape}</strong> — {$dv.size_human|escape} — uploaded at {$dv.modified_at|escape}</div>
+                    <div class="small mt-1">
+                      camera_info: {if $dv.metadata.camera_info.exists}<span class="text-success">yes</span>{else}<span class="text-muted">no</span>{/if}
+                      · manifest: {if $dv.metadata.manifest.exists}<span class="text-success">yes</span>{else}<span class="text-muted">no</span>{/if}
+                      · imu: {if $dv.metadata.imu.exists}<span class="text-success">yes</span>{else}<span class="text-muted">no</span>{/if}
+                    </div>
+                    <div class="small d-flex gap-2 flex-wrap mt-1">
+                      {if $dv.metadata.camera_info.exists}<a href="{$dv.metadata.camera_info.url|escape}" target="_blank">View camera_info</a>{/if}
+                      {if $dv.metadata.manifest.exists}<a href="{$dv.metadata.manifest.url|escape}" target="_blank">View manifest</a>{/if}
+                      {if $dv.metadata.imu.exists}<a href="{$dv.metadata.imu.url|escape}">Download imu</a>{/if}
+                    </div>
                     {if $isAdminDebug}<div class="small"><code>{$dv.path|escape}</code></div>{/if}
                     <form method="post" action="/order.php?id={$order.id}" class="mt-1 d-inline">
                       <input type="hidden" name="action" value="sfm_extract_frames_web">

@@ -28,7 +28,9 @@ function column_exists(mysqli $dbcnx,string $table,string $column): bool { $t=$d
 function ensure_sfm_remote_jobs_table(mysqli $dbcnx): void {
   $dbcnx->query("CREATE TABLE IF NOT EXISTS sfm_remote_jobs (id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, capture_session_id BIGINT NOT NULL, job_type VARCHAR(64) NOT NULL, remote_job_id INT NOT NULL, parent_remote_job_id INT NULL, input_path TEXT NULL, output_path TEXT NULL, status VARCHAR(32) NOT NULL DEFAULT 'QUEUED', progress_percent INT DEFAULT 0, message TEXT NULL, result_json_path TEXT NULL, log_path TEXT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), KEY idx_sfm_remote_jobs_order_session (order_id, capture_session_id), KEY idx_sfm_remote_jobs_remote (remote_job_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 }
-function sfm_safe_uuid(string $uuid): string { return preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); }
+function sfm_safe_uuid(string $uuid): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:'session'; }
+function video_scan_safe_uuid(string $uuid,int $scanId): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:('scan_'.$scanId); }
+function video_scan_metadata_info(int $scanId,string $appScanUuid,string $videoDir): array { $safe=video_scan_safe_uuid($appScanUuid,$scanId); $defs=['camera_info'=>['_camera_info.json','View camera_info'],'manifest'=>['_manifest.json','View manifest'],'imu'=>['_imu.jsonl','Download imu']]; $out=[]; foreach($defs as $type=>$def){ $path=$videoDir.'/'.$safe.$def[0]; $exists=is_file($path); $out[$type]=['exists'=>$exists,'label'=>$def[1],'url'=>$exists?('/api/video_scan_metadata.php?scan_id='.$scanId.'&type='.$type):'']; } return $out; }
 function sfm_remote_output_dir(int $remoteJobId): string { return '/home/makler/web/remote_station/output/job_'.$remoteJobId; }
 function sfm_job_id(mysqli $dbcnx): int { do { $id=random_int(10000,999999999); $st=$dbcnx->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1'); if(!$st){return $id;} $st->bind_param('i',$id); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); } while($exists); return $id; }
 function sfm_session_for_order(mysqli $dbcnx,int $orderId,int $sessionId): ?array { $st=$dbcnx->prepare('SELECT id, app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1'); if(!$st){return null;} $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $row=$st->get_result()->fetch_assoc()?:null; $st->close(); return $row; }
@@ -285,9 +287,20 @@ foreach($captureSessions as $idx=>$session){
   $safeUuid=sfm_safe_uuid((string)($session['app_session_uuid'] ?? ''));
   $videoDir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safeUuid.'/videos';
   $diskVideos=[];
+  $videosByFilename=[];
+  foreach(($session['videos'] ?? []) as $scanRow){ $videosByFilename[(string)($scanRow['filename'] ?? '')]=$scanRow; }
   $realVideoDir=realpath($videoDir);
   if($realVideoDir!==false && is_dir($realVideoDir)){
-    foreach(glob($realVideoDir.'/*.mp4') ?: [] as $vf){ $rv=realpath($vf); if($rv!==false && strpos($rv,$realVideoDir.'/')===0){ $diskVideos[]=['filename'=>basename($rv),'path'=>$rv,'size_human'=>bytes_human((float)filesize($rv)),'modified_at'=>date('Y-m-d H:i:s',(int)filemtime($rv))]; } }
+    foreach(glob($realVideoDir.'/*.mp4') ?: [] as $vf){
+      $rv=realpath($vf);
+      if($rv!==false && strpos($rv,$realVideoDir.'/')===0){
+        $filename=basename($rv);
+        $scanRow=$videosByFilename[$filename] ?? null;
+        $metadata=['camera_info'=>['exists'=>false,'url'=>'','label'=>'View camera_info'],'manifest'=>['exists'=>false,'url'=>'','label'=>'View manifest'],'imu'=>['exists'=>false,'url'=>'','label'=>'Download imu']];
+        if($scanRow){ $metadata=video_scan_metadata_info((int)$scanRow['id'],(string)($scanRow['app_scan_uuid'] ?? ''),$realVideoDir); }
+        $diskVideos[]=['filename'=>$filename,'path'=>$rv,'size_human'=>bytes_human((float)filesize($rv)),'modified_at'=>date('Y-m-d H:i:s',(int)filemtime($rv)),'metadata'=>$metadata];
+      }
+    }
   }
   $captureSessions[$idx]['sfm_disk_videos']=$diskVideos;
   $captureSessions[$idx]['sfm_remote_jobs']=$sfmJobsBySession[(int)$session['id']] ?? [];
