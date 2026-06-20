@@ -71,6 +71,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.camera.view.PreviewView
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -1326,16 +1329,28 @@ private fun CameraScreen(
             CaptureOverlay()
         }
         if (showPhoneCameraScan) {
-            PhoneCameraScanScreen(
-                scanName = scanName,
-                isRecordingScanVideo = isRecordingScanVideo,
-                videoScanUiState = videoScanUiState,
-                scanVideos = scanVideos,
-                onBindPreview = onBindPhoneCameraPreview,
-                onStartPhoneVideoScan = { name -> onStartPhoneVideoScan(name) },
-                onStopPhoneVideoScan = onStopVideoScan,
-                onClose = { showPhoneCameraScan = false },
-            )
+            Dialog(
+                onDismissRequest = {
+                    if (!isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING) {
+                        showPhoneCameraScan = false
+                    }
+                },
+                properties = DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false,
+                ),
+            ) {
+                PhoneCameraScanScreen(
+                    scanName = scanName,
+                    isRecordingScanVideo = isRecordingScanVideo,
+                    videoScanUiState = videoScanUiState,
+                    scanVideos = scanVideos,
+                    onBindPreview = onBindPhoneCameraPreview,
+                    onStartPhoneVideoScan = { name -> onStartPhoneVideoScan(name) },
+                    onStopPhoneVideoScan = onStopVideoScan,
+                    onClose = { showPhoneCameraScan = false },
+                )
+            }
         }
     }
     if (showNoSessionDialog) {
@@ -1376,7 +1391,16 @@ private fun PhoneCameraScanScreen(
     var elapsedSec by remember { mutableStateOf(0L) }
     var showCalibrationDialog by remember { mutableStateOf(false) }
     var showCameraSettingsDialog by remember { mutableStateOf(false) }
+    var startedInThisScreen by remember { mutableStateOf(false) }
+    var lastShownCapturedScanId by remember { mutableStateOf<String?>(null) }
+    val debugMode = remember(context) { DebugPreferences.get(context) }
     val latestPhoneScan = scanVideos.filter { it.source == com.maklertour.domain.ScanSource.PHONE_CAMERA }.maxByOrNull { it.updatedAt }
+    val capturedPhoneScan = latestPhoneScan?.takeIf {
+        startedInThisScreen &&
+            videoScanUiState == VideoScanUiState.CAPTURED &&
+            it.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED &&
+            it.id != lastShownCapturedScanId
+    }
     DisposableEffect(lifecycleOwner, context) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -1397,10 +1421,10 @@ private fun PhoneCameraScanScreen(
         !hasCameraPermission -> "Нет доступа"
         bindError != null || videoScanUiState == VideoScanUiState.FAILED -> "Ошибка"
         videoScanUiState == VideoScanUiState.RECORDING -> "Запись"
-        videoScanUiState == VideoScanUiState.STOPPING -> "Остановка"
+        videoScanUiState == VideoScanUiState.STOPPING -> "Сохранение видео..."
         videoScanUiState == VideoScanUiState.CAPTURED -> "Видео сохранено"
         previewBound -> "Камера готова"
-        else -> "Камера готова"
+        else -> "Открытие камеры..."
     }
     LaunchedEffect(videoScanUiState) {
         if (videoScanUiState == VideoScanUiState.RECORDING) {
@@ -1465,7 +1489,15 @@ private fun PhoneCameraScanScreen(
             Column(modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.85f)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (videoScanUiState == VideoScanUiState.RECORDING) Text("Таймер: ${elapsedSec}s", color = Color.White)
                 Button(
-                    onClick = { if (isRecordingScanVideo) onStopPhoneVideoScan() else onStartPhoneVideoScan(scanName.trim()) },
+                    onClick = {
+                        if (isRecordingScanVideo) {
+                            onStopPhoneVideoScan()
+                        } else {
+                            startedInThisScreen = true
+                            lastShownCapturedScanId = null
+                            onStartPhoneVideoScan(scanName.trim())
+                        }
+                    },
                     enabled = hasCameraPermission && previewBound && scanName.isNotBlank() && videoScanUiState !in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.STOPPING),
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = if (isRecordingScanVideo) Color.DarkGray else Color.Red),
@@ -1476,11 +1508,23 @@ private fun PhoneCameraScanScreen(
                     Button(onClick = { showCalibrationDialog = true }) { Text("Калибровка") }
                     Button(onClick = { showCameraSettingsDialog = true }) { Text("Настройки камеры") }
                 }
-                if (videoScanUiState == VideoScanUiState.CAPTURED && latestPhoneScan != null) {
-                    Text("localVideoPath=${latestPhoneScan.localVideoPath ?: "—"}", color = Color.White)
-                    Text("fileSizeBytes=${latestPhoneScan.fileSizeBytes ?: 0}", color = Color.White)
-                    Text("durationSec=${latestPhoneScan.durationSec ?: 0}", color = Color.White)
-                    Button(onClick = onClose) { Text("Готово") }
+                if (capturedPhoneScan != null) {
+                    Text("Видео сохранено", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text("Размер: ${formatBytes(capturedPhoneScan.fileSizeBytes ?: 0L)}", color = Color.White)
+                    Text("Длительность: ${capturedPhoneScan.durationSec ?: 0} сек", color = Color.White)
+                    if (debugMode) {
+                        Text(
+                            "Путь: ${capturedPhoneScan.localVideoPath ?: "—"}",
+                            color = Color.White.copy(alpha = 0.65f),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Button(onClick = {
+                        lastShownCapturedScanId = capturedPhoneScan.id
+                        onClose()
+                    }) { Text("Готово") }
                 }
                 latestPhoneScan?.notes?.takeIf { videoScanUiState == VideoScanUiState.FAILED }?.let { Text("Ошибка: $it", color = Color(0xFFFFB4AB)) }
             }
@@ -1488,6 +1532,18 @@ private fun PhoneCameraScanScreen(
     }
     if (showCalibrationDialog) AlertDialog(onDismissRequest = { showCalibrationDialog = false }, title = { Text("Калибровка") }, text = { Text("Калибровка камеры будет добавлена следующим этапом. План: шахматка/AprilTag board, сохранение camera_matrix и distortion_coefficients.") }, confirmButton = { TextButton(onClick = { showCalibrationDialog = false }) { Text("ОК") } })
     if (showCameraSettingsDialog) AlertDialog(onDismissRequest = { showCameraSettingsDialog = false }, title = { Text("Настройки камеры") }, text = { Text("Выбор объектива, разрешения и FPS будет добавлен следующим этапом.") }, confirmButton = { TextButton(onClick = { showCameraSettingsDialog = false }) { Text("ОК") } })
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val units = listOf("KB", "MB", "GB")
+    var value = bytes.toDouble() / 1024.0
+    var unitIndex = 0
+    while (value >= 1024.0 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    return String.format(java.util.Locale.US, "%.1f %s", value, units[unitIndex])
 }
 
 @Composable
