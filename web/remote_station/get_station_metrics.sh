@@ -22,7 +22,23 @@ json_escape(){ python3 -c '\''import json,sys; print(json.dumps(sys.stdin.read()
 hostname_v=$(hostname 2>/dev/null || printf unknown)
 uptime_v=$(uptime -p 2>/dev/null || uptime 2>/dev/null || true)
 load_avg=$(awk "{print \$1\" \"\$2\" \"\$3}" /proc/loadavg 2>/dev/null || printf "")
-cpu_usage=$(awk '\''/cpu /{u=$2+$4; t=$2+$3+$4+$5+$6+$7+$8; if(t>0) printf "%d", (u*100/t); else printf "0"}'\'' /proc/stat 2>/dev/null || printf "0")
+read_cpu() {
+  awk '\''/^cpu /{
+    idle=$5+$6
+    total=$2+$3+$4+$5+$6+$7+$8+$9+$10
+    print total, idle
+  }'\'' /proc/stat
+}
+read total1 idle1 < <(read_cpu 2>/dev/null || printf "0 0\n")
+sleep 0.5
+read total2 idle2 < <(read_cpu 2>/dev/null || printf "0 0\n")
+diff_total=$((total2-total1))
+diff_idle=$((idle2-idle1))
+if (( diff_total > 0 )); then
+  cpu_usage=$((100*(diff_total-diff_idle)/diff_total))
+else
+  cpu_usage=0
+fi
 read mem_total mem_avail < <(awk '\''/MemTotal:/{t=int($2/1024)} /MemAvailable:/{a=int($2/1024)} END{print t+0, a+0}'\'' /proc/meminfo)
 mem_used=$((mem_total-mem_avail))
 updated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
