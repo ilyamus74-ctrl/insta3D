@@ -54,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -138,6 +139,7 @@ private fun iconForTab(tab: AppTab): ImageVector = when (tab) {
 private fun MaklerTourApp() {
     val navController = rememberNavController()
     val baseContext = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val authStorage = remember { AuthStorage(baseContext.applicationContext) }
     val authApi = remember { MobileAuthApi(baseContext.applicationContext) }
     val ordersRepository = remember { OrdersRepository(authStorage, MobileOrdersApi(baseContext.applicationContext)) }
@@ -162,7 +164,7 @@ private fun MaklerTourApp() {
             connectivityManager = appConnectivityManager,
         )
         AppStateViewModel(
-            phoneCameraScanProvider = PhoneCameraScanProvider(baseContext.applicationContext, this),
+            phoneCameraScanProvider = PhoneCameraScanProvider(baseContext.applicationContext, lifecycleOwner),
             cameraProvider = if (BuildConfig.CAMERA_PROVIDER == "osc") {
                 Insta360OscProvider(
                     OscHttpClient(
