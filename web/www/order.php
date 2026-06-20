@@ -20,7 +20,7 @@ $canOperatorClose = $role==='ADMIN' || ($role==='OPERATOR' && (int)$order['opera
 $canBrokerClose = $role==='ADMIN' || ((int)$order['broker_id']===$userId && empty($order['broker_closed_at']));
 $canReopen = $role==='ADMIN' || ((int)$order['broker_id']===$userId && (string)$order['status']!=='COMPLETED');
 $canCreatePublicLink = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
-$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['photo_deleted'])?'Снимок удалён':(isset($_GET['session_deleted'])?'Сессия удалена':null)))));
+$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['sfm_job_queued'])?'SfM job queued':(isset($_GET['photo_deleted'])?'Снимок удалён':(isset($_GET['session_deleted'])?'Сессия удалена':null))))));
 
 function table_exists(mysqli $dbcnx,string $table): bool { $t=$dbcnx->real_escape_string($table); $r=$dbcnx->query("SHOW TABLES LIKE '".$t."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
 function column_exists(mysqli $dbcnx,string $table,string $column): bool { $t=$dbcnx->real_escape_string($table); $c=$dbcnx->real_escape_string($column); $r=$dbcnx->query("SHOW COLUMNS FROM `".$t."` LIKE '".$c."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
@@ -33,8 +33,6 @@ function sfm_remote_output_dir(int $remoteJobId): string { return '/home/makler/
 function sfm_job_id(mysqli $dbcnx): int { do { $id=random_int(10000,999999999); $st=$dbcnx->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1'); if(!$st){return $id;} $st->bind_param('i',$id); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); } while($exists); return $id; }
 function sfm_session_for_order(mysqli $dbcnx,int $orderId,int $sessionId): ?array { $st=$dbcnx->prepare('SELECT id, app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1'); if(!$st){return null;} $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $row=$st->get_result()->fetch_assoc()?:null; $st->close(); return $row; }
 function sfm_resolve_video_path(mysqli $dbcnx,int $orderId,int $sessionId,string $videoInput): ?string { $sess=sfm_session_for_order($dbcnx,$orderId,$sessionId); if(!$sess){return null;} $safe=sfm_safe_uuid((string)$sess['app_session_uuid']); $dir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safe.'/videos'; $realDir=realpath($dir); if($realDir===false || !is_dir($realDir)){return null;} $candidate=(str_contains($videoInput,'/')?$videoInput:($realDir.'/'.$videoInput)); $real=realpath($candidate); if($real===false || !is_file($real) || strtolower(pathinfo($real,PATHINFO_EXTENSION))!=='mp4'){return null;} return (strpos($real,$realDir.'/')===0)?$real:null; }
-function sfm_run_command(array $args): array { $cmd=implode(' ', array_map('escapeshellarg',$args)).' 2>&1'; $out=[]; $code=0; exec($cmd,$out,$code); return [$code,implode("
-",$out)]; }
 
 function move_session_to_trash(int $orderId,string $appSessionUuid): ?string {
   $safeUuid=preg_replace('/[^a-zA-Z0-9._-]+/','_',$appSessionUuid);
@@ -99,27 +97,37 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
 
  if(in_array($action,['sfm_extract_frames_web','sfm_colmap_sparse_web','sfm_export_ply_web'],true) && $canDeleteMedia){
    try{
-     $remoteConf='/home/makler/web/remote_station/stations.conf'; $remoteBase='/home/makler/web/remote_station';
      if($action==='sfm_extract_frames_web'){
-       $captureSessionId=(int)($_POST['capture_session_id']??0); $abs=sfm_resolve_video_path($dbcnx,$orderId,$captureSessionId,(string)($_POST['video_path']??($_POST['video_filename']??''))); if($abs===null){ throw new RuntimeException('Video path is invalid or outside session videos directory'); }
+       $captureSessionId=(int)($_POST['capture_session_id']??0);
+       $abs=sfm_resolve_video_path($dbcnx,$orderId,$captureSessionId,(string)($_POST['video_path']??($_POST['video_filename']??'')));
+       if($abs===null){ throw new RuntimeException('Video path is invalid or outside session videos directory'); }
        $rid=sfm_job_id($dbcnx); $out=sfm_remote_output_dir($rid); $result=$out.'/result.json'; $log=$out.'/logs'; $jt='EXTRACT_FRAMES';
-       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,input_path,output_path,status,result_json_path,log_path) VALUES (?,?,?,?,?,?,'RUNNING',?,?)"); $st->bind_param('iisissss',$orderId,$captureSessionId,$jt,$rid,$abs,$out,$result,$log); $st->execute(); $st->close();
-       [$code,$msg]=sfm_run_command([$remoteBase.'/run_extract_frames_job.sh',$remoteConf,(string)$rid,$abs]); $status=$code===0?'QUEUED':'ERROR'; $st=$dbcnx->prepare('UPDATE sfm_remote_jobs SET status=?, message=?, updated_at=NOW(6) WHERE remote_job_id=?'); $st->bind_param('ssi',$status,$msg,$rid); $st->execute(); $st->close();
+       $msg='job queued';
+       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?)");
+       if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+       $st->bind_param('iisisssss',$orderId,$captureSessionId,$jt,$rid,$abs,$out,$msg,$result,$log); $st->execute(); $st->close();
      } elseif($action==='sfm_colmap_sparse_web'){
-       $captureSessionId=(int)($_POST['capture_session_id']??0); if(!sfm_session_for_order($dbcnx,$orderId,$captureSessionId)){ throw new RuntimeException('Capture session not found'); } $parent=(int)($_POST['extract_job_id']??0); if($parent<=0){throw new RuntimeException('Bad extract job id');}
-       $rid=sfm_job_id($dbcnx); $input='/home/makler_storage/output/job_'.$parent.'/frames'; $out=sfm_remote_output_dir($rid); $result=$out.'/result.json'; $log=$out.'/logs'; $jt='COLMAP_SPARSE';
-       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,result_json_path,log_path) VALUES (?,?,?,?,?,?,?,'RUNNING',?,?)"); $st->bind_param('iisiissss',$orderId,$captureSessionId,$jt,$rid,$parent,$input,$out,$result,$log); $st->execute(); $st->close();
-       [$code,$msg]=sfm_run_command([$remoteBase.'/run_colmap_sparse_job.sh',$remoteConf,(string)$rid,$input]); $status=$code===0?'QUEUED':'ERROR'; $st=$dbcnx->prepare('UPDATE sfm_remote_jobs SET status=?, message=?, updated_at=NOW(6) WHERE remote_job_id=?'); $st->bind_param('ssi',$status,$msg,$rid); $st->execute(); $st->close();
+       $captureSessionId=(int)($_POST['capture_session_id']??0); if(!sfm_session_for_order($dbcnx,$orderId,$captureSessionId)){ throw new RuntimeException('Capture session not found'); }
+       $parent=(int)($_POST['extract_job_id']??0); if($parent<=0){throw new RuntimeException('Bad extract job id');}
+       $st=$dbcnx->prepare("SELECT id FROM sfm_remote_jobs WHERE order_id=? AND capture_session_id=? AND remote_job_id=? AND job_type='EXTRACT_FRAMES' LIMIT 1");
+       if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+       $st->bind_param('iii',$orderId,$captureSessionId,$parent); $st->execute(); $parentJob=$st->get_result()->fetch_assoc(); $st->close(); if(!$parentJob){throw new RuntimeException('EXTRACT_FRAMES job not found');}
+       $rid=sfm_job_id($dbcnx); $input='/home/makler_storage/output/job_'.$parent.'/frames'; $out=sfm_remote_output_dir($rid); $result=$out.'/result.json'; $log=$out.'/logs'; $jt='COLMAP_SPARSE'; $msg='job queued';
+       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path) VALUES (?,?,?,?,?,?,?,'QUEUED',0,?,?,?)");
+       if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+       $st->bind_param('iisiisssss',$orderId,$captureSessionId,$jt,$rid,$parent,$input,$out,$msg,$result,$log); $st->execute(); $st->close();
      } else {
        $colmap=(int)($_POST['colmap_job_id']??0); $model=(int)($_POST['model_id']??0); if($colmap<=0||$model<0){throw new RuntimeException('Bad COLMAP job or model id');}
        $st=$dbcnx->prepare("SELECT capture_session_id FROM sfm_remote_jobs WHERE order_id=? AND remote_job_id=? AND job_type='COLMAP_SPARSE' LIMIT 1"); $st->bind_param('ii',$orderId,$colmap); $st->execute(); $parentJob=$st->get_result()->fetch_assoc(); $st->close(); if(!$parentJob){throw new RuntimeException('COLMAP job not found');}
-       $captureSessionId=(int)$parentJob['capture_session_id']; $out=sfm_remote_output_dir($colmap).'/sparse_'.$model.'.ply'; $log=sfm_remote_output_dir($colmap).'/logs'; $jt='EXPORT_PLY';
-       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,log_path) VALUES (?,?,?,?,?,?,'RUNNING',?)"); $st->bind_param('iisiiss',$orderId,$captureSessionId,$jt,$colmap,$colmap,$out,$log); $st->execute(); $webId=$dbcnx->insert_id; $st->close();
-       [$code,$msg]=sfm_run_command([$remoteBase.'/export_sparse_ply.sh',$remoteConf,(string)$colmap,(string)$model,$remoteBase.'/output']); $status=$code===0?'DONE':'ERROR'; $st=$dbcnx->prepare('UPDATE sfm_remote_jobs SET status=?, message=?, updated_at=NOW(6) WHERE id=?'); $st->bind_param('ssi',$status,$msg,$webId); $st->execute(); $st->close();
+       $captureSessionId=(int)$parentJob['capture_session_id']; $rid=sfm_job_id($dbcnx); $out=sfm_remote_output_dir($colmap).'/sparse_'.$model.'.ply'; $log=sfm_remote_output_dir($colmap).'/logs'; $jt='EXPORT_PLY'; $msg='job queued';
+       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,log_path) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?)");
+       if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+       $st->bind_param('iisiisss',$orderId,$captureSessionId,$jt,$rid,$colmap,$out,$msg,$log); $st->execute(); $st->close();
      }
-     header('Location: /order.php?id='.$orderId.'&sfm_job=1'); exit;
+     header('Location: /order.php?id='.$orderId.'&sfm_job_queued=1'); exit;
    }catch(Throwable $e){ $error=$e->getMessage(); }
  }
+
 
  if($action==='operator_close_order' && $canOperatorClose){
    $st=$dbcnx->prepare("UPDATE tour_orders SET operator_closed_at=NOW(6), operator_closed_by=?, status=IF(broker_closed_at IS NULL,'READY','COMPLETED'), updated_at=NOW(6) WHERE id=?"); if($st){$st->bind_param('ii',$userId,$orderId);$st->execute();$st->close();audit_log($userId,'ORDER_OPERATOR_CLOSED','TOUR_ORDER',$orderId,'Закрытие со стороны оператора');header('Location: /order.php?id='.$orderId.'&closed=1');exit;}

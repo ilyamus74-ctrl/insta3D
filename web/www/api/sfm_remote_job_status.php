@@ -23,8 +23,11 @@ if($file!==''){
   header('Content-Type: '.$ctype); if($download) header('Content-Disposition: attachment; filename="'.basename($rp).'"'); readfile($rp); exit;
 }
 $statusJson=[]; $statusPath=$base.'/status.json';
-$cmd=implode(' ',array_map('escapeshellarg',['/home/makler/web/remote_station/get_station_status.sh','/home/makler/web/remote_station/stations.conf',(string)$remote])).' 2>&1'; $out=[]; $code=0; exec($cmd,$out,$code); $raw=implode("\n",$out); $decoded=json_decode($raw,true); if(is_array($decoded)) $statusJson=$decoded; elseif(is_file($statusPath)){ $decoded=json_decode((string)file_get_contents($statusPath),true); if(is_array($decoded)) $statusJson=$decoded; }
-$status=strtoupper((string)($statusJson['status'] ?? ($code===0?($job['status'] ?? 'UNKNOWN'):'ERROR'))); $progress=(int)($statusJson['progress_percent'] ?? $statusJson['progress'] ?? $job['progress_percent'] ?? 0); $message=(string)($statusJson['message'] ?? ($raw!==''?$raw:($job['message'] ?? '')));
-$st=$dbcnx->prepare('UPDATE sfm_remote_jobs SET status=?, progress_percent=?, message=?, updated_at=NOW(6) WHERE id=?'); $jid=(int)$job['id']; $st->bind_param('sisi',$status,$progress,$message,$jid); $st->execute(); $st->close();
-$job['status']=$status; $job['progress_percent']=$progress; $job['message']=$message; $job['updated_at']=date('Y-m-d H:i:s');
+if(is_file($statusPath)){
+  $decoded=json_decode((string)file_get_contents($statusPath),true);
+  if(is_array($decoded)) $statusJson=$decoded;
+}
+$job['status']=(string)($job['status'] ?? 'UNKNOWN');
+$job['progress_percent']=(int)($job['progress_percent'] ?? 0);
+$job['message']=(string)($job['message'] ?? '');
 srj_json(['ok'=>true,'job'=>$job,'remote_status'=>$statusJson,'files'=>['status'=>is_file($base.'/status.json'),'result'=>is_file($base.'/result.json'),'logs'=>(bool)(glob($base.'/logs/*.log') ?: []),'ply'=>(bool)(glob($base.'/*.ply') ?: [])]]);
