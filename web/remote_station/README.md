@@ -112,6 +112,8 @@ Typical setup/deploy sequence:
 ./deploy_station.sh ./stations.conf
 chmod +x /home/makler/web/remote_station/*.sh
 chmod +x /home/makler/web/remote_station/scripts/*.sh
+chmod +x /home/makler/web/remote_station/run_colmap_dense_job.sh
+chmod +x /home/makler/web/remote_station/scripts/process_colmap_dense.sh
 /home/makler/web/remote_station/get_station_metrics.sh /home/makler/web/remote_station/stations.conf
 ```
 

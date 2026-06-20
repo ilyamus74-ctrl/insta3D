@@ -252,7 +252,16 @@ function frames_path_for_parent(int $parentRemoteJobId): string
 function model_id_from_job(array $job): int
 {
     $out = (string)($job['output_path'] ?? '');
-    if (preg_match('/(?:sparse|dense_model)_(\d+)\.ply$/', $out, $m)) {
+    if (preg_match('/sparse_(\d+)\.ply$/', $out, $m)) {
+        return (int)$m[1];
+    }
+    if (preg_match('/dense_model_(\d+)\.ply$/', $out, $m)) {
+        return (int)$m[1];
+    }
+    if (preg_match('#/sparse/(\d+)/model\.ply#', $out, $m)) {
+        return (int)$m[1];
+    }
+    if (preg_match('/model[_-]?(\d+)/', $out, $m)) {
         return (int)$m[1];
     }
     return 0;
@@ -314,7 +323,9 @@ function launch_job(mysqli $db, array $job): void
         $modelId = model_id_from_job($job);
         $args = [SFM_REMOTE_BASE . '/run_colmap_dense_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parent, (string)$modelId];
     } else {
-        throw new RuntimeException('unknown job_type: ' . $type);
+        $message = 'unknown job_type: ' . $type;
+        set_job($db, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), $message);
+        throw new RuntimeException($message);
     }
 
     worker_log("running command for job id={$id} type={$type} remote_job_id={$remoteJobId}");
@@ -335,6 +346,8 @@ function launch_job(mysqli $db, array $job): void
         $parent = (int)($job['parent_remote_job_id'] ?? $remoteJobId);
         $modelId = model_id_from_job($job);
         set_job($db, $id, 'DONE', 100, 'PLY exported: job_' . $parent . '/colmap/sparse/' . $modelId . '/model.ply');
+    } elseif ($type === 'COLMAP_DENSE') {
+        set_job($db, $id, 'RUNNING', 0, 'dense job launched');
     } else {
         set_job($db, $id, 'RUNNING', 0, $output !== '' ? $output : 'job launched');
     }
