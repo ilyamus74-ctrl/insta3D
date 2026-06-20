@@ -58,8 +58,28 @@ function set_job(mysqli $db, int $id, string $status, int $progress, string $mes
     $st->close();
 }
 
+function ensure_executable(string $path): void
+{
+    if (!is_file($path)) {
+        throw new RuntimeException('remote_station script not found: ' . $path);
+    }
+    if (!is_executable($path)) {
+        throw new RuntimeException('remote_station script is not executable: ' . $path);
+    }
+}
+
+function format_command_failure(string $cmd, int $code, string $output): string
+{
+    $message = "Command failed with exit code {$code}\nCommand: {$cmd}";
+    if ($output !== '') {
+        $message .= "\nOutput:\n" . $output;
+    }
+    return $message;
+}
+
 function run_command(array $args): array
 {
+    ensure_executable((string)$args[0]);
     $cmd = implode(' ', array_map('escapeshellarg', $args)) . ' 2>&1';
     $out = [];
     $code = 0;
@@ -161,9 +181,16 @@ function launch_job(mysqli $db, array $job): void
         throw new RuntimeException('unknown job_type: ' . $type);
     }
 
-    [$code, $output] = run_command($args);
+    worker_log("running command for job id={$id} type={$type} remote_job_id={$remoteJobId}");
+    try {
+        [$code, $output, $cmd] = run_command($args);
+    } catch (Throwable $e) {
+        set_job($db, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), $e->getMessage());
+        worker_log("ERROR launch {$type} id={$id} remote={$remoteJobId}: " . $e->getMessage());
+        return;
+    }
     if ($code !== 0) {
-        set_job($db, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), $output !== '' ? $output : 'Command failed with exit code ' . $code);
+        set_job($db, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), format_command_failure($cmd, $code, $output));
         worker_log("ERROR launch {$type} id={$id} remote={$remoteJobId} exit={$code}");
         return;
     }
@@ -180,23 +207,40 @@ function sync_running_jobs(mysqli $db): void
     while ($job = $res->fetch_assoc()) {
         $id = (int)$job['id'];
         $remote = (int)$job['remote_job_id'];
-        [$code, $raw] = run_command([SFM_REMOTE_BASE . '/get_station_status.sh', SFM_REMOTE_CONF, (string)$remote]);
+        $type = (string)$job['job_type'];
+        worker_log("running status command for job id={$id} type={$type} remote_job_id={$remote}");
+        try {
+            [$code, $raw, $cmd] = run_command([SFM_REMOTE_BASE . '/get_station_status.sh', SFM_REMOTE_CONF, (string)$remote]);
+        } catch (Throwable $e) {
+            set_job($db, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), $e->getMessage());
+            worker_log("ERROR status id={$id} remote={$remote}: " . $e->getMessage());
+            continue;
+        }
         $json = json_decode($raw, true);
         if ($code !== 0 || !is_array($json)) {
-            set_job($db, $id, 'RUNNING', (int)($job['progress_percent'] ?? 0), $raw !== '' ? $raw : 'waiting for remote status');
+            $message = $code !== 0 ? format_command_failure($cmd, $code, $raw) : ($raw !== '' ? "Invalid status response from command: {$cmd}\nOutput:\n{$raw}" : "Invalid status response from command: {$cmd}");
+            set_job($db, $id, 'RUNNING', (int)($job['progress_percent'] ?? 0), $message);
             continue;
         }
         $remoteStatus = strtoupper((string)($json['status'] ?? 'RUNNING'));
         $progress = (int)($json['progress_percent'] ?? $json['progress'] ?? $job['progress_percent'] ?? 0);
         $message = (string)($json['message'] ?? $raw);
         if ($remoteStatus === 'DONE') {
-            [$fetchCode, $fetchOut] = run_command([
-                SFM_REMOTE_BASE . '/fetch_job_result.sh',
-                SFM_REMOTE_CONF,
-                (string)$remote,
-                SFM_REMOTE_OUTPUT,
-            ]);
-            set_job($db, $id, $fetchCode === 0 ? 'DONE' : 'ERROR', $fetchCode === 0 ? 100 : $progress, $fetchOut !== '' ? $fetchOut : $message);
+            worker_log("running fetch command for job id={$id} type={$type} remote_job_id={$remote}");
+            try {
+                [$fetchCode, $fetchOut, $fetchCmd] = run_command([
+                    SFM_REMOTE_BASE . '/fetch_job_result.sh',
+                    SFM_REMOTE_CONF,
+                    (string)$remote,
+                    SFM_REMOTE_OUTPUT,
+                ]);
+                $fetchMessage = $fetchCode === 0 ? ($fetchOut !== '' ? $fetchOut : $message) : format_command_failure($fetchCmd, $fetchCode, $fetchOut);
+            } catch (Throwable $e) {
+                $fetchCode = 1;
+                $fetchMessage = $e->getMessage();
+                worker_log("ERROR fetch id={$id} remote={$remote}: " . $e->getMessage());
+            }
+            set_job($db, $id, $fetchCode === 0 ? 'DONE' : 'ERROR', $fetchCode === 0 ? 100 : $progress, $fetchMessage);
         } elseif ($remoteStatus === 'ERROR' || $remoteStatus === 'FAILED') {
             set_job($db, $id, 'ERROR', $progress, $message);
         } else {
@@ -208,6 +252,9 @@ function sync_running_jobs(mysqli $db): void
 
 ensure_sfm_remote_jobs_table($dbcnx);
 worker_log('MaklerTour SfM remote worker started');
+worker_log('SFM_REMOTE_BASE=' . SFM_REMOTE_BASE);
+worker_log('SFM_REMOTE_CONF=' . SFM_REMOTE_CONF);
+worker_log('SFM_REMOTE_OUTPUT=' . SFM_REMOTE_OUTPUT);
 while (true) {
     try {
         sync_running_jobs($dbcnx);

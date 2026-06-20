@@ -21,6 +21,18 @@ systemctl daemon-reload
 systemctl enable --now makler-sfm-worker.service
 ```
 
+## Post-deploy permissions and worker restart
+
+После каждого deploy убедитесь, что shell scripts в `remote_station` исполняемые, проверьте PHP syntax worker-а и перезапустите service:
+
+```bash
+chmod +x /home/makler/web/remote_station/*.sh
+chmod +x /home/makler/web/remote_station/scripts/*.sh
+php -l /home/makler/web/tools/sfm_remote_worker.php
+systemctl restart makler-sfm-worker.service
+journalctl -u makler-sfm-worker.service -f
+```
+
 ## Логи
 
 ```bash
