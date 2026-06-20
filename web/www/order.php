@@ -302,8 +302,33 @@ foreach($captureSessions as $idx=>$session){
       }
     }
   }
+    $sessionSfmJobs=$sfmJobsBySession[(int)$session['id']] ?? [];
+  foreach($diskVideos as $dvIdx=>$dv){
+    $related=[]; $relatedRemoteIds=[]; $changed=true;
+    while($changed){
+      $changed=false;
+      foreach($sessionSfmJobs as $job){
+        $rid=(int)($job['remote_job_id'] ?? 0);
+        if($rid<=0 || isset($relatedRemoteIds[$rid])){ continue; }
+        $isVideoRoot=((string)($job['job_type'] ?? '')==='EXTRACT_FRAMES' && (string)($job['input_path'] ?? '') === (string)$dv['path']);
+        $isChild=!empty($job['parent_remote_job_id']) && isset($relatedRemoteIds[(int)$job['parent_remote_job_id']]);
+        if($isVideoRoot || $isChild){ $related[]=$job; $relatedRemoteIds[$rid]=true; $changed=true; }
+      }
+    }
+    $active=false; $done=false; $failed=false;
+    foreach($related as $job){
+      $st=strtoupper((string)($job['status'] ?? ''));
+      if(in_array($st,['QUEUED','RUNNING'],true)){$active=true;}
+      if($st==='DONE'){$done=true;}
+      if(in_array($st,['ERROR','FAILED'],true)){$failed=true;}
+    }
+    $diskVideos[$dvIdx]['auto_sfm_jobs']=$related;
+    $diskVideos[$dvIdx]['auto_sfm_has_jobs']=count($related)>0;
+    $diskVideos[$dvIdx]['auto_sfm_badge']=$failed?'Auto SfM failed':($active?'Auto SfM queued/running':($done?'Auto SfM done':''));
+    $diskVideos[$dvIdx]['auto_sfm_can_manual']=!$active;
+  }
   $captureSessions[$idx]['sfm_disk_videos']=$diskVideos;
-  $captureSessions[$idx]['sfm_remote_jobs']=$sfmJobsBySession[(int)$session['id']] ?? [];
+  $captureSessions[$idx]['sfm_remote_jobs']=$sessionSfmJobs;
   $sid=(int)$session['id'];
   $captureSessions[$idx]['processing_job']=$processingJobsBySession[$sid] ?? null;
   $job = $captureSessions[$idx]['processing_job'] ?? null;

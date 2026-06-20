@@ -201,12 +201,19 @@
                       {if $dv.metadata.imu.exists}<a href="{$dv.metadata.imu.url|escape}">Download imu</a>{/if}
                     </div>
                     {if $isAdminDebug}<div class="small"><code>{$dv.path|escape}</code></div>{/if}
-                    <form method="post" action="/order.php?id={$order.id}" class="mt-1 d-inline">
-                      <input type="hidden" name="action" value="sfm_extract_frames_web">
-                      <input type="hidden" name="capture_session_id" value="{$s.id}">
-                      <input type="hidden" name="video_filename" value="{$dv.filename|escape}">
-                      <button type="submit" class="btn btn-sm btn-outline-primary">Extract frames</button>
-                    </form>
+                    {if $dv.auto_sfm_badge|default:'' != ''}
+                      <div class="mt-1"><span class="badge bg-info text-dark">{$dv.auto_sfm_badge|escape}</span></div>
+                    {/if}
+                    {if $dv.auto_sfm_has_jobs|default:false && !$dv.auto_sfm_can_manual|default:true}
+                      <button type="button" class="btn btn-sm btn-outline-secondary mt-1" disabled>Already queued/running</button>
+                    {else}
+                      <form method="post" action="/order.php?id={$order.id}" class="mt-1 d-inline">
+                        <input type="hidden" name="action" value="sfm_extract_frames_web">
+                        <input type="hidden" name="capture_session_id" value="{$s.id}">
+                        <input type="hidden" name="video_filename" value="{$dv.filename|escape}">
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Extract frames</button>
+                      </form>
+                    {/if}
                   </div>
                 {/foreach}
               {else}<div class="small text-muted">No phone videos found in storage.</div>{/if}

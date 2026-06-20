@@ -7,6 +7,78 @@ require_once __DIR__ . '/../../libs/tour_media_derivatives_lib.php';
 header('Content-Type: application/json; charset=utf-8');
 $maklerConfig = require __DIR__ . '/../../configs/maklertour_config.php';
 
+const AUTO_SFM_ON_PHONE_VIDEO_UPLOAD = true;
+const AUTO_SFM_EXPORT_MODELS = [0, 1];
+const AUTO_SFM_ENABLED_FOR_SOURCE = 'PHONE_CAMERA';
+
+function api_ensure_sfm_remote_jobs_table(mysqli $dbcnx): void {
+    $dbcnx->query("CREATE TABLE IF NOT EXISTS sfm_remote_jobs (id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, capture_session_id BIGINT NOT NULL, job_type VARCHAR(64) NOT NULL, remote_job_id INT NOT NULL, parent_remote_job_id INT NULL, input_path TEXT NULL, output_path TEXT NULL, status VARCHAR(32) NOT NULL DEFAULT 'QUEUED', progress_percent INT DEFAULT 0, message TEXT NULL, result_json_path TEXT NULL, log_path TEXT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), KEY idx_sfm_remote_jobs_order_session (order_id, capture_session_id), KEY idx_sfm_remote_jobs_remote (remote_job_id), KEY idx_sfm_remote_jobs_status_updated (status, updated_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+}
+
+function api_sfm_remote_output_dir(int $remoteJobId): string {
+    return '/home/makler/web/remote_station/output/job_' . $remoteJobId;
+}
+
+function api_sfm_job_id(mysqli $dbcnx): int {
+    do {
+        $id = random_int(10000, 999999999);
+        $st = $dbcnx->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1');
+        if (!$st) {
+            return $id;
+        }
+        $st->bind_param('i', $id);
+        $st->execute();
+        $exists = $st->get_result()->fetch_assoc();
+        $st->close();
+    } while ($exists);
+    return $id;
+}
+
+function api_auto_queue_sfm_extract_for_phone_video(mysqli $dbcnx, int $orderId, int $captureSessionId, string $videoPath, string $message): ?int {
+    api_ensure_sfm_remote_jobs_table($dbcnx);
+    $realVideo = realpath($videoPath);
+    $storageRoot = realpath(__DIR__ . '/../../storage');
+    if ($realVideo === false || $storageRoot === false || !is_file($realVideo)) {
+        error_log('auto SfM skipped: video path is not a file');
+        return null;
+    }
+    $needle = $storageRoot . '/orders/' . $orderId . '/';
+    if (strpos($realVideo, $needle) !== 0 || strpos($realVideo, '/videos/') === false) {
+        error_log('auto SfM skipped: video path outside order/session videos storage: ' . $realVideo);
+        return null;
+    }
+
+    $jt = 'EXTRACT_FRAMES';
+    $st = $dbcnx->prepare("SELECT remote_job_id FROM sfm_remote_jobs WHERE job_type=? AND input_path=? ORDER BY id DESC LIMIT 1");
+    if ($st) {
+        $st->bind_param('ss', $jt, $realVideo);
+        $st->execute();
+        $existing = $st->get_result()->fetch_assoc();
+        $st->close();
+        if ($existing) {
+            return (int)$existing['remote_job_id'];
+        }
+    }
+
+    $rid = api_sfm_job_id($dbcnx);
+    $out = api_sfm_remote_output_dir($rid);
+    $result = $out . '/result.json';
+    $log = $out . '/logs';
+    $st = $dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?)");
+    if (!$st) {
+        error_log('auto SfM prepare failed: ' . $dbcnx->error);
+        return null;
+    }
+    $st->bind_param('iisisssss', $orderId, $captureSessionId, $jt, $rid, $realVideo, $out, $message, $result, $log);
+    if (!$st->execute()) {
+        error_log('auto SfM insert failed: ' . $st->error);
+        $st->close();
+        return null;
+    }
+    $st->close();
+    return $rid;
+}
+
 function api_json(array $data, int $code = 200): void {
     http_response_code($code);
     echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -583,6 +655,7 @@ if ($action === 'upload_video_scan') {
     $appScanUuid = trim($_POST['app_scan_uuid'] ?? '');
     $durationSec = (int)($_POST['duration_sec'] ?? 0);
     $localCameraUrl = trim($_POST['local_camera_url'] ?? '');
+    $source = strtoupper(trim((string)($_POST['source'] ?? AUTO_SFM_ENABLED_FOR_SOURCE)));
 
     if ($orderId <= 0 || $captureSessionId <= 0 || $appScanUuid === '') {
         api_json(['ok' => false, 'error' => 'missing required fields'], 400);
@@ -930,10 +1003,22 @@ if ($stmt) {
             'size_bytes' => $sizeBytes,
             'duration_sec' => $durationSec,
             'local_camera_url' => $localCameraUrl,
+            'source' => $source,
             'metadata' => $metadataPaths,
             'metadata_warnings' => $metadataWarnings,
         ])
     );
+
+    $autoSfmJobId = null;
+    if (AUTO_SFM_ON_PHONE_VIDEO_UPLOAD && $source === AUTO_SFM_ENABLED_FOR_SOURCE) {
+        $autoSfmJobId = api_auto_queue_sfm_extract_for_phone_video(
+            $dbcnx,
+            $orderId,
+            $captureSessionId,
+            $targetPath,
+            'Auto queued after PHONE_CAMERA video upload'
+        );
+    }
 
     api_json([
         'ok' => true,
@@ -942,6 +1027,7 @@ if ($stmt) {
         'size_bytes' => $sizeBytes,
         'metadata' => $metadataPaths,
         'metadata_warnings' => $metadataWarnings,
+        'auto_sfm_extract_remote_job_id' => $autoSfmJobId,
     ]);
 }
 

@@ -32,6 +32,7 @@ const SFM_REMOTE_BASE = '/home/makler/web/remote_station';
 const SFM_REMOTE_CONF = '/home/makler/web/remote_station/stations.conf';
 const SFM_REMOTE_OUTPUT = '/home/makler/web/remote_station/output';
 const SFM_REMOTE_STORAGE_OUTPUT = '/home/makler_storage/output';
+const AUTO_SFM_EXPORT_MODELS = [0, 1];
 
 function worker_log(string $message): void
 {
@@ -43,6 +44,117 @@ function ensure_sfm_remote_jobs_table(mysqli $db): void
     $sql = "CREATE TABLE IF NOT EXISTS sfm_remote_jobs (id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, capture_session_id BIGINT NOT NULL, job_type VARCHAR(64) NOT NULL, remote_job_id INT NOT NULL, parent_remote_job_id INT NULL, input_path TEXT NULL, output_path TEXT NULL, status VARCHAR(32) NOT NULL DEFAULT 'QUEUED', progress_percent INT DEFAULT 0, message TEXT NULL, result_json_path TEXT NULL, log_path TEXT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), KEY idx_sfm_remote_jobs_order_session (order_id, capture_session_id), KEY idx_sfm_remote_jobs_remote (remote_job_id), KEY idx_sfm_remote_jobs_status_updated (status, updated_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
     if (!$db->query($sql)) {
         throw new RuntimeException('failed to ensure sfm_remote_jobs: ' . $db->error);
+    }
+}
+
+
+function sfm_job_id(mysqli $db): int
+{
+    do {
+        $id = random_int(10000, 999999999);
+        $st = $db->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1');
+        if (!$st) {
+            return $id;
+        }
+        $st->bind_param('i', $id);
+        $st->execute();
+        $exists = $st->get_result()->fetch_assoc();
+        $st->close();
+    } while ($exists);
+    return $id;
+}
+
+function remote_output_dir(int $remoteJobId): string
+{
+    return rtrim(SFM_REMOTE_OUTPUT, '/') . '/job_' . $remoteJobId;
+}
+
+function auto_chain_after_done(mysqli $db, array $job): void
+{
+    $type = (string)$job['job_type'];
+    $remote = (int)$job['remote_job_id'];
+    $orderId = (int)$job['order_id'];
+    $sessionId = (int)$job['capture_session_id'];
+    if ($remote <= 0 || $orderId <= 0 || $sessionId <= 0) {
+        return;
+    }
+
+    if ($type === 'EXTRACT_FRAMES') {
+        $st = $db->prepare("SELECT id FROM sfm_remote_jobs WHERE job_type='COLMAP_SPARSE' AND parent_remote_job_id=? LIMIT 1");
+        if (!$st) {
+            return;
+        }
+        $st->bind_param('i', $remote);
+        $st->execute();
+        $exists = $st->get_result()->fetch_assoc();
+        $st->close();
+        if ($exists) {
+            return;
+        }
+        $rid = sfm_job_id($db);
+        $input = frames_path_for_parent($remote);
+        $out = remote_output_dir($rid);
+        $result = $out . '/result.json';
+        $log = $out . '/logs';
+        $jt = 'COLMAP_SPARSE';
+        $msg = 'Auto queued after extract frames';
+        $st = $db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path) VALUES (?,?,?,?,?,?,?,'QUEUED',0,?,?,?)");
+        if ($st) {
+            $st->bind_param('iisiisssss', $orderId, $sessionId, $jt, $rid, $remote, $input, $out, $msg, $result, $log);
+            $st->execute();
+            $st->close();
+            worker_log("auto queued COLMAP_SPARSE parent={$remote} remote_job_id={$rid}");
+        }
+        return;
+    }
+
+    if ($type === 'COLMAP_SPARSE') {
+        $resultPath = remote_output_dir($remote) . '/colmap/result.json';
+        if (!is_file($resultPath)) {
+            $resultPath = remote_output_dir($remote) . '/result.json';
+        }
+        $models = 0;
+        if (is_file($resultPath)) {
+            $data = json_decode((string)file_get_contents($resultPath), true);
+            if (is_array($data)) {
+                $models = (int)($data['models'] ?? $data['model_count'] ?? $data['models_count'] ?? 0);
+            }
+        }
+        if ($models <= 0) {
+            worker_log("auto export skipped for COLMAP {$remote}: models count not found");
+            return;
+        }
+        $maxModels = min($models, count(AUTO_SFM_EXPORT_MODELS));
+        for ($i = 0; $i < $maxModels; $i++) {
+            $modelId = (int)AUTO_SFM_EXPORT_MODELS[$i];
+            if ($modelId >= $models) {
+                continue;
+            }
+            $st = $db->prepare("SELECT id FROM sfm_remote_jobs WHERE job_type='EXPORT_PLY' AND parent_remote_job_id=? AND output_path LIKE ? LIMIT 1");
+            if (!$st) {
+                continue;
+            }
+            $like = '%sparse_' . $modelId . '.ply';
+            $st->bind_param('is', $remote, $like);
+            $st->execute();
+            $exists = $st->get_result()->fetch_assoc();
+            $st->close();
+            if ($exists) {
+                continue;
+            }
+            $rid = sfm_job_id($db);
+            $out = remote_output_dir($remote) . '/sparse_' . $modelId . '.ply';
+            $log = remote_output_dir($remote) . '/logs';
+            $jt = 'EXPORT_PLY';
+            $msg = 'Auto queued after COLMAP sparse';
+            $st = $db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,log_path) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?)");
+            if ($st) {
+                $st->bind_param('iisiisss', $orderId, $sessionId, $jt, $rid, $remote, $out, $msg, $log);
+                $st->execute();
+                $st->close();
+                worker_log("auto queued EXPORT_PLY parent={$remote} model={$modelId} remote_job_id={$rid}");
+            }
+        }
     }
 }
 
@@ -260,7 +372,12 @@ function sync_running_jobs(mysqli $db): void
                 $fetchMessage = $e->getMessage();
                 worker_log("ERROR fetch id={$id} remote={$remote}: " . $e->getMessage());
             }
-            set_job($db, $id, $fetchCode === 0 ? 'DONE' : 'ERROR', $fetchCode === 0 ? 100 : $progress, $fetchMessage);
+            if ($fetchCode === 0) {
+                set_job($db, $id, 'DONE', 100, $fetchMessage);
+                auto_chain_after_done($db, $job);
+            } else {
+                set_job($db, $id, 'ERROR', $progress, $fetchMessage);
+            }
         } elseif ($remoteStatus === 'ERROR' || $remoteStatus === 'FAILED') {
             set_job($db, $id, 'ERROR', $progress, $message);
         } else {
