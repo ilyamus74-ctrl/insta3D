@@ -2,6 +2,7 @@ package com.maklertour.state
 
 import androidx.lifecycle.ViewModel
 import android.util.Log
+import androidx.camera.view.PreviewView
 import androidx.lifecycle.viewModelScope
 import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscFileDownloader
@@ -313,10 +314,21 @@ class AppStateViewModel(
         }
     }
 
+    fun bindPhoneCameraPreview(previewView: PreviewView) {
+        val provider = phoneCameraScanProvider ?: return
+        viewModelScope.launch {
+            try {
+                provider.bindPreview(previewView)
+            } catch (e: Throwable) {
+                Log.e("AppStateViewModel", "bindPhoneCameraPreview() failed", e)
+            }
+        }
+    }
+
     fun startPhoneVideoScan(scanName: String) {
         val sessionId = uiState.value.selectedSessionId
         val provider = phoneCameraScanProvider
-        Log.d("AppStateViewModel", "startPhoneVideoScan(): selectedSessionId=$sessionId provider=${provider != null}")
+        Log.d("AppStateViewModel", "startPhoneVideoScan(): called selectedSessionId=$sessionId provider=${provider != null}")
         if (sessionId == null || provider == null) return
         if (videoScanUiState.value == VideoScanUiState.SWITCHING_MODE || videoScanUiState.value == VideoScanUiState.RECORDING || videoScanUiState.value == VideoScanUiState.STOPPING || isCapturing.value || currentRecordingScanVideo.value != null) return
 
@@ -341,6 +353,7 @@ class AppStateViewModel(
                 val result = provider.startVideoScan(scan.name, sessionId, scan.id, scan.sequenceNumber)
                 if (result.captureStatus == ScanVideoCaptureStatus.RECORDING) {
                     isRecordingScanVideo.value = true
+                    Log.d("AppStateViewModel", "startPhoneVideoScan(): recording confirmed")
                     videoScanUiState.value = VideoScanUiState.RECORDING
                 } else {
                     sessionRepository.updateScanVideo(scan.copy(captureStatus = ScanVideoCaptureStatus.FAILED, updatedAt = java.time.Instant.now(), notes = result.notes ?: "startPhoneVideoScan failed"))
@@ -368,6 +381,7 @@ class AppStateViewModel(
         if (!isRecordingScanVideo.value || videoScanUiState.value == VideoScanUiState.STOPPING) return
         viewModelScope.launch {
             Log.d("AppStateViewModel", "stopVideoScan()")
+            if (current.source == ScanSource.PHONE_CAMERA) Log.d("AppStateViewModel", "stopPhoneVideoScan(): called")
             videoScanUiState.value = VideoScanUiState.STOPPING
             val result = try {
                 if (current.source == ScanSource.PHONE_CAMERA && phoneCameraScanProvider != null) {
@@ -401,6 +415,7 @@ class AppStateViewModel(
                 current.copy(captureStatus = ScanVideoCaptureStatus.FAILED, updatedAt = now, notes = result.notes)
             }
             sessionRepository.updateScanVideo(updated)
+            if (updated.source == ScanSource.PHONE_CAMERA) Log.d("AppStateViewModel", "stopVideoScan(): phone result localVideoPath=${updated.localVideoPath}")
             Log.d("AppStateViewModel", "saved scanVideo sessionId=${updated.sessionId}, scanId=${updated.id}, status=${updated.captureStatus}")
             isRecordingScanVideo.value = false
             currentRecordingScanVideo.value = null

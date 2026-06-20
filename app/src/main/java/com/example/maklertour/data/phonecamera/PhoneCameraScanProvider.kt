@@ -1,6 +1,7 @@
 package com.maklertour.data.phonecamera
 
 import android.content.Context
+import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.maklertour.domain.CameraDeleteResult
 import com.maklertour.domain.CameraProvider
@@ -30,6 +31,8 @@ class PhoneCameraScanProvider(
     override suspend fun connect(): CameraStatus = CameraStatus(isConnected = true, model = "Phone Camera")
     override suspend fun disconnect(): CameraStatus = CameraStatus(isConnected = false, model = "Phone Camera")
     override suspend fun getStatus(): CameraStatus = CameraStatus(isConnected = true, model = "Phone Camera")
+
+    suspend fun bindPreview(previewView: PreviewView) = videoRecorder.bindPreview(previewView)
 
     override suspend fun capture(pointName: String): CapturePoint = CapturePoint(
         name = pointName,

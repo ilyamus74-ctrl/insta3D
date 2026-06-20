@@ -54,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
@@ -61,6 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.camera.view.PreviewView
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -515,6 +517,7 @@ private fun MaklerTourApp() {
                         scanVideos = state.selectedSessionScanVideos,
                         onStartVideoScan = viewModel::startVideoScan,
                         onStartPhoneVideoScan = viewModel::startPhoneVideoScan,
+                        onBindPhoneCameraPreview = viewModel::bindPhoneCameraPreview,
                         onStopVideoScan = viewModel::stopVideoScan,
                         onCreateSessionRequested = {
                             pendingSessionName = localizedContext.getString(R.string.quick_capture)
@@ -1174,6 +1177,7 @@ private fun CameraScreen(
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     onStartVideoScan: (String) -> Unit,
     onStartPhoneVideoScan: (String) -> Unit,
+    onBindPhoneCameraPreview: (PreviewView) -> Unit,
     onStopVideoScan: () -> Unit,
     onCreateSessionRequested: () -> Unit,
     onDeleteVideoScan: (String) -> Unit,
@@ -1274,20 +1278,19 @@ private fun CameraScreen(
                             },
                             enabled = connected && !videoScanBusy && !isCapturing && scanName.isNotBlank(),
                         ) { Text(stringResource(R.string.start_video_scan)) }
-                        Button(
-                            onClick = {
-                                if (selectedSessionName == null) {
-                                    showNoSessionDialog = true
-                                } else if (scanName.isNotBlank()) {
-                                    onStartPhoneVideoScan(scanName.trim())
-                                }
-                            },
-                            enabled = !videoScanBusy && !isCapturing && scanName.isNotBlank(),
-                        ) { Text("Скан смартфоном") }
-                        Button(onClick = onStopVideoScan, enabled = isRecordingScanVideo) {
-                            Text(stringResource(R.string.stop_video_scan))
-                        }
                     }
+                    PhoneCameraPreviewCard(
+                        scanName = scanName,
+                        selectedSessionName = selectedSessionName,
+                        isCapturing = isCapturing,
+                        isRecordingScanVideo = isRecordingScanVideo,
+                        videoScanUiState = videoScanUiState,
+                        scanVideos = scanVideos,
+                        onBindPreview = onBindPhoneCameraPreview,
+                        onStartPhoneVideoScan = { name -> onStartPhoneVideoScan(name) },
+                        onStopPhoneVideoScan = onStopVideoScan,
+                        onNoSession = { showNoSessionDialog = true },
+                    )
                     when (videoScanUiState) {
                         VideoScanUiState.SWITCHING_MODE, VideoScanUiState.RECORDING, VideoScanUiState.STOPPING -> {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1339,6 +1342,74 @@ private fun CameraScreen(
 
 }
 
+@Composable
+private fun PhoneCameraPreviewCard(
+    scanName: String,
+    selectedSessionName: String?,
+    isCapturing: Boolean,
+    isRecordingScanVideo: Boolean,
+    videoScanUiState: VideoScanUiState,
+    scanVideos: List<com.maklertour.domain.ScanVideo>,
+    onBindPreview: (PreviewView) -> Unit,
+    onStartPhoneVideoScan: (String) -> Unit,
+    onStopPhoneVideoScan: () -> Unit,
+    onNoSession: () -> Unit,
+) {
+    var elapsedSec by remember { mutableStateOf(0L) }
+    val phoneScans = scanVideos.filter { it.source == com.maklertour.domain.ScanSource.PHONE_CAMERA }
+    val latestPhoneScan = phoneScans.maxByOrNull { it.updatedAt }
+    val status = when (videoScanUiState) {
+        VideoScanUiState.RECORDING -> "Recording"
+        VideoScanUiState.STOPPING -> "Stopping"
+        VideoScanUiState.CAPTURED -> "Captured"
+        VideoScanUiState.FAILED -> "Failed"
+        else -> "Ready"
+    }
+
+    LaunchedEffect(videoScanUiState) {
+        if (videoScanUiState == VideoScanUiState.RECORDING) {
+            elapsedSec = 0L
+            while (true) {
+                delay(1_000)
+                elapsedSec += 1L
+            }
+        } else if (videoScanUiState != VideoScanUiState.STOPPING) {
+            elapsedSec = 0L
+        }
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Phone camera scan", style = MaterialTheme.typography.titleMedium)
+            AndroidView(
+                modifier = Modifier.fillMaxWidth().height(280.dp),
+                factory = { context ->
+                    PreviewView(context).apply {
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        onBindPreview(this)
+                    }
+                },
+            )
+            Text("Status: $status")
+            if (videoScanUiState == VideoScanUiState.RECORDING) Text("Timer: ${elapsedSec}s")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        if (selectedSessionName == null) onNoSession() else onStartPhoneVideoScan(scanName.trim())
+                    },
+                    enabled = selectedSessionName != null && !isCapturing && !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING && scanName.isNotBlank(),
+                ) { Text("Start phone scan") }
+                Button(onClick = onStopPhoneVideoScan, enabled = isRecordingScanVideo) {
+                    Text("Stop phone scan")
+                }
+            }
+            latestPhoneScan?.localVideoPath?.let { Text("localVideoPath=$it") }
+            latestPhoneScan?.fileSizeBytes?.let { Text("fileSizeBytes=$it") }
+            latestPhoneScan?.notes?.takeIf { latestPhoneScan.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.FAILED }?.let { Text("Error: $it") }
+        }
+    }
+}
 
 @Composable
 private fun CaptureOverlay() {
