@@ -87,6 +87,19 @@ function run_command(array $args): array
     return [$code, implode("\n", $out), $cmd];
 }
 
+function write_job_text_log(int $remoteJobId, string $name, string $contents): ?string
+{
+    if ($remoteJobId <= 0) {
+        return null;
+    }
+    $dir = rtrim(SFM_REMOTE_OUTPUT, '/') . '/job_' . $remoteJobId . '/logs';
+    if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+        return null;
+    }
+    $path = $dir . '/' . preg_replace('/[^a-zA-Z0-9._-]+/', '_', $name);
+    return @file_put_contents($path, $contents) === false ? null : $path;
+}
+
 function safe_session_video_path(mysqli $db, array $job): string
 {
     $input = (string)($job['input_path'] ?? '');
@@ -194,7 +207,14 @@ function launch_job(mysqli $db, array $job): void
         worker_log("ERROR launch {$type} id={$id} remote={$remoteJobId} exit={$code}");
         return;
     }
-    set_job($db, $id, $type === 'EXPORT_PLY' ? 'DONE' : 'RUNNING', $type === 'EXPORT_PLY' ? 100 : 0, $output !== '' ? $output : 'job launched');
+    if ($type === 'EXPORT_PLY') {
+        write_job_text_log($remoteJobId, 'export_ply_stdout_stderr.log', $output);
+        $parent = (int)($job['parent_remote_job_id'] ?? $remoteJobId);
+        $modelId = model_id_from_job($job);
+        set_job($db, $id, 'DONE', 100, 'PLY exported: job_' . $parent . '/colmap/sparse/' . $modelId . '/model.ply');
+    } else {
+        set_job($db, $id, 'RUNNING', 0, $output !== '' ? $output : 'job launched');
+    }
     worker_log("launched {$type} id={$id} remote={$remoteJobId}");
 }
 

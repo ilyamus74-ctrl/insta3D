@@ -17,7 +17,13 @@ if($file!==''){
   if($file==='status'){$path=$base.'/status.json'; $ctype='application/json; charset=utf-8';}
   elseif($file==='result'){$path=$base.'/result.json'; $ctype='application/json; charset=utf-8';}
   elseif($file==='logs'){ header('Content-Type: text/plain; charset=utf-8'); foreach(glob($base.'/logs/*.log') ?: [] as $lf){ $rl=realpath($lf); if($rl && (realpath($base)===false || strpos($rl,realpath($base).'/')===0)){ echo "===== ".basename($lf)." =====\n".srj_tail($rl,100)."\n"; } } exit; }
-  elseif($file==='ply') { foreach(array_merge(glob($base.'/*.ply') ?: [], glob($base.'/sparse/*.ply') ?: []) as $pf){ $path=$pf; break; } $ctype='application/octet-stream'; $download=true; }
+  elseif($file==='ply') {
+    if ((string)($job['job_type'] ?? '') !== 'EXPORT_PLY') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
+    $parent=(int)($job['parent_remote_job_id'] ?? 0); $out=(string)($job['output_path'] ?? ''); $model=0;
+    if (preg_match('/sparse_(\d+)\.ply|model[_-]?(\d+)/', $out, $m)) { $model=(int)(($m[1] ?? '') !== '' ? $m[1] : $m[2]); }
+    if ($parent>0) { $base='/home/makler/web/remote_station/output/job_'.$parent; $realBase=realpath($base) ?: $base; $path=$base.'/colmap/sparse/'.$model.'/model.ply'; }
+    $ctype='application/octet-stream'; $download=true;
+  }
   if(!$path || !is_file($path)) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
   $rp=realpath($path); $rb=realpath($base); if(!$rp || ($rb && strpos($rp,$rb.'/')!==0)) { http_response_code(403); exit('forbidden'); }
   header('Content-Type: '.$ctype); if($download) header('Content-Disposition: attachment; filename="'.basename($rp).'"'); readfile($rp); exit;

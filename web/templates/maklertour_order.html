@@ -184,6 +184,7 @@
               <div class="fw-semibold">SfM Video Reconstruction</div>
               <hr class="my-2">
               <div class="fw-semibold">Phone Video / SfM processing</div>
+              <div class="d-flex align-items-center gap-2 flex-wrap my-2"><span class="fw-semibold">GrafikStation:</span> <span class="small" data-station-metrics>metrics not loaded</span> <button type="button" class="btn btn-sm btn-outline-secondary" data-station-refresh>Refresh station metrics</button></div>
               <div class="small text-muted mb-1">Video files:</div>
               {if $s.sfm_disk_videos|@count > 0}
                 {foreach from=$s.sfm_disk_videos item=dv}
@@ -208,10 +209,10 @@
                       <div class="small text-muted" data-job-field="message">{$rj.message|default:''|escape}</div>
                       <div class="small">updated: <span data-job-field="updated">{$rj.updated_at|default:'-'|escape}</span></div>
                       <div class="d-flex gap-1 flex-wrap mt-1">
-                        <a class="btn btn-sm btn-outline-secondary" href="{$rj.status_json_url|escape}" target="_blank">Show status.json</a>
-                        <a class="btn btn-sm btn-outline-secondary" href="{$rj.result_json_url|escape}" target="_blank">Show result.json</a>
-                        <a class="btn btn-sm btn-outline-secondary" href="{$rj.logs_url|escape}" target="_blank">Show logs</a>
-                        <a class="btn btn-sm btn-outline-success" href="{$rj.ply_url|escape}" target="_blank">Download PLY</a>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-job-file-url="{$rj.status_json_url|escape}" data-job-file-target="jobFile{$rj.id}">Show status.json</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-job-file-url="{$rj.result_json_url|escape}" data-job-file-target="jobFile{$rj.id}">Show result.json</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-job-file-url="{$rj.logs_url|escape}" data-job-file-target="jobFile{$rj.id}">Show logs</button>
+                        {if $rj.job_type == 'EXPORT_PLY'}<a class="btn btn-sm btn-outline-success" href="{$rj.ply_url|escape}" target="_blank">Download PLY</a>{/if}
                         {if $rj.job_type == 'EXTRACT_FRAMES'}
                           <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_colmap_sparse_web"><input type="hidden" name="capture_session_id" value="{$s.id}"><input type="hidden" name="extract_job_id" value="{$rj.remote_job_id}"><button type="submit" class="btn btn-sm btn-outline-primary">Run COLMAP sparse</button></form>
                         {/if}
@@ -220,6 +221,7 @@
                           <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_export_ply_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="1"><button type="submit" class="btn btn-sm btn-outline-primary">Export PLY model 1</button></form>
                         {/if}
                       </div>
+                      <pre id="jobFile{$rj.id}" class="small bg-dark text-light rounded p-2 mt-2 d-none" style="max-height:320px;overflow:auto;white-space:pre-wrap"></pre>
                     </div>
                   {/foreach}
                 {else}<div class="small text-muted">No remote SfM jobs yet.</div>{/if}
@@ -491,6 +493,29 @@ document.querySelectorAll('[id^=\"sfmVideoBlock\"]').forEach((block)=>{
   block.querySelector('[data-sfm-action=\"refresh\"]').addEventListener('click',()=>sfmRefresh(block,orderId,sessionId).catch((e)=>alert('SfM status error: '+e.message)));
   block.querySelector('[data-sfm-action=\"run\"]').addEventListener('click',()=>sfmRun(block,orderId,sessionId).catch((e)=>alert('SfM enqueue error: '+e.message)));
 });
+
+
+function formatStationMetrics(d){
+  if(!d || !d.ok) return (d && (d.message||d.error)) ? d.message : 'metrics unavailable';
+  const g=d.gpu||{}, c=d.cpu||{}, m=d.memory||{};
+  const gb=v=>((Number(v||0)/1024).toFixed(1).replace(/\.0$/,''));
+  const parts=[];
+  if(g.available){ parts.push('GPU '+String(g.name||'GPU').replace(/^NVIDIA GeForce /,'')); parts.push('GPU '+(g.utilization_percent??0)+'%'); parts.push('Temp '+(g.temperature_c??0)+'°C'); parts.push('Power '+Math.round(Number(g.power_draw_w||0))+' W'); parts.push('VRAM '+gb(g.memory_used_mb)+'/'+gb(g.memory_total_mb)+' GB'); }
+  else parts.push('GPU unavailable');
+  parts.push('CPU '+(c.usage_percent ?? c.load_avg ?? '-')+'%'); parts.push('RAM '+gb(m.used_mb)+'/'+gb(m.total_mb)+' GB');
+  return parts.join(' | ');
+}
+function refreshStationMetrics(){
+  return fetch('/api/sfm_station_metrics.php').then(r=>r.json()).then(d=>{ document.querySelectorAll('[data-station-metrics]').forEach(el=>{ el.textContent=formatStationMetrics(d); }); });
+}
+document.querySelectorAll('[data-station-refresh]').forEach(btn=>btn.addEventListener('click',()=>refreshStationMetrics().catch(()=>{})));
+function hasRunningRemoteJob(){ return Array.from(document.querySelectorAll('[data-sfm-remote-job]')).some(el=>!['DONE','ERROR','FAILED'].includes((el.getAttribute('data-active-status')||'').toUpperCase())); }
+setInterval(()=>{ if(hasRunningRemoteJob()) refreshStationMetrics().catch(()=>{}); },4000); refreshStationMetrics().catch(()=>{});
+document.querySelectorAll('[data-job-file-url]').forEach(btn=>btn.addEventListener('click',()=>{
+  const pre=document.getElementById(btn.getAttribute('data-job-file-target')); if(!pre) return;
+  pre.classList.remove('d-none'); pre.textContent='Loading...';
+  fetch(btn.getAttribute('data-job-file-url')).then(async r=>{ const txt=await r.text(); if(!r.ok) return 'File not available yet'; try { return JSON.stringify(JSON.parse(txt), null, 2); } catch(e) { return txt || 'File not available yet'; } }).then(t=>{ pre.textContent=t; }).catch(()=>{ pre.textContent='File not available yet'; });
+}));
 
 function pollSfmRemoteJobs(){
   document.querySelectorAll('[data-sfm-remote-job]').forEach((el)=>{
