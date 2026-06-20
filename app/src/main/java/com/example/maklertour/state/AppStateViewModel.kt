@@ -106,6 +106,10 @@ class AppStateViewModel(
     private val uploadError = MutableStateFlow<String?>(null)
     private val isAutoUploadRunning = MutableStateFlow(false)
 
+    init {
+        uploadQueueRepository.resetInterruptedUploadsOnStartup()
+    }
+
     val uiState: StateFlow<AppUiState> = combine(
         combine(
             sessionRepository.sessions,
@@ -518,7 +522,7 @@ class AppStateViewModel(
 
         val targetOrderId = session.serverOrderId
             ?: selectedOrderSnapshot?.id
-            ?: return EnqueueUploadResult.Rejected("Выберите заявку для загрузки этой сессии.")
+            ?: return EnqueueUploadResult.Rejected("Сессия не привязана к заявке. Выберите заявку перед загрузкой.")
 
         val targetOrderTitle = session.orderTitle ?: selectedOrderSnapshot?.title
         val targetOrderAddress = session.orderAddress ?: selectedOrderSnapshot?.address

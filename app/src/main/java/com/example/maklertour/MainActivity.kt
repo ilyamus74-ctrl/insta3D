@@ -2017,14 +2017,25 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
     ) {
         val clipboardManager = LocalClipboardManager.current
         val context = LocalContext.current
+        val queuedCount = queue.count { it.status == com.maklertour.domain.UploadStatus.Queued }
+        val uploadingCount = queue.count { it.status == com.maklertour.domain.UploadStatus.Uploading }
+        val errorCount = queue.count { it.status == com.maklertour.domain.UploadStatus.Error }
+        val successCount = queue.count { it.status == com.maklertour.domain.UploadStatus.Success }
         var filter by remember { mutableStateOf("Новые") }
         val filteredQueue = when (filter) {
             "Новые" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Queued }
-            "В процессе" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Uploading }
+            "Загружаются" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Uploading }
             "Ошибки" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Error }
             "Успешные" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Success }
             else -> queue
         }
+        val filterLabels = mapOf(
+            "Новые" to "Новые / Queued ($queuedCount)",
+            "Загружаются" to "Загружаются / Uploading ($uploadingCount)",
+            "Ошибки" to "Ошибки / Error ($errorCount)",
+            "Успешные" to "Успешные / Success ($successCount)",
+            "Все" to "Все (${queue.size})",
+        )
         Column(
             modifier = Modifier.fillMaxSize().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -2041,11 +2052,19 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
             }
             SimpleFilterDropdown(
                 label = "Фильтр очереди",
-                selected = filter,
-                options = listOf("Новые", "В процессе", "Ошибки", "Успешные", "Все"),
-                onSelected = { filter = it }
+                selected = filterLabels[filter] ?: filter,
+                options = listOf(
+                    filterLabels.getValue("Новые"),
+                    filterLabels.getValue("Загружаются"),
+                    filterLabels.getValue("Ошибки"),
+                    filterLabels.getValue("Успешные"),
+                    filterLabels.getValue("Все"),
+                ),
+                onSelected = { selected ->
+                    filter = filterLabels.entries.firstOrNull { it.value == selected }?.key ?: "Все"
+                }
             )
-            Text("Фильтр очереди: $filter")
+            Text("Фильтр очереди: ${filterLabels[filter] ?: filter}")
             Button(
                 onClick = {
                     when (val result = onEnqueue()) {
@@ -2066,6 +2085,12 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                     Toast.makeText(context, "diagnostic JSON скопирован", Toast.LENGTH_SHORT).show()
                 }
             ) { Text(stringResource(R.string.copy_diagnostic_json)) }
+            if (filter == "Новые" && queuedCount == 0 && (uploadingCount > 0 || errorCount > 0)) {
+                Text(
+                    "Новых элементов нет. Есть элементы в процессе или с ошибкой — переключите фильтр очереди.",
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(filteredQueue) { _, item ->
                     val session = sessions.firstOrNull { it.id == item.sessionId }
@@ -2124,7 +2149,14 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                                     item.status == com.maklertour.domain.UploadStatus.Success
                                 ) {
                                     Button(onClick = { onResetQueueItem(item.id) }) {
-                                        Text("Сбросить в новые")
+                                        Text(
+                                            when (item.status) {
+                                                com.maklertour.domain.UploadStatus.Uploading -> "Вернуть в очередь"
+                                                com.maklertour.domain.UploadStatus.Error -> "Повторить"
+                                                com.maklertour.domain.UploadStatus.Success -> "Сбросить в новые"
+                                                com.maklertour.domain.UploadStatus.Queued -> "Сбросить в новые"
+                                            }
+                                        )
                                     }
                                 }
                                 Button(

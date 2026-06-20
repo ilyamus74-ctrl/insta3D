@@ -26,6 +26,9 @@ interface UploadItemDao {
     @Query("UPDATE upload_items SET syncState = 'SYNC_ERROR', lastSyncError = :error, updatedAtEpochMs = :updatedAtEpochMs WHERE id = :id")
     suspend fun markSyncError(id: String, error: String, updatedAtEpochMs: Long)
 
+    @Query("UPDATE upload_items SET syncState = 'PENDING_UPDATE', updatedAtEpochMs = :updatedAtEpochMs, status = 'Queued', progressPercent = 0, bytesUploaded = 0, bytesTotal = 0, currentFileName = NULL, currentStep = 'Interrupted, ready to retry' WHERE status = 'Uploading' AND deletedAtEpochMs IS NULL")
+    suspend fun resetInterruptedUploads(updatedAtEpochMs: Long)
+
     @Query("DELETE FROM upload_items WHERE id = :id")
     suspend fun deleteById(id: String)
 }
