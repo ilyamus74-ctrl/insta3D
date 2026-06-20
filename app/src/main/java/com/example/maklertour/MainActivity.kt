@@ -1727,6 +1727,9 @@ private fun VideoScansBlock(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(scan.name, style = MaterialTheme.typography.titleSmall)
+                        if (scan.source == com.maklertour.domain.ScanSource.PHONE_CAMERA) {
+                            Text("Phone video")
+                        }
                         if (scan.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED) {
                             Text(stringResource(R.string.video_captured))
                             scan.durationSec?.let { Text(stringResource(R.string.video_duration_sec_format, it)) }
@@ -1766,7 +1769,8 @@ private fun VideoScansBlock(
                             Text("durationSec=${scan.durationSec}")
                         }
 
-                        if (scan.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED &&
+                        if (scan.source != com.maklertour.domain.ScanSource.PHONE_CAMERA &&
+                            scan.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED &&
                             scan.localVideoPath == null &&
                             scan.downloadState != com.maklertour.domain.ScanVideoDownloadState.DOWNLOADING
                         ) {

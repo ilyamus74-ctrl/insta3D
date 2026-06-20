@@ -83,7 +83,7 @@ class MobileUploadApi(
 
         Log.d(
             "MobileUploadApi",
-            "upload_video_scan request orderId=$orderId captureSessionId=$captureSessionId app_scan_uuid=${scan.id} durationSec=${scan.durationSec} localCameraUrl=${scan.cameraFileUrl} videoPath=${scan.localVideoPath} exists=true size=$videoSize"
+            "upload_video_scan request orderId=$orderId captureSessionId=$captureSessionId app_scan_uuid=${scan.id} scanId=${scan.id} source=${scan.source} durationSec=${scan.durationSec} localCameraUrl=${scan.cameraFileUrl} localVideoPath=${scan.localVideoPath} file.exists=${videoFile.exists()} file.length=$videoSize"
         )
 
         val bodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
@@ -92,6 +92,10 @@ class MobileUploadApi(
             .addFormDataPart("app_scan_uuid", scan.id)
             .addFormDataPart("duration_sec", (scan.durationSec ?: 0L).toString())
             .addFormDataPart("local_camera_url", scan.cameraFileUrl ?: "")
+            .addFormDataPart("source", scan.source.name)
+            .addFormDataPart("camera_local_file_url", scan.cameraLocalFileUrl ?: "")
+            .addFormDataPart("marker_expected", scan.markerExpected.toString())
+            .addFormDataPart("marker_detected", scan.markerDetected.toString())
 
         bodyBuilder.addFormDataPart(
             "video",
@@ -120,7 +124,10 @@ class MobileUploadApi(
         val totalSize = videoFile.length()
         val totalChunks = ceil(totalSize.toDouble() / CHUNK_SIZE_BYTES.toDouble()).toInt()
         var uploadedBefore = 0L
-        Log.d("UploadChunk", "start upload_id=$uploadId fileSize=$totalSize chunkSize=$CHUNK_SIZE_BYTES totalChunks=$totalChunks")
+        Log.d(
+            "UploadChunk",
+            "upload_video_scan request scanId=${scan.id} source=${scan.source} localVideoPath=${scan.localVideoPath} file.exists=${videoFile.exists()} file.length=$totalSize durationSec=${scan.durationSec} upload_id=$uploadId chunked=true chunkSize=$CHUNK_SIZE_BYTES totalChunks=$totalChunks"
+        )
         for (chunkIndex in 0 until totalChunks) {
             val offset = chunkIndex * CHUNK_SIZE_BYTES
             val chunkSize = min(CHUNK_SIZE_BYTES, totalSize - offset)
@@ -134,6 +141,10 @@ class MobileUploadApi(
                     .addFormDataPart("app_scan_uuid", scan.id)
                     .addFormDataPart("duration_sec", (scan.durationSec ?: 0L).toString())
                     .addFormDataPart("local_camera_url", scan.cameraFileUrl ?: "")
+                    .addFormDataPart("source", scan.source.name)
+                    .addFormDataPart("camera_local_file_url", scan.cameraLocalFileUrl ?: "")
+                    .addFormDataPart("marker_expected", scan.markerExpected.toString())
+                    .addFormDataPart("marker_detected", scan.markerDetected.toString())
                     .addFormDataPart("upload_id", uploadId)
                     .addFormDataPart("chunk_index", chunkIndex.toString())
                     .addFormDataPart("total_chunks", totalChunks.toString())

@@ -603,6 +603,12 @@ class AppStateViewModel(
             Log.d("Upload", "points count=${session?.points?.size ?: 0}")
             val scanVideos = sessionRepository.scanVideos.value.filter { it.sessionId == item.sessionId }
             Log.d("Upload", "scanVideos count=${scanVideos.size}")
+            scanVideos.forEach { scan ->
+                Log.d(
+                    "Upload",
+                    "scanVideo scanId=${scan.id} source=${scan.source} localVideoPath=${scan.localVideoPath} downloadState=${scan.downloadState} uploadState=${scan.uploadState} captureStatus=${scan.captureStatus}"
+                )
+            }
 
         if (item.orderId == null) {
             val error = "В элементе очереди не выбрана заявка"
@@ -651,9 +657,38 @@ class AppStateViewModel(
             scanVideos.forEach { scan ->
                 val file = scan.localVideoPath?.let { path -> File(path) }
                 val exists = file?.exists() == true
-                Log.d("Upload", "video file scanId=${scan.id} exists=$exists size=${if (exists) file?.length() else null}")
-                if (!exists) {
-                    Log.e("Upload", "video file missing scanId=${scan.id}")
+                val size = if (exists) file?.length() ?: 0L else 0L
+                Log.d(
+                    "Upload",
+                    "video file scanId=${scan.id} source=${scan.source} localVideoPath=${scan.localVideoPath} downloadState=${scan.downloadState} uploadState=${scan.uploadState} captureStatus=${scan.captureStatus} exists=$exists size=$size"
+                )
+
+                if (scan.source == ScanSource.PHONE_CAMERA) {
+                    if (scan.localVideoPath.isNullOrBlank()) {
+                        Log.e("Upload", "Phone video file not found scanId=${scan.id}: localVideoPath is blank")
+                        sessionRepository.updateScanVideo(scan.copy(uploadState = ScanVideoUploadState.UPLOAD_ERROR, notes = "Phone video file not found", updatedAt = java.time.Instant.now()))
+                        allUploaded = false
+                        return@forEach
+                    }
+                    if (scan.downloadState != ScanVideoDownloadState.DOWNLOADED) {
+                        Log.e("Upload", "Phone video file not found scanId=${scan.id}: downloadState=${scan.downloadState}")
+                        sessionRepository.updateScanVideo(scan.copy(uploadState = ScanVideoUploadState.UPLOAD_ERROR, notes = "Phone video file not found", updatedAt = java.time.Instant.now()))
+                        allUploaded = false
+                        return@forEach
+                    }
+                }
+
+                if (!exists || size <= 0L) {
+                    val message = if (scan.source == ScanSource.PHONE_CAMERA) "Phone video file not found" else "video file missing"
+                    Log.e("Upload", "$message scanId=${scan.id} path=${scan.localVideoPath} exists=$exists size=$size")
+                    if (scan.source == ScanSource.PHONE_CAMERA) {
+                        sessionRepository.updateScanVideo(scan.copy(uploadState = ScanVideoUploadState.UPLOAD_ERROR, notes = message, updatedAt = java.time.Instant.now()))
+                    } else {
+                        sessionRepository.updateScanVideoUploadState(
+                            scanVideoId = scan.id,
+                            state = ScanVideoUploadState.UPLOAD_ERROR,
+                        )
+                    }
                     allUploaded = false
                     return@forEach
                 }
