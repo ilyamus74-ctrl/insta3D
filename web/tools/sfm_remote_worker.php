@@ -190,7 +190,12 @@ function sync_running_jobs(mysqli $db): void
         $progress = (int)($json['progress_percent'] ?? $json['progress'] ?? $job['progress_percent'] ?? 0);
         $message = (string)($json['message'] ?? $raw);
         if ($remoteStatus === 'DONE') {
-            [$fetchCode, $fetchOut] = run_command([SFM_REMOTE_BASE . '/fetch_job_result.sh', SFM_REMOTE_CONF, (string)$remote]);
+            [$fetchCode, $fetchOut] = run_command([
+                SFM_REMOTE_BASE . '/fetch_job_result.sh',
+                SFM_REMOTE_CONF,
+                (string)$remote,
+                SFM_REMOTE_OUTPUT,
+            ]);
             set_job($db, $id, $fetchCode === 0 ? 'DONE' : 'ERROR', $fetchCode === 0 ? 100 : $progress, $fetchOut !== '' ? $fetchOut : $message);
         } elseif ($remoteStatus === 'ERROR' || $remoteStatus === 'FAILED') {
             set_job($db, $id, 'ERROR', $progress, $message);
