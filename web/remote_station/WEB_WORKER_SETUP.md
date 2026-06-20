@@ -20,6 +20,17 @@ cp web/remote_station/makler-sfm-worker.service.example /etc/systemd/system/makl
 systemctl daemon-reload
 systemctl enable --now makler-sfm-worker.service
 ```
+## Установка metrics timer
+
+Метрики собирает root-side updater в JSON cache, а PHP API только читает готовый файл.
+
+```bash
+cp web/remote_station/makler-station-metrics.service.example /etc/systemd/system/makler-station-metrics.service
+cp web/remote_station/makler-station-metrics.timer.example /etc/systemd/system/makler-station-metrics.timer
+systemctl daemon-reload
+systemctl enable --now makler-station-metrics.timer
+journalctl -u makler-station-metrics.service -f
+```
 
 ## Post-deploy permissions and worker restart
 

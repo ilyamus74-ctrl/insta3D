@@ -1,0 +1,10 @@
+[Unit]
+Description=Run MaklerTour station metrics cache updater every 5 seconds
+
+[Timer]
+OnBootSec=10
+OnUnitActiveSec=5
+AccuracySec=1
+
+[Install]
+WantedBy=timers.target

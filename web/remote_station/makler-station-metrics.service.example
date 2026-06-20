@@ -1,0 +1,7 @@
+[Unit]
+Description=MaklerTour station metrics cache updater
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/home/makler/web/tools/update_station_metrics.sh
