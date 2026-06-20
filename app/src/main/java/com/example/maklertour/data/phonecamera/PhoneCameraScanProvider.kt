@@ -79,12 +79,13 @@ class PhoneCameraScanProvider(
             baseDir = current.baseDir,
             scanId = current.scanId,
             sessionId = current.sessionId,
-            videoPath = video.path,
-            cameraInfoPath = current.cameraInfoFile.absolutePath,
-            imuPath = current.imuFile.absolutePath,
-            startedAt = current.startedAt.toString(),
+            videoFile = File(video.path),
+            cameraInfoFile = current.cameraInfoFile,
+            imuFile = current.imuFile,
+            createdAt = current.startedAt.toString(),
             finishedAt = finishedAt.toString(),
             durationSec = video.durationSec,
+            fileSizeBytes = video.fileSizeBytes,
         )
         active = null
         return ScanVideo(

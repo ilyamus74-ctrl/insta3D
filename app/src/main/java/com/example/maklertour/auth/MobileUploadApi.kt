@@ -97,7 +97,7 @@ class MobileUploadApi(
             .addFormDataPart("marker_expected", scan.markerExpected.toString())
             .addFormDataPart("marker_detected", scan.markerDetected.toString())
 
-        addCameraInfoPartIfAvailable(bodyBuilder, scan, videoFile)
+        addPhoneScanMetadataPartsIfAvailable(bodyBuilder, scan, videoFile)
 
         bodyBuilder.addFormDataPart(
             "video",
@@ -120,17 +120,23 @@ class MobileUploadApi(
         }
     }
 
-    private fun addCameraInfoPartIfAvailable(bodyBuilder: MultipartBody.Builder, scan: ScanVideo, videoFile: File) {
-        val cameraInfoFile = videoFile.parentFile?.let { File(it, "camera_info.json") } ?: return
-        if (!cameraInfoFile.exists() || cameraInfoFile.length() <= 0L) {
-            Log.d("MobileUploadApi", "camera_info not found scanId=${scan.id} path=${cameraInfoFile.absolutePath}")
+    private fun addPhoneScanMetadataPartsIfAvailable(bodyBuilder: MultipartBody.Builder, scan: ScanVideo, videoFile: File) {
+        val dir = videoFile.parentFile ?: return
+        addFilePartIfAvailable(bodyBuilder, scan, File(dir, "camera_info.json"), "camera_info", "application/json")
+        addFilePartIfAvailable(bodyBuilder, scan, File(dir, "manifest.json"), "manifest", "application/json")
+        addFilePartIfAvailable(bodyBuilder, scan, File(dir, "imu.jsonl"), "imu", "application/x-ndjson")
+    }
+
+    private fun addFilePartIfAvailable(bodyBuilder: MultipartBody.Builder, scan: ScanVideo, file: File, partName: String, mediaType: String) {
+        if (!file.exists() || file.length() <= 0L) {
+            Log.d("MobileUploadApi", "$partName not found scanId=${scan.id} path=${file.absolutePath}")
             return
         }
-        Log.d("MobileUploadApi", "attaching camera_info scanId=${scan.id} path=${cameraInfoFile.absolutePath} size=${cameraInfoFile.length()}")
+        Log.d("MobileUploadApi", "attaching $partName scanId=${scan.id} path=${file.absolutePath} size=${file.length()}")
         bodyBuilder.addFormDataPart(
-            "camera_info",
-            cameraInfoFile.name,
-            cameraInfoFile.asRequestBody("application/json".toMediaType()),
+            partName,
+            file.name,
+            file.asRequestBody(mediaType.toMediaType()),
         )
     }
 
@@ -161,7 +167,7 @@ class MobileUploadApi(
                     .addFormDataPart("camera_local_file_url", scan.cameraLocalFileUrl ?: "")
                     .addFormDataPart("marker_expected", scan.markerExpected.toString())
                     .addFormDataPart("marker_detected", scan.markerDetected.toString())
-                    .apply { if (chunkIndex == totalChunks - 1) addCameraInfoPartIfAvailable(this, scan, videoFile) }
+                    .apply { if (chunkIndex == totalChunks - 1) addPhoneScanMetadataPartsIfAvailable(this, scan, videoFile) }
                     .addFormDataPart("upload_id", uploadId)
                     .addFormDataPart("chunk_index", chunkIndex.toString())
                     .addFormDataPart("total_chunks", totalChunks.toString())
