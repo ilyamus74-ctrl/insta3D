@@ -26,10 +26,13 @@ if($file!==''){
   elseif($file==='result'){$path=$base.'/result.json'; $ctype='application/json; charset=utf-8';}
   elseif($file==='logs'){ header('Content-Type: text/plain; charset=utf-8'); foreach(glob($base.'/logs/*.log') ?: [] as $lf){ $rl=realpath($lf); if($rl && (realpath($base)===false || strpos($rl,realpath($base).'/')===0)){ echo "===== ".basename($lf)." =====\n".srj_tail($rl,100)."\n"; } } exit; }
   elseif($file==='ply') {
-    if ((string)($job['job_type'] ?? '') !== 'EXPORT_PLY') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
+    if ((string)($job['job_type'] ?? '') === 'COLMAP_DENSE') { $path=$base.'/dense/fused.ply'; $downloadName='job_'.$remote.'_dense_fused.ply'; }
+    elseif ((string)($job['job_type'] ?? '') !== 'EXPORT_PLY') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
+    else {
     $parent=(int)($job['parent_remote_job_id'] ?? 0); $out=(string)($job['output_path'] ?? ''); $model=0;
     if (preg_match('/sparse_(\d+)\.ply|model[_-]?(\d+)/', $out, $m)) { $model=(int)(($m[1] ?? '') !== '' ? $m[1] : $m[2]); }
     if ($parent>0) { $base='/home/makler/web/remote_station/output/job_'.$parent; $realBase=realpath($base) ?: $base; $path=$base.'/colmap/sparse/'.$model.'/model.ply'; $downloadName='job_'.$parent.'_sparse_'.$model.'_model.ply'; }
+    }
     $ctype='application/octet-stream'; $download=true;
   }
   if(!$path || !is_file($path)) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
@@ -45,4 +48,4 @@ if(is_file($statusPath)){
 $job['status']=(string)($job['status'] ?? 'UNKNOWN');
 $job['progress_percent']=(int)($job['progress_percent'] ?? 0);
 $job['message']=(string)($job['message'] ?? '');
-srj_json(['ok'=>true,'job'=>$job,'remote_status'=>$statusJson,'files'=>['status'=>is_file($base.'/status.json'),'result'=>is_file($base.'/result.json'),'logs'=>(bool)(glob($base.'/logs/*.log') ?: []),'ply'=>(bool)(glob($base.'/*.ply') ?: [])]]);
+srj_json(['ok'=>true,'job'=>$job,'remote_status'=>$statusJson,'files'=>['status'=>is_file($base.'/status.json'),'result'=>is_file($base.'/result.json'),'logs'=>(bool)(glob($base.'/logs/*.log') ?: []),'ply'=>is_file($base.'/dense/fused.ply') || (bool)(glob($base.'/*.ply') ?: [])]]);

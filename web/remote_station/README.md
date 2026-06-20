@@ -248,3 +248,38 @@ This creates `./output/job_<job_id>/` and fetches:
 ## Notes
 
 No systemd worker, timer, or API polling worker is installed at this stage. Job orchestration is intentionally SSH-controlled by the web server.
+
+## COLMAP sparse vs dense pipeline
+
+The remote station supports two COLMAP reconstruction stages:
+
+- **COLMAP_SPARSE** builds the sparse SfM model from extracted frames. It produces the camera model, sparse points, and per-model folders under `output/job_<id>/colmap/sparse/<model_id>`.
+- **COLMAP_DENSE** uses an existing sparse model and the original frames to produce a denser fused point cloud at `output/job_<dense_id>/dense/fused.ply`.
+
+Dense reconstruction is intentionally heavier than sparse reconstruction. It runs:
+
+1. `image_undistorter`
+2. `patch_match_stereo`
+3. `stereo_fusion`
+
+The dense launcher is:
+
+```bash
+./run_colmap_dense_job.sh ./stations.conf <dense_job_id> <sparse_job_id> <model_id>
+```
+
+The station script reads `frames_dir` from the sparse job's `colmap/result.json`, validates the sparse model contains `cameras.bin`, `images.bin`, and `points3D.bin`, then writes logs to:
+
+- `dense/logs/image_undistorter.log`
+- `dense/logs/patch_match_stereo.log`
+- `dense/logs/stereo_fusion.log`
+
+### Hardware and runtime guidance
+
+Dense COLMAP is GPU/RAM intensive. Recommended baseline:
+
+- NVIDIA GPU with CUDA support and at least 8 GB VRAM for small/medium captures.
+- 16-32 GB system RAM minimum; 64 GB is safer for larger frame sets.
+- Fast local SSD storage, because PatchMatch and fusion create large intermediate workspaces.
+
+Expected runtime depends heavily on frame count, image resolution, overlap, and GPU speed. Small captures may finish in tens of minutes; larger room/property scans can take hours. Keep dense reconstruction manual by default until station capacity and quality settings are tuned.

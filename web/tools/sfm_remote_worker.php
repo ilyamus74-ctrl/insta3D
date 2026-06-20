@@ -33,6 +33,7 @@ const SFM_REMOTE_CONF = '/home/makler/web/remote_station/stations.conf';
 const SFM_REMOTE_OUTPUT = '/home/makler/web/remote_station/output';
 const SFM_REMOTE_STORAGE_OUTPUT = '/home/makler_storage/output';
 const AUTO_SFM_EXPORT_MODELS = [0, 1];
+const AUTO_SFM_DENSE_AFTER_SPARSE = false;
 
 function worker_log(string $message): void
 {
@@ -123,6 +124,9 @@ function auto_chain_after_done(mysqli $db, array $job): void
         if ($models <= 0) {
             worker_log("auto export skipped for COLMAP {$remote}: models count not found");
             return;
+        }
+        if (AUTO_SFM_DENSE_AFTER_SPARSE) {
+            // Dense reconstruction is intentionally disabled by default; keep this hook for later config enablement.
         }
         $maxModels = min($models, count(AUTO_SFM_EXPORT_MODELS));
         for ($i = 0; $i < $maxModels; $i++) {
@@ -248,7 +252,7 @@ function frames_path_for_parent(int $parentRemoteJobId): string
 function model_id_from_job(array $job): int
 {
     $out = (string)($job['output_path'] ?? '');
-    if (preg_match('/sparse_(\d+)\.ply$/', $out, $m)) {
+    if (preg_match('/(?:sparse|dense_model)_(\d+)\.ply$/', $out, $m)) {
         return (int)$m[1];
     }
     return 0;
@@ -302,6 +306,13 @@ function launch_job(mysqli $db, array $job): void
         $parent = (int)($job['parent_remote_job_id'] ?? $remoteJobId);
         $modelId = model_id_from_job($job);
         $args = [SFM_REMOTE_BASE . '/export_sparse_ply.sh', SFM_REMOTE_CONF, (string)$parent, (string)$modelId, SFM_REMOTE_OUTPUT];
+    } elseif ($type === 'COLMAP_DENSE') {
+        $parent = (int)($job['parent_remote_job_id'] ?? 0);
+        if ($parent <= 0) {
+            throw new RuntimeException('missing COLMAP_SPARSE parent_remote_job_id');
+        }
+        $modelId = model_id_from_job($job);
+        $args = [SFM_REMOTE_BASE . '/run_colmap_dense_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parent, (string)$modelId];
     } else {
         throw new RuntimeException('unknown job_type: ' . $type);
     }

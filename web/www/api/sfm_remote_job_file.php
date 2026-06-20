@@ -20,13 +20,14 @@ if ($type === 'status') {
   header('Content-Type: application/json; charset=utf-8'); readfile($file); exit;
 }
 if ($type === 'logs') {
-  $logs=[]; foreach (['logs/*.log','logs/*.txt','colmap/logs/*.log','colmap/logs/*.txt'] as $pat) { foreach (glob($base.'/'.$pat) ?: [] as $lf) { $rp = safe_file($base, substr($lf, strlen($base)+1)); if ($rp) $logs[] = ['file'=>substr($rp, strlen((string)realpath($base))+1), 'tail'=>tail_file($rp, 200)]; } }
+  $logs=[]; foreach (['logs/*.log','logs/*.txt','colmap/logs/*.log','colmap/logs/*.txt','dense/logs/*.log','dense/logs/*.txt'] as $pat) { foreach (glob($base.'/'.$pat) ?: [] as $lf) { $rp = safe_file($base, substr($lf, strlen($base)+1)); if ($rp) $logs[] = ['file'=>substr($rp, strlen((string)realpath($base))+1), 'tail'=>tail_file($rp, 200)]; } }
   if (!$logs) out_json(['ok'=>false,'message'=>'File not available yet'], 404);
   out_json(['ok'=>true,'logs'=>$logs]);
 }
 $jt = (string)$job['job_type']; $candidates=[];
 if ($jt === 'EXTRACT_FRAMES') $candidates[]='frames/result.json';
 elseif ($jt === 'COLMAP_SPARSE') $candidates[]='colmap/result.json';
+elseif ($jt === 'COLMAP_DENSE') $candidates[]='dense/result.json';
 elseif ($jt === 'EXPORT_PLY') {
   $parent = (int)($job['parent_remote_job_id'] ?? 0); $out = (string)($job['output_path'] ?? ''); $model = null;
   if (preg_match('/sparse_(\d+)\.ply|model[_-]?(\d+)/', $out, $m)) $model = (int)($m[1] !== '' ? $m[1] : $m[2]);
