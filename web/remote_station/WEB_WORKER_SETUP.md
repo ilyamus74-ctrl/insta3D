@@ -28,6 +28,7 @@ systemctl enable --now makler-sfm-worker.service
 ```bash
 chmod +x /home/makler/web/remote_station/*.sh
 chmod +x /home/makler/web/remote_station/scripts/*.sh
+/home/makler/web/remote_station/get_station_metrics.sh /home/makler/web/remote_station/stations.conf
 php -l /home/makler/web/tools/sfm_remote_worker.php
 systemctl restart makler-sfm-worker.service
 journalctl -u makler-sfm-worker.service -f

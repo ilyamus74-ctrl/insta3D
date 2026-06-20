@@ -110,7 +110,12 @@ Typical setup/deploy sequence:
 ```bash
 ./install_station.sh ./stations.conf
 ./deploy_station.sh ./stations.conf
+chmod +x /home/makler/web/remote_station/*.sh
+chmod +x /home/makler/web/remote_station/scripts/*.sh
+/home/makler/web/remote_station/get_station_metrics.sh /home/makler/web/remote_station/stations.conf
 ```
+
+The `chmod` commands are required after every deploy on the web host so GrafikStation metrics and worker endpoints can execute newly added scripts.
 
 
 ## COLMAP via Podman
@@ -165,7 +170,13 @@ After changing local scripts, deploy them to the station:
 ./deploy_station.sh ./stations.conf
 ```
 
-This copies `scripts/*.sh` into `$STATION_BASE/scripts/` and runs `chmod +x` remotely.
+This copies `scripts/*.sh` into `$STATION_BASE/scripts/` and runs `chmod +x` remotely. After repository/web deploys, also refresh executable bits on the web host and verify station metrics:
+
+```bash
+chmod +x /home/makler/web/remote_station/*.sh
+chmod +x /home/makler/web/remote_station/scripts/*.sh
+/home/makler/web/remote_station/get_station_metrics.sh /home/makler/web/remote_station/stations.conf
+```
 
 ## Extract frames test
 

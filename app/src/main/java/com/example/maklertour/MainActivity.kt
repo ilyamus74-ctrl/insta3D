@@ -1645,6 +1645,7 @@ private fun DraftScreen(
                 onAddToUploadQueue = {
                     when (val result = onAddToUploadQueue()) {
                         EnqueueUploadResult.Enqueued -> Toast.makeText(context, "Сессия добавлена в очередь", Toast.LENGTH_SHORT).show()
+                        EnqueueUploadResult.RequeuedNewMedia -> Toast.makeText(context, "Новые файлы добавлены в очередь", Toast.LENGTH_SHORT).show()
                         is EnqueueUploadResult.Rejected -> Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
                     }
                 },
@@ -1661,6 +1662,7 @@ private fun DraftScreen(
                 scanVideos = scanVideos,
                 onDelete = onDeleteVideoScan,
                 onDownload = onDownloadVideoScan,
+                onSyncVideo = { onAddToUploadQueue() },
                 debugMode = debugMode,
             )
         }
@@ -1712,8 +1714,10 @@ private fun VideoScansBlock(
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     onDelete: (String) -> Unit,
     onDownload: (String) -> Unit,
-    debugMode: Boolean,
+    onSyncVideo: (String) -> EnqueueUploadResult = { EnqueueUploadResult.Rejected("Сессия не выбрана.") },
+    debugMode: Boolean = false,
 ) {
+    val context = LocalContext.current
     Text(stringResource(R.string.video_scans), style = MaterialTheme.typography.titleMedium)
 
     if (scanVideos.isEmpty()) {
@@ -1783,6 +1787,31 @@ private fun VideoScansBlock(
                         }
                         if (scan.localVideoPath != null) {
                             Text(stringResource(R.string.video_downloaded))
+                        }
+
+                        val syncEnabled = scan.uploadState !in setOf(
+                            com.maklertour.domain.ScanVideoUploadState.UPLOADED,
+                            com.maklertour.domain.ScanVideoUploadState.CONFIRMED,
+                        )
+                        Button(
+                            onClick = {
+                                when (val result = onSyncVideo(scan.id)) {
+                                    EnqueueUploadResult.Enqueued -> Toast.makeText(context, "Видео добавлено в очередь", Toast.LENGTH_SHORT).show()
+                                    EnqueueUploadResult.RequeuedNewMedia -> Toast.makeText(context, "Видео добавлено в очередь", Toast.LENGTH_SHORT).show()
+                                    is EnqueueUploadResult.Rejected -> Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            enabled = syncEnabled,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                when (scan.uploadState) {
+                                    com.maklertour.domain.ScanVideoUploadState.UPLOADED,
+                                    com.maklertour.domain.ScanVideoUploadState.CONFIRMED -> "Уже загружено"
+                                    com.maklertour.domain.ScanVideoUploadState.UPLOAD_ERROR -> "Повторить"
+                                    else -> "Добавить видео в очередь"
+                                }
+                            )
                         }
 
                         Button(
@@ -2071,6 +2100,9 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                         EnqueueUploadResult.Enqueued -> {
                             Toast.makeText(context, "Сессия добавлена в очередь", Toast.LENGTH_SHORT).show()
                         }
+                        EnqueueUploadResult.RequeuedNewMedia -> {
+                            Toast.makeText(context, "Новые файлы добавлены в очередь", Toast.LENGTH_SHORT).show()
+                        }
 
                         is EnqueueUploadResult.Rejected -> {
                             Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
@@ -2151,9 +2183,9 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                                     Button(onClick = { onResetQueueItem(item.id) }) {
                                         Text(
                                             when (item.status) {
-                                                com.maklertour.domain.UploadStatus.Uploading -> "Вернуть в очередь"
-                                                com.maklertour.domain.UploadStatus.Error -> "Повторить"
-                                                com.maklertour.domain.UploadStatus.Success -> "Сбросить в новые"
+                                                com.maklertour.domain.UploadStatus.Uploading -> "Добавить новые файлы в очередь"
+                                                com.maklertour.domain.UploadStatus.Error -> "Добавить новые файлы в очередь"
+                                                com.maklertour.domain.UploadStatus.Success -> "Добавить новые файлы в очередь"
                                                 com.maklertour.domain.UploadStatus.Queued -> "Сбросить в новые"
                                             }
                                         )

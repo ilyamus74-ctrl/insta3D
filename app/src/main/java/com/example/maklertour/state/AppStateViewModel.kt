@@ -64,6 +64,7 @@ data class AppUiState(
 
 sealed interface EnqueueUploadResult {
     data object Enqueued : EnqueueUploadResult
+    data object RequeuedNewMedia : EnqueueUploadResult
     data class Rejected(val reason: String) : EnqueueUploadResult
 }
 
@@ -514,6 +515,21 @@ class AppStateViewModel(
     }
     fun deleteConnection(connectionId: String) = sessionRepository.deleteConnection(connectionId)
 
+
+    private fun hasPendingUploadMedia(session: Session, scanVideos: List<ScanVideo>): Boolean {
+        val hasPendingPhoto = session.points.any { point ->
+            point.serverUploadState != ServerUploadState.CONFIRMED || point.serverMediaId.isNullOrBlank()
+        }
+        val hasPendingVideo = scanVideos.any { scan ->
+            val file = scan.localVideoPath?.let { File(it) }
+            scan.captureStatus == ScanVideoCaptureStatus.CAPTURED &&
+                !scan.localVideoPath.isNullOrBlank() &&
+                file?.exists() == true &&
+                scan.uploadState !in setOf(ScanVideoUploadState.CONFIRMED, ScanVideoUploadState.UPLOADED)
+        }
+        return hasPendingPhoto || hasPendingVideo
+    }
+
     fun enqueueUpload(): EnqueueUploadResult {
         val session = uiState.value.sessions.firstOrNull { it.id == uiState.value.selectedSessionId }
             ?: return EnqueueUploadResult.Rejected("Сессия не выбрана.")
@@ -537,6 +553,11 @@ class AppStateViewModel(
             return EnqueueUploadResult.Rejected("Заявка закрыта для загрузки.")
         }
 
+        val sessionScanVideos = sessionRepository.scanVideos.value.filter { it.sessionId == session.id }
+        if (!hasPendingUploadMedia(session, sessionScanVideos)) {
+            return EnqueueUploadResult.Rejected("Нет новых файлов для загрузки. Все фото/видео уже синхронизированы.")
+        }
+
         val existing = uiState.value.uploadQueue.firstOrNull {
             it.sessionId == session.id && it.orderId == targetOrderId
         }
@@ -544,9 +565,11 @@ class AppStateViewModel(
         if (existing != null) {
             Log.d(
                 "UploadQueue",
-                "enqueue duplicate rejected sessionId=${session.id} orderId=$targetOrderId"
+                "enqueue existing reset for new media sessionId=${session.id} orderId=$targetOrderId"
             )
-            return EnqueueUploadResult.Rejected("Эта сессия уже есть в очереди для заявки #$targetOrderId")
+            uploadQueueRepository.resetQueueItem(existing.id)
+            uploadQueueRepository.updateProgress(existing.id, 0, 0L, 0L, null, "Queued new media")
+            return EnqueueUploadResult.RequeuedNewMedia
         }
 
         val uploadAppSessionUuid = "${session.id}_${targetOrderId}"
@@ -662,20 +685,22 @@ class AppStateViewModel(
                 val file = scan.localVideoPath?.let { path -> File(path) }
                 val exists = file?.exists() == true
                 val size = if (exists) file?.length() ?: 0L else 0L
+                val decision = when {
+                    scan.uploadState in setOf(ScanVideoUploadState.CONFIRMED, ScanVideoUploadState.UPLOADED) -> "skip"
+                    scan.captureStatus != ScanVideoCaptureStatus.CAPTURED -> "skip"
+                    scan.source == ScanSource.PHONE_CAMERA && (scan.localVideoPath.isNullOrBlank() || !exists || size <= 0L) -> "error"
+                    !exists || size <= 0L -> "error"
+                    else -> "upload"
+                }
                 Log.d(
                     "Upload",
-                    "video file scanId=${scan.id} source=${scan.source} localVideoPath=${scan.localVideoPath} downloadState=${scan.downloadState} uploadState=${scan.uploadState} captureStatus=${scan.captureStatus} exists=$exists size=$size"
+                    "scanVideo decision scanId=${scan.id} source=${scan.source} captureStatus=${scan.captureStatus} uploadState=${scan.uploadState} localVideoPath=${scan.localVideoPath} exists=$exists length=$size decision=$decision"
                 )
+                if (decision == "skip") return@forEach
 
                 if (scan.source == ScanSource.PHONE_CAMERA) {
                     if (scan.localVideoPath.isNullOrBlank()) {
                         Log.e("Upload", "Phone video file not found scanId=${scan.id}: localVideoPath is blank")
-                        sessionRepository.updateScanVideo(scan.copy(uploadState = ScanVideoUploadState.UPLOAD_ERROR, notes = "Phone video file not found", updatedAt = java.time.Instant.now()))
-                        allUploaded = false
-                        return@forEach
-                    }
-                    if (scan.downloadState != ScanVideoDownloadState.DOWNLOADED) {
-                        Log.e("Upload", "Phone video file not found scanId=${scan.id}: downloadState=${scan.downloadState}")
                         sessionRepository.updateScanVideo(scan.copy(uploadState = ScanVideoUploadState.UPLOAD_ERROR, notes = "Phone video file not found", updatedAt = java.time.Instant.now()))
                         allUploaded = false
                         return@forEach
@@ -727,6 +752,10 @@ class AppStateViewModel(
             }
 
             session.points.forEach { point ->
+                if (point.serverUploadState == ServerUploadState.CONFIRMED && !point.serverMediaId.isNullOrBlank()) {
+                    Log.d("Upload", "skip confirmed photo pointId=${point.id}")
+                    return@forEach
+                }
                 val previewFile = point.localPreviewPath?.let { path -> File(path) }
                 val originalFile = point.localOriginalPath?.let { path -> File(path) }
                 val hasPreview = previewFile?.exists() == true

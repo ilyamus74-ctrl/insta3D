@@ -5,6 +5,14 @@ auth_require_login();
 header('Content-Type: application/json; charset=utf-8');
 $script = '/home/makler/web/remote_station/get_station_metrics.sh';
 $config = '/home/makler/web/remote_station/stations.conf';
+if (file_exists($script) && !is_executable($script)) {
+    http_response_code(200);
+    echo json_encode([
+        'ok' => false,
+        'message' => 'get_station_metrics.sh is not executable. Run chmod +x /home/makler/web/remote_station/*.sh',
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
 $cmd = escapeshellarg($script) . ' ' . escapeshellarg($config) . ' 2>&1';
 $output = [];
 $code = 0;
