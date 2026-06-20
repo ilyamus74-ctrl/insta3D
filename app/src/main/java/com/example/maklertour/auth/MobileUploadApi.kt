@@ -97,6 +97,8 @@ class MobileUploadApi(
             .addFormDataPart("marker_expected", scan.markerExpected.toString())
             .addFormDataPart("marker_detected", scan.markerDetected.toString())
 
+        addCameraInfoPartIfAvailable(bodyBuilder, scan, videoFile)
+
         bodyBuilder.addFormDataPart(
             "video",
             videoFile.name,
@@ -116,6 +118,20 @@ class MobileUploadApi(
             Log.d("MobileUploadApi", "upload_video_scan response http=${response.code} body=$text")
             response.isSuccessful && text.contains("\"ok\":true")
         }
+    }
+
+    private fun addCameraInfoPartIfAvailable(bodyBuilder: MultipartBody.Builder, scan: ScanVideo, videoFile: File) {
+        val cameraInfoFile = videoFile.parentFile?.let { File(it, "camera_info.json") } ?: return
+        if (!cameraInfoFile.exists() || cameraInfoFile.length() <= 0L) {
+            Log.d("MobileUploadApi", "camera_info not found scanId=${scan.id} path=${cameraInfoFile.absolutePath}")
+            return
+        }
+        Log.d("MobileUploadApi", "attaching camera_info scanId=${scan.id} path=${cameraInfoFile.absolutePath} size=${cameraInfoFile.length()}")
+        bodyBuilder.addFormDataPart(
+            "camera_info",
+            cameraInfoFile.name,
+            cameraInfoFile.asRequestBody("application/json".toMediaType()),
+        )
     }
 
     private fun uploadVideoScanChunked(orderId: Long, captureSessionId: Long, scan: ScanVideo, videoFile: File, onProgress: ((UploadProgress) -> Unit)?): Boolean {
@@ -145,6 +161,7 @@ class MobileUploadApi(
                     .addFormDataPart("camera_local_file_url", scan.cameraLocalFileUrl ?: "")
                     .addFormDataPart("marker_expected", scan.markerExpected.toString())
                     .addFormDataPart("marker_detected", scan.markerDetected.toString())
+                    .apply { if (chunkIndex == totalChunks - 1) addCameraInfoPartIfAvailable(this, scan, videoFile) }
                     .addFormDataPart("upload_id", uploadId)
                     .addFormDataPart("chunk_index", chunkIndex.toString())
                     .addFormDataPart("total_chunks", totalChunks.toString())

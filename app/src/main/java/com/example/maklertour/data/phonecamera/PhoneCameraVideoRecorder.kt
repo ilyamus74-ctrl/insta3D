@@ -29,12 +29,14 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var outputFile: File? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var finalizeDeferred: CompletableDeferred<PhoneVideoRecordingResult>? = null
+    private var selectedVideoInfo: SelectedPhoneVideoInfo? = null
 
     suspend fun bindPreview(previewView: PreviewView) {
         Log.d(TAG, "bindPreview(): start")
         val cameraProvider = getCameraProvider()
         val preview = Preview.Builder().build()
         val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
+        selectedVideoInfo = SelectedPhoneVideoInfo(width = 1280, height = 720, fps = null)
         val preparedVideoCapture = VideoCapture.withOutput(recorder)
         preview.setSurfaceProvider(previewView.surfaceProvider)
         cameraProvider.unbindAll()
@@ -53,6 +55,8 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         }
         Log.d(TAG, "bindPreview(): success")
     }
+
+    fun getSelectedVideoInfo(): SelectedPhoneVideoInfo? = selectedVideoInfo
 
     suspend fun startRecording(sessionId: String, scanId: String): File {
         val preparedVideoCapture = videoCapture ?: error("Camera preview is not bound")
