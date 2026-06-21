@@ -12,6 +12,9 @@ STATION_BASE="/home/makler_storage"
 # Install missing station packages during install_station.sh (1=yes, 0=check only).
 INSTALL_PACKAGES="1"
 
+# Install/check Python dependencies required by chunk planning and dense merge during deploy_station.sh.
+INSTALL_STATION_DEPENDENCIES="1"
+
 # Fail install_station.sh if COLMAP is unavailable after package installation/checks.
 COLMAP_MODE="podman"
 COLMAP_BIN="colmap"

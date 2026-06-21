@@ -209,9 +209,27 @@ function format_command_failure(string $cmd, int $code, string $output): string
     return $message;
 }
 
+function ensure_command_available(string $command): void
+{
+    if ($command === '') {
+        throw new RuntimeException('empty command');
+    }
+    if (str_contains($command, '/')) {
+        ensure_executable($command);
+        return;
+    }
+    $resolved = trim((string)shell_exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null'));
+    if ($resolved === '' || !is_executable($resolved)) {
+        throw new RuntimeException('command not found in PATH: ' . $command);
+    }
+}
+
 function run_command(array $args): array
 {
-    ensure_executable((string)$args[0]);
+    if (!$args) {
+        throw new RuntimeException('empty command args');
+    }
+    ensure_command_available((string)$args[0]);
     $cmd = implode(' ', array_map('escapeshellarg', $args)) . ' 2>&1';
     $out = [];
     $code = 0;
@@ -332,7 +350,7 @@ function launch_job(mysqli $db, array $job): void
         $reserve = (int)($params['ram_reserve_mb'] ?? 3000);
         $outDir = remote_output_dir($remoteJobId);
         if (!is_dir($outDir)) { @mkdir($outDir, 0775, true); }
-        [$code, $output, $cmd] = run_command(['python3', SFM_REMOTE_BASE . '/scripts/plan_colmap_dense_chunks.py', '--sparse-model-dir', remote_output_dir($sparse) . '/colmap/sparse/' . $model, '--model-id', (string)$model, '--mode', $mode, '--output-plan', $outDir . '/chunk_plan.json', '--target-images-per-chunk', (string)$target, '--max-images-per-chunk', (string)$max, '--overlap-images', (string)$overlap, '--sparse-job-id', (string)$sparse, '--ram-reserve-mb', (string)$reserve]);
+        [$code, $output, $cmd] = run_command([SFM_REMOTE_BASE . '/run_colmap_chunk_plan_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$sparse, (string)$model, $mode, (string)$target, (string)$max, (string)$overlap, (string)$reserve, SFM_REMOTE_OUTPUT]);
         if ($code !== 0) { set_job($db, $id, 'ERROR', 0, format_command_failure($cmd, $code, $output)); return; }
         $plan = json_decode((string)@file_get_contents($outDir . '/chunk_plan.json'), true) ?: [];
         $chunkCount = count($plan['chunks'] ?? []);
@@ -420,7 +438,7 @@ function orchestrate_reconstruction_parents(mysqli $db): void
             set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Retry queued for chunk {$failedIdx}"); continue;
         } elseif($failed) { set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),'Chunk failed after retry; merge skipped'); continue; }
         if($done >= $total){
-            $out=remote_output_dir($parentRemote).'/merged/merged_fused.ply'; $cmd=['python3', SFM_REMOTE_BASE.'/scripts/merge_dense_chunks.py','--parent-output-dir',remote_output_dir($parentRemote),'--mode',$mode,'--output-ply',$out]; [$code,$output,$c]=run_command($cmd);
+            $cmd=[SFM_REMOTE_BASE.'/run_colmap_dense_merge_job.sh', SFM_REMOTE_CONF, (string)$parentRemote, $mode, SFM_REMOTE_OUTPUT]; [$code,$output,$c]=run_command($cmd);
             set_job($db,$pid,$code===0?'DONE':'ERROR',$code===0?100:95,$output!==''?$output:'merge done'); continue;
         }
         if($active===0){ $next=$chunks[$done]; $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='chunk queued'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$next['image_list_path']], JSON_UNESCAPED_SLASHES); $idx=(int)$next['chunk_id']; $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?)"); $st->bind_param('iisiissiis',(int)$p['order_id'],(int)$p['capture_session_id'],$jt,$rid,$parentRemote,$msg,$mode,$idx,$total,$pj); $st->execute(); $st->close(); }
