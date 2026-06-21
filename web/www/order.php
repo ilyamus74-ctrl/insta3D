@@ -7,6 +7,36 @@ $orderId=(int)($_GET['id']??0); if($orderId<=0){http_response_code(400);exit('Ba
 
 function status_meta(string $status): array { $m=['NEW'=>['bg-secondary','bi-circle','Новая'],'ASSIGNED'=>['bg-primary','bi-person-check','В работе'],'IN_PROGRESS'=>['bg-info','bi-camera','Съемка'],'CAPTURED'=>['bg-warning','bi-check2-square','Отснята'],'UPLOADING'=>['bg-warning','bi-cloud-upload','Загружается'],'UPLOADED'=>['bg-success','bi-cloud-check','Загружена'],'PROCESSING'=>['bg-info','bi-gear','Обработка'],'READY'=>['bg-success','bi-check-circle','Готова'],'COMPLETED'=>['bg-dark','bi-check2-all','Завершена'],'CLOSED'=>['bg-dark','bi-lock','Закрыта']]; $x=$m[$status]??['bg-secondary','bi-circle',$status]; return ['class'=>$x[0],'icon'=>$x[1],'label'=>$x[2]]; }
 function load_order(mysqli $dbcnx,int $orderId): ?array { $stmt=$dbcnx->prepare("SELECT o.*,b.full_name broker_name,b.email broker_email,op.full_name operator_name,op.email operator_email FROM tour_orders o LEFT JOIN users b ON b.id=o.broker_id LEFT JOIN users op ON op.id=o.operator_id WHERE o.id=? LIMIT 1"); if(!$stmt){return null;} $stmt->bind_param('i',$orderId); $stmt->execute(); $o=$stmt->get_result()->fetch_assoc()?:null; $stmt->close(); return $o; }
+
+const MIN_REGISTERED_IMAGES_PREVIEW = 10;
+const MIN_REGISTERED_IMAGES_HQ = 20;
+
+
+function sfm_read_uint64_le($fh): ?int { $b=fread($fh,8); if(strlen($b)!==8){return null;} $u=unpack('Vlo/Vhi',$b); return (int)($u['lo'] + $u['hi'] * 4294967296); }
+function sfm_skip_bytes($fh,int $bytes): bool { return fseek($fh,$bytes,SEEK_CUR)===0; }
+function sfm_count_colmap_images_bin(string $path): int { $fh=@fopen($path,'rb'); if(!$fh){return 0;} $n=sfm_read_uint64_le($fh); fclose($fh); return $n ?? 0; }
+function sfm_count_colmap_points3d_bin(string $path): int { return sfm_count_colmap_images_bin($path); }
+function sfm_sparse_model_stats(int $sparseJobId, int $modelId): array {
+  $dir=sfm_remote_output_dir($sparseJobId).'/colmap/sparse/'.$modelId;
+  $images=0; $points=0;
+  $imagesTxt=$dir.'/images.txt'; $pointsTxt=$dir.'/points3D.txt';
+  if(is_file($imagesTxt)){
+    foreach(file($imagesTxt, FILE_IGNORE_NEW_LINES) ?: [] as $line){ $line=trim($line); if($line!=='' && $line[0]!=='#'){ $images++; } }
+    $images=(int)floor($images/2);
+  }
+  if(is_file($pointsTxt)){
+    foreach(file($pointsTxt, FILE_IGNORE_NEW_LINES) ?: [] as $line){ $line=trim($line); if($line!=='' && $line[0]!=='#'){ $points++; } }
+  }
+  if($images===0){ $images=sfm_count_colmap_images_bin($dir.'/images.bin'); }
+  if($points===0){ $points=sfm_count_colmap_points3d_bin($dir.'/points3D.bin'); }
+  return ['model_id'=>$modelId,'registered_images'=>$images,'points3D'=>$points,'preview_enabled'=>$images>=MIN_REGISTERED_IMAGES_PREVIEW,'hq_enabled'=>$images>=MIN_REGISTERED_IMAGES_HQ];
+}
+function sfm_best_sparse_model_id(int $sparseJobId, array $modelIds): int {
+  $best=-1; $bestImages=-1; $bestPoints=-1;
+  foreach($modelIds as $mid){ $st=sfm_sparse_model_stats($sparseJobId,(int)$mid); if($st['registered_images']>$bestImages || ($st['registered_images']===$bestImages && $st['points3D']>$bestPoints)){ $best=(int)$mid; $bestImages=(int)$st['registered_images']; $bestPoints=(int)$st['points3D']; } }
+  return $best>=0?$best:0;
+}
+
 function bytes_human($bytes): string { $b=(float)$bytes; if($b<=0){return '0 B';} $u=['B','KB','MB','GB','TB']; $i=0; while($b>=1024 && $i<count($u)-1){$b/=1024;$i++;} return round($b,2).' '.$u[$i]; }
 
 $order=load_order($dbcnx,$orderId); if(!$order){http_response_code(404);exit('Order not found');}
@@ -178,7 +208,8 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      } else {
        $colmap=(int)($_POST['colmap_job_id']??0); $model=(int)($_POST['model_id']??0); if($colmap<=0||$model<0){throw new RuntimeException('Bad COLMAP job or model id');}
        $st=$dbcnx->prepare("SELECT capture_session_id FROM sfm_remote_jobs WHERE order_id=? AND remote_job_id=? AND job_type='COLMAP_SPARSE' LIMIT 1"); $st->bind_param('ii',$orderId,$colmap); $st->execute(); $parentJob=$st->get_result()->fetch_assoc(); $st->close(); if(!$parentJob){throw new RuntimeException('COLMAP job not found');}
-       $mode=$action==='sfm_reconstruction_hq_web'?'hq':'preview'; $captureSessionId=(int)$parentJob['capture_session_id']; $rid=sfm_job_id($dbcnx); $jt=$mode==='hq'?'COLMAP_RECONSTRUCTION_HQ':'COLMAP_RECONSTRUCTION_PREVIEW'; $out=sfm_remote_output_dir($rid).'/merged/merged_fused.ply'; $result=sfm_remote_output_dir($rid).'/merged/result.json'; $log=sfm_remote_output_dir($rid).'/logs'; $msg='chunked reconstruction queued';
+       $mode=$action==='sfm_reconstruction_hq_web'?'hq':'preview'; if(isset($_POST['best_model'])){ $model=sfm_best_sparse_model_id($colmap,[0,1]); } $captureSessionId=(int)$parentJob['capture_session_id']; $rid=sfm_job_id($dbcnx); $jt=$mode==='hq'?'COLMAP_RECONSTRUCTION_HQ':'COLMAP_RECONSTRUCTION_PREVIEW'; $out=sfm_remote_output_dir($rid).'/merged/merged_fused.ply'; $result=sfm_remote_output_dir($rid).'/merged/result.json'; $log=sfm_remote_output_dir($rid).'/logs'; $msg='chunked reconstruction queued';
+       $stats=sfm_sparse_model_stats($colmap,$model); $min=$mode==='hq'?MIN_REGISTERED_IMAGES_HQ:MIN_REGISTERED_IMAGES_PREVIEW; if((int)$stats['registered_images'] < $min){ $label=$mode==='hq'?'high quality':'preview'; throw new RuntimeException('Insufficient registered images: '.(int)$stats['registered_images'].'. Minimum for '.$label.' is '.$min.'. Select another sparse model or improve sparse reconstruction.'); }
        $params=json_encode(['sparse_job_id'=>$colmap,'model_id'=>$model], JSON_UNESCAPED_SLASHES);
        $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,parameters_json) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)");
        if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
@@ -365,7 +396,7 @@ if($stmt){
 
 $sfmJobsBySession=[];
 $stmt=$dbcnx->prepare("SELECT * FROM sfm_remote_jobs WHERE order_id=? ORDER BY created_at DESC, id DESC");
-if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($j=$rs->fetch_assoc()){ $sid=(int)$j['capture_session_id']; if(!isset($sfmJobsBySession[$sid])){$sfmJobsBySession[$sid]=[];} $j['status_url']='/api/sfm_remote_job_status.php?job_id='.(int)$j['id']; $j['status_json_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=status'; $j['result_json_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=result'; $j['logs_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=logs'; $j['ply_url']=$j['status_url'].'&file=ply'; $j['dense_model_ids']=[0,1]; $sfmJobsBySession[$sid][]=$j; } $stmt->close(); }
+if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($j=$rs->fetch_assoc()){ $sid=(int)$j['capture_session_id']; if(!isset($sfmJobsBySession[$sid])){$sfmJobsBySession[$sid]=[];} $j['status_url']='/api/sfm_remote_job_status.php?job_id='.(int)$j['id']; $j['status_json_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=status'; $j['result_json_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=result'; $j['logs_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=logs'; $j['ply_url']=$j['status_url'].'&file=ply'; $j['dense_model_ids']=[0,1]; $j['sparse_model_stats']=[]; if((string)$j['job_type']==='COLMAP_SPARSE'){ foreach($j['dense_model_ids'] as $mid){ $j['sparse_model_stats'][(int)$mid]=sfm_sparse_model_stats((int)$j['remote_job_id'],(int)$mid); } } $sfmJobsBySession[$sid][]=$j; } $stmt->close(); }
 
 foreach($captureSessions as $idx=>$session){
   $safeUuid=sfm_safe_uuid((string)($session['app_session_uuid'] ?? ''));

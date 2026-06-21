@@ -40,7 +40,7 @@ def main():
     out=Path(args.output_ply); out.parent.mkdir(parents=True,exist_ok=True)
     header=['ply','format ascii 1.0',f'element vertex {len(merged)}'] + [f'property float {x}' for x in (props or ['x','y','z'])] + ['end_header']
     out.write_text('\n'.join(header+[' '.join(v) for v in merged])+'\n')
-    res={'status':status,'mode':args.mode,'chunks_total':len(chunks),'chunks_done':len(chunks)-skipped,'chunks_skipped':skipped,'input_vertices_total':len(allv),'merged_vertices':len(merged),'output_ply':str(out),'duration_sec':round(time.time()-t,3),'warnings':warnings}
+    res={'status':status,'mode':args.mode,'chunks_total':len(chunks),'chunks_done':len(chunks)-skipped,'chunks_skipped':skipped,'input_vertices_total':len(allv),'merged_vertices':len(merged),'fused_vertices':len(merged),'output_ply':str(out),'duration_sec':round(time.time()-t,3),'warnings':warnings}
     (out.parent/'result.json').write_text(json.dumps(res,indent=2));
     if status=='ERROR': raise SystemExit(2)
 if __name__=='__main__': main()

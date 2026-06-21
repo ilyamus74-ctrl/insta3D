@@ -24,8 +24,24 @@ status(){ local st="$1" pr="$2" msg; msg="$(printf '%s' "$3"|jqstr)"; cat > "$ST
 {"job_id":"$JOB_ID","parent_job_id":"$PARENT_JOB_ID","status":"$st","progress_percent":$pr,"message":"$msg","updated_at":"$(date -Iseconds)"}
 JSON
 }
-result(){ local st="$1" code="$2" msg="$3" count size; count=$(wc -l < "$CHUNK_DIR/image_list.txt"|tr -d ' '); size=0; [[ -f "$FUSED_PLY" ]] && size=$(stat -c '%s' "$FUSED_PLY"); cat > "$CHUNK_DIR/result.json" <<JSON
-{"job_id":"$JOB_ID","parent_job_id":"$PARENT_JOB_ID","sparse_job_id":"$SPARSE_JOB_ID","model_id":$MODEL_ID,"chunk_id":$CHUNK_ID,"status":"$st","exit_code":$code,"message":"$msg","images_count":$count,"max_image_size":$MAX_IMAGE_SIZE,"patchmatch_cache_size":$PMC,"fusion_cache_size":$FC,"available_ram_before_start_mb":$AVAIL_BEFORE,"fused_ply":"$FUSED_PLY","fused_ply_size_bytes":$size,"finished_at":"$(date -Iseconds)"}
+ply_vertices(){ python3 - "$FUSED_PLY" <<'PYV'
+import re,sys
+p=sys.argv[1]
+n=0
+try:
+    with open(p,'rb') as f:
+        for raw in f:
+            line=raw.decode('utf-8','replace').strip()
+            m=re.match(r'element\s+vertex\s+(\d+)$', line)
+            if m: n=int(m.group(1))
+            if line=='end_header': break
+except FileNotFoundError:
+    pass
+print(n)
+PYV
+}
+result(){ local st="$1" code="$2" msg="$3" count size vertices; count=$(wc -l < "$CHUNK_DIR/image_list.txt"|tr -d ' '); size=0; [[ -f "$FUSED_PLY" ]] && size=$(stat -c '%s' "$FUSED_PLY"); vertices=$(ply_vertices); cat > "$CHUNK_DIR/result.json" <<JSON
+{"job_id":"$JOB_ID","parent_job_id":"$PARENT_JOB_ID","sparse_job_id":"$SPARSE_JOB_ID","model_id":$MODEL_ID,"chunk_id":$CHUNK_ID,"status":"$st","exit_code":$code,"message":"$msg","images_count":$count,"max_image_size":$MAX_IMAGE_SIZE,"patchmatch_cache_size":$PMC,"fusion_cache_size":$FC,"available_ram_before_start_mb":$AVAIL_BEFORE,"fused_ply":"$FUSED_PLY","fused_ply_size_bytes":$size,"fused_vertices":$vertices,"finished_at":"$(date -Iseconds)"}
 JSON
 }
 run_colmap(){ case "$COLMAP_MODE" in native) "$COLMAP_BIN" "$@";; podman) podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable -v "$BASE:$BASE" "$COLMAP_IMAGE" colmap "$@";; *) echo "bad COLMAP_MODE" >&2; return 1;; esac; }
@@ -42,4 +58,10 @@ run_colmap patch_match_stereo --workspace_path "$UNDISTORTED_DIR" --workspace_fo
 status RUNNING 85 "Fusion chunk $CHUNK_ID"
 run_colmap stereo_fusion --workspace_path "$UNDISTORTED_DIR" --workspace_format COLMAP --input_type geometric --output_path "$FUSED_PLY" --StereoFusion.cache_size "$FC" > "$LOG_DIR/stereo_fusion.log" 2>&1
 [[ -s "$FUSED_PLY" ]] || { status ERROR 0 "fused.ply missing"; exit 1; }
+FUSED_VERTICES=$(ply_vertices)
+if [[ "$FUSED_VERTICES" -eq 0 ]]; then
+  result ERROR_EMPTY 0 "Dense fusion produced zero vertices"
+  status ERROR_EMPTY 100 "Dense fusion produced zero vertices"
+  exit 0
+fi
 result DONE 0 done; status DONE 100 "Dense chunk $CHUNK_ID done"
