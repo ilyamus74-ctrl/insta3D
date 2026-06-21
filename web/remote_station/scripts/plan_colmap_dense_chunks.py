@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse,json,os,re,shutil,subprocess,sys,time
+import argparse,json,os,re,shutil,subprocess,sys,tempfile,time
 from pathlib import Path
 
 def run_colmap(args):
@@ -45,21 +45,37 @@ def registered_images(model_dir):
     tmp=None
     try:
         if not txt.exists():
-station_base = Path(
-    os.environ.get("STATION_BASE", "/home/makler_storage")
-)
-tmp_root = station_base / "tmp"
-tmp_root.mkdir(parents=True, exist_ok=True)
+            station_base = Path(
+                os.environ.get(
+                    "STATION_BASE",
+                    "/home/makler_storage",
+                )
+            )
 
-tmp = Path(
-    tempfile.mkdtemp(
-        prefix="colmap_model_txt_",
-        dir=str(tmp_root),
-    )
-)
-            tmp.mkdir(parents=True,exist_ok=True)
-            run_colmap(['model_converter','--input_path',str(model),'--output_path',str(tmp),'--output_type','TXT'])
-            txt=tmp/'images.txt'
+            tmp_root = station_base / "tmp"
+            tmp_root.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            tmp = Path(
+                tempfile.mkdtemp(
+                    prefix="colmap_model_txt_",
+                    dir=str(tmp_root),
+                )
+            )
+
+            run_colmap([
+                "model_converter",
+                "--input_path",
+                str(model),
+                "--output_path",
+                str(tmp),
+                "--output_type",
+                "TXT",
+            ])
+
+            txt = tmp / "images.txt"
 
         lines=[
             line.strip()
