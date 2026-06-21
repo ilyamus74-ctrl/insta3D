@@ -232,6 +232,7 @@
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-job-file-url="{$rj.logs_url|escape}" data-job-file-target="jobFile{$rj.id}">Show logs</button>
                         {if $rj.job_type == 'EXPORT_PLY'}<a class="btn btn-sm btn-outline-success" href="{$rj.ply_url|escape}" target="_blank">Download PLY</a>{/if}
                         {if $rj.job_type == 'COLMAP_DENSE'}<a class="btn btn-sm btn-outline-success" href="{$rj.ply_url|escape}" target="_blank">Download dense PLY</a>{/if}
+                        {if $rj.job_type == 'COLMAP_RECONSTRUCTION_PREVIEW' || $rj.job_type == 'COLMAP_RECONSTRUCTION_HQ'}<a class="btn btn-sm btn-outline-success" href="{$rj.ply_url|escape}" target="_blank">Download merged PLY</a>{/if}
                         {if $rj.job_type == 'EXTRACT_FRAMES'}
                           <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_colmap_sparse_web"><input type="hidden" name="capture_session_id" value="{$s.id}"><input type="hidden" name="extract_job_id" value="{$rj.remote_job_id}"><button type="submit" class="btn btn-sm btn-outline-primary">Run COLMAP sparse</button></form>
                         {/if}
@@ -239,6 +240,9 @@
                           {foreach from=$rj.dense_model_ids item=mid}
                             <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_export_ply_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary">Export PLY model {$mid}</button></form>
                             <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_colmap_dense_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary">Run dense model {$mid}</button></form>
+
+                            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_preview_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary">Preview model {$mid}</button></form>
+                            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_hq_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary">High quality model {$mid}</button></form>
                           {/foreach}
                         {/if}
                       </div>

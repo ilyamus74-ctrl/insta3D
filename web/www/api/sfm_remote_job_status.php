@@ -27,6 +27,7 @@ if($file!==''){
   elseif($file==='logs'){ header('Content-Type: text/plain; charset=utf-8'); foreach(glob($base.'/logs/*.log') ?: [] as $lf){ $rl=realpath($lf); if($rl && (realpath($base)===false || strpos($rl,realpath($base).'/')===0)){ echo "===== ".basename($lf)." =====\n".srj_tail($rl,100)."\n"; } } exit; }
   elseif($file==='ply') {
     if ((string)($job['job_type'] ?? '') === 'COLMAP_DENSE') { $path=$base.'/dense/fused.ply'; $downloadName='job_'.$remote.'_dense_fused.ply'; }
+    elseif (in_array((string)($job['job_type'] ?? ''), ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) { $path=$base.'/merged/merged_fused.ply'; $downloadName='job_'.$remote.'_merged_fused.ply'; }
     elseif ((string)($job['job_type'] ?? '') !== 'EXPORT_PLY') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
     else {
     $parent=(int)($job['parent_remote_job_id'] ?? 0); $out=(string)($job['output_path'] ?? ''); $model=0;

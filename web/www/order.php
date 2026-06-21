@@ -32,6 +32,7 @@ function ensure_sfm_remote_jobs_table(mysqli $dbcnx): void {
 function sfm_safe_uuid(string $uuid): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:'session'; }
 function video_scan_safe_uuid(string $uuid,int $scanId): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:('scan_'.$scanId); }
 function video_scan_metadata_info(int $scanId,string $appScanUuid,string $videoDir): array { $safe=video_scan_safe_uuid($appScanUuid,$scanId); $defs=['camera_info'=>['_camera_info.json','View camera_info'],'manifest'=>['_manifest.json','View manifest'],'imu'=>['_imu.jsonl','Download imu']]; $out=[]; foreach($defs as $type=>$def){ $path=$videoDir.'/'.$safe.$def[0]; $exists=is_file($path); $out[$type]=['exists'=>$exists,'label'=>$def[1],'url'=>$exists?('/api/video_scan_metadata.php?scan_id='.$scanId.'&type='.$type):'']; } return $out; }
+function ensure_sfm_remote_jobs_chunk_columns(mysqli $dbcnx): void { foreach(['reconstruction_mode'=>'VARCHAR(20) NULL','chunk_index'=>'INT NULL','chunk_count'=>'INT NULL','retry_count'=>'INT NOT NULL DEFAULT 0','parameters_json'=>'LONGTEXT NULL'] as $c=>$def){ if(!column_exists($dbcnx,'sfm_remote_jobs',$c)){ @$dbcnx->query('ALTER TABLE sfm_remote_jobs ADD COLUMN '.$c.' '.$def); } } }
 function sfm_remote_output_dir(int $remoteJobId): string { return '/home/makler/web/remote_station/output/job_'.$remoteJobId; }
 function sfm_job_id(mysqli $dbcnx): int { do { $id=random_int(10000,999999999); $st=$dbcnx->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1'); if(!$st){return $id;} $st->bind_param('i',$id); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); } while($exists); return $id; }
 function sfm_session_for_order(mysqli $dbcnx,int $orderId,int $sessionId): ?array { $st=$dbcnx->prepare('SELECT id, app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1'); if(!$st){return null;} $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $row=$st->get_result()->fetch_assoc()?:null; $st->close(); return $row; }
@@ -90,6 +91,7 @@ function db_delete_or_soft_session_rows(mysqli $dbcnx,string $table,array $where
 }
 
 ensure_sfm_remote_jobs_table($dbcnx);
+ensure_sfm_remote_jobs_chunk_columns($dbcnx);
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
  $action=$_POST['action']??'';
@@ -137,7 +139,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
    }
  }
 
- if(in_array($action,['sfm_extract_frames_web','sfm_colmap_sparse_web','sfm_export_ply_web','sfm_colmap_dense_web'],true) && $canDeleteMedia){
+ if(in_array($action,['sfm_extract_frames_web','sfm_colmap_sparse_web','sfm_export_ply_web','sfm_colmap_dense_web','sfm_reconstruction_preview_web','sfm_reconstruction_hq_web'],true) && $canDeleteMedia){
    try{
      if($action==='sfm_extract_frames_web'){
        $captureSessionId=(int)($_POST['capture_session_id']??0);
@@ -165,13 +167,22 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
        $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,log_path) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?)");
        if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
        $st->bind_param('iisiisss',$orderId,$captureSessionId,$jt,$rid,$colmap,$out,$msg,$log); $st->execute(); $st->close();
-     } else {
+     } elseif($action==='sfm_colmap_dense_web') {
        $colmap=(int)($_POST['colmap_job_id']??0); $model=(int)($_POST['model_id']??0); if($colmap<=0||$model<0){throw new RuntimeException('Bad COLMAP job or model id');}
        $st=$dbcnx->prepare("SELECT capture_session_id FROM sfm_remote_jobs WHERE order_id=? AND remote_job_id=? AND job_type='COLMAP_SPARSE' LIMIT 1"); $st->bind_param('ii',$orderId,$colmap); $st->execute(); $parentJob=$st->get_result()->fetch_assoc(); $st->close(); if(!$parentJob){throw new RuntimeException('COLMAP job not found');}
        $captureSessionId=(int)$parentJob['capture_session_id']; $rid=sfm_job_id($dbcnx); $out=sfm_remote_output_dir($rid).'/dense_model_'.$model.'.ply'; $result=sfm_remote_output_dir($rid).'/dense/result.json'; $log=sfm_remote_output_dir($rid).'/dense/logs'; $jt='COLMAP_DENSE'; $msg='job queued';
        $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,result_json_path,log_path) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?)");
        if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
        $st->bind_param('iisiissss',$orderId,$captureSessionId,$jt,$rid,$colmap,$out,$msg,$result,$log); $st->execute(); $st->close();
+
+     } else {
+       $colmap=(int)($_POST['colmap_job_id']??0); $model=(int)($_POST['model_id']??0); if($colmap<=0||$model<0){throw new RuntimeException('Bad COLMAP job or model id');}
+       $st=$dbcnx->prepare("SELECT capture_session_id FROM sfm_remote_jobs WHERE order_id=? AND remote_job_id=? AND job_type='COLMAP_SPARSE' LIMIT 1"); $st->bind_param('ii',$orderId,$colmap); $st->execute(); $parentJob=$st->get_result()->fetch_assoc(); $st->close(); if(!$parentJob){throw new RuntimeException('COLMAP job not found');}
+       $mode=$action==='sfm_reconstruction_hq_web'?'hq':'preview'; $captureSessionId=(int)$parentJob['capture_session_id']; $rid=sfm_job_id($dbcnx); $jt=$mode==='hq'?'COLMAP_RECONSTRUCTION_HQ':'COLMAP_RECONSTRUCTION_PREVIEW'; $out=sfm_remote_output_dir($rid).'/merged/merged_fused.ply'; $result=sfm_remote_output_dir($rid).'/merged/result.json'; $log=sfm_remote_output_dir($rid).'/logs'; $msg='chunked reconstruction queued';
+       $params=json_encode(['sparse_job_id'=>$colmap,'model_id'=>$model], JSON_UNESCAPED_SLASHES);
+       $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,parameters_json) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)");
+       if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+       $st->bind_param('iisiissssss',$orderId,$captureSessionId,$jt,$rid,$colmap,$out,$msg,$result,$log,$mode,$params); $st->execute(); $st->close();
      }
      header('Location: /order.php?id='.$orderId.'&sfm_job_queued=1'); exit;
    }catch(Throwable $e){ $error=$e->getMessage(); }

@@ -48,6 +48,22 @@ function ensure_sfm_remote_jobs_table(mysqli $db): void
     }
 }
 
+function ensure_sfm_remote_jobs_chunk_columns(mysqli $db): void
+{
+    $cols = [
+        'reconstruction_mode' => "ALTER TABLE sfm_remote_jobs ADD COLUMN reconstruction_mode VARCHAR(20) NULL",
+        'chunk_index' => "ALTER TABLE sfm_remote_jobs ADD COLUMN chunk_index INT NULL",
+        'chunk_count' => "ALTER TABLE sfm_remote_jobs ADD COLUMN chunk_count INT NULL",
+        'retry_count' => "ALTER TABLE sfm_remote_jobs ADD COLUMN retry_count INT NOT NULL DEFAULT 0",
+        'parameters_json' => "ALTER TABLE sfm_remote_jobs ADD COLUMN parameters_json LONGTEXT NULL",
+    ];
+    foreach ($cols as $col => $sql) {
+        $res = $db->query("SHOW COLUMNS FROM sfm_remote_jobs LIKE '" . $db->real_escape_string($col) . "'");
+        $exists = $res && $res->num_rows > 0;
+        if ($res) { $res->close(); }
+        if (!$exists) { $db->query($sql); }
+    }
+}
 
 function sfm_job_id(mysqli $db): int
 {
@@ -305,6 +321,26 @@ function launch_job(mysqli $db, array $job): void
     if ($remoteJobId <= 0) {
         throw new RuntimeException('bad remote_job_id');
     }
+    if ($type === 'COLMAP_RECONSTRUCTION_PREVIEW' || $type === 'COLMAP_RECONSTRUCTION_HQ') {
+        $mode = (string)($job['reconstruction_mode'] ?: (str_contains($type, 'HQ') ? 'hq' : 'preview'));
+        $params = json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: [];
+        $sparse = (int)($params['sparse_job_id'] ?? $job['parent_remote_job_id'] ?? 0);
+        $model = (int)($params['model_id'] ?? 0);
+        $target = (int)($params['target_images_per_chunk'] ?? ($mode === 'hq' ? 60 : 50));
+        $max = (int)($params['max_images_per_chunk'] ?? ($mode === 'hq' ? 100 : 80));
+        $overlap = (int)($params['overlap_images'] ?? ($mode === 'hq' ? 20 : 15));
+        $reserve = (int)($params['ram_reserve_mb'] ?? 3000);
+        $outDir = remote_output_dir($remoteJobId);
+        if (!is_dir($outDir)) { @mkdir($outDir, 0775, true); }
+        [$code, $output, $cmd] = run_command(['python3', SFM_REMOTE_BASE . '/scripts/plan_colmap_dense_chunks.py', '--sparse-model-dir', remote_output_dir($sparse) . '/colmap/sparse/' . $model, '--model-id', (string)$model, '--mode', $mode, '--output-plan', $outDir . '/chunk_plan.json', '--target-images-per-chunk', (string)$target, '--max-images-per-chunk', (string)$max, '--overlap-images', (string)$overlap, '--sparse-job-id', (string)$sparse, '--ram-reserve-mb', (string)$reserve]);
+        if ($code !== 0) { set_job($db, $id, 'ERROR', 0, format_command_failure($cmd, $code, $output)); return; }
+        $plan = json_decode((string)@file_get_contents($outDir . '/chunk_plan.json'), true) ?: [];
+        $chunkCount = count($plan['chunks'] ?? []);
+        $st = $db->prepare('UPDATE sfm_remote_jobs SET chunk_count=?, message=?, updated_at=NOW(6) WHERE id=?');
+        if ($st) { $msg = 'Chunk plan ready: ' . $chunkCount . ' chunks'; $st->bind_param('isi', $chunkCount, $msg, $id); $st->execute(); $st->close(); }
+        set_job($db, $id, 'RUNNING', 5, 'Chunk plan ready: ' . $chunkCount . ' chunks');
+        return;
+    }
     if ($type === 'EXTRACT_FRAMES') {
         $input = safe_session_video_path($db, $job);
         $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input];
@@ -315,6 +351,10 @@ function launch_job(mysqli $db, array $job): void
         $parent = (int)($job['parent_remote_job_id'] ?? $remoteJobId);
         $modelId = model_id_from_job($job);
         $args = [SFM_REMOTE_BASE . '/export_sparse_ply.sh', SFM_REMOTE_CONF, (string)$parent, (string)$modelId, SFM_REMOTE_OUTPUT];
+    } elseif ($type === 'COLMAP_DENSE_CHUNK') {
+        $parentJobId = (int)($job['parent_remote_job_id'] ?? 0);
+        $params = json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: [];
+        $args = [SFM_REMOTE_BASE . '/run_colmap_dense_chunk_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parentJobId, (string)($params['sparse_job_id'] ?? 0), (string)($params['model_id'] ?? 0), (string)($job['chunk_index'] ?? 0), (string)($params['image_list_path'] ?? ''), (string)($job['reconstruction_mode'] ?? 'preview')];
     } elseif ($type === 'COLMAP_DENSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         if ($parent <= 0) {
@@ -346,12 +386,47 @@ function launch_job(mysqli $db, array $job): void
         $parent = (int)($job['parent_remote_job_id'] ?? $remoteJobId);
         $modelId = model_id_from_job($job);
         set_job($db, $id, 'DONE', 100, 'PLY exported: job_' . $parent . '/colmap/sparse/' . $modelId . '/model.ply');
+    } elseif ($type === 'COLMAP_DENSE_CHUNK') {
+        set_job($db, $id, 'DONE', 100, 'dense chunk done');
     } elseif ($type === 'COLMAP_DENSE') {
         set_job($db, $id, 'RUNNING', 0, 'dense job launched');
     } else {
         set_job($db, $id, 'RUNNING', 0, $output !== '' ? $output : 'job launched');
     }
     worker_log("launched {$type} id={$id} remote={$remoteJobId}");
+}
+
+function orchestrate_reconstruction_parents(mysqli $db): void
+{
+    $res = $db->query("SELECT * FROM sfm_remote_jobs WHERE job_type IN ('COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ') AND status IN ('RUNNING','PLANNING','RUNNING_CHUNKS','MERGING') ORDER BY updated_at ASC LIMIT 10");
+    if (!$res) { return; }
+    while ($p = $res->fetch_assoc()) {
+        $pid=(int)$p['id']; $parentRemote=(int)$p['remote_job_id']; $mode=(string)($p['reconstruction_mode'] ?: (str_contains($p['job_type'],'HQ')?'hq':'preview'));
+        $params=json_decode((string)($p['parameters_json'] ?? '{}'), true) ?: []; $sparse=(int)($params['sparse_job_id'] ?? $p['parent_remote_job_id'] ?? 0); $model=(int)($params['model_id'] ?? 0);
+        $planPath=remote_output_dir($parentRemote).'/chunk_plan.json';
+        if (!is_file($planPath)) { set_job($db,$pid,'PLANNING',3,'Waiting for chunk plan generated on station'); continue; }
+        $plan=json_decode((string)file_get_contents($planPath), true); if(!is_array($plan)){ set_job($db,$pid,'ERROR',3,'Invalid chunk_plan.json'); continue; }
+        $chunks=$plan['chunks'] ?? []; $total=count($chunks); if($total===0){ set_job($db,$pid,'ERROR',0,'No chunks in plan'); continue; }
+        $st=$db->prepare("SELECT COUNT(*) c FROM sfm_remote_jobs WHERE parent_remote_job_id=? AND job_type='COLMAP_DENSE_CHUNK' AND status='DONE'"); $st->bind_param('i',$parentRemote); $st->execute(); $done=(int)$st->get_result()->fetch_assoc()['c']; $st->close();
+        $st=$db->prepare("SELECT COUNT(*) c FROM sfm_remote_jobs WHERE parent_remote_job_id=? AND job_type='COLMAP_DENSE_CHUNK' AND status IN ('QUEUED','RUNNING')"); $st->bind_param('i',$parentRemote); $st->execute(); $active=(int)$st->get_result()->fetch_assoc()['c']; $st->close();
+        $st=$db->prepare("SELECT f.* FROM sfm_remote_jobs f WHERE f.parent_remote_job_id=? AND f.job_type='COLMAP_DENSE_CHUNK' AND f.status='ERROR' AND NOT EXISTS (SELECT 1 FROM sfm_remote_jobs d WHERE d.parent_remote_job_id=f.parent_remote_job_id AND d.job_type='COLMAP_DENSE_CHUNK' AND d.chunk_index=f.chunk_index AND d.status='DONE') ORDER BY f.updated_at DESC LIMIT 1"); $st->bind_param('i',$parentRemote); $st->execute(); $failed=$st->get_result()->fetch_assoc(); $st->close();
+        if($failed && (int)($failed['retry_count'] ?? 0) <= 0){
+            $failedParams=json_decode((string)($failed['parameters_json'] ?? '{}'), true) ?: []; $failedIdx=(int)($failed['chunk_index'] ?? 0);
+            $src=(string)($failedParams['image_list_path'] ?? ($chunks[$failedIdx]['image_list_path'] ?? '')); $retryList=preg_replace('/\.txt$/','_retry1.txt',$src);
+            $lines=is_file($src)?array_values(array_filter(array_map('trim', file($src)))):[]; $keep=max(20,(int)floor(count($lines)*0.75)); if(count($lines)>0){ file_put_contents($retryList, implode("\n", array_slice($lines,0,min($keep,count($lines)))) . "\n"); }
+            $oldId=(int)$failed['id']; $db->query('UPDATE sfm_remote_jobs SET retry_count=1 WHERE id=' . $oldId);
+            $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='retry chunk queued after OOM/error'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$retryList ?: $src], JSON_UNESCAPED_SLASHES);
+            $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,retry_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?,?)"); $retry=1; $st->bind_param('iisiissiisis',(int)$p['order_id'],(int)$p['capture_session_id'],$jt,$rid,$parentRemote,$msg,$mode,$failedIdx,$total,$retry,$pj); $st->execute(); $st->close();
+            set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Retry queued for chunk {$failedIdx}"); continue;
+        } elseif($failed) { set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),'Chunk failed after retry; merge skipped'); continue; }
+        if($done >= $total){
+            $out=remote_output_dir($parentRemote).'/merged/merged_fused.ply'; $cmd=['python3', SFM_REMOTE_BASE.'/scripts/merge_dense_chunks.py','--parent-output-dir',remote_output_dir($parentRemote),'--mode',$mode,'--output-ply',$out]; [$code,$output,$c]=run_command($cmd);
+            set_job($db,$pid,$code===0?'DONE':'ERROR',$code===0?100:95,$output!==''?$output:'merge done'); continue;
+        }
+        if($active===0){ $next=$chunks[$done]; $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='chunk queued'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$next['image_list_path']], JSON_UNESCAPED_SLASHES); $idx=(int)$next['chunk_id']; $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?)"); $st->bind_param('iisiissiis',(int)$p['order_id'],(int)$p['capture_session_id'],$jt,$rid,$parentRemote,$msg,$mode,$idx,$total,$pj); $st->execute(); $st->close(); }
+        set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Chunks {$done}/{$total} done");
+    }
+    $res->close();
 }
 
 function sync_running_jobs(mysqli $db): void
@@ -412,6 +487,7 @@ function sync_running_jobs(mysqli $db): void
 }
 
 ensure_sfm_remote_jobs_table($dbcnx);
+ensure_sfm_remote_jobs_chunk_columns($dbcnx);
 worker_log('MaklerTour SfM remote worker started');
 worker_log('SFM_REMOTE_BASE=' . SFM_REMOTE_BASE);
 worker_log('SFM_REMOTE_CONF=' . SFM_REMOTE_CONF);
@@ -419,6 +495,7 @@ worker_log('SFM_REMOTE_OUTPUT=' . SFM_REMOTE_OUTPUT);
 while (true) {
     try {
         sync_running_jobs($dbcnx);
+        orchestrate_reconstruction_parents($dbcnx);
         $job = claim_next_job($dbcnx);
         if ($job) {
             launch_job($dbcnx, $job);
