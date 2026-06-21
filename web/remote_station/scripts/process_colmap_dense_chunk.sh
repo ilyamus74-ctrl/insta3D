@@ -5,7 +5,18 @@ JOB_ID="$1"; PARENT_JOB_ID="$2"; SPARSE_JOB_ID="$3"; MODEL_ID="$4"; CHUNK_ID="$5
 BASE="${STATION_BASE:-/home/makler_storage}"; COLMAP_MODE="${COLMAP_MODE:-native}"; COLMAP_BIN="${COLMAP_BIN:-colmap}"; COLMAP_IMAGE="${COLMAP_IMAGE:-}"
 PARENT_DIR="$BASE/output/job_${PARENT_JOB_ID}"; SPARSE_JOB_DIR="$BASE/output/job_${SPARSE_JOB_ID}/colmap"; SPARSE_MODEL_DIR="$SPARSE_JOB_DIR/sparse/${MODEL_ID}"
 CHUNK_DIR="$PARENT_DIR/chunks/chunk_${CHUNK_ID}"; UNDISTORTED_DIR="$CHUNK_DIR/undistorted"; LOG_DIR="$CHUNK_DIR/logs"; FUSED_PLY="$CHUNK_DIR/fused.ply"; STATUS_FILE="$BASE/status/job_${JOB_ID}.json"
-mkdir -p "$BASE/status" "$BASE/logs" "$CHUNK_DIR" "$LOG_DIR"; cp "$IMAGE_LIST_PATH" "$CHUNK_DIR/image_list.txt"
+mkdir -p "$BASE/status" "$BASE/logs" "$CHUNK_DIR" "$LOG_DIR"
+
+TARGET_IMAGE_LIST="$CHUNK_DIR/image_list.txt"
+
+if [[ ! -f "$IMAGE_LIST_PATH" ]]; then
+    echo "image list not found: $IMAGE_LIST_PATH" >&2
+    exit 1
+fi
+
+if [[ "$(realpath "$IMAGE_LIST_PATH")" != "$(realpath -m "$TARGET_IMAGE_LIST")" ]]; then
+    cp "$IMAGE_LIST_PATH" "$TARGET_IMAGE_LIST"
+fi
 if [[ "$MODE" == "preview" ]]; then MAX_IMAGE_SIZE="${COLMAP_PREVIEW_MAX_IMAGE_SIZE:-640}"; SRC="${COLMAP_PREVIEW_NUM_SRC_IMAGES:-6}"; PMC="${COLMAP_PREVIEW_PATCHMATCH_CACHE_SIZE:-2}"; FC="${COLMAP_PREVIEW_FUSION_CACHE_SIZE:-2}"; else MAX_IMAGE_SIZE="${COLMAP_HQ_MAX_IMAGE_SIZE:-1600}"; SRC="${COLMAP_HQ_NUM_SRC_IMAGES:-8}"; PMC="${COLMAP_HQ_PATCHMATCH_CACHE_SIZE:-4}"; FC="${COLMAP_HQ_FUSION_CACHE_SIZE:-4}"; fi
 avail_mb(){ awk '/MemAvailable:/ {print int($2/1024)}' /proc/meminfo; }
 jqstr(){ python3 -c 'import json,sys;print(json.dumps(sys.stdin.read())[1:-1])'; }
