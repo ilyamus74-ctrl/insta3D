@@ -49,13 +49,46 @@ def registered_images(model_dir):
             tmp.mkdir(parents=True,exist_ok=True)
             run_colmap(['model_converter','--input_path',str(model),'--output_path',str(tmp),'--output_type','TXT'])
             txt=tmp/'images.txt'
+
+        lines=[
+            line.strip()
+            for line in txt.read_text(errors='replace').splitlines()
+            if line.strip() and not line.lstrip().startswith('#')
+        ]
         imgs=[]; poses={}
-        for line in txt.read_text(errors='replace').splitlines():
-            if not line or line.startswith('#'): continue
+        image_ext=re.compile(r'\.(jpg|jpeg|png|webp|tif|tiff|bmp)$', re.IGNORECASE)
+
+        # COLMAP images.txt stores two data lines per image: the camera record
+        # followed by the POINTS2D record. Only parse camera records.
+        for index in range(0, len(lines), 2):
+            line=lines[index]
             parts=line.split()
-            if len(parts)>=10:
-                name=parts[9]; imgs.append(name); poses[name]=' '.join(parts[1:8])
+            if len(parts)<10:
+                raise RuntimeError(f'Invalid COLMAP image record at data line {index + 1}: {line[:200]}')
+            try:
+                int(parts[0])
+                float(parts[1]); float(parts[2]); float(parts[3]); float(parts[4])
+                float(parts[5]); float(parts[6]); float(parts[7])
+                int(parts[8])
+            except ValueError as exc:
+                raise RuntimeError(f'Invalid COLMAP image header: {line[:200]}') from exc
+
+            name=' '.join(parts[9:]).strip()
+            if not name:
+                raise RuntimeError('COLMAP image record has empty filename')
+            if re.fullmatch(r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)', name):
+                raise RuntimeError(f'Unexpected numeric-only COLMAP image filename: {name}')
+            if not image_ext.search(name):
+                raise RuntimeError(f'Unexpected COLMAP image filename: {name}')
+
+            imgs.append(name)
+            poses[name]=' '.join(parts[1:8])
+
         imgs=sorted(dict.fromkeys(imgs), key=frame_key)
+        if not imgs:
+            raise RuntimeError('COLMAP model has no registered images')
+        if len(poses)!=len(imgs):
+            raise RuntimeError(f'COLMAP image parser mismatch: {len(imgs)} images but {len(poses)} poses')
         return imgs, poses
     finally:
         if tmp and tmp.exists():
@@ -84,6 +117,6 @@ def main():
     out=Path(args.output_plan); (out.parent/'chunks').mkdir(parents=True,exist_ok=True)
     for c in chunks:
         p=Path(c['image_list_path']); p.parent.mkdir(parents=True,exist_ok=True); p.write_text('\n'.join(c['images'])+'\n')
-    plan={'status':'DONE','mode':args.mode,'sparse_job_id':args.sparse_job_id,'model_id':args.model_id,'registered_images_total':len(images),'target_images_per_chunk':target,'overlap_images':overlap,'total_ram_mb':total,'available_ram_mb':avail,'reserved_ram_mb':args.ram_reserve_mb,'usable_ram_mb':avail-args.ram_reserve_mb,'selected_max_images_per_chunk':selected,'calculation_reason':reason,'poses_by_image':poses,'chunks':chunks,'duration_sec':round(time.time()-started,3)}
+    plan={'status':'DONE','mode':args.mode,'sparse_job_id':args.sparse_job_id,'model_id':args.model_id,'registered_images_total':len(images),'parser_validated':True,'target_images_per_chunk':target,'overlap_images':overlap,'total_ram_mb':total,'available_ram_mb':avail,'reserved_ram_mb':args.ram_reserve_mb,'usable_ram_mb':avail-args.ram_reserve_mb,'selected_max_images_per_chunk':selected,'calculation_reason':reason,'poses_by_image':poses,'chunks':chunks,'duration_sec':round(time.time()-started,3)}
     out.write_text(json.dumps(plan,indent=2,ensure_ascii=False))
 if __name__=='__main__': main()

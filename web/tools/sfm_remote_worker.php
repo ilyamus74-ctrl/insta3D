@@ -424,7 +424,7 @@ function orchestrate_reconstruction_parents(mysqli $db): void
         $planPath=remote_output_dir($parentRemote).'/chunk_plan.json';
         if (!is_file($planPath)) { set_job($db,$pid,'PLANNING',3,'Waiting for chunk plan generated on station'); continue; }
         $plan=json_decode((string)file_get_contents($planPath), true); if(!is_array($plan)){ set_job($db,$pid,'ERROR',3,'Invalid chunk_plan.json'); continue; }
-        $chunks=$plan['chunks'] ?? []; $total=count($chunks); if($total===0){ set_job($db,$pid,'ERROR',0,'No chunks in plan'); continue; }
+        $chunks=$plan['chunks'] ?? []; if(($plan['parser_validated'] ?? false) !== true){ set_job($db,$pid,'ERROR',0,'Chunk plan was created by an outdated parser; regenerate parent output'); continue; } $invalidPlanImage=''; foreach($chunks as $chunk){ foreach(($chunk['images'] ?? []) as $imageName){ $imageName=(string)$imageName; if(preg_match('/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/', $imageName) || !preg_match('/\.(jpg|jpeg|png|webp|tif|tiff|bmp)$/i', $imageName)){ $invalidPlanImage=$imageName; break 2; } } } if($invalidPlanImage !== ''){ set_job($db,$pid,'ERROR',0,'Invalid image name in chunk plan: ' . $invalidPlanImage); continue; } $total=count($chunks); if($total===0){ set_job($db,$pid,'ERROR',0,'No chunks in plan'); continue; }
         $st=$db->prepare("SELECT COUNT(*) c FROM sfm_remote_jobs WHERE parent_remote_job_id=? AND job_type='COLMAP_DENSE_CHUNK' AND status='DONE'"); $st->bind_param('i',$parentRemote); $st->execute(); $done=(int)$st->get_result()->fetch_assoc()['c']; $st->close();
         $st=$db->prepare("SELECT COUNT(*) c FROM sfm_remote_jobs WHERE parent_remote_job_id=? AND job_type='COLMAP_DENSE_CHUNK' AND status IN ('QUEUED','RUNNING')"); $st->bind_param('i',$parentRemote); $st->execute(); $active=(int)$st->get_result()->fetch_assoc()['c']; $st->close();
         $st=$db->prepare("SELECT f.* FROM sfm_remote_jobs f WHERE f.parent_remote_job_id=? AND f.job_type='COLMAP_DENSE_CHUNK' AND f.status='ERROR' AND NOT EXISTS (SELECT 1 FROM sfm_remote_jobs d WHERE d.parent_remote_job_id=f.parent_remote_job_id AND d.job_type='COLMAP_DENSE_CHUNK' AND d.chunk_index=f.chunk_index AND d.status='DONE') ORDER BY f.updated_at DESC LIMIT 1"); $st->bind_param('i',$parentRemote); $st->execute(); $failed=$st->get_result()->fetch_assoc(); $st->close();
@@ -434,14 +434,14 @@ function orchestrate_reconstruction_parents(mysqli $db): void
             $lines=is_file($src)?array_values(array_filter(array_map('trim', file($src)))):[]; $keep=max(20,(int)floor(count($lines)*0.75)); if(count($lines)>0){ file_put_contents($retryList, implode("\n", array_slice($lines,0,min($keep,count($lines)))) . "\n"); }
             $oldId=(int)$failed['id']; $db->query('UPDATE sfm_remote_jobs SET retry_count=1 WHERE id=' . $oldId);
             $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='retry chunk queued after OOM/error'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$retryList ?: $src], JSON_UNESCAPED_SLASHES);
-            $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,retry_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?,?)"); $retry=1; $st->bind_param('iisiissiisis',(int)$p['order_id'],(int)$p['capture_session_id'],$jt,$rid,$parentRemote,$msg,$mode,$failedIdx,$total,$retry,$pj); $st->execute(); $st->close();
+            $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,retry_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?,?)"); $retry=1; $orderId=(int)$p['order_id']; $sessionId=(int)$p['capture_session_id']; $st->bind_param('iisiissiisis',$orderId,$sessionId,$jt,$rid,$parentRemote,$msg,$mode,$failedIdx,$total,$retry,$pj); $st->execute(); $st->close();
             set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Retry queued for chunk {$failedIdx}"); continue;
         } elseif($failed) { set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),'Chunk failed after retry; merge skipped'); continue; }
         if($done >= $total){
             $cmd=[SFM_REMOTE_BASE.'/run_colmap_dense_merge_job.sh', SFM_REMOTE_CONF, (string)$parentRemote, $mode, SFM_REMOTE_OUTPUT]; [$code,$output,$c]=run_command($cmd);
             set_job($db,$pid,$code===0?'DONE':'ERROR',$code===0?100:95,$output!==''?$output:'merge done'); continue;
         }
-        if($active===0){ $next=$chunks[$done]; $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='chunk queued'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$next['image_list_path']], JSON_UNESCAPED_SLASHES); $idx=(int)$next['chunk_id']; $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?)"); $st->bind_param('iisiissiis',(int)$p['order_id'],(int)$p['capture_session_id'],$jt,$rid,$parentRemote,$msg,$mode,$idx,$total,$pj); $st->execute(); $st->close(); }
+        if($active===0){ $next=$chunks[$done]; $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='chunk queued'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$next['image_list_path']], JSON_UNESCAPED_SLASHES); $idx=(int)$next['chunk_id']; $orderId=(int)$p['order_id']; $sessionId=(int)$p['capture_session_id']; $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?)"); $st->bind_param('iisiissiis',$orderId,$sessionId,$jt,$rid,$parentRemote,$msg,$mode,$idx,$total,$pj); $st->execute(); $st->close(); }
         set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Chunks {$done}/{$total} done");
     }
     $res->close();
@@ -519,7 +519,7 @@ while (true) {
             launch_job($dbcnx, $job);
         }
     } catch (Throwable $e) {
-        worker_log('ERROR ' . $e->getMessage());
+        worker_log('ERROR ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
     }
     sleep(2);
 }
