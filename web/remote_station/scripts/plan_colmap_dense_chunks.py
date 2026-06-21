@@ -1,6 +1,34 @@
 #!/usr/bin/env python3
-import argparse,json,os,re,subprocess,sys,time
+import argparse,json,os,re,shutil,subprocess,sys,time
 from pathlib import Path
+
+def run_colmap(args):
+    mode = os.environ.get('COLMAP_MODE', 'native')
+    colmap_bin = os.environ.get('COLMAP_BIN', 'colmap')
+    colmap_image = os.environ.get('COLMAP_IMAGE', '')
+    base = os.environ.get('STATION_BASE', '/home/makler_storage')
+
+    if mode == 'native':
+        cmd = [colmap_bin] + args
+    elif mode == 'podman':
+        if not colmap_image:
+            raise RuntimeError('COLMAP_IMAGE is required for podman mode')
+        if shutil.which('podman') is None:
+            raise RuntimeError('podman not found')
+        cmd = [
+            'podman',
+            'run',
+            '--rm',
+            '--device', 'nvidia.com/gpu=all',
+            '--security-opt=label=disable',
+            '-v', f'{base}:{base}',
+            colmap_image,
+            'colmap',
+        ] + args
+    else:
+        raise RuntimeError(f'Unsupported COLMAP_MODE: {mode}')
+
+    subprocess.run(cmd, check=True)
 
 def meminfo():
     vals={}
@@ -15,20 +43,23 @@ def frame_key(name):
 def registered_images(model_dir):
     model=Path(model_dir); txt=model/'images.txt'
     tmp=None
-    if not txt.exists():
-        tmp=Path(os.environ.get('TMPDIR','/tmp'))/f'colmap_model_txt_{os.getpid()}'
-        tmp.mkdir(parents=True,exist_ok=True)
-        colmap=os.environ.get('COLMAP_BIN','colmap')
-        subprocess.run([colmap,'model_converter','--input_path',str(model),'--output_path',str(tmp),'--output_type','TXT'],check=True)
-        txt=tmp/'images.txt'
-    imgs=[]; poses={}
-    for line in txt.read_text(errors='replace').splitlines():
-        if not line or line.startswith('#'): continue
-        parts=line.split()
-        if len(parts)>=10:
-            name=parts[9]; imgs.append(name); poses[name]=' '.join(parts[1:8])
-    imgs=sorted(dict.fromkeys(imgs), key=frame_key)
-    return imgs, poses
+    try:
+        if not txt.exists():
+            tmp=Path(os.environ.get('TMPDIR','/tmp'))/f'colmap_model_txt_{os.getpid()}'
+            tmp.mkdir(parents=True,exist_ok=True)
+            run_colmap(['model_converter','--input_path',str(model),'--output_path',str(tmp),'--output_type','TXT'])
+            txt=tmp/'images.txt'
+        imgs=[]; poses={}
+        for line in txt.read_text(errors='replace').splitlines():
+            if not line or line.startswith('#'): continue
+            parts=line.split()
+            if len(parts)>=10:
+                name=parts[9]; imgs.append(name); poses[name]=' '.join(parts[1:8])
+        imgs=sorted(dict.fromkeys(imgs), key=frame_key)
+        return imgs, poses
+    finally:
+        if tmp and tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
 
 def ram_limit(mode, avail):
     if avail < 6144: raise SystemExit('insufficient available RAM: MemAvailable below 6 GB')
