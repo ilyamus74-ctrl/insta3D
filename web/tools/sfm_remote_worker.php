@@ -467,7 +467,13 @@ function orchestrate_reconstruction_parents(mysqli $db): void
         if($done >= $total){
             $verticesTotal=0; for($i=0;$i<$total;$i++){ $verticesTotal+=chunk_result_vertices($parentRemote,$i); } if($verticesTotal<=0){ set_job($db,$pid,'ERROR',95,'Dense fusion produced zero vertices'); continue; }
             $cmd=[SFM_REMOTE_BASE.'/run_colmap_dense_merge_job.sh', SFM_REMOTE_CONF, (string)$parentRemote, $mode, SFM_REMOTE_OUTPUT]; [$code,$output,$c]=run_command($cmd);
-            set_job($db,$pid,$code===0?'DONE':'ERROR',$code===0?100:95,$output!==''?$output:'merge done'); continue;
+            $mergeLog='/home/makler_storage/logs/job_'.$parentRemote.'_merge.log'; @mkdir(dirname($mergeLog),0775,true); @file_put_contents($mergeLog, '['.date('c').'] '.$c."\nexit_code=".$code."\n".$output."\n");
+            if ($code === 0) {
+                set_job($db, $pid, 'DONE', 100, $output !== '' ? $output : 'Merge completed');
+            } else {
+                set_job($db, $pid, 'ERROR', 95, $output !== '' ? $output : 'Merge failed with exit code ' . $code);
+            }
+            continue;
         }
         if($active===0){ $next=$chunks[$done]; $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='chunk queued'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$next['image_list_path']], JSON_UNESCAPED_SLASHES); $idx=(int)$next['chunk_id']; $orderId=(int)$p['order_id']; $sessionId=(int)$p['capture_session_id']; $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?)"); $st->bind_param('iisiissiis',$orderId,$sessionId,$jt,$rid,$parentRemote,$msg,$mode,$idx,$total,$pj); $st->execute(); $st->close(); }
         set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Chunks {$done}/{$total} done");

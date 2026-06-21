@@ -31,6 +31,52 @@ function sfm_sparse_model_stats(int $sparseJobId, int $modelId): array {
   if($points===0){ $points=sfm_count_colmap_points3d_bin($dir.'/points3D.bin'); }
   return ['model_id'=>$modelId,'registered_images'=>$images,'points3D'=>$points,'preview_enabled'=>$images>=MIN_REGISTERED_IMAGES_PREVIEW,'hq_enabled'=>$images>=MIN_REGISTERED_IMAGES_HQ];
 }
+
+function sfm_ply_is_downloadable(int $parentRemoteId): bool {
+  $path=sfm_remote_output_dir($parentRemoteId).'/merged/merged_fused.ply';
+  if(!is_file($path)||!is_readable($path)||filesize($path)<=100){return false;}
+  $fh=@fopen($path,'rb'); if(!$fh){return false;}
+  $magic=fread($fh,3); if($magic!=="ply"){fclose($fh); return false;}
+  rewind($fh); $n=0; $ok=false;
+  while(($line=fgets($fh))!==false){ $line=trim($line); if(preg_match('/^element\s+vertex\s+(\d+)$/',$line,$m)){$n=(int)$m[1];} if($line==='end_header'){$ok=true; break;} }
+  fclose($fh); return $ok && $n>0;
+}
+function sfm_job_status_class(string $status): string { $s=strtoupper($status); if($s==='DONE'){return 'bg-success';} if(in_array($s,['ERROR','FAILED','ERROR_EMPTY'],true)){return 'bg-danger';} if(in_array($s,['RUNNING','PLANNING','RUNNING_CHUNKS','MERGING'],true)){return 'bg-primary progress-bar-striped progress-bar-animated';} return 'bg-secondary'; }
+function sfm_job_title(array $j): string { $t=(string)$j['job_type']; if($t==='COLMAP_RECONSTRUCTION_PREVIEW'){return 'Preview reconstruction';} if($t==='COLMAP_RECONSTRUCTION_HQ'){return 'High quality reconstruction';} if($t==='COLMAP_DENSE_CHUNK'){return 'Dense chunk '.(((int)($j['chunk_index']??0))+1).' of '.max(1,(int)($j['chunk_count']??1));} if($t==='COLMAP_SPARSE'){return 'Sparse reconstruction';} if($t==='EXTRACT_FRAMES'){return 'Frame extraction';} if($t==='EXPORT_PLY'){return 'Export sparse PLY';} return $t; }
+function sfm_enrich_session_jobs(array $jobs): array {
+  $activeStatuses=['QUEUED','RUNNING','PLANNING','RUNNING_CHUNKS','MERGING']; $failedStatuses=['ERROR','FAILED','ERROR_EMPTY'];
+  $byRemote=[]; foreach($jobs as $j){ $byRemote[(int)$j['remote_job_id']]=$j; }
+  $children=[]; foreach($jobs as $j){ if((string)$j['job_type']==='COLMAP_DENSE_CHUNK'){ $children[(int)$j['parent_remote_job_id']][]=$j; } }
+  foreach($children as &$arr){ usort($arr, fn($a,$b)=>((int)($a['chunk_index']??0))<=>((int)($b['chunk_index']??0))); } unset($arr);
+  $parents=[]; $standalone=[];
+  foreach($jobs as $j){
+    $st=strtoupper((string)$j['status']); $jt=(string)$j['job_type']; $rid=(int)$j['remote_job_id'];
+    $j['ui_title']=sfm_job_title($j); $j['ui_progress_class']=sfm_job_status_class($st); $j['ui_can_download_merged']=in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true) && sfm_ply_is_downloadable($rid); $j['children']=$children[$rid]??[];
+    if(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true)){$parents[]=$j;}
+    elseif($jt!=='COLMAP_DENSE_CHUNK'){$standalone[]=$j;}
+  }
+  $parentActive=array_values(array_filter($parents,fn($j)=>in_array(strtoupper((string)$j['status']),$activeStatuses,true)));
+  usort($parentActive,fn($a,$b)=>strcmp((string)$b['created_at'],(string)$a['created_at']));
+  $doneParents=array_values(array_filter($parents,fn($j)=>strtoupper((string)$j['status'])==='DONE')); usort($doneParents,fn($a,$b)=>strcmp((string)$b['created_at'],(string)$a['created_at']));
+  $errParents=array_values(array_filter($parents,fn($j)=>in_array(strtoupper((string)$j['status']),$failedStatuses,true))); usort($errParents,fn($a,$b)=>strcmp((string)$b['created_at'],(string)$a['created_at']));
+  $selected=$parentActive[0]??($doneParents[0]??($errParents[0]??null));
+  if(!$selected){ foreach($standalone as $j){ if(in_array(strtoupper((string)$j['status']),$activeStatuses,true)){ $selected=$j; break; } } }
+  $overall=0; $stage='Waiting for upload'; $stageProgress=0; $activeChild=null;
+  if($selected){ $st=strtoupper((string)$selected['status']); $overall=(int)($selected['progress_percent']??0); $stage=$selected['ui_title']; $stageProgress=$overall;
+    if(in_array((string)$selected['job_type'],['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true)){
+      $done=0; $total=max(1,(int)($selected['chunk_count']??count($selected['children']))); foreach($selected['children'] as $c){ if(strtoupper((string)$c['status'])==='DONE'){$done++;} if(!$activeChild && in_array(strtoupper((string)$c['status']),$activeStatuses,true)){$activeChild=$c;} }
+      if($st==='DONE'){$overall=100;$stage='Result ready';$stageProgress=100;} elseif(in_array($st,$failedStatuses,true)){$stage='Reconstruction failed';}
+      elseif($st==='MERGING'){$overall=max(90,$overall);$stage='Merge';}
+      elseif($activeChild){$stage='Dense chunk '.(((int)($activeChild['chunk_index']??0))+1).' of '.$total; $stageProgress=(int)($activeChild['progress_percent']??0); $overall=(int)(5+($done/$total)*85);}
+      else {$stage='Planning / queued chunks'; $overall=max(0,min(5,$overall));}
+      $selected['active_child']=$activeChild;
+    }
+  }
+  $allCards=array_merge($parents,$standalone); $active=[];$completed=[];$failed=[];
+  foreach($allCards as $j){ $st=strtoupper((string)$j['status']); if(in_array($st,$activeStatuses,true)){$active[]=$j;} elseif($st==='DONE'){$completed[]=$j;} elseif(in_array($st,$failedStatuses,true)){$failed[]=$j;} else {$completed[]=$j;} }
+  return ['selected'=>$selected,'overall_progress'=>max(0,min(100,$overall)),'stage'=>$stage,'stage_progress'=>max(0,min(100,$stageProgress)),'active'=>$active,'completed'=>$completed,'failed'=>$failed,'has_active'=>count($active)>0];
+}
+
 function sfm_best_sparse_model_id(int $sparseJobId, array $modelIds): int {
   $best=-1; $bestImages=-1; $bestPoints=-1;
   foreach($modelIds as $mid){ $st=sfm_sparse_model_stats($sparseJobId,(int)$mid); if($st['registered_images']>$bestImages || ($st['registered_images']===$bestImages && $st['points3D']>$bestPoints)){ $best=(int)$mid; $bestImages=(int)$st['registered_images']; $bestPoints=(int)$st['points3D']; } }
@@ -167,6 +213,34 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
        }
      }
    }
+ }
+
+
+ if(in_array($action,['sfm_retry_job','sfm_delete_job_record','sfm_delete_job_files'],true) && $canDeleteMedia){
+   try{
+     $jobId=(int)($_POST['job_id']??0); if($jobId<=0){ throw new RuntimeException('Bad job id'); }
+     $st=$dbcnx->prepare('SELECT * FROM sfm_remote_jobs WHERE id=? AND order_id=? LIMIT 1'); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+     $st->bind_param('ii',$jobId,$orderId); $st->execute(); $job=$st->get_result()->fetch_assoc(); $st->close(); if(!$job){ throw new RuntimeException('SfM job not found'); }
+     $jt=(string)$job['job_type']; $remote=(int)$job['remote_job_id'];
+     if($action==='sfm_retry_job'){
+       if(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ','COLMAP_DENSE_CHUNK'],true)){
+         $rid=sfm_job_id($dbcnx); $status='QUEUED'; $progress=0; $msg='Retry queued';
+         $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,chunk_index,chunk_count,retry_count,parameters_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+         if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+         $out=in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true)?(sfm_remote_output_dir($rid).'/merged/merged_fused.ply'):(string)($job['output_path']??'');
+         $result=in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true)?(sfm_remote_output_dir($rid).'/merged/result.json'):(string)($job['result_json_path']??'');
+         $log=in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true)?(sfm_remote_output_dir($rid).'/logs'):(string)($job['log_path']??'');
+         $parent=$jt==='COLMAP_DENSE_CHUNK'?(int)$job['parent_remote_job_id']:(int)$job['parent_remote_job_id']; $mode=(string)($job['reconstruction_mode']??''); $chunkIndex=$job['chunk_index']===null?null:(int)$job['chunk_index']; $chunkCount=$job['chunk_count']===null?null:(int)$job['chunk_count']; $retry=(int)($job['retry_count']??0)+1; $params=(string)($job['parameters_json']??''); $sid=(int)$job['capture_session_id'];
+         $st->bind_param('iisiissisissiiss',$orderId,$sid,$jt,$rid,$parent,$out,$status,$progress,$msg,$result,$log,$mode,$chunkIndex,$chunkCount,$retry,$params); $st->execute(); $st->close();
+       } else { throw new RuntimeException('Retry is available for reconstruction parents and chunks'); }
+     } elseif($action==='sfm_delete_job_record'){
+       $st=$dbcnx->prepare('DELETE FROM sfm_remote_jobs WHERE order_id=? AND (id=? OR parent_remote_job_id=?)'); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); } $st->bind_param('iii',$orderId,$jobId,$remote); $st->execute(); $st->close();
+     } elseif($action==='sfm_delete_job_files'){
+       $base='/home/makler/web/remote_station/output'; safe_rrmdir(sfm_remote_output_dir($remote),$base); @unlink('/home/makler_storage/logs/job_'.$remote.'_merge.log');
+       $st=$dbcnx->prepare("UPDATE sfm_remote_jobs SET message='Job files deleted', updated_at=NOW(6) WHERE order_id=? AND (id=? OR parent_remote_job_id=?)"); if($st){ $st->bind_param('iii',$orderId,$jobId,$remote); $st->execute(); $st->close(); }
+     }
+     header('Location: /order.php?id='.$orderId.'&sfm_job_queued=1'); exit;
+   }catch(Throwable $e){ $error=$e->getMessage(); }
  }
 
  if(in_array($action,['sfm_extract_frames_web','sfm_colmap_sparse_web','sfm_export_ply_web','sfm_colmap_dense_web','sfm_reconstruction_preview_web','sfm_reconstruction_hq_web'],true) && $canDeleteMedia){
@@ -439,11 +513,12 @@ foreach($captureSessions as $idx=>$session){
     }
     $diskVideos[$dvIdx]['auto_sfm_jobs']=$related;
     $diskVideos[$dvIdx]['auto_sfm_has_jobs']=count($related)>0;
-    $diskVideos[$dvIdx]['auto_sfm_badge']=$failed?'Auto SfM failed':($active?'Auto SfM queued/running':($done?'Auto SfM done':''));
+    $diskVideos[$dvIdx]['auto_sfm_badge']=$failed?'Automatic pipeline: failed':($active?'Automatic upload pipeline: running':($done?'Automatic upload pipeline: completed':''));
     $diskVideos[$dvIdx]['auto_sfm_can_manual']=!$active;
   }
   $captureSessions[$idx]['sfm_disk_videos']=$diskVideos;
   $captureSessions[$idx]['sfm_remote_jobs']=$sessionSfmJobs;
+  $captureSessions[$idx]['sfm_pipeline']=sfm_enrich_session_jobs($sessionSfmJobs);
   $sid=(int)$session['id'];
   $captureSessions[$idx]['processing_job']=$processingJobsBySession[$sid] ?? null;
   $job = $captureSessions[$idx]['processing_job'] ?? null;

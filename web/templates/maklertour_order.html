@@ -218,40 +218,59 @@
                   </div>
                 {/foreach}
               {else}<div class="small text-muted">No phone videos found in storage.</div>{/if}
+              <div class="card mb-3" data-sfm-pipeline-status>
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                    <div>
+                      <div class="fw-semibold">SfM processing status</div>
+                      <div>{if $s.sfm_pipeline.selected}{$s.sfm_pipeline.selected.ui_title|escape}{else}No reconstruction selected{/if}</div>
+                      <div class="small text-muted">Current stage: {$s.sfm_pipeline.stage|escape}</div>
+                      {if $s.sfm_pipeline.selected}
+                        <div class="small text-muted">Active parent job: {$s.sfm_pipeline.selected.remote_job_id|escape}{if $s.sfm_pipeline.selected.active_child|default:null} · Active child job: {$s.sfm_pipeline.selected.active_child.remote_job_id|escape}{/if}</div>
+                      {/if}
+                    </div>
+                    {if $s.sfm_pipeline.selected}<span class="badge {$s.sfm_pipeline.selected.ui_progress_class|regex_replace:'/ progress-bar[^ ]*/':''|escape}">{$s.sfm_pipeline.selected.status|escape}</span>{/if}
+                  </div>
+                  <div class="mt-2 small fw-semibold">Overall reconstruction — {$s.sfm_pipeline.overall_progress}%</div>
+                  <div class="progress mb-2"><div class="progress-bar {$s.sfm_pipeline.selected.ui_progress_class|default:'bg-secondary'|escape}" style="width: {$s.sfm_pipeline.overall_progress}%">{$s.sfm_pipeline.overall_progress}%</div></div>
+                  <div class="small fw-semibold">{$s.sfm_pipeline.stage|escape} — {$s.sfm_pipeline.stage_progress}%</div>
+                  <div class="progress mb-2"><div class="progress-bar bg-primary progress-bar-striped progress-bar-animated" style="width: {$s.sfm_pipeline.stage_progress}%">{$s.sfm_pipeline.stage_progress}%</div></div>
+                  <div class="small">
+                    <div>✓ Video uploaded</div>
+                    <div>{if $s.sfm_pipeline.overall_progress >= 1}✓{else}○{/if} Frames extracted</div>
+                    <div>{if $s.sfm_pipeline.selected && ($s.sfm_pipeline.selected.parent_remote_job_id|default:0 > 0)}✓{else}○{/if} Sparse reconstruction</div>
+                    <div>{if $s.sfm_pipeline.selected && ($s.sfm_pipeline.selected.job_type == 'COLMAP_RECONSTRUCTION_PREVIEW' || $s.sfm_pipeline.selected.job_type == 'COLMAP_RECONSTRUCTION_HQ')}●{else}○{/if} Dense chunks</div>
+                    <div>{if $s.sfm_pipeline.overall_progress >= 90}●{else}○{/if} Merge</div>
+                    <div>{if $s.sfm_pipeline.overall_progress == 100}✓{else}○{/if} Result ready</div>
+                  </div>
+                </div>
+              </div>
               <div class="small text-muted mt-2 mb-1">Jobs:</div>
               <div class="sfm-remote-jobs" data-sfm-remote-jobs>
                 {if $s.sfm_remote_jobs|@count > 0}
-                  {foreach from=$s.sfm_remote_jobs item=rj}
-                    <div class="border rounded p-2 mb-2 bg-white" data-sfm-remote-job="{$rj.id}" data-active-status="{$rj.status|escape}">
-                      <div><strong>{$rj.job_type|escape} job {$rj.remote_job_id}</strong> — <span data-job-field="status">{$rj.status|escape}</span> — <span data-job-field="progress">{$rj.progress_percent|default:0}</span>%</div>
-                      <div class="small text-muted" data-job-field="message">{$rj.message|default:''|escape}</div>
-                      <div class="small">updated: <span data-job-field="updated">{$rj.updated_at|default:'-'|escape}</span></div>
-                      <div class="d-flex gap-1 flex-wrap mt-1">
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-job-file-url="{$rj.status_json_url|escape}" data-job-file-target="jobFile{$rj.id}">Show status.json</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-job-file-url="{$rj.result_json_url|escape}" data-job-file-target="jobFile{$rj.id}">Show result.json</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-job-file-url="{$rj.logs_url|escape}" data-job-file-target="jobFile{$rj.id}">Show logs</button>
-                        {if $rj.job_type == 'EXPORT_PLY'}<a class="btn btn-sm btn-outline-success" href="{$rj.ply_url|escape}" target="_blank">Download PLY</a>{/if}
-                        {if $rj.job_type == 'COLMAP_DENSE'}<a class="btn btn-sm btn-outline-success" href="{$rj.ply_url|escape}" target="_blank">Download dense PLY</a>{/if}
-                        {if $rj.job_type == 'COLMAP_RECONSTRUCTION_PREVIEW' || $rj.job_type == 'COLMAP_RECONSTRUCTION_HQ'}<a class="btn btn-sm btn-outline-success" href="{$rj.ply_url|escape}" target="_blank">Download merged PLY</a>{/if}
-                        {if $rj.job_type == 'EXTRACT_FRAMES'}
-                          <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_colmap_sparse_web"><input type="hidden" name="capture_session_id" value="{$s.id}"><input type="hidden" name="extract_job_id" value="{$rj.remote_job_id}"><button type="submit" class="btn btn-sm btn-outline-primary">Run COLMAP sparse</button></form>
-                        {/if}
-                        {if $rj.job_type == 'COLMAP_SPARSE'}
-                          <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_preview_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="best_model" value="1"><button type="submit" class="btn btn-sm btn-outline-primary">Run Preview best model</button></form>
-                          {foreach from=$rj.dense_model_ids item=mid}
-                            {assign var=modelStats value=$rj.sparse_model_stats[$mid]}
-                            <div class="small text-muted mt-1">Model {$mid} — {$modelStats.registered_images|default:0} registered images</div>
-                            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_export_ply_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary">Export PLY model {$mid}</button></form>
-                            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_colmap_dense_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary">Run dense model {$mid}</button></form>
+                  <div class="fw-semibold mb-1">Active processing</div>
+                  {if $s.sfm_pipeline.active|@count > 0}
+                    {foreach from=$s.sfm_pipeline.active item=rj}
+                      {include file='sfm_job_card.tpl' rj=$rj s=$s order=$order}
+                    {/foreach}
+                  {else}<div class="small text-muted mb-2">No active process.</div>{/if}
 
-                            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_preview_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.preview_enabled} disabled{/if}>Preview model {$mid}</button>{if !$modelStats.preview_enabled}<span class="small text-danger ms-1">Too few registered images.</span>{/if}</form>
-                            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_hq_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.hq_enabled} disabled{/if}>High quality model {$mid}</button>{if !$modelStats.hq_enabled}<span class="small text-danger ms-1">Too few registered images.</span>{/if}</form>
-                          {/foreach}
-                        {/if}
-                      </div>
-                      <pre id="jobFile{$rj.id}" class="small bg-dark text-light rounded p-2 mt-2 d-none" style="max-height:320px;overflow:auto;white-space:pre-wrap"></pre>
+                  <div class="accordion mb-2" id="sfmCompletedJobs{$s.id}">
+                    <div class="accordion-item">
+                      <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#sfmCompletedJobsBody{$s.id}">Completed jobs ({$s.sfm_pipeline.completed|@count})</button></h2>
+                      <div id="sfmCompletedJobsBody{$s.id}" class="accordion-collapse collapse" data-bs-parent="#sfmCompletedJobs{$s.id}"><div class="accordion-body">
+                        {foreach from=$s.sfm_pipeline.completed item=rj}{include file='sfm_job_card.tpl' rj=$rj s=$s order=$order}{foreachelse}<div class="small text-muted">No completed jobs.</div>{/foreach}
+                      </div></div>
                     </div>
-                  {/foreach}
+                  </div>
+                  <div class="accordion" id="sfmFailedJobs{$s.id}">
+                    <div class="accordion-item">
+                      <h2 class="accordion-header"><button class="accordion-button {if $s.sfm_pipeline.has_active || $s.sfm_pipeline.failed|@count == 0}collapsed{/if}" type="button" data-bs-toggle="collapse" data-bs-target="#sfmFailedJobsBody{$s.id}">Failed jobs ({$s.sfm_pipeline.failed|@count})</button></h2>
+                      <div id="sfmFailedJobsBody{$s.id}" class="accordion-collapse collapse {if !$s.sfm_pipeline.has_active && $s.sfm_pipeline.failed|@count > 0}show{/if}" data-bs-parent="#sfmFailedJobs{$s.id}"><div class="accordion-body">
+                        {foreach from=$s.sfm_pipeline.failed item=rj}{include file='sfm_job_card.tpl' rj=$rj s=$s order=$order}{foreachelse}<div class="small text-muted">No failed jobs.</div>{/foreach}
+                      </div></div>
+                    </div>
+                  </div>
                 {else}<div class="small text-muted">No remote SfM jobs yet.</div>{/if}
               </div>
               <hr class="my-2">

@@ -20,7 +20,12 @@ if ($type === 'status') {
   header('Content-Type: application/json; charset=utf-8'); readfile($file); exit;
 }
 if ($type === 'logs') {
-  $logs=[]; foreach (['logs/*.log','logs/*.txt','colmap/logs/*.log','colmap/logs/*.txt','dense/logs/*.log','dense/logs/*.txt','chunks/chunk_*/logs/*.log','chunks/chunk_*/logs/*.txt','merged/*.json'] as $pat) { foreach (glob($base.'/'.$pat) ?: [] as $lf) { $rp = safe_file($base, substr($lf, strlen($base)+1)); if ($rp) $logs[] = ['file'=>substr($rp, strlen((string)realpath($base))+1), 'tail'=>tail_file($rp, 200)]; } }
+  $logs=[];
+  if (in_array((string)$job['job_type'], ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) {
+    $mergeLog='/home/makler_storage/logs/job_'.$remote.'_merge.log';
+    if (is_file($mergeLog) && is_readable($mergeLog)) { $logs[]=['file'=>basename($mergeLog),'tail'=>tail_file($mergeLog, 300)]; }
+  }
+  foreach (['logs/*.log','logs/*.txt','colmap/logs/*.log','colmap/logs/*.txt','dense/logs/*.log','dense/logs/*.txt','chunks/chunk_*/logs/*.log','chunks/chunk_*/logs/*.txt','merged/*.json'] as $pat) { foreach (glob($base.'/'.$pat) ?: [] as $lf) { $rp = safe_file($base, substr($lf, strlen($base)+1)); if ($rp) $logs[] = ['file'=>substr($rp, strlen((string)realpath($base))+1), 'tail'=>tail_file($rp, 200)]; } }
   if (!$logs) out_json(['ok'=>false,'message'=>'File not available yet'], 404);
   out_json(['ok'=>true,'logs'=>$logs]);
 }
