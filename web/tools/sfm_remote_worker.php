@@ -52,6 +52,27 @@ function ply_vertex_count(string $path): ?int
     fclose($fh);
     return $count;
 }
+
+function ply_header_info(string $path): array
+{
+    $info = ['ok' => false, 'vertices' => 0, 'normals' => false];
+    if (!is_file($path) || !is_readable($path) || filesize($path) <= 100) { return $info; }
+    $fh = @fopen($path, 'rb');
+    if (!$fh) { return $info; }
+    if (fread($fh, 3) !== 'ply') { fclose($fh); return $info; }
+    rewind($fh);
+    $props = [];
+    while (($line = fgets($fh)) !== false) {
+        $line = trim($line);
+        if (preg_match('/^element\s+vertex\s+(\d+)$/', $line, $m)) { $info['vertices'] = (int)$m[1]; }
+        if (preg_match('/^property\s+\S+\s+(nx|ny|nz)$/', $line, $m)) { $props[] = $m[1]; }
+        if ($line === 'end_header') { $info['ok'] = true; break; }
+    }
+    fclose($fh);
+    $info['normals'] = in_array('nx', $props, true) && in_array('ny', $props, true) && in_array('nz', $props, true);
+    return $info;
+}
+
 function chunk_result_vertices(int $parentRemote, int $chunkIndex): int
 {
     $result = remote_output_dir($parentRemote) . '/chunks/chunk_' . $chunkIndex . '/result.json';
@@ -147,6 +168,40 @@ function auto_chain_after_done(mysqli $db, array $job): void
             $st->execute();
             $st->close();
             worker_log("auto queued COLMAP_SPARSE parent={$remote} remote_job_id={$rid}");
+        }
+        return;
+    }
+
+    if (in_array($type, ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) {
+        $mode = (string)($job['reconstruction_mode'] ?: (str_contains($type, 'HQ') ? 'hq' : 'preview'));
+        $inputPly = remote_output_dir($remote) . '/merged/merged_fused.ply';
+        $ply = ply_header_info($inputPly);
+        if (!$ply['ok'] || (int)$ply['vertices'] <= 0) {
+            worker_log("auto mesh skipped for reconstruction {$remote}: invalid merged PLY");
+            return;
+        }
+        $st = $db->prepare("SELECT id FROM sfm_remote_jobs WHERE parent_remote_job_id=? AND job_type='COLMAP_MESH' AND status IN ('QUEUED','RUNNING','DONE') LIMIT 1");
+        if (!$st) { return; }
+        $st->bind_param('i', $remote);
+        $st->execute();
+        $exists = $st->get_result()->fetch_assoc();
+        $st->close();
+        if ($exists) { return; }
+        $rid = sfm_job_id($db);
+        $out = remote_output_dir($rid) . '/mesh';
+        $result = $out . '/mesh_result.json';
+        $log = $out . '/logs';
+        $jt = 'COLMAP_MESH';
+        $msg = 'Auto queued mesh after dense merge';
+        $poissonDepth = $mode === 'hq' ? 9 : 7;
+        $targetFaces = $mode === 'hq' ? 500000 : 100000;
+        $pj = json_encode(['input_ply' => $inputPly, 'poisson_depth' => $poissonDepth, 'target_faces' => $targetFaces, 'trim_enabled' => false], JSON_UNESCAPED_SLASHES);
+        $st = $db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,parameters_json) VALUES (?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)");
+        if ($st) {
+            $st->bind_param('iisiisssssss', $orderId, $sessionId, $jt, $rid, $remote, $inputPly, $out, $msg, $result, $log, $mode, $pj);
+            $st->execute();
+            $st->close();
+            worker_log("auto queued COLMAP_MESH parent={$remote} remote_job_id={$rid}");
         }
         return;
     }
@@ -400,6 +455,10 @@ function launch_job(mysqli $db, array $job): void
         $parentJobId = (int)($job['parent_remote_job_id'] ?? 0);
         $params = json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: [];
         $args = [SFM_REMOTE_BASE . '/run_colmap_dense_chunk_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parentJobId, (string)($params['sparse_job_id'] ?? 0), (string)($params['model_id'] ?? 0), (string)($job['chunk_index'] ?? 0), (string)($params['image_list_path'] ?? ''), (string)($job['reconstruction_mode'] ?? 'preview')];
+    } elseif ($type === 'COLMAP_MESH') {
+        $parent = (int)($job['parent_remote_job_id'] ?? 0);
+        $mode = (string)($job['reconstruction_mode'] ?: 'preview');
+        $args = [SFM_REMOTE_BASE . '/run_colmap_mesh_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parent, $mode];
     } elseif ($type === 'COLMAP_DENSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         if ($parent <= 0) {

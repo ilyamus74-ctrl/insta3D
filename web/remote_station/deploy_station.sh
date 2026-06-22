@@ -74,6 +74,7 @@ if ! "${SSH[@]}" "
   '$STATION_BASE/venv/bin/python' -c 'import numpy; print(numpy.__version__)'
   test -f '$STATION_BASE/scripts/plan_colmap_dense_chunks.py'
   test -f '$STATION_BASE/scripts/merge_dense_chunks.py'
+  test -x '$STATION_BASE/scripts/process_colmap_mesh.sh'
 "; then
   if [[ "$INSTALL_STATION_DEPENDENCIES" != "1" ]]; then
     echo "ERROR: station Python dependency check failed. Re-run with INSTALL_STATION_DEPENDENCIES=1 in $CONFIG to install python3, pip, venv, and numpy." >&2

@@ -25,7 +25,7 @@ if ($type === 'logs') {
     $mergeLog='/home/makler_storage/logs/job_'.$remote.'_merge.log';
     if (is_file($mergeLog) && is_readable($mergeLog)) { $logs[]=['file'=>basename($mergeLog),'tail'=>tail_file($mergeLog, 300)]; }
   }
-  foreach (['logs/*.log','logs/*.txt','colmap/logs/*.log','colmap/logs/*.txt','dense/logs/*.log','dense/logs/*.txt','chunks/chunk_*/logs/*.log','chunks/chunk_*/logs/*.txt','merged/*.json'] as $pat) { foreach (glob($base.'/'.$pat) ?: [] as $lf) { $rp = safe_file($base, substr($lf, strlen($base)+1)); if ($rp) $logs[] = ['file'=>substr($rp, strlen((string)realpath($base))+1), 'tail'=>tail_file($rp, 200)]; } }
+  foreach (['logs/*.log','logs/*.txt','colmap/logs/*.log','colmap/logs/*.txt','dense/logs/*.log','dense/logs/*.txt','chunks/chunk_*/logs/*.log','chunks/chunk_*/logs/*.txt','merged/*.json','mesh/logs/*.log','mesh/*.json'] as $pat) { foreach (glob($base.'/'.$pat) ?: [] as $lf) { $rp = safe_file($base, substr($lf, strlen($base)+1)); if ($rp) $logs[] = ['file'=>substr($rp, strlen((string)realpath($base))+1), 'tail'=>tail_file($rp, 200)]; } }
   if (!$logs) out_json(['ok'=>false,'message'=>'File not available yet'], 404);
   out_json(['ok'=>true,'logs'=>$logs]);
 }
@@ -33,6 +33,7 @@ $jt = (string)$job['job_type']; $candidates=[];
 if ($jt === 'EXTRACT_FRAMES') $candidates[]='frames/result.json';
 elseif ($jt === 'COLMAP_SPARSE') $candidates[]='colmap/result.json';
 elseif ($jt === 'COLMAP_DENSE') $candidates[]='dense/result.json';
+elseif ($jt === 'COLMAP_MESH') $candidates[]='mesh/mesh_result.json';
 elseif ($jt === 'COLMAP_RECONSTRUCTION_PREVIEW' || $jt === 'COLMAP_RECONSTRUCTION_HQ') { $candidates[]='merged/result.json'; $candidates[]='chunk_plan.json'; }
 elseif ($jt === 'EXPORT_PLY') {
   $parent = (int)($job['parent_remote_job_id'] ?? 0); $out = (string)($job['output_path'] ?? ''); $model = null;
