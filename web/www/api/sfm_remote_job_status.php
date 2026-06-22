@@ -6,6 +6,51 @@ $user=auth_current_user(); $userId=(int)$user['id']; $role=(string)($user['role'
 function srj_json(array $p,int $c=200): void { http_response_code($c); header('Content-Type: application/json; charset=utf-8'); echo json_encode($p,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
 function srj_can_view(array $order,int $uid,string $role): bool { return $role==='ADMIN' || (int)$order['broker_id']===$uid || ($role==='OPERATOR' && ((int)$order['operator_id']===$uid || ((int)$order['is_published']===1 && (string)$order['status']==='NEW' && $order['operator_id']===null))); }
 function srj_tail(string $file,int $lines=100): string { if(!is_file($file)) return ''; $data=@file($file); if($data===false) return ''; return implode('', array_slice($data, -$lines)); }
+
+function srj_send_ply_file(string $path, string $base, string $downloadName): void {
+  while (ob_get_level() > 0) {
+    ob_end_clean();
+  }
+
+  header_remove();
+
+  if (!is_file($path) || !is_readable($path)) {
+    http_response_code(404);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('PLY file not found');
+  }
+
+  $rp = realpath($path);
+  $rb = realpath($base);
+  if (!$rp || ($rb && strpos($rp, $rb . '/') !== 0)) {
+    http_response_code(403);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('forbidden');
+  }
+
+  $head = file_get_contents($rp, false, null, 0, 3);
+  if ($head !== 'ply') {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Invalid PLY header');
+  }
+
+  $handle = fopen($rp, 'rb');
+  if ($handle === false) {
+    http_response_code(500);
+    exit;
+  }
+
+  header('Content-Type: application/octet-stream');
+  header('Content-Disposition: attachment; filename="' . basename($downloadName) . '"');
+  header('Content-Length: ' . filesize($rp));
+  header('X-Content-Type-Options: nosniff');
+  header('Cache-Control: no-store');
+
+  fpassthru($handle);
+  fclose($handle);
+  exit;
+}
 function srj_is_valid_ply_file(string $file): bool {
   $fh=@fopen($file,'rb');
   if($fh===false) return false;
@@ -36,9 +81,9 @@ if($file!==''){
     }
     $ctype='application/octet-stream'; $download=true;
   }
+  if ($file === 'ply') { srj_send_ply_file((string)$path, $base, (string)($downloadName ?: basename((string)$path))); }
   if(!$path || !is_file($path)) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
   $rp=realpath($path); $rb=realpath($base); if(!$rp || ($rb && strpos($rp,$rb.'/')!==0)) { http_response_code(403); exit('forbidden'); }
-  if($file==='ply' && !srj_is_valid_ply_file($rp)) { http_response_code(422); header('Content-Type: text/plain; charset=utf-8'); echo 'invalid_ply_file'; exit; }
   header('Content-Type: '.$ctype); if($download) header('Content-Disposition: attachment; filename="'.($downloadName ?: basename($rp)).'"'); readfile($rp); exit;
 }
 $statusJson=[]; $statusPath=$base.'/status.json';

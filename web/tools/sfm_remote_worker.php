@@ -469,9 +469,29 @@ function orchestrate_reconstruction_parents(mysqli $db): void
             $cmd=[SFM_REMOTE_BASE.'/run_colmap_dense_merge_job.sh', SFM_REMOTE_CONF, (string)$parentRemote, $mode, SFM_REMOTE_OUTPUT]; [$code,$output,$c]=run_command($cmd);
             $mergeLog='/home/makler_storage/logs/job_'.$parentRemote.'_merge.log'; @mkdir(dirname($mergeLog),0775,true); @file_put_contents($mergeLog, '['.date('c').'] '.$c."\nexit_code=".$code."\n".$output."\n");
             if ($code === 0) {
-                set_job($db, $pid, 'DONE', 100, $output !== '' ? $output : 'Merge completed');
+                $message = $output !== ''
+                    ? $output
+                    : 'Merge completed';
+
+                set_job(
+                    $db,
+                    $pid,
+                    'DONE',
+                    100,
+                    $message
+                );
             } else {
-                set_job($db, $pid, 'ERROR', 95, $output !== '' ? $output : 'Merge failed with exit code ' . $code);
+                $message = $output !== ''
+                    ? $output
+                    : 'Merge failed with exit code ' . $code;
+
+                set_job(
+                    $db,
+                    $pid,
+                    'ERROR',
+                    95,
+                    $message
+                );
             }
             continue;
         }
