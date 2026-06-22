@@ -291,43 +291,72 @@
                   <div class="progress mb-2"><div class="progress-bar {$s.sfm_pipeline.selected.ui_progress_class|default:'bg-secondary'|escape}" style="width: {$s.sfm_pipeline.overall_progress}%">{$s.sfm_pipeline.overall_progress}%</div></div>
                   <div class="small fw-semibold">{$s.sfm_pipeline.stage|escape} — {$s.sfm_pipeline.stage_progress}%</div>
                   <div class="progress mb-2"><div class="progress-bar bg-primary progress-bar-striped progress-bar-animated" style="width: {$s.sfm_pipeline.stage_progress}%">{$s.sfm_pipeline.stage_progress}%</div></div>
-                  <div class="small">
-                    <div>✓ Video uploaded</div>
-                    <div>{if $s.sfm_pipeline.overall_progress >= 1}✓{else}○{/if} Frames extracted</div>
-                    <div>{if $s.sfm_pipeline.selected && ($s.sfm_pipeline.selected.parent_remote_job_id|default:0 > 0)}✓{else}○{/if} Sparse reconstruction</div>
-                    <div>{if $s.sfm_pipeline.selected && ($s.sfm_pipeline.selected.job_type == 'COLMAP_RECONSTRUCTION_PREVIEW' || $s.sfm_pipeline.selected.job_type == 'COLMAP_RECONSTRUCTION_HQ')}●{else}○{/if} Dense chunks</div>
-<div>
-  {if $s.sfm_pipeline.overall_progress >= 90}
-    ✓
-  {else}
-    ○
-  {/if}
-  Merge
+
+<div class="small">
+  <div>
+    <i class="bi bi-check-circle-fill text-success"></i>
+    Video uploaded
+  </div>
+
+  <div>
+    {if $s.sfm_pipeline.overall_progress >= 1}
+      <i class="bi bi-check-circle-fill text-success"></i>
+    {else}
+      <i class="bi bi-circle text-secondary"></i>
+    {/if}
+    Frames extracted
+  </div>
+
+  <div>
+    {if $s.sfm_pipeline.selected && ($s.sfm_pipeline.selected.parent_remote_job_id|default:0 > 0)}
+      <i class="bi bi-check-circle-fill text-success"></i>
+    {else}
+      <i class="bi bi-circle text-secondary"></i>
+    {/if}
+    Sparse reconstruction
+  </div>
+
+  <div>
+    {if $s.sfm_pipeline.selected && ($s.sfm_pipeline.selected.job_type == 'COLMAP_RECONSTRUCTION_PREVIEW' || $s.sfm_pipeline.selected.job_type == 'COLMAP_RECONSTRUCTION_HQ')}
+      <i class="bi bi-record-circle-fill text-primary"></i>
+    {else}
+      <i class="bi bi-circle text-secondary"></i>
+    {/if}
+    Dense chunks
+  </div>
+
+  <div>
+    {if $s.sfm_pipeline.overall_progress >= 90}
+      <i class="bi bi-check-circle-fill text-success"></i>
+    {else}
+      <i class="bi bi-circle text-secondary"></i>
+    {/if}
+    Merge
+  </div>
+
+  <div>
+    {if $s.sfm_pipeline.overall_progress == 100}
+      <i class="bi bi-check-circle-fill text-success"></i>
+    {elseif $s.sfm_pipeline.stage == 'mesh'
+        || $s.sfm_pipeline.stage == 'mesh_generation'
+        || $s.sfm_pipeline.stage == 'meshing'}
+      <i class="bi bi-record-circle-fill text-primary"></i>
+    {else}
+      <i class="bi bi-circle text-secondary"></i>
+    {/if}
+    Mesh generation
+  </div>
+
+  <div>
+    {if $s.sfm_pipeline.overall_progress == 100}
+      <i class="bi bi-check-circle-fill text-success"></i>
+    {else}
+      <i class="bi bi-circle text-secondary"></i>
+    {/if}
+    Result ready
+  </div>
 </div>
 
-<div>
-  {if $s.sfm_pipeline.overall_progress == 100}
-    ✓
-  {elseif $s.sfm_pipeline.stage == 'mesh'
-      || $s.sfm_pipeline.stage == 'mesh_generation'
-      || $s.sfm_pipeline.stage == 'meshing'}
-    ●
-  {else}
-    ○
-  {/if}
-  Mesh generation
-</div>
-
-<div>
-  {if $s.sfm_pipeline.overall_progress == 100}
-    ✓
-  {else}
-    ○
-  {/if}
-  Result ready
-</div>
-
-                  </div>
                 </div>
               </div>
               <div class="small text-muted mt-2 mb-1">Jobs:</div>
