@@ -46,11 +46,12 @@ printf -v LOG '%q' "$STATION_BASE/logs/job_${JOB_ID}.nohup.log"
 
 "${SSH[@]}" \
   "mkdir -p $B/logs $B/status && \
-   STATION_BASE=$B \
-   COLMAP_MODE=$CM \
-   COLMAP_BIN=$CB \
-   COLMAP_IMAGE=$CI \
-   nohup $B/scripts/process_colmap_dense_chunk.sh $A \
-   > $LOG 2>&1 < /dev/null &"
+   setsid -f env \
+     STATION_BASE=$B \
+     COLMAP_MODE=$CM \
+     COLMAP_BIN=$CB \
+     COLMAP_IMAGE=$CI \
+     $B/scripts/process_colmap_dense_chunk.sh $A \
+     > $LOG 2>&1 < /dev/null"
 
 echo "Dense chunk job $JOB_ID started"

@@ -54,7 +54,13 @@ PY
 [[ -d "$FRAMES_DIR" ]] || { status ERROR 0 "frames_dir missing"; exit 1; }
 run_colmap image_undistorter --image_path "$FRAMES_DIR" --input_path "$SPARSE_MODEL_DIR" --output_path "$UNDISTORTED_DIR" --output_type COLMAP --image_list_path "$CHUNK_DIR/image_list.txt" --max_image_size "$MAX_IMAGE_SIZE" --num_patch_match_src_images "$SRC" > "$LOG_DIR/image_undistorter.log" 2>&1
 status RUNNING 45 "PatchMatch chunk $CHUNK_ID"
-run_colmap patch_match_stereo --workspace_path "$UNDISTORTED_DIR" --workspace_format COLMAP --PatchMatchStereo.geom_consistency true --PatchMatchStereo.cache_size "$PMC" > "$LOG_DIR/patch_match_stereo.log" 2>&1
+run_colmap patch_match_stereo \
+  --workspace_path "$UNDISTORTED_DIR" \
+  --workspace_format COLMAP \
+  --PatchMatchStereo.geom_consistency true \
+  --PatchMatchStereo.allow_missing_files true \
+  --PatchMatchStereo.cache_size "$PMC" \
+  > "$LOG_DIR/patch_match_stereo.log" 2>&1
 status RUNNING 85 "Fusion chunk $CHUNK_ID"
 run_colmap stereo_fusion --workspace_path "$UNDISTORTED_DIR" --workspace_format COLMAP --input_type geometric --output_path "$FUSED_PLY" --StereoFusion.cache_size "$FC" > "$LOG_DIR/stereo_fusion.log" 2>&1
 [[ -s "$FUSED_PLY" ]] || { status ERROR 0 "fused.ply missing"; exit 1; }
