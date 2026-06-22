@@ -226,7 +226,7 @@
                       <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start gap-2">
                           <h6 class="mb-1">{$pc.preset.label|escape}</h6>
-                          {if $run}<span class="badge {if $run.status=='DONE'}bg-success{elseif $run.status=='ERROR'}bg-danger{elseif $run.status=='RUNNING' || $run.status=='QUEUED'}bg-primary{else}bg-secondary{/if}" data-pipeline-status-label>{$run.status|escape}</span>{else}<span class="badge bg-secondary" data-pipeline-status-label>NOT STARTED</span>{/if}
+                          {if $run}<span class="badge {if $run.status=='DONE'}bg-success{elseif $run.status=='ERROR'}bg-danger{elseif $run.status=='RUNNING' || $run.status=='QUEUED' || $run.status=='CANCELLING' || $run.status=='RESTARTING'}bg-primary{else}bg-secondary{/if}" data-pipeline-status-label>{$run.status|escape}</span>{else}<span class="badge bg-secondary" data-pipeline-status-label>NOT STARTED</span>{/if}
                         </div>
                         {if $run}
                           <div class="small text-muted mb-1">Stage: <span data-pipeline-stage>{$run.stage|escape}</span></div>
@@ -245,7 +245,15 @@
                             {if $run.output_mesh_path}<a class="btn btn-sm btn-outline-success" href="{$run.mesh_url|escape}">Download mesh</a>{/if}
                             <a class="btn btn-sm btn-outline-secondary" href="{$run.log_url|escape}" target="_blank">View pipeline log</a>
                             <a class="btn btn-sm btn-outline-secondary" href="{$run.download_log_url|escape}">Download full log</a>
-                            {if $run.status=='QUEUED' || $run.status=='RUNNING' || $run.status=='DONE' || $run.status=='ERROR' || $run.status=='CANCELLED'}
+                            {if $run.status=='QUEUED' || $run.status=='RUNNING' || $run.status=='RUNNING_CHUNKS' || $run.status=='PLANNING' || $run.status=='MERGING'}
+                              <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('Cancel this pipeline and keep output files for diagnostics?');">
+                                <input type="hidden" name="action" value="cancel_sfm_pipeline">
+                                <input type="hidden" name="pipeline_run_id" value="{$run.id}">
+                                <input type="hidden" name="capture_session_id" value="{$s.id}">
+                                <button type="submit" class="btn btn-sm btn-outline-warning">Cancel</button>
+                              </form>
+                            {/if}
+                            {if $run.status=='QUEUED' || $run.status=='RUNNING' || $run.status=='RUNNING_CHUNKS' || $run.status=='PLANNING' || $run.status=='MERGING' || $run.status=='DONE' || $run.status=='ERROR' || $run.status=='CANCELLED'}
                               <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('{if $run.status=='QUEUED' || $run.status=='RUNNING'}This pipeline branch is active; its running or queued remote task will be stopped. {/if}Delete all files and jobs for this pipeline branch and start it again from the original video?');">
                                 <input type="hidden" name="action" value="restart_sfm_pipeline">
                                 <input type="hidden" name="pipeline_run_id" value="{$run.id}">
@@ -756,7 +764,7 @@ function pipelineBadgeClass(status) {
     return 'bg-danger';
   }
 
-  if (s === 'RUNNING' || s === 'QUEUED') {
+  if (s === 'RUNNING' || s === 'QUEUED' || s === 'CANCELLING' || s === 'RESTARTING') {
     return 'bg-primary';
   }
 

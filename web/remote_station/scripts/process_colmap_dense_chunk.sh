@@ -40,12 +40,19 @@ except FileNotFoundError:
 print(n)
 PYV
 }
-result(){ local st="$1" code="$2" msg="$3" count size vertices; count=$(wc -l < "$CHUNK_DIR/image_list.txt"|tr -d ' '); size=0; [[ -f "$FUSED_PLY" ]] && size=$(stat -c '%s' "$FUSED_PLY"); vertices=$(ply_vertices); cat > "$CHUNK_DIR/result.json" <<JSON
-{"job_id":"$JOB_ID","parent_job_id":"$PARENT_JOB_ID","sparse_job_id":"$SPARSE_JOB_ID","model_id":$MODEL_ID,"chunk_id":$CHUNK_ID,"status":"$st","exit_code":$code,"message":"$msg","images_count":$count,"max_image_size":$MAX_IMAGE_SIZE,"patchmatch_cache_size":$PMC,"fusion_cache_size":$FC,"available_ram_before_start_mb":$AVAIL_BEFORE,"fused_ply":"$FUSED_PLY","fused_ply_size_bytes":$size,"fused_vertices":$vertices,"finished_at":"$(date -Iseconds)"}
+error_summary(){ local log="${1:-}"; [[ -f "$log" ]] || return 0; python3 - "$log" <<'PY'
+import re,sys
+lines=open(sys.argv[1], errors='replace').read().splitlines()
+interesting=[l.strip() for l in lines if re.search(r'(Missing image or map dependency|Check failed|terminate called|SIGABRT|ERROR|FATAL|failed)', l, re.I)]
+print('\n'.join(interesting[-8:]))
+PY
+}
+result(){ local st="$1" code="$2" msg="$3" stage="${4:-}" log_path="${5:-}" count size vertices summary; count=$(wc -l < "$CHUNK_DIR/image_list.txt"|tr -d ' '); size=0; [[ -f "$FUSED_PLY" ]] && size=$(stat -c '%s' "$FUSED_PLY"); vertices=$(ply_vertices); summary="$(printf '%s' "$msg" | jqstr)"; cat > "$CHUNK_DIR/result.json" <<JSON
+{"job_id":"$JOB_ID","parent_job_id":"$PARENT_JOB_ID","sparse_job_id":"$SPARSE_JOB_ID","model_id":$MODEL_ID,"chunk_id":$CHUNK_ID,"status":"$st","exit_code":$code,"failed_stage":"$stage","log_path":"$log_path","error_summary":"$summary","message":"$summary","images_count":$count,"max_image_size":$MAX_IMAGE_SIZE,"patchmatch_cache_size":$PMC,"fusion_cache_size":$FC,"available_ram_before_start_mb":$AVAIL_BEFORE,"fused_ply":"$FUSED_PLY","fused_ply_size_bytes":$size,"fused_vertices":$vertices,"finished_at":"$(date -Iseconds)"}
 JSON
 }
-run_colmap(){ case "$COLMAP_MODE" in native) "$COLMAP_BIN" "$@";; podman) podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable -v "$BASE:$BASE" "$COLMAP_IMAGE" colmap "$@";; *) echo "bad COLMAP_MODE" >&2; return 1;; esac; }
-trap 'ec=$?; st=ERROR; [[ $ec -eq 137 ]] && st=ERROR_OOM; status "$st" 0 "Dense chunk $CHUNK_ID failed exit $ec"; result "$st" "$ec" "failed"; exit $ec' ERR
+run_colmap(){ case "$COLMAP_MODE" in native) "$COLMAP_BIN" "$@";; podman) podman run --name "makler_job_${JOB_ID}" --rm --device nvidia.com/gpu=all --security-opt=label=disable -v "$BASE:$BASE" "$COLMAP_IMAGE" colmap "$@";; *) echo "bad COLMAP_MODE" >&2; return 1;; esac; }
+trap 'ec=$?; st=ERROR; [[ $ec -eq 137 ]] && st=ERROR_OOM; msg="Dense chunk $CHUNK_ID failed exit $ec"; status "$st" 0 "$msg"; result "$st" "$ec" "$msg"; exit $ec' ERR
 AVAIL_BEFORE=$(avail_mb); status RUNNING 5 "Preparing dense chunk $CHUNK_ID"
 FRAMES_DIR=$(python3 - "$SPARSE_JOB_DIR/result.json" <<'PY'
 import json,sys; print(json.load(open(sys.argv[1])).get('frames_dir',''))
@@ -53,7 +60,9 @@ PY
 )
 [[ -d "$FRAMES_DIR" ]] || { status ERROR 0 "frames_dir missing"; exit 1; }
 run_colmap image_undistorter --image_path "$FRAMES_DIR" --input_path "$SPARSE_MODEL_DIR" --output_path "$UNDISTORTED_DIR" --output_type COLMAP --image_list_path "$CHUNK_DIR/image_list.txt" --max_image_size "$MAX_IMAGE_SIZE" --num_patch_match_src_images "$SRC" > "$LOG_DIR/image_undistorter.log" 2>&1
+python3 "$(dirname "$0")/filter_patch_match_cfg.py" "$UNDISTORTED_DIR/stereo/patch-match.cfg" "$UNDISTORTED_DIR/images" "$CHUNK_DIR/image_list.txt" --stats-json "$LOG_DIR/patch_match_filter_stats.json" > "$LOG_DIR/patch_match_filter.log" 2>&1
 status RUNNING 45 "PatchMatch chunk $CHUNK_ID"
+set +e
 run_colmap patch_match_stereo \
   --workspace_path "$UNDISTORTED_DIR" \
   --workspace_format COLMAP \
@@ -61,6 +70,15 @@ run_colmap patch_match_stereo \
   --PatchMatchStereo.allow_missing_files true \
   --PatchMatchStereo.cache_size "$PMC" \
   > "$LOG_DIR/patch_match_stereo.log" 2>&1
+pm_ec=$?
+set -e
+if [[ "$pm_ec" -ne 0 ]]; then
+  summary="$(error_summary "$LOG_DIR/patch_match_stereo.log")"
+  [[ -n "$summary" ]] || summary="PatchMatch failed with exit code $pm_ec"
+  status ERROR 0 "$summary"
+  result ERROR "$pm_ec" "$summary" PATCH_MATCH "$LOG_DIR/patch_match_stereo.log"
+  exit "$pm_ec"
+fi
 status RUNNING 85 "Fusion chunk $CHUNK_ID"
 run_colmap stereo_fusion --workspace_path "$UNDISTORTED_DIR" --workspace_format COLMAP --input_type geometric --output_path "$FUSED_PLY" --StereoFusion.cache_size "$FC" > "$LOG_DIR/stereo_fusion.log" 2>&1
 [[ -s "$FUSED_PLY" ]] || { status ERROR 0 "fused.ply missing"; exit 1; }

@@ -37,6 +37,7 @@ const AUTO_SFM_EXPORT_MODELS = [0, 1];
 const AUTO_SFM_DENSE_AFTER_SPARSE = false;
 const MIN_REGISTERED_IMAGES_PREVIEW = 10;
 const MIN_REGISTERED_IMAGES_HQ = 20;
+define('SFM_DENSE_STALE_TIMEOUT_SECONDS', max(60, (int)(getenv('SFM_DENSE_STALE_TIMEOUT_SECONDS') ?: 900)));
 
 
 function ply_vertex_count(string $path): ?int
@@ -440,6 +441,16 @@ function sfm_pipeline_best_sparse_model_worker(int $sparseJobId): array {
 }
 function sfm_pipeline_fail(mysqli $db, int $pipelineRunId, string $message, array $error=[]): void { pipeline_log($pipelineRunId,'ERROR','PIPELINE',$message); sfm_pipeline_update($db,$pipelineRunId,'ERROR','ERROR',100,$message,['error_json'=>json_encode($error, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)]); }
 
+function dense_patchmatch_user_error(string $message): string
+{
+    preg_match_all('/Missing image or map dependency for image \d+:\s*([^\s]+)/', $message, $matches);
+    if (!empty($matches[1])) {
+        $names = array_values(array_unique($matches[1]));
+        return "PatchMatch failed:\nmissing image/map dependencies:\n" . implode(', ', array_slice($names, 0, 12));
+    }
+    return mb_substr($message !== '' ? $message : 'PatchMatch failed', 0, 1000);
+}
+
 function dense_chunk_stage_label(string $message): string
 {
     if (stripos($message, 'fusion') !== false) { return 'Fusion'; }
@@ -505,7 +516,7 @@ function set_job(mysqli $db, int $id, string $status, int $progress, string $mes
     $st->close();
     if (in_array($status, ['ERROR','FAILED','ERROR_EMPTY'], true)) {
         $q=$db->prepare('SELECT pipeline_run_id, job_type, chunk_index FROM sfm_remote_jobs WHERE id=? LIMIT 1');
-        if($q){ $q->bind_param('i',$id); $q->execute(); $j=$q->get_result()->fetch_assoc(); $q->close(); $pid=(int)($j['pipeline_run_id'] ?? 0); if($pid>0){ $userMessage = ((string)($j['job_type'] ?? '') === 'COLMAP_DENSE_CHUNK') ? 'Dense reconstruction failed: chunk '.(((int)($j['chunk_index'] ?? 0))+1).' produced an empty or failed point cloud.' : 'Pipeline stage failed: '.(string)($j['job_type'] ?? 'job'); sfm_pipeline_fail($db,$pid,$userMessage,['child_job_id'=>$id,'child_job_type'=>$j['job_type'] ?? '', 'technical_message'=>$message]); } }
+        if($q){ $q->bind_param('i',$id); $q->execute(); $j=$q->get_result()->fetch_assoc(); $q->close(); $pid=(int)($j['pipeline_run_id'] ?? 0); if($pid>0){ $userMessage = ((string)($j['job_type'] ?? '') === 'COLMAP_DENSE_CHUNK') ? dense_patchmatch_user_error($message) : 'Pipeline stage failed: '.(string)($j['job_type'] ?? 'job'); sfm_pipeline_fail($db,$pid,$userMessage,['child_job_id'=>$id,'child_job_type'=>$j['job_type'] ?? '', 'technical_message'=>$message]); } }
     }
 }
 
@@ -838,6 +849,31 @@ function sync_running_jobs(mysqli $db): void
         $remoteStatus = strtoupper((string)($json['status'] ?? 'RUNNING'));
         $progress = (int)($json['progress_percent'] ?? $json['progress'] ?? $job['progress_percent'] ?? 0);
         $message = (string)($json['message'] ?? $raw);
+        if ($type === 'COLMAP_DENSE_CHUNK' && $remoteStatus === 'RUNNING') {
+            $statusAge = null;
+            if (!empty($json['updated_at'])) {
+                $ts = strtotime((string)$json['updated_at']);
+                if ($ts !== false) { $statusAge = time() - $ts; }
+            }
+            if ($statusAge !== null && $statusAge > SFM_DENSE_STALE_TIMEOUT_SECONDS
+                && $progress === (int)($job['progress_percent'] ?? -1)
+                && $message === (string)($job['message'] ?? '')
+            ) {
+                try {
+                    [$hCode, $hRaw, $hCmd] = run_command([SFM_REMOTE_BASE . '/get_remote_job_health.sh', SFM_REMOTE_CONF, (string)$remote, (string)($job['parent_remote_job_id'] ?? 0)]);
+                    $health = $hCode === 0 ? (json_decode($hRaw, true) ?: []) : [];
+                } catch (Throwable $e) {
+                    $health = [];
+                }
+                $deadOrAborted = (($health['process_present'] ?? true) === false && ($health['container_present'] ?? true) === false) || (($health['log_has_sigabrt'] ?? false) === true);
+                if ($deadOrAborted) {
+                    $staleMessage = 'Dense chunk stale: remote status not updated for ' . $statusAge . 's; process/container absent or PatchMatch log shows SIGABRT';
+                    pipeline_job_log($db, $job, 'ERROR', 'DENSE_CHUNK', $staleMessage);
+                    set_job($db, $id, 'ERROR', 0, $staleMessage);
+                    continue;
+                }
+            }
+        }
         if ($remoteStatus === 'DONE') {
             if ($type === 'COLMAP_MESH') {
                 worker_log("running mesh fetch command for job id={$id} type={$type} remote_job_id={$remote}");
