@@ -240,8 +240,26 @@
                     <div>{if $s.sfm_pipeline.overall_progress >= 1}✓{else}○{/if} Frames extracted</div>
                     <div>{if $s.sfm_pipeline.selected && ($s.sfm_pipeline.selected.parent_remote_job_id|default:0 > 0)}✓{else}○{/if} Sparse reconstruction</div>
                     <div>{if $s.sfm_pipeline.selected && ($s.sfm_pipeline.selected.job_type == 'COLMAP_RECONSTRUCTION_PREVIEW' || $s.sfm_pipeline.selected.job_type == 'COLMAP_RECONSTRUCTION_HQ')}●{else}○{/if} Dense chunks</div>
-                    <div>{if $s.sfm_pipeline.overall_progress >= 90}✓{else}○{/if} Merge</div>
-                    <div>{if $s.sfm_pipeline.stage|strstr:'mesh' || $s.sfm_pipeline.overall_progress == 100}●{else}○{/if} Mesh generation</div>
+<div>
+  {if $s.sfm_pipeline.overall_progress >= 90}
+    ✓
+  {else}
+    ○
+  {/if}
+  Merge
+</div>
+
+<div>
+  {if $s.sfm_pipeline.overall_progress == 100}
+    ✓
+  {elseif $s.sfm_pipeline.stage == 'mesh'
+      || $s.sfm_pipeline.stage == 'mesh_generation'
+      || $s.sfm_pipeline.stage == 'meshing'}
+    ●
+  {else}
+    ○
+  {/if}
+  Mesh generati
                     <div>{if $s.sfm_pipeline.overall_progress == 100}✓{else}○{/if} Result ready</div>
                   </div>
                 </div>
