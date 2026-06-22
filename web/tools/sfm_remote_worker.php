@@ -912,14 +912,37 @@ function sync_running_jobs(mysqli $db): void
                 auto_chain_after_done($db, $job);
                 continue;
             }
-            worker_log("running fetch command for job id={$id} type={$type} remote_job_id={$remote}");
-            try {
-                [$fetchCode, $fetchOut, $fetchCmd] = run_command([
-                    SFM_REMOTE_BASE . '/fetch_job_result.sh',
-                    SFM_REMOTE_CONF,
-                    (string)$remote,
-                    SFM_REMOTE_OUTPUT,
-                ]);
+$fetchRemote = $remote;
+
+if ($type === 'COLMAP_DENSE_CHUNK') {
+    $fetchRemote = (int)($job['parent_remote_job_id'] ?? 0);
+
+    if ($fetchRemote <= 0) {
+        set_job(
+            $db,
+            $id,
+            'ERROR',
+            $progress,
+            'Dense chunk has no parent_remote_job_id for result fetch'
+        );
+        continue;
+    }
+}
+
+worker_log(
+    "running fetch command for job id={$id}" .
+    " type={$type}" .
+    " remote_job_id={$remote}" .
+    " fetch_remote_job_id={$fetchRemote}"
+);
+
+try {
+    [$fetchCode, $fetchOut, $fetchCmd] = run_command([
+        SFM_REMOTE_BASE . '/fetch_job_result.sh',
+        SFM_REMOTE_CONF,
+        (string)$fetchRemote,
+        SFM_REMOTE_OUTPUT,
+    ]);
                 $fetchMessage = $fetchCode === 0 ? ($fetchOut !== '' ? $fetchOut : $message) : format_command_failure($fetchCmd, $fetchCode, $fetchOut);
             } catch (Throwable $e) {
                 $fetchCode = 1;
