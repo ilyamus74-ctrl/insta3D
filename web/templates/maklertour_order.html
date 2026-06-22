@@ -316,7 +316,17 @@
     ○
   {/if}
   Mesh generation
-                    <div>{if $s.sfm_pipeline.overall_progress == 100}✓{else}○{/if} Result ready</div>
+</div>
+
+<div>
+  {if $s.sfm_pipeline.overall_progress == 100}
+    ✓
+  {else}
+    ○
+  {/if}
+  Result ready
+</div>
+
                   </div>
                 </div>
               </div>
