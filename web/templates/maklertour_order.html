@@ -222,7 +222,7 @@
                 {foreach from=$s.sfm_pipeline_cards item=pc key=pmode}
                   {assign var=run value=$pc.run}
                   <div class="col-md-4">
-                    <div class="card h-100 border-primary-subtle">
+                    <div class="card h-100 border-primary-subtle"{if $run} data-pipeline-run-id="{$run.id}" data-pipeline-status="{$run.status|escape}"{/if}>
                       <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start gap-2">
                           <h6 class="mb-1">{$pc.preset.label|escape}</h6>
@@ -245,13 +245,12 @@
                             {if $run.output_mesh_path}<a class="btn btn-sm btn-outline-success" href="{$run.mesh_url|escape}">Download mesh</a>{/if}
                             <a class="btn btn-sm btn-outline-secondary" href="{$run.log_url|escape}" target="_blank">View pipeline log</a>
                             <a class="btn btn-sm btn-outline-secondary" href="{$run.download_log_url|escape}">Download full log</a>
-                            {if $run.status=='DONE' || $run.status=='ERROR' || $run.status=='CANCELLED'}
-                              <form method="post" action="/order.php?id={$order.id}" class="d-inline">
-                                <input type="hidden" name="action" value="start_sfm_pipeline">
+                            {if $run.status=='QUEUED' || $run.status=='RUNNING' || $run.status=='DONE' || $run.status=='ERROR' || $run.status=='CANCELLED'}
+                              <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('{if $run.status=='QUEUED' || $run.status=='RUNNING'}This pipeline branch is active; its running or queued remote task will be stopped. {/if}Delete all files and jobs for this pipeline branch and start it again from the original video?');">
+                                <input type="hidden" name="action" value="restart_sfm_pipeline">
+                                <input type="hidden" name="pipeline_run_id" value="{$run.id}">
                                 <input type="hidden" name="capture_session_id" value="{$s.id}">
-                                <input type="hidden" name="pipeline_mode" value="{$pmode|escape}">
-                                {if $s.videos|@count > 0}<input type="hidden" name="video_scan_id" value="{$s.videos.0.id}">{/if}
-                                <button class="btn btn-sm btn-primary">{if $run.status=='ERROR'}Retry whole pipeline{else}Run again{/if}</button>
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Restart from scratch</button>
                               </form>
                             {/if}
                           </div>
@@ -668,7 +667,7 @@ function formatStationMetrics(d){
   return parts.join(' | ');
 }
 function refreshStationMetrics(){
-  return fetch('/api/sfm_station_metrics.php').then(r=>r.json()).then(d=>{ document.querySelectorAll('[data-station-metrics]').forEach(el=>{ el.textContent=formatStationMetrics(d); }); });
+  return fetch('/api/sfm_station_metrics.php?_=' + Date.now(), { cache: 'no-store' }).then(r=>r.json()).then(d=>{ document.querySelectorAll('[data-station-metrics]').forEach(el=>{ el.textContent=formatStationMetrics(d); }); });
 }
 document.querySelectorAll('[data-station-refresh]').forEach(btn=>btn.addEventListener('click',()=>refreshStationMetrics().catch(()=>{})));
 function sfmJobStatusClasses(status){
@@ -685,7 +684,13 @@ function sfmSetClass(el, nextClass){
 }
 function sfmTerminalStatus(status){ return ['DONE','ERROR','FAILED','ERROR_EMPTY','CANCELLED'].includes(String(status||'').toUpperCase()); }
 function hasRunningRemoteJob(){ return Array.from(document.querySelectorAll('[data-sfm-remote-job]')).some(el=>!sfmTerminalStatus(el.getAttribute('data-active-status'))); }
-setInterval(()=>{ if(hasRunningRemoteJob()) refreshStationMetrics().catch(()=>{}); },4000); refreshStationMetrics().catch(()=>{});
+function hasRunningPipeline(){
+  return Array.from(document.querySelectorAll('[data-pipeline-status]')).some((el) => {
+    const status = String(el.dataset.pipelineStatus || '').toUpperCase();
+    return status === 'QUEUED' || status === 'RUNNING';
+  });
+}
+setInterval(()=>{ if(hasRunningRemoteJob() || hasRunningPipeline()) refreshStationMetrics().catch(()=>{}); },4000); refreshStationMetrics().catch(()=>{});
 document.querySelectorAll('[data-job-file-url]').forEach(btn=>btn.addEventListener('click',()=>{
   const pre=document.getElementById(btn.getAttribute('data-job-file-target')); if(!pre) return;
   pre.classList.remove('d-none'); pre.textContent='Loading...';

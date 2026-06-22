@@ -718,6 +718,34 @@ function sync_running_jobs(mysqli $db): void
     $res->close();
 }
 
+
+function reconcile_pipeline_runs(mysqli $db): void
+{
+    $res=$db->query("SELECT * FROM sfm_pipeline_runs WHERE status IN ('QUEUED','RUNNING')");
+    if(!$res){ return; }
+    while($run=$res->fetch_assoc()){
+        $pid=(int)$run['id']; $root=(int)($run['root_remote_job_id'] ?? 0); $orderId=(int)$run['order_id']; $sessionId=(int)$run['capture_session_id']; $started=(string)($run['started_at'] ?? '1970-01-01');
+        if($pid<=0 || $root<=0){ continue; }
+        $st=$db->prepare("SELECT * FROM sfm_remote_jobs WHERE pipeline_run_id=? AND job_type='EXTRACT_FRAMES' AND status='DONE' ORDER BY id DESC LIMIT 1"); if(!$st){continue;} $st->bind_param('i',$pid); $st->execute(); $extract=$st->get_result()->fetch_assoc(); $st->close();
+        if($extract){
+            $remote=(int)$extract['remote_job_id'];
+            $st=$db->prepare("SELECT * FROM sfm_remote_jobs WHERE pipeline_run_id=? AND job_type='COLMAP_SPARSE' LIMIT 1"); $st->bind_param('i',$pid); $st->execute(); $sparse=$st->get_result()->fetch_assoc(); $st->close();
+            if(!$sparse){
+                $st=$db->prepare("SELECT * FROM sfm_remote_jobs WHERE pipeline_run_id IS NULL AND job_type='COLMAP_SPARSE' AND parent_remote_job_id=? AND order_id=? AND capture_session_id=? AND created_at>=? LIMIT 1");
+                if($st){ $st->bind_param('iiis',$root,$orderId,$sessionId,$started); $st->execute(); $orphan=$st->get_result()->fetch_assoc(); $st->close(); if($orphan){ $oid=(int)$orphan['id']; $u=$db->prepare('UPDATE sfm_remote_jobs SET pipeline_run_id=? WHERE id=?'); if($u){$u->bind_param('ii',$pid,$oid);$u->execute();$u->close(); pipeline_log($pid,'INFO','SPARSE','Recovered orphan COLMAP_SPARSE job '.(int)$orphan['remote_job_id']);} continue; } }
+                auto_chain_after_done($db,$extract);
+            }
+        }
+        $st=$db->prepare("SELECT * FROM sfm_remote_jobs WHERE pipeline_run_id=? AND job_type='COLMAP_SPARSE' AND status='DONE' ORDER BY id DESC LIMIT 1"); if(!$st){continue;} $st->bind_param('i',$pid); $st->execute(); $sparseDone=$st->get_result()->fetch_assoc(); $st->close();
+        if($sparseDone){
+            $remote=(int)$sparseDone['remote_job_id'];
+            $st=$db->prepare("SELECT id FROM sfm_remote_jobs WHERE pipeline_run_id=? AND job_type='COLMAP_RECONSTRUCTION_PREVIEW' LIMIT 1"); $st->bind_param('i',$pid); $st->execute(); $dense=$st->get_result()->fetch_assoc(); $st->close();
+            if(!$dense){ auto_chain_after_done($db,$sparseDone); }
+        }
+    }
+    $res->close();
+}
+
 ensure_sfm_remote_jobs_table($dbcnx);
 ensure_sfm_remote_jobs_chunk_columns($dbcnx);
 ensure_sfm_pipeline_tables($dbcnx);
@@ -728,6 +756,7 @@ worker_log('SFM_REMOTE_OUTPUT=' . SFM_REMOTE_OUTPUT);
 while (true) {
     try {
         sync_running_jobs($dbcnx);
+        reconcile_pipeline_runs($dbcnx);
         orchestrate_reconstruction_parents($dbcnx);
         $job = claim_next_job($dbcnx);
         if ($job) {

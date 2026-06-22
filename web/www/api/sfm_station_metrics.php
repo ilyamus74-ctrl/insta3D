@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../bootstrap.php';
 auth_require_login();
 header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate');
 
 $cacheFile = '/home/makler/web/remote_station/output/station_metrics.json';
 
