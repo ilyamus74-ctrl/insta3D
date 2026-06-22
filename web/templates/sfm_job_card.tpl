@@ -69,5 +69,5 @@
     </div>
   {/if}
   <details class="small mt-2"><summary>Details</summary><div>Technical type: <code>{$rj.job_type|escape}</code></div></details>
-  <pre id="jobFile{$rj.id}" class="small bg-dark text-light rounded p-2 mt-2 d-none" style="max-height:320px;overflow:auto;white-space:pre-wrap"></pre>
+  <pre id="jobFile{$rj.id}" class="small bg-dark text-light rounded p-2 mt-2 d-none" style="max-height:220px;overflow:auto;white-space:pre-wrap"></pre>
 </div>

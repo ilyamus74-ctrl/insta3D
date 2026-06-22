@@ -440,6 +440,59 @@ function sfm_pipeline_best_sparse_model_worker(int $sparseJobId): array {
 }
 function sfm_pipeline_fail(mysqli $db, int $pipelineRunId, string $message, array $error=[]): void { pipeline_log($pipelineRunId,'ERROR','PIPELINE',$message); sfm_pipeline_update($db,$pipelineRunId,'ERROR','ERROR',100,$message,['error_json'=>json_encode($error, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)]); }
 
+function dense_chunk_stage_label(string $message): string
+{
+    if (stripos($message, 'fusion') !== false) { return 'Fusion'; }
+    if (stripos($message, 'patchmatch') !== false || stripos($message, 'patch match') !== false) { return 'PatchMatch'; }
+    if (stripos($message, 'prepar') !== false) { return 'Preparing'; }
+    return trim($message) !== '' ? trim($message) : 'Running';
+}
+
+function update_parent_pipeline_from_dense_child(mysqli $db, array $job, int $childProgress, string $childMessage, string $remoteStatus): void
+{
+    if ((string)($job['job_type'] ?? '') !== 'COLMAP_DENSE_CHUNK') { return; }
+    $pipelineRunId = pipeline_run_for_job($job);
+    if ($pipelineRunId <= 0) { return; }
+    $chunkIndex = (int)($job['chunk_index'] ?? 0);
+    $total = max(1, (int)($job['chunk_count'] ?? 1));
+    $parentRemote = (int)($job['parent_remote_job_id'] ?? 0);
+    $done = 0;
+    if ($parentRemote > 0) {
+        $st = $db->prepare("SELECT COUNT(*) c FROM sfm_remote_jobs WHERE parent_remote_job_id=? AND job_type='COLMAP_DENSE_CHUNK' AND status='DONE'");
+        if ($st) {
+            $st->bind_param('i', $parentRemote);
+            $st->execute();
+            $row = $st->get_result()->fetch_assoc();
+            $st->close();
+            $done = (int)($row['c'] ?? 0);
+        }
+    }
+    $doneBeforeCurrent = min($done, $chunkIndex);
+    $boundedChildProgress = max(0, min(100, $childProgress));
+    $overall = 40 + (int)floor((($doneBeforeCurrent + ($boundedChildProgress / 100)) / $total) * 40);
+    $stageLabel = dense_chunk_stage_label($childMessage);
+    $message = 'Dense reconstruction: chunk ' . ($chunkIndex + 1) . ' of ' . $total . ' — ' . $stageLabel . ' ' . $boundedChildProgress . '%';
+
+    $st = $db->prepare('SELECT progress_percent, message FROM sfm_pipeline_runs WHERE id=? LIMIT 1');
+    $oldProgress = null;
+    $oldMessage = '';
+    if ($st) {
+        $st->bind_param('i', $pipelineRunId);
+        $st->execute();
+        $row = $st->get_result()->fetch_assoc();
+        $st->close();
+        $oldProgress = isset($row['progress_percent']) ? (int)$row['progress_percent'] : null;
+        $oldMessage = (string)($row['message'] ?? '');
+    }
+    $oldBucket = $oldProgress === null ? -1 : intdiv($oldProgress, 10);
+    $newBucket = intdiv($overall, 10);
+    if ($oldBucket !== $newBucket || $oldMessage !== $message || strtoupper($remoteStatus) === 'DONE') {
+        pipeline_log($pipelineRunId, 'INFO', 'DENSE_CHUNK', 'chunk=' . ($chunkIndex + 1) . '/' . $total . ' progress=' . $boundedChildProgress . ' stage=' . $stageLabel);
+    }
+    sfm_pipeline_update($db, $pipelineRunId, 'RUNNING', 'DENSE', $overall, $message);
+}
+
+
 function set_job(mysqli $db, int $id, string $status, int $progress, string $message): void
 {
     $message = mb_substr($message, 0, 60000);
@@ -678,7 +731,7 @@ function launch_job(mysqli $db, array $job): void
         $modelId = model_id_from_job($job);
         set_job($db, $id, 'DONE', 100, 'PLY exported: job_' . $parent . '/colmap/sparse/' . $modelId . '/model.ply');
     } elseif ($type === 'COLMAP_DENSE_CHUNK') {
-        $idx=(int)($job['chunk_index'] ?? 0); $parent=(int)($job['parent_remote_job_id'] ?? 0); $vertices=chunk_result_vertices($parent,$idx); if($vertices<=0){ set_job($db,$id,'ERROR_EMPTY',100,'Dense fusion produced zero vertices'); } else { set_job($db, $id, 'DONE', 100, 'dense chunk done'); }
+        set_job($db, $id, 'RUNNING', 0, 'launched COLMAP_DENSE_CHUNK');
     } elseif ($type === 'COLMAP_DENSE') {
         set_job($db, $id, 'RUNNING', 0, 'dense job launched');
     } else {
@@ -838,6 +891,12 @@ function sync_running_jobs(mysqli $db): void
                 worker_log("ERROR fetch id={$id} remote={$remote}: " . $e->getMessage());
             }
             if ($fetchCode === 0) {
+                if ($type === 'COLMAP_DENSE_CHUNK') {
+                    $vertices = chunk_result_vertices((int)($job['parent_remote_job_id'] ?? 0), (int)($job['chunk_index'] ?? 0));
+                    if ($vertices <= 0) { set_job($db, $id, 'ERROR_EMPTY', 100, 'Dense fusion produced zero vertices'); continue; }
+                    $pidRun = pipeline_run_for_job($job);
+                    if ($pidRun > 0) { pipeline_log($pidRun, 'INFO', 'DENSE_CHUNK', 'chunk=' . (((int)($job['chunk_index'] ?? 0)) + 1) . '/' . max(1, (int)($job['chunk_count'] ?? 1)) . ' done vertices=' . $vertices); }
+                }
                 set_job($db, $id, 'DONE', 100, $fetchMessage);
                 auto_chain_after_done($db, $job);
             } else {
@@ -849,6 +908,9 @@ function sync_running_jobs(mysqli $db): void
     ) {
          set_job($db, $id, 'ERROR', $progress, $message);
     } else {
+            if ($type === 'COLMAP_DENSE_CHUNK') {
+                update_parent_pipeline_from_dense_child($db, $job, $progress, $message, $remoteStatus);
+            }
             set_job($db, $id, 'RUNNING', $progress, $message);
         }
     }
