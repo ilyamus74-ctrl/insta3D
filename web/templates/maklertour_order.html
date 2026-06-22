@@ -230,19 +230,24 @@
                         </div>
                         {if $run}
                           <div class="small text-muted mb-1">Stage: <span data-pipeline-stage>{$run.stage|escape}</span></div>
-                          <div class="small mb-2" data-pipeline-message>{$run.message|default:''|escape}</div>
+                          <div class="small mb-2" data-pipeline-message>{$run.display_message|default:$run.message|default:''|escape}</div>
                           <div class="progress mb-2" style="height:18px"><div class="progress-bar {if $run.status=='RUNNING' || $run.status=='QUEUED'}progress-bar-striped progress-bar-animated{/if}" data-pipeline-progress style="width: {$run.progress_percent|default:0}%">{$run.progress_percent|default:0}%</div></div>
-                          {if $run.status=='DONE'}
-                            <div class="small">Sparse model: {$run.sparse_model_id|default:'-'}</div>
-                            <div class="small">Registered images: {$run.registered_images|default:'-'}</div>
-                            <div class="small">Sparse points: {$run.sparse_points|default:'-'}</div>
-                            <div class="small">Dense points: {$run.dense_points|default:'-'}</div>
-                            <div class="small">Mesh: {$run.mesh_vertices|default:'-'} vertices / {$run.mesh_faces|default:'-'} faces</div>
-                          {/if}
-                          {if $run.status=='ERROR'}<div class="alert alert-danger small py-2 mt-2 mb-2">{$run.message|escape}</div>{/if}
+                          {if $run.status=='ERROR'}<div class="alert alert-danger small py-2 mt-2 mb-2">{$run.display_message|default:$run.message|escape}</div>{/if}
+                          {assign var=art value=$run.artifacts}
+                          <div class="border rounded p-2 bg-light-subtle small mt-2">
+                            <div class="fw-semibold mb-1">{if $run.status=='ERROR'}Available artifacts{else}Artifacts / Готовые файлы{/if}</div>
+                            <div class="mb-1">
+                              {if $art.sparse.available}<span class="text-success">✓</span> Sparse point cloud — Model {$art.sparse.model_id|escape} — {$art.sparse.registered_images|default:0|string_format:"%d"} registered images — {$art.sparse.points|default:0|number_format:0:'.':','} points{if $art.sparse.size_bytes} — {$art.sparse.size_human|escape}{/if} — <a href="{$art.sparse.download_url|escape}">Download sparse PLY</a>{if $art.sparse.viewer_url} · <a href="{$art.sparse.viewer_url|escape}" target="_blank">Open in viewer</a>{/if}{else}<span class="text-muted">○</span> Sparse point cloud — unavailable{/if}
+                            </div>
+                            <div class="mb-1">
+                              {if $art.dense.available}<span class="text-success">✓</span> Dense point cloud — {$art.dense.vertices|default:0|number_format:0:'.':','} points — {$art.dense.size_human|escape} — <a href="{$art.dense.download_url|escape}">Download dense point cloud</a>{if $art.dense.viewer_url} · <a href="{$art.dense.viewer_url|escape}" target="_blank">Open in viewer</a>{/if}{else}<span class="text-muted">○</span> Dense point cloud — unavailable{/if}
+                            </div>
+                            <div class="mb-1">
+                              {if $art.mesh.available}<span class="text-success">✓</span> Final mesh — {$art.mesh.vertices|default:0|number_format:0:'.':','} vertices / {$art.mesh.faces|default:0|number_format:0:'.':','} faces — {$art.mesh.size_human|escape}{if $art.mesh.engine} — {$art.mesh.engine|escape}{/if} — <a href="{$art.mesh.download_url|escape}">Download final mesh PLY</a>{if $art.mesh.viewer_url} · <a href="{$art.mesh.viewer_url|escape}" target="_blank">Open in viewer</a>{/if}{else}<span class="text-muted">○</span> Final mesh — unavailable{/if}
+                            </div>
+                            {if $art.result_json.available}<div><span class="text-success">✓</span> Pipeline result — <a href="{$art.result_json.download_url|escape}">Download result JSON</a></div>{/if}
+                          </div>
                           <div class="d-flex gap-2 flex-wrap mt-2">
-                            {if $run.output_point_cloud_path}<a class="btn btn-sm btn-outline-success" href="{$run.point_cloud_url|escape}">Download point cloud</a>{/if}
-                            {if $run.output_mesh_path}<a class="btn btn-sm btn-outline-success" href="{$run.mesh_url|escape}">Download mesh</a>{/if}
                             <a class="btn btn-sm btn-outline-secondary" href="{$run.log_url|escape}" target="_blank">View pipeline log</a>
                             <a class="btn btn-sm btn-outline-secondary" href="{$run.download_log_url|escape}">Download full log</a>
                             {if $run.status=='QUEUED' || $run.status=='RUNNING' || $run.status=='RUNNING_CHUNKS' || $run.status=='PLANNING' || $run.status=='MERGING'}

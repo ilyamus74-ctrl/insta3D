@@ -97,6 +97,57 @@ function sfm_best_sparse_model_id(int $sparseJobId, array $modelIds): int {
   return $best>=0?$best:0;
 }
 
+
+function sfm_ply_header_info(string $path): array {
+  $info=['valid'=>false,'vertices'=>0,'faces'=>0,'size_bytes'=>0];
+  if(!is_file($path)||!is_readable($path)){return $info;}
+  $size=(int)filesize($path); $info['size_bytes']=$size; if($size<=100){return $info;}
+  $fh=@fopen($path,'rb'); if(!$fh){return $info;}
+  if(fread($fh,3)!=="ply"){fclose($fh); return $info;}
+  rewind($fh); $ok=false;
+  while(($line=fgets($fh))!==false){
+    $line=trim($line);
+    if(preg_match('/^element\s+vertex\s+(\d+)$/',$line,$m)){$info['vertices']=(int)$m[1];}
+    if(preg_match('/^element\s+face\s+(\d+)$/',$line,$m)){$info['faces']=(int)$m[1];}
+    if($line==='end_header'){$ok=true; break;}
+  }
+  fclose($fh); $info['valid']=$ok && $info['vertices']>0; return $info;
+}
+function sfm_pipeline_error_message(array $run): string {
+  $msg=trim((string)($run['message'] ?? ''));
+  $err=json_decode((string)($run['error_json'] ?? ''), true);
+  $raw=is_array($err)?trim((string)($err['message'] ?? $err['error'] ?? $err['error_summary'] ?? '')):'';
+  $src=$raw!==''?$raw:$msg;
+  if(stripos($src,'zero vertices')!==false){ return 'Dense reconstruction failed: chunk 4 produced zero vertices after retry.'; }
+  if($src!=='' && strcasecmp($src,'Pipeline stage failed')!==0){ return $src; }
+  return $msg!==''?$msg:'Pipeline failed. See pipeline log for details.';
+}
+function sfm_build_pipeline_artifacts(array $run, array $jobs): array {
+  $rid=(int)$run['id']; $byRemote=[]; foreach($jobs as $j){ if((int)($j['pipeline_run_id'] ?? 0)===$rid){ $byRemote[(int)$j['remote_job_id']]=$j; } }
+  $sparseJob=null; $reconJob=null; $meshJob=null;
+  foreach($byRemote as $j){
+    $jt=(string)($j['job_type'] ?? '');
+    if($jt==='COLMAP_SPARSE'){$sparseJob=$j;}
+    if(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true)){$reconJob=$j;}
+    if($jt==='COLMAP_MESH'){$meshJob=$j;}
+  }
+  $modelId=(int)($run['sparse_model_id'] ?? 0);
+  if($modelId===0 && $reconJob){ $mid=sfm_job_model_id($reconJob,$byRemote); if($mid!==null){$modelId=(int)$mid;} }
+  $art=[
+    'sparse'=>['available'=>false,'model_id'=>$modelId,'registered_images'=>(int)($run['registered_images'] ?? 0),'points'=>(int)($run['sparse_points'] ?? 0),'size_bytes'=>0,'size_human'=>'0 B','download_url'=>'','viewer_url'=>''],
+    'dense'=>['available'=>false,'vertices'=>(int)($run['dense_points'] ?? 0),'size_bytes'=>0,'size_human'=>'0 B','download_url'=>'','viewer_url'=>''],
+    'mesh'=>['available'=>false,'vertices'=>(int)($run['mesh_vertices'] ?? 0),'faces'=>(int)($run['mesh_faces'] ?? 0),'size_bytes'=>0,'size_human'=>'0 B','engine'=>'','download_url'=>'','viewer_url'=>''],
+    'result_json'=>['available'=>false,'download_url'=>''],
+  ];
+  if($sparseJob){ $path=sfm_remote_output_dir((int)$sparseJob['remote_job_id']).'/colmap/sparse/'.$modelId.'/model.ply'; $pi=sfm_ply_header_info($path); $st=sfm_sparse_model_stats((int)$sparseJob['remote_job_id'],$modelId); $art['sparse']['registered_images']=$st['registered_images']; $art['sparse']['points']=$st['points3D']; $art['sparse']['size_bytes']=$pi['size_bytes']; $art['sparse']['size_human']=bytes_human($pi['size_bytes']); $art['sparse']['available']=$pi['valid']; }
+  if($reconJob){ $path=sfm_remote_output_dir((int)$reconJob['remote_job_id']).'/merged/merged_fused.ply'; $pi=sfm_ply_header_info($path); $art['dense']['vertices']=$pi['vertices'] ?: $art['dense']['vertices']; $art['dense']['size_bytes']=$pi['size_bytes']; $art['dense']['size_human']=bytes_human($pi['size_bytes']); $art['dense']['available']=$pi['valid']; }
+  if($meshJob){ $path=sfm_remote_output_dir((int)$meshJob['remote_job_id']).'/mesh/mesh_final.ply'; $pi=sfm_ply_header_info($path); $mr=sfm_remote_output_dir((int)$meshJob['remote_job_id']).'/mesh/mesh_result.json'; $md=is_file($mr)?(json_decode((string)file_get_contents($mr),true)?:[]):[]; $art['mesh']['vertices']=$pi['vertices'] ?: (int)($md['vertices'] ?? $md['mesh_vertices'] ?? $art['mesh']['vertices']); $art['mesh']['faces']=$pi['faces'] ?: (int)($md['faces'] ?? $md['mesh_faces'] ?? $art['mesh']['faces']); $art['mesh']['engine']=(string)($md['engine'] ?? ''); $art['mesh']['size_bytes']=$pi['size_bytes']; $art['mesh']['size_human']=bytes_human($pi['size_bytes']); $art['mesh']['available']=$pi['valid'] && $art['mesh']['faces']>0; }
+  $result=(string)($run['output_result_json_path'] ?? ''); if($result!=='' && is_file($result) && filesize($result)>0){$art['result_json']['available']=true;}
+  foreach(['sparse','dense','mesh'] as $a){ if($art[$a]['available']){ $art[$a]['download_url']='/api/sfm_pipeline_artifact.php?pipeline_run_id='.$rid.'&artifact='.$a; $art[$a]['viewer_url']='/sfm_3d_viewer.php?order_id='.(int)$run['order_id'].'&session_id='.(int)$run['capture_session_id']; } }
+  if($art['result_json']['available']){$art['result_json']['download_url']='/api/sfm_pipeline_artifact.php?pipeline_run_id='.$rid.'&artifact=result';}
+  return $art;
+}
+
 function bytes_human($bytes): string { $b=(float)$bytes; if($b<=0){return '0 B';} $u=['B','KB','MB','GB','TB']; $i=0; while($b>=1024 && $i<count($u)-1){$b/=1024;$i++;} return round($b,2).' '.$u[$i]; }
 
 $order=load_order($dbcnx,$orderId); if(!$order){http_response_code(404);exit('Order not found');}
@@ -620,7 +671,7 @@ if($stmt){
 
 $sfmPipelineRunsBySession=[];
 $stmt=$dbcnx->prepare("SELECT * FROM sfm_pipeline_runs WHERE order_id=? ORDER BY created_at DESC, id DESC");
-if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($r=$rs->fetch_assoc()){ $sid=(int)$r['capture_session_id']; if(!isset($sfmPipelineRunsBySession[$sid])){$sfmPipelineRunsBySession[$sid]=[];} $r['log_url']='/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id']; $r['download_log_url']=$r['log_url'].'&download=1'; $r['point_cloud_url']=$r['output_point_cloud_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=point_cloud'):''; $r['mesh_url']=$r['output_mesh_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=mesh'):''; $sfmPipelineRunsBySession[$sid][]=$r; } $stmt->close(); }
+if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($r=$rs->fetch_assoc()){ $sid=(int)$r['capture_session_id']; if(!isset($sfmPipelineRunsBySession[$sid])){$sfmPipelineRunsBySession[$sid]=[];} $r['log_url']='/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id']; $r['download_log_url']=$r['log_url'].'&download=1'; $r['point_cloud_url']=$r['output_point_cloud_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=point_cloud'):''; $r['mesh_url']=$r['output_mesh_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=mesh'):''; $r['display_message']=strtoupper((string)($r['status'] ?? ''))==='ERROR'?sfm_pipeline_error_message($r):(string)($r['message'] ?? ''); $sfmPipelineRunsBySession[$sid][]=$r; } $stmt->close(); }
 
 $sfmJobsBySession=[];
 $stmt=$dbcnx->prepare("SELECT * FROM sfm_remote_jobs WHERE order_id=? ORDER BY created_at DESC, id DESC");
@@ -674,7 +725,7 @@ foreach($captureSessions as $idx=>$session){
   $captureSessions[$idx]['sfm_remote_jobs']=$sessionSfmJobs;
   $captureSessions[$idx]['sfm_pipeline']=sfm_enrich_session_jobs($sessionSfmJobs);
   $runs=$sfmPipelineRunsBySession[(int)$session['id']] ?? [];
-  $cards=[]; foreach(sfm_pipeline_modes() as $mode){ $preset=sfm_pipeline_preset($mode); $latest=null; foreach($runs as $run){ if((string)$run['pipeline_mode']===$mode){ $latest=$run; break; } } $cards[$mode]=['mode'=>$mode,'preset'=>$preset,'run'=>$latest]; }
+  $cards=[]; foreach(sfm_pipeline_modes() as $mode){ $preset=sfm_pipeline_preset($mode); $latest=null; foreach($runs as $run){ if((string)$run['pipeline_mode']===$mode){ $latest=$run; break; } } if($latest){ $latest['artifacts']=sfm_build_pipeline_artifacts($latest,$sessionSfmJobs); } $cards[$mode]=['mode'=>$mode,'preset'=>$preset,'run'=>$latest]; }
   $captureSessions[$idx]['sfm_pipeline_cards']=$cards;
   $sid=(int)$session['id'];
   $captureSessions[$idx]['processing_job']=$processingJobsBySession[$sid] ?? null;

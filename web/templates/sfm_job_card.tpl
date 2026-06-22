@@ -57,14 +57,21 @@
     <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('Delete this job record?');"><input type="hidden" name="action" value="sfm_delete_job_record"><input type="hidden" name="job_id" value="{$rj.id}"><button type="submit" class="btn btn-sm btn-outline-danger">Delete job record</button></form>
   </div>
   {if $rj.job_type == 'COLMAP_SPARSE'}
-    <div class="row g-2 mt-2">
+    <div class="border rounded p-2 mt-2 small bg-light-subtle">
+      <div class="fw-semibold">Sparse reconstruction components</div>
+      <div class="text-muted mb-2">Models are disconnected reconstruction components detected by COLMAP, not quality levels.</div>
       {foreach from=$rj.dense_model_ids item=mid}{assign var=modelStats value=$rj.sparse_model_stats[$mid]}
-        <div class="col-md-6"><div class="border rounded p-2 small">
-          <div class="fw-semibold">Model {$mid} {if $rj.sparse_model_selection[$mid]}<span class="badge {$rj.sparse_model_selection[$mid].class|escape}">{$rj.sparse_model_selection[$mid].label|escape}</span>{/if}</div><div>Registered images: {$modelStats.registered_images|default:0}</div><div>Points: {$modelStats.points3D|default:0}</div><div>Status: {if $modelStats.preview_enabled}Suitable for Preview/HQ{else}Too few images{/if}</div>
-          <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_preview_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.preview_enabled} disabled{/if}>Run Preview</button></form>
-          <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_hq_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.hq_enabled} disabled{/if}>Run High quality</button></form>
-          <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_export_ply_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary">Export PLY</button></form>
-        </div></div>
+        <div class="border rounded p-2 mb-2 bg-white">
+          <div class="fw-semibold">Model {$mid}</div>
+          <div>Registered images: {$modelStats.registered_images|default:0}</div>
+          <div>Sparse points: {$modelStats.points3D|default:0|number_format:0:'.':','}</div>
+          <div>{if $rj.sparse_model_selection[$mid] && $rj.sparse_model_selection[$mid].label != 'Not selected'}Used by: {$rj.sparse_model_selection[$mid].label|replace:'Selected for ':''|escape}{else}Not used{/if}</div>
+          <div class="d-flex gap-1 flex-wrap mt-1">
+            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_preview_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.preview_enabled} disabled{/if}>Run Preview</button></form>
+            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_hq_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.hq_enabled} disabled{/if}>Run High quality</button></form>
+            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_export_ply_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-success">Download sparse PLY</button></form>
+          </div>
+        </div>
       {/foreach}
     </div>
   {/if}
