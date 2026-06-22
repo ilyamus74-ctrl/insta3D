@@ -794,12 +794,22 @@ function orchestrate_reconstruction_parents(mysqli $db): void
 
                 if($pipelineRunId>0){ pipeline_log($pipelineRunId,'INFO','MERGE','Done vertices='.$verticesTotal); sfm_pipeline_update($db,$pipelineRunId,'RUNNING','MESH',88,'Mesh generation queued',['dense_points'=>$verticesTotal]); }
                 set_job(
-                    $db,
-                    $pid,
-                    'DONE',
-                    100,
-                    $message
-                );
+    $db,
+    $pid,
+    'DONE',
+    100,
+    $message
+);
+
+$completedParent = $p;
+$completedParent['status'] = 'DONE';
+$completedParent['progress_percent'] = 100;
+$completedParent['message'] = $message;
+
+auto_chain_after_done(
+    $db,
+    $completedParent
+);
             } else {
                 $message = $output !== ''
                     ? $output
