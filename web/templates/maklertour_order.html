@@ -718,9 +718,11 @@ setInterval(pollSfmRemoteJobs,4000); pollSfmRemoteJobs();
 {/literal}
 {include file="maklertour_footer.html"}
 
+{literal}
 <script>
 document.querySelectorAll('[data-pipeline-log-url]').forEach((el)=>{
   const load=()=>fetch(el.dataset.pipelineLogUrl).then(r=>r.text()).then(t=>{el.textContent=t; el.scrollTop=el.scrollHeight;}).catch(()=>{});
   load(); setInterval(load,5000);
 });
 </script>
+{/literal}

@@ -182,7 +182,7 @@ function db_delete_or_soft_session_rows(mysqli $dbcnx,string $table,array $where
 
 ensure_sfm_remote_jobs_table($dbcnx);
 ensure_sfm_remote_jobs_chunk_columns($dbcnx);
-ensure_sfm_pipeline_tables($dbcnx);
+//ensure_sfm_pipeline_tables($dbcnx);
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
  $action=$_POST['action']??'';
