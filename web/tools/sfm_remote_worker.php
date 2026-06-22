@@ -55,7 +55,7 @@ function ply_vertex_count(string $path): ?int
 
 function ply_header_info(string $path): array
 {
-    $info = ['ok' => false, 'vertices' => 0, 'normals' => false];
+    $info = ['ok' => false, 'vertices' => 0, 'faces' => 0, 'normals' => false];
     if (!is_file($path) || !is_readable($path) || filesize($path) <= 100) { return $info; }
     $fh = @fopen($path, 'rb');
     if (!$fh) { return $info; }
@@ -65,6 +65,7 @@ function ply_header_info(string $path): array
     while (($line = fgets($fh)) !== false) {
         $line = trim($line);
         if (preg_match('/^element\s+vertex\s+(\d+)$/', $line, $m)) { $info['vertices'] = (int)$m[1]; }
+        if (preg_match('/^element\s+face\s+(\d+)$/', $line, $m)) { $info['faces'] = (int)$m[1]; }
         if (preg_match('/^property\s+\S+\s+(nx|ny|nz)$/', $line, $m)) { $props[] = $m[1]; }
         if ($line === 'end_header') { $info['ok'] = true; break; }
     }
@@ -588,6 +589,22 @@ function sync_running_jobs(mysqli $db): void
         $progress = (int)($json['progress_percent'] ?? $json['progress'] ?? $job['progress_percent'] ?? 0);
         $message = (string)($json['message'] ?? $raw);
         if ($remoteStatus === 'DONE') {
+            if ($type === 'COLMAP_MESH') {
+                $remoteMesh = '/home/makler_storage/output/job_' . $remote . '/mesh/mesh_final.ply';
+                try { run_command([SFM_REMOTE_BASE . '/fetch_job_result.sh', SFM_REMOTE_CONF, (string)$remote, SFM_REMOTE_OUTPUT]); } catch (Throwable $e) {}
+                $localMesh = remote_output_dir($remote) . '/mesh/mesh_final.ply';
+                $meshInfo = ply_header_info($localMesh);
+                if (!$meshInfo['ok'] || (int)$meshInfo['vertices'] <= 0 || (int)$meshInfo['faces'] <= 0) {
+                    set_job($db, $id, 'ERROR', $progress, 'Remote mesh DONE but mesh_final.ply is invalid or missing');
+                    continue;
+                }
+                $resultPath = remote_output_dir($remote) . '/mesh/mesh_result.json';
+                $rd = is_file($resultPath) ? (json_decode((string)file_get_contents($resultPath), true) ?: []) : [];
+                $engine = strtoupper((string)($rd['engine'] ?? 'COLMAP')) === 'OPEN3D' ? 'Open3D' : 'COLMAP';
+                set_job($db, $id, 'DONE', 100, 'Mesh generated with ' . $engine . ': ' . (int)$meshInfo['vertices'] . ' vertices, ' . (int)$meshInfo['faces'] . ' faces');
+                auto_chain_after_done($db, $job);
+                continue;
+            }
             worker_log("running fetch command for job id={$id} type={$type} remote_job_id={$remote}");
             try {
                 [$fetchCode, $fetchOut, $fetchCmd] = run_command([

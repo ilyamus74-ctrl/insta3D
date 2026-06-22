@@ -68,12 +68,12 @@ $file=(string)($_GET['file'] ?? '');
 if($file!==''){
   $path=null; $ctype='text/plain; charset=utf-8'; $download=false; $downloadName=null;
   if($file==='status'){$path=$base.'/status.json'; $ctype='application/json; charset=utf-8';}
-  elseif($file==='result'){$path=$base.'/result.json'; $ctype='application/json; charset=utf-8';}
-  elseif($file==='logs'){ header('Content-Type: text/plain; charset=utf-8'); foreach(glob($base.'/logs/*.log') ?: [] as $lf){ $rl=realpath($lf); if($rl && (realpath($base)===false || strpos($rl,realpath($base).'/')===0)){ echo "===== ".basename($lf)." =====\n".srj_tail($rl,100)."\n"; } } exit; }
+  elseif($file==='result'){$path=((string)($job['job_type'] ?? '') === 'COLMAP_MESH') ? $base.'/mesh/mesh_result.json' : $base.'/result.json'; $ctype='application/json; charset=utf-8';}
+  elseif($file==='logs'){ header('Content-Type: text/plain; charset=utf-8'); $logGlob=((string)($job['job_type'] ?? '') === 'COLMAP_MESH') ? $base.'/mesh/logs/*.log' : $base.'/logs/*.log'; foreach(glob($logGlob) ?: [] as $lf){ $rl=realpath($lf); if($rl && (realpath($base)===false || strpos($rl,realpath($base).'/')===0)){ echo "===== ".basename($lf)." =====\n".srj_tail($rl,100)."\n"; } } exit; }
   elseif($file==='ply') {
     if ((string)($job['job_type'] ?? '') === 'COLMAP_DENSE') { $path=$base.'/dense/fused.ply'; $downloadName='job_'.$remote.'_dense_fused.ply'; }
     elseif (in_array((string)($job['job_type'] ?? ''), ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) { $path=$base.'/merged/merged_fused.ply'; $downloadName='job_'.$remote.'_merged_fused.ply'; }
-    elseif ((string)($job['job_type'] ?? '') === 'COLMAP_MESH') { $which=(string)($_GET['mesh'] ?? 'cleaned'); $name=$which==='poisson'?'mesh_poisson.ply':'mesh_cleaned.ply'; $path=$base.'/mesh/'.$name; $downloadName='job_'.$remote.'_'.$name; }
+    elseif ((string)($job['job_type'] ?? '') === 'COLMAP_MESH') { $path=$base.'/mesh/mesh_final.ply'; $downloadName='job_'.$remote.'_mesh_final.ply'; }
     elseif ((string)($job['job_type'] ?? '') !== 'EXPORT_PLY') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
     else {
     $parent=(int)($job['parent_remote_job_id'] ?? 0); $out=(string)($job['output_path'] ?? ''); $model=0;
@@ -95,4 +95,4 @@ if(is_file($statusPath)){
 $job['status']=(string)($job['status'] ?? 'UNKNOWN');
 $job['progress_percent']=(int)($job['progress_percent'] ?? 0);
 $job['message']=(string)($job['message'] ?? '');
-srj_json(['ok'=>true,'job'=>$job,'remote_status'=>$statusJson,'files'=>['status'=>is_file($base.'/status.json'),'result'=>is_file($base.'/result.json'),'logs'=>(bool)(glob($base.'/logs/*.log') ?: []),'ply'=>is_file($base.'/dense/fused.ply') || (bool)(glob($base.'/*.ply') ?: [])]]);
+srj_json(['ok'=>true,'job'=>$job,'remote_status'=>$statusJson,'files'=>['status'=>is_file($base.'/status.json'),'result'=>is_file($base.'/result.json'),'logs'=>(bool)(glob($base.'/logs/*.log') ?: []),'ply'=>is_file($base.'/mesh/mesh_final.ply') || is_file($base.'/dense/fused.ply') || (bool)(glob($base.'/*.ply') ?: [])]]);

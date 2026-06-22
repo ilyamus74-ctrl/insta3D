@@ -4,6 +4,15 @@
       <div><strong>{$rj.ui_title|default:$rj.job_type|escape}</strong> — <span data-job-field="status">{$rj.status|escape}</span> — <span data-job-field="progress">{$rj.progress_percent|default:0}</span>%</div>
       <div class="small text-muted">Job ID: {$rj.remote_job_id|escape}{if $rj.parent_remote_job_id} · Parent/Sparse job: {$rj.parent_remote_job_id|escape}{/if}{if $rj.reconstruction_mode} · Mode: {$rj.reconstruction_mode|escape}{/if}{if $rj.chunk_index ne null} · Chunk: {$rj.chunk_index|escape}{/if}</div>
       <div class="small text-muted" data-job-field="message">{$rj.message|default:''|escape}</div>
+      {if $rj.job_type == 'COLMAP_MESH' && $rj.status == 'DONE'}
+        <div class="small mt-1">
+          <span class="badge bg-info text-dark">Engine: {if $rj.mesh_engine|lower == 'open3d'}Open3D{else}COLMAP{/if}</span>
+          {if $rj.mesh_fallback}<span class="badge bg-warning text-dark">Open3D fallback</span>{/if}
+          <span class="ms-1">Vertices: {$rj.mesh_vertices|default:'-'|escape}</span>
+          <span class="ms-1">Faces: {$rj.mesh_faces|default:'-'|escape}</span>
+          <span class="ms-1">Mode: {$rj.mesh_mode|default:$rj.reconstruction_mode|capitalize|escape}</span>
+        </div>
+      {/if}
       <div class="small">updated: <span data-job-field="updated">{$rj.updated_at|default:'-'|escape}</span></div>
     </div>
     <span class="badge {$rj.ui_progress_class|regex_replace:'/ progress-bar[^ ]*/':''|escape}">{$rj.status|escape}</span>
@@ -27,7 +36,7 @@
       <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_generate_mesh_preview_web"><input type="hidden" name="parent_remote_job_id" value="{$rj.remote_job_id}"><button type="submit" class="btn btn-sm btn-outline-primary">Generate preview mesh</button></form>
       <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_generate_mesh_hq_web"><input type="hidden" name="parent_remote_job_id" value="{$rj.remote_job_id}"><button type="submit" class="btn btn-sm btn-outline-primary">Generate HQ mesh</button></form>
     {/if}
-    {if $rj.job_type == 'COLMAP_MESH' && $rj.status == 'DONE'}<a class="btn btn-sm btn-outline-success" href="{$rj.mesh_poisson_url|escape}" target="_blank">Download Poisson mesh</a><a class="btn btn-sm btn-outline-success" href="{$rj.mesh_cleaned_url|escape}" target="_blank">Download cleaned mesh</a>{/if}
+    {if $rj.job_type == 'COLMAP_MESH' && $rj.status == 'DONE'}<a class="btn btn-sm btn-outline-success" href="{$rj.mesh_final_url|escape}" target="_blank">Download mesh PLY</a>{/if}
     {if $rj.job_type == 'EXTRACT_FRAMES'}<form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_colmap_sparse_web"><input type="hidden" name="capture_session_id" value="{$s.id}"><input type="hidden" name="extract_job_id" value="{$rj.remote_job_id}"><button type="submit" class="btn btn-sm btn-outline-primary">Run COLMAP sparse</button></form>{/if}
     {if $rj.job_type == 'COLMAP_SPARSE'}
       <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_preview_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="best_model" value="1"><button type="submit" class="btn btn-sm btn-outline-primary">Run Preview best model</button></form>
