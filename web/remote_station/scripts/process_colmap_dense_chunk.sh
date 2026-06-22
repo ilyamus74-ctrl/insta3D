@@ -98,6 +98,22 @@ python3 "$(dirname "$0")/filter_patch_match_cfg.py" \
   --max-sources "$SRC" \
   --stats-json "$LOG_DIR/patch_match_filter_stats.json" \
   > "$LOG_DIR/patch_match_filter.log" 2>&1
+
+CFG_LINES=$(grep -cve '^[[:space:]]*$' \
+  "$UNDISTORTED_DIR/stereo/patch-match.cfg" || true)
+
+if (( CFG_LINES < 4 || CFG_LINES % 2 != 0 )); then
+    status ERROR 0 \
+      "Invalid filtered patch-match.cfg: ${CFG_LINES} non-empty lines"
+
+    result ERROR 2 \
+      "Invalid filtered patch-match.cfg: ${CFG_LINES} non-empty lines" \
+      PATCH_MATCH_CONFIG \
+      "$LOG_DIR/patch_match_filter.log"
+
+    exit 2
+fi
+
 status RUNNING 45 "PatchMatch chunk $CHUNK_ID"
 set +e
 run_colmap patch_match_stereo \
