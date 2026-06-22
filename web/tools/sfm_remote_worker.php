@@ -590,16 +590,37 @@ function sync_running_jobs(mysqli $db): void
         $message = (string)($json['message'] ?? $raw);
         if ($remoteStatus === 'DONE') {
             if ($type === 'COLMAP_MESH') {
-                $remoteMesh = '/home/makler_storage/output/job_' . $remote . '/mesh/mesh_final.ply';
-                try { run_command([SFM_REMOTE_BASE . '/fetch_job_result.sh', SFM_REMOTE_CONF, (string)$remote, SFM_REMOTE_OUTPUT]); } catch (Throwable $e) {}
+                worker_log("running mesh fetch command for job id={$id} type={$type} remote_job_id={$remote}");
+                try {
+                    [$fetchCode, $fetchOut, $fetchCmd] = run_command([
+                        SFM_REMOTE_BASE . '/fetch_job_result.sh',
+                        SFM_REMOTE_CONF,
+                        (string)$remote,
+                        SFM_REMOTE_OUTPUT,
+                    ]);
+                } catch (Throwable $e) {
+                    set_job($db, $id, 'ERROR', $progress, 'Remote mesh DONE but fetch_job_result.sh failed: ' . $e->getMessage());
+                    worker_log("ERROR mesh fetch id={$id} remote={$remote}: " . $e->getMessage());
+                    continue;
+                }
+                if ($fetchCode !== 0) {
+                    set_job($db, $id, 'ERROR', $progress, 'Remote mesh DONE but fetch_job_result.sh failed: ' . format_command_failure($fetchCmd, $fetchCode, $fetchOut));
+                    continue;
+                }
+
+                $localDir = remote_output_dir($remote);
+                $resultPath = $localDir . '/mesh/mesh_result.json';
                 $localMesh = remote_output_dir($remote) . '/mesh/mesh_final.ply';
+                if (!is_file($resultPath) || !is_readable($resultPath)) {
+                    set_job($db, $id, 'ERROR', $progress, 'Remote mesh DONE but mesh_result.json is missing after fetch');
+                    continue;
+                }
                 $meshInfo = ply_header_info($localMesh);
                 if (!$meshInfo['ok'] || (int)$meshInfo['vertices'] <= 0 || (int)$meshInfo['faces'] <= 0) {
                     set_job($db, $id, 'ERROR', $progress, 'Remote mesh DONE but mesh_final.ply is invalid or missing');
                     continue;
                 }
-                $resultPath = remote_output_dir($remote) . '/mesh/mesh_result.json';
-                $rd = is_file($resultPath) ? (json_decode((string)file_get_contents($resultPath), true) ?: []) : [];
+                $rd = json_decode((string)file_get_contents($resultPath), true) ?: [];
                 $engine = strtoupper((string)($rd['engine'] ?? 'COLMAP')) === 'OPEN3D' ? 'Open3D' : 'COLMAP';
                 set_job($db, $id, 'DONE', 100, 'Mesh generated with ' . $engine . ': ' . (int)$meshInfo['vertices'] . ' vertices, ' . (int)$meshInfo['faces'] . ' faces');
                 auto_chain_after_done($db, $job);

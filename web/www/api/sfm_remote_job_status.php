@@ -22,7 +22,7 @@ function srj_send_ply_file(string $path, string $base, string $downloadName): vo
 
   $rp = realpath($path);
   $rb = realpath($base);
-  if (!$rp || ($rb && strpos($rp, $rb . '/') !== 0)) {
+  if (!$rp || !$rb || ($rp !== $rb && strpos($rp, $rb . '/') !== 0)) {
     http_response_code(403);
     header('Content-Type: text/plain; charset=utf-8');
     exit('forbidden');
@@ -73,7 +73,10 @@ if($file!==''){
   elseif($file==='ply') {
     if ((string)($job['job_type'] ?? '') === 'COLMAP_DENSE') { $path=$base.'/dense/fused.ply'; $downloadName='job_'.$remote.'_dense_fused.ply'; }
     elseif (in_array((string)($job['job_type'] ?? ''), ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) { $path=$base.'/merged/merged_fused.ply'; $downloadName='job_'.$remote.'_merged_fused.ply'; }
-    elseif ((string)($job['job_type'] ?? '') === 'COLMAP_MESH') { $path=$base.'/mesh/mesh_final.ply'; $downloadName='job_'.$remote.'_mesh_final.ply'; }
+    elseif ((string)($job['job_type'] ?? '') === 'COLMAP_MESH') {
+      if ((string)($job['status'] ?? '') !== 'DONE') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_ready'; exit; }
+      $path=$base.'/mesh/mesh_final.ply'; $downloadName='job_'.$remote.'_mesh_final.ply'; $base='/home/makler/web/remote_station/output';
+    }
     elseif ((string)($job['job_type'] ?? '') !== 'EXPORT_PLY') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
     else {
     $parent=(int)($job['parent_remote_job_id'] ?? 0); $out=(string)($job['output_path'] ?? ''); $model=0;
