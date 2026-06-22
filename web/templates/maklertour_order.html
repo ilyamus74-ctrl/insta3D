@@ -729,7 +729,7 @@ document.querySelectorAll('[data-pipeline-log-url]').forEach((el)=>{
   const load=()=>fetch(el.dataset.pipelineLogUrl).then(r=>r.text()).then(t=>{el.textContent=t; el.scrollTop=el.scrollHeight;}).catch(()=>{});
   load(); setInterval(load,5000);
 });
-}
+
 
 function pipelineBadgeClass(status) {
   const s = String(status || '').toUpperCase();
