@@ -286,15 +286,152 @@ function auto_chain_after_done(mysqli $db, array $job): void
 
 function pipeline_run_for_job(array $job): int { return (int)($job['pipeline_run_id'] ?? 0); }
 function pipeline_job_log(mysqli $db, array $job, string $level, string $stage, string $message): void { $pid=pipeline_run_for_job($job); if($pid>0){ pipeline_log($pid,$level,$stage,$message); } }
-function sfm_sparse_stats_worker(int $sparseJobId, int $modelId): array {
-    $dir=remote_output_dir($sparseJobId).'/colmap/sparse/'.$modelId;
-    $images=0; $points=0;
-    $imagesTxt=$dir.'/images.txt'; if(is_file($imagesTxt)){ foreach(file($imagesTxt, FILE_IGNORE_NEW_LINES) ?: [] as $line){ $line=trim($line); if($line!=='' && $line[0]!=='#'){$images++;} } $images=(int)floor($images/2); }
-    $pointsTxt=$dir.'/points3D.txt'; if(is_file($pointsTxt)){ foreach(file($pointsTxt, FILE_IGNORE_NEW_LINES) ?: [] as $line){ $line=trim($line); if($line!=='' && $line[0]!=='#'){$points++;} } }
-    $result=remote_output_dir($sparseJobId).'/result.json'; $data=is_file($result)?(json_decode((string)file_get_contents($result), true) ?: []):[];
-    if($images===0){ $images=(int)($data['registered_images_by_model'][$modelId] ?? $data['registered_images'] ?? 0); }
-    if($points===0){ $points=(int)($data['points_by_model'][$modelId] ?? $data['points3D'] ?? $data['points'] ?? 0); }
-    return ['model_id'=>$modelId,'registered_images'=>$images,'points'=>$points];
+
+function sfm_read_uint64_le_worker($fh): ?int
+{
+    $bytes = fread($fh, 8);
+
+    if ($bytes === false || strlen($bytes) !== 8) {
+        return null;
+    }
+
+    $parts = unpack('Vlo/Vhi', $bytes);
+
+    if (!is_array($parts)) {
+        return null;
+    }
+
+    return (int)(
+        (int)$parts['lo'] +
+        (int)$parts['hi'] * 4294967296
+    );
+}
+
+function sfm_count_colmap_bin_worker(string $path): int
+{
+    $fh = @fopen($path, 'rb');
+
+    if (!$fh) {
+        return 0;
+    }
+
+    $count = sfm_read_uint64_le_worker($fh);
+    fclose($fh);
+
+    return max(0, (int)($count ?? 0));
+}
+
+function sfm_sparse_stats_worker(
+    int $sparseJobId,
+    int $modelId
+): array {
+    $dir = remote_output_dir($sparseJobId) .
+        '/colmap/sparse/' .
+        $modelId;
+
+    $images = 0;
+    $points = 0;
+
+    $imagesTxt = $dir . '/images.txt';
+
+    if (is_file($imagesTxt)) {
+        foreach (
+            file($imagesTxt, FILE_IGNORE_NEW_LINES) ?: []
+            as $line
+        ) {
+            $line = trim($line);
+
+            if ($line !== '' && $line[0] !== '#') {
+                $images++;
+            }
+        }
+
+        $images = (int)floor($images / 2);
+    }
+
+    $pointsTxt = $dir . '/points3D.txt';
+
+    if (is_file($pointsTxt)) {
+        foreach (
+            file($pointsTxt, FILE_IGNORE_NEW_LINES) ?: []
+            as $line
+        ) {
+            $line = trim($line);
+
+            if ($line !== '' && $line[0] !== '#') {
+                $points++;
+            }
+        }
+    }
+
+    if ($images <= 0) {
+        $images = sfm_count_colmap_bin_worker(
+            $dir . '/images.bin'
+        );
+    }
+
+    if ($points <= 0) {
+        $points = sfm_count_colmap_bin_worker(
+            $dir . '/points3D.bin'
+        );
+    }
+
+    $resultPaths = [
+        remote_output_dir($sparseJobId) . '/colmap/result.json',
+        remote_output_dir($sparseJobId) . '/result.json',
+    ];
+
+    $data = [];
+
+    foreach ($resultPaths as $resultPath) {
+        if (!is_file($resultPath)) {
+            continue;
+        }
+
+        $decoded = json_decode(
+            (string)file_get_contents($resultPath),
+            true
+        );
+
+        if (is_array($decoded)) {
+            $data = $decoded;
+            break;
+        }
+    }
+
+    if ($images <= 0) {
+        $images = (int)(
+            $data['registered_images_by_model'][$modelId]
+            ?? $data['models'][$modelId]['registered_images']
+            ?? $data['registered_images']
+            ?? 0
+        );
+    }
+
+    if ($points <= 0) {
+        $points = (int)(
+            $data['points_by_model'][$modelId]
+            ?? $data['models'][$modelId]['points']
+            ?? $data['models'][$modelId]['points3D']
+            ?? $data['points3D']
+            ?? $data['points']
+            ?? 0
+        );
+    }
+
+    worker_log(
+        'sparse model stats' .
+        ' sparse_job_id=' . $sparseJobId .
+        ' model_id=' . $modelId .
+        ' images=' . $images .
+        ' points=' . $points
+    );
+
+    return [
+        'model_id' => $modelId,
+        'registered_images' => $images,
+        'points' => $points,
+    ];
 }
 function sfm_pipeline_best_sparse_model_worker(int $sparseJobId): array {
     $best=['model_id'=>0,'registered_images'=>0,'points'=>0,'score'=>-1];
