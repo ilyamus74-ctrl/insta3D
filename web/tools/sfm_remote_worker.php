@@ -483,7 +483,7 @@ function launch_job(mysqli $db, array $job): void
     }
     if ($code !== 0) {
         set_job($db, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), format_command_failure($cmd, $code, $output));
-        worker_log("ERROR launch {$type} id={$id} remote={$remoteJobId} exit={$code}");
+        worker_log("ERROR launch {$type} id={$id} remote={$remoteJobId}: " . format_command_failure($cmd, $code, $output));
         return;
     }
     if ($type === 'EXPORT_PLY') {
@@ -521,9 +521,12 @@ function orchestrate_reconstruction_parents(mysqli $db): void
         if($failed && (int)($failed['retry_count'] ?? 0) <= 0){
             $failedParams=json_decode((string)($failed['parameters_json'] ?? '{}'), true) ?: []; $failedIdx=(int)($failed['chunk_index'] ?? 0);
             $src=(string)($failedParams['image_list_path'] ?? ($chunks[$failedIdx]['image_list_path'] ?? '')); $retryList=preg_replace('/\.txt$/','_retry1.txt',$src);
-            $lines=is_file($src)?array_values(array_filter(array_map('trim', file($src)))):[]; $keep=max(20,(int)floor(count($lines)*0.75)); if(count($lines)>0){ file_put_contents($retryList, implode("\n", array_slice($lines,0,min($keep,count($lines)))) . "\n"); }
+            if ($retryList === null || $retryList === '') { $retryList = $src . '_retry1.txt'; }
+            $retryCmd=[SFM_REMOTE_BASE.'/create_retry_image_list.sh', SFM_REMOTE_CONF, $src, $retryList, '0.75', '3']; [$retryCode,$retryOutput,$retryShellCmd]=run_command($retryCmd);
+            if($retryCode !== 0){ $err='Failed to create remote retry image list: '.format_command_failure($retryShellCmd,$retryCode,$retryOutput); worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
+            worker_log("created retry image list for parent_remote_job_id={$parentRemote} chunk_index={$failedIdx}: " . $retryOutput);
             $oldId=(int)$failed['id']; $db->query('UPDATE sfm_remote_jobs SET retry_count=1 WHERE id=' . $oldId);
-            $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='retry chunk queued after OOM/error'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$retryList ?: $src], JSON_UNESCAPED_SLASHES);
+            $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='retry chunk queued after OOM/error'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$retryList], JSON_UNESCAPED_SLASHES);
             $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,retry_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?,?)"); $retry=1; $orderId=(int)$p['order_id']; $sessionId=(int)$p['capture_session_id'];
             if(!$st){ $err='SQL prepare failed while queuing retry dense chunk: '.$db->error; worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
             if(!$st->bind_param('iisiissiiis',$orderId,$sessionId,$jt,$rid,$parentRemote,$msg,$mode,$failedIdx,$total,$retry,$pj)){ $err='SQL bind_param failed while queuing retry dense chunk: '.$st->error; worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); $st->close(); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
