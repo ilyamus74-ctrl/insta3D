@@ -2,8 +2,17 @@
   <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
     <div>
       <div><strong>{$rj.ui_title|default:$rj.job_type|escape}</strong> — <span data-job-field="status">{$rj.status|escape}</span> — <span data-job-field="progress">{$rj.progress_percent|default:0}</span>%</div>
-      <div class="small text-muted">Job ID: {$rj.remote_job_id|escape}{if $rj.parent_remote_job_id} · Parent/Sparse job: {$rj.parent_remote_job_id|escape}{/if}{if $rj.reconstruction_mode} · Mode: {$rj.reconstruction_mode|escape}{/if}{if $rj.chunk_index ne null} · Chunk: {$rj.chunk_index|escape}{/if}</div>
+      <div class="small text-muted">Job ID: {$rj.remote_job_id|escape}{if $rj.ui_model_id ne null} <span class="badge bg-primary">Model {$rj.ui_model_id|escape}</span>{/if}{if $rj.parent_remote_job_id} · Parent/Sparse job: {$rj.parent_remote_job_id|escape}{/if}{if $rj.reconstruction_mode} · Mode: {$rj.reconstruction_mode|escape}{/if}{if $rj.chunk_index ne null} · Chunk: {$rj.chunk_index|escape}{/if}</div>
       <div class="small text-muted" data-job-field="message">{$rj.message|default:''|escape}</div>
+      {if ($rj.job_type == 'COLMAP_RECONSTRUCTION_PREVIEW' || $rj.job_type == 'COLMAP_RECONSTRUCTION_HQ')}
+        <div class="small mt-1">
+          <span class="badge bg-info text-dark">Mode: {if $rj.job_type == 'COLMAP_RECONSTRUCTION_HQ'}HQ{else}Preview{/if}</span>
+          {if $rj.parent_remote_job_id}<span class="ms-1">Sparse parent job ID: {$rj.parent_remote_job_id|escape}</span>{/if}
+          {if $rj.ui_model_id ne null}<span class="ms-1">Model ID: {$rj.ui_model_id|escape}</span>{/if}
+          {if $rj.ui_sparse_stats.registered_images ne ''}<span class="ms-1">Registered images: {$rj.ui_sparse_stats.registered_images|escape}</span>{/if}
+          {if $rj.ui_sparse_stats.points3D ne ''}<span class="ms-1">Sparse points: {$rj.ui_sparse_stats.points3D|escape}</span>{/if}
+        </div>
+      {/if}
       {if $rj.job_type == 'COLMAP_MESH' && $rj.status == 'DONE'}
         <div class="small mt-1">
           <span class="badge bg-info text-dark">Engine: {if $rj.mesh_engine|lower == 'open3d'}Open3D fallback{elseif $rj.mesh_engine}{$rj.mesh_engine|escape}{else}Unknown{/if}</span>
@@ -16,14 +25,14 @@
       {/if}
       <div class="small">updated: <span data-job-field="updated">{$rj.updated_at|default:'-'|escape}</span></div>
     </div>
-    <span class="badge {$rj.ui_progress_class|regex_replace:'/ progress-bar[^ ]*/':''|escape}">{$rj.status|escape}</span>
+    <span class="badge {$rj.ui_progress_class|regex_replace:'/ progress-bar[^ ]*/':''|escape}" data-job-field="status_badge">{$rj.status|escape}</span>
   </div>
-  <div class="progress my-2"><div class="progress-bar {$rj.ui_progress_class|escape}" style="width: {$rj.progress_percent|default:0}%">{$rj.progress_percent|default:0}%</div></div>
+  <div class="progress my-2"><div class="progress-bar {$rj.ui_progress_class|escape}" data-job-field="progress_bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{$rj.progress_percent|default:0}" style="width: {$rj.progress_percent|default:0}%">{$rj.progress_percent|default:0}%</div></div>
   {if $rj.children|@count > 0}
     <div class="small fw-semibold mt-2">Dense / Mesh:</div>
     <div class="small mb-2">
       {foreach from=$rj.children item=ch}
-        <div>{if $ch.status == 'DONE'}✓{elseif $ch.status == 'RUNNING'}●{else}○{/if} {if $ch.job_type == 'COLMAP_MESH'}Mesh{else}Dense chunk {($ch.chunk_index|default:0)+1} of {$ch.chunk_count|default:($rj.children|@count)}{/if} — {$ch.status|escape}{if $ch.job_type == 'COLMAP_MESH'} — {if $ch.mesh_engine|lower == 'open3d'}Open3D{elseif $ch.mesh_engine}{$ch.mesh_engine|escape}{else}engine pending{/if}{if $ch.mesh_vertices || $ch.mesh_faces} — {$ch.mesh_vertices|default:'-'|escape} vertices / {$ch.mesh_faces|default:'-'|escape} faces{/if}{if $ch.mesh_fallback} — Fallback used: Open3D{/if}{else} — {$ch.progress_percent|default:0}%{/if} <span class="text-muted">Job ID: {$ch.remote_job_id|escape}</span>{if $ch.job_type == 'COLMAP_MESH' && $ch.ui_can_download_mesh} <a class="btn btn-sm btn-outline-success ms-1" href="{$ch.mesh_final_url|escape}" target="_blank">Download mesh PLY</a>{/if}</div>
+        <div>{if $ch.status == 'DONE'}✓{elseif $ch.status == 'RUNNING'}●{else}○{/if} {if $ch.job_type == 'COLMAP_MESH'}Mesh{else}Dense chunk {($ch.chunk_index|default:0)+1} of {$ch.chunk_count|default:($rj.children|@count)}{/if}{if $ch.ui_model_id ne null} — Model {$ch.ui_model_id|escape}{/if} — {$ch.status|escape}{if $ch.job_type == 'COLMAP_MESH'} — {if $ch.mesh_engine|lower == 'open3d'}Open3D{elseif $ch.mesh_engine}{$ch.mesh_engine|escape}{else}engine pending{/if}{if $ch.mesh_vertices || $ch.mesh_faces} — {$ch.mesh_vertices|default:'-'|escape} vertices / {$ch.mesh_faces|default:'-'|escape} faces{/if}{if $ch.mesh_fallback} — Fallback used: Open3D{/if}{else} — {$ch.progress_percent|default:0}%{/if} <span class="text-muted">Job ID: {$ch.remote_job_id|escape}</span>{if $ch.job_type == 'COLMAP_MESH' && $ch.ui_can_download_mesh} <a class="btn btn-sm btn-outline-success ms-1" href="{$ch.mesh_final_url|escape}" target="_blank">Download mesh PLY</a>{/if}</div>
       {/foreach}
     </div>
   {/if}
@@ -51,7 +60,7 @@
     <div class="row g-2 mt-2">
       {foreach from=$rj.dense_model_ids item=mid}{assign var=modelStats value=$rj.sparse_model_stats[$mid]}
         <div class="col-md-6"><div class="border rounded p-2 small">
-          <div class="fw-semibold">Model {$mid}</div><div>Registered images: {$modelStats.registered_images|default:0}</div><div>Points: {$modelStats.points3D|default:0}</div><div>Status: {if $modelStats.preview_enabled}Suitable for Preview/HQ{else}Too few images{/if}</div>
+          <div class="fw-semibold">Model {$mid} {if $rj.sparse_model_selection[$mid]}<span class="badge {$rj.sparse_model_selection[$mid].class|escape}">{$rj.sparse_model_selection[$mid].label|escape}</span>{/if}</div><div>Registered images: {$modelStats.registered_images|default:0}</div><div>Points: {$modelStats.points3D|default:0}</div><div>Status: {if $modelStats.preview_enabled}Suitable for Preview/HQ{else}Too few images{/if}</div>
           <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_preview_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.preview_enabled} disabled{/if}>Run Preview</button></form>
           <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_hq_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.hq_enabled} disabled{/if}>Run High quality</button></form>
           <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_export_ply_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary">Export PLY</button></form>

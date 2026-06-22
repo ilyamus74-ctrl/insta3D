@@ -259,7 +259,7 @@
   {else}
     ○
   {/if}
-  Mesh generati
+  Mesh generation
                     <div>{if $s.sfm_pipeline.overall_progress == 100}✓{else}○{/if} Result ready</div>
                   </div>
                 </div>
@@ -575,7 +575,20 @@ function refreshStationMetrics(){
   return fetch('/api/sfm_station_metrics.php').then(r=>r.json()).then(d=>{ document.querySelectorAll('[data-station-metrics]').forEach(el=>{ el.textContent=formatStationMetrics(d); }); });
 }
 document.querySelectorAll('[data-station-refresh]').forEach(btn=>btn.addEventListener('click',()=>refreshStationMetrics().catch(()=>{})));
-function hasRunningRemoteJob(){ return Array.from(document.querySelectorAll('[data-sfm-remote-job]')).some(el=>!['DONE','ERROR','FAILED'].includes((el.getAttribute('data-active-status')||'').toUpperCase())); }
+function sfmJobStatusClasses(status){
+  const s=String(status||'').toUpperCase();
+  if(s==='DONE') return {badge:'bg-success',bar:'bg-success'};
+  if(['ERROR','FAILED','ERROR_EMPTY'].includes(s)) return {badge:'bg-danger',bar:'bg-danger'};
+  if(['RUNNING','PLANNING','RUNNING_CHUNKS','MERGING'].includes(s)) return {badge:'bg-primary',bar:'bg-primary progress-bar-striped progress-bar-animated'};
+  return {badge:'bg-secondary',bar:'bg-secondary'};
+}
+function sfmSetClass(el, nextClass){
+  if(!el) return;
+  ['bg-success','bg-danger','bg-primary','bg-secondary','bg-info','progress-bar-striped','progress-bar-animated'].forEach(c=>el.classList.remove(c));
+  String(nextClass||'').split(/\s+/).filter(Boolean).forEach(c=>el.classList.add(c));
+}
+function sfmTerminalStatus(status){ return ['DONE','ERROR','FAILED','ERROR_EMPTY','CANCELLED'].includes(String(status||'').toUpperCase()); }
+function hasRunningRemoteJob(){ return Array.from(document.querySelectorAll('[data-sfm-remote-job]')).some(el=>!sfmTerminalStatus(el.getAttribute('data-active-status'))); }
 setInterval(()=>{ if(hasRunningRemoteJob()) refreshStationMetrics().catch(()=>{}); },4000); refreshStationMetrics().catch(()=>{});
 document.querySelectorAll('[data-job-file-url]').forEach(btn=>btn.addEventListener('click',()=>{
   const pre=document.getElementById(btn.getAttribute('data-job-file-target')); if(!pre) return;
@@ -586,14 +599,19 @@ document.querySelectorAll('[data-job-file-url]').forEach(btn=>btn.addEventListen
 function pollSfmRemoteJobs(){
   document.querySelectorAll('[data-sfm-remote-job]').forEach((el)=>{
     const status=(el.getAttribute('data-active-status')||'').toUpperCase();
-    if(['DONE','ERROR','FAILED'].includes(status)) return;
+    if(sfmTerminalStatus(status)) return;
     const id=el.getAttribute('data-sfm-remote-job');
     fetch('/api/sfm_remote_job_status.php?job_id='+encodeURIComponent(id)).then(r=>r.json()).then(d=>{
       if(!d.ok||!d.job) return;
       const j=d.job, s=String(j.status||'');
       el.setAttribute('data-active-status',s);
+      const progress=Math.max(0,Math.min(100,Number(j.progress_percent||0)));
       const st=el.querySelector('[data-job-field="status"]'); if(st) st.textContent=s;
-      const pr=el.querySelector('[data-job-field="progress"]'); if(pr) pr.textContent=j.progress_percent||0;
+      const pr=el.querySelector('[data-job-field="progress"]'); if(pr) pr.textContent=progress;
+      const pb=el.querySelector('[data-job-field="progress_bar"]'); if(pb){ pb.style.width=progress+'%'; pb.textContent=progress+'%'; pb.setAttribute('aria-valuenow',String(progress)); }
+      const classes=sfmJobStatusClasses(s);
+      sfmSetClass(pb,classes.bar);
+      const badge=el.querySelector('[data-job-field="status_badge"]'); if(badge){ badge.textContent=s; sfmSetClass(badge,classes.badge); }
       const msg=el.querySelector('[data-job-field="message"]'); if(msg) msg.textContent=j.message||'';
       const up=el.querySelector('[data-job-field="updated"]'); if(up) up.textContent=j.updated_at||'';
     }).catch(()=>{});

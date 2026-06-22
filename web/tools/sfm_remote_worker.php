@@ -525,8 +525,10 @@ function orchestrate_reconstruction_parents(mysqli $db): void
             $oldId=(int)$failed['id']; $db->query('UPDATE sfm_remote_jobs SET retry_count=1 WHERE id=' . $oldId);
             $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='retry chunk queued after OOM/error'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$retryList ?: $src], JSON_UNESCAPED_SLASHES);
             $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,retry_count,parameters_json) VALUES (?,?,?,?,?,'QUEUED',0,?,?,?,?,?,?)"); $retry=1; $orderId=(int)$p['order_id']; $sessionId=(int)$p['capture_session_id'];
-            $st->bind_param('iisiissiiis',$orderId,$sessionId,$jt,$rid,$parentRemote,$msg,$mode,$failedIdx,$total,$retry,$pj); $st->execute(); $st->close();
-            set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Retry queued for chunk {$failedIdx}"); continue;
+            if(!$st){ $err='SQL prepare failed while queuing retry dense chunk: '.$db->error; worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
+            if(!$st->bind_param('iisiissiiis',$orderId,$sessionId,$jt,$rid,$parentRemote,$msg,$mode,$failedIdx,$total,$retry,$pj)){ $err='SQL bind_param failed while queuing retry dense chunk: '.$st->error; worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); $st->close(); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
+            if(!$st->execute()){ $err='SQL execute failed while queuing retry dense chunk: '.$st->error; worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); $st->close(); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
+            $st->close(); set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Retry queued for chunk {$failedIdx}"); continue;
         } elseif($failed) { set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),'Chunk failed after retry; merge skipped'); continue; }
         if($done >= $total){
             $verticesTotal=0; for($i=0;$i<$total;$i++){ $verticesTotal+=chunk_result_vertices($parentRemote,$i); } if($verticesTotal<=0){ set_job($db,$pid,'ERROR',95,'Dense fusion produced zero vertices'); continue; }
