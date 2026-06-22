@@ -729,22 +729,136 @@ document.querySelectorAll('[data-pipeline-log-url]').forEach((el)=>{
   const load=()=>fetch(el.dataset.pipelineLogUrl).then(r=>r.text()).then(t=>{el.textContent=t; el.scrollTop=el.scrollHeight;}).catch(()=>{});
   load(); setInterval(load,5000);
 });
-function hasActivePipelineCard() {
-  return Array.from(
-    document.querySelectorAll('[data-pipeline-status]')
-  ).some((el) => {
-    const status = String(
-      el.dataset.pipelineStatus || ''
-    ).toUpperCase();
-
-    return status === 'QUEUED' || status === 'RUNNING';
-  });
 }
 
-if (hasActivePipelineCard()) {
-  setTimeout(() => {
-    window.location.reload();
-  }, 10000);
+function pipelineBadgeClass(status) {
+  const s = String(status || '').toUpperCase();
+
+  if (s === 'DONE') {
+    return 'bg-success';
+  }
+
+  if (s === 'ERROR') {
+    return 'bg-danger';
+  }
+
+  if (s === 'RUNNING' || s === 'QUEUED') {
+    return 'bg-primary';
+  }
+
+  return 'bg-secondary';
 }
+
+async function refreshPipelineCard(card) {
+  const runId = Number(card.dataset.pipelineRunId || 0);
+
+  if (!runId) {
+    return;
+  }
+
+  const response = await fetch(
+    `/api/sfm_pipeline_status.php?pipeline_run_id=${runId}&_=${Date.now()}`,
+    {
+      cache: 'no-store',
+      credentials: 'same-origin'
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || 'Pipeline status error');
+  }
+
+  const status = String(data.status || '').toUpperCase();
+  const progress = Math.max(
+    0,
+    Math.min(100, Number(data.progress_percent || 0))
+  );
+
+  const statusLabel = card.querySelector(
+    '[data-pipeline-status-label]'
+  );
+
+  const stage = card.querySelector(
+    '[data-pipeline-stage]'
+  );
+
+  const message = card.querySelector(
+    '[data-pipeline-message]'
+  );
+
+  const bar = card.querySelector(
+    '[data-pipeline-progress]'
+  );
+
+  if (statusLabel) {
+    statusLabel.textContent = status;
+
+    statusLabel.classList.remove(
+      'bg-success',
+      'bg-danger',
+      'bg-primary',
+      'bg-secondary'
+    );
+
+    statusLabel.classList.add(
+      pipelineBadgeClass(status)
+    );
+  }
+
+  if (stage) {
+    stage.textContent = data.stage || '';
+  }
+
+  if (message) {
+    message.textContent = data.message || '';
+  }
+
+  if (bar) {
+    bar.style.width = `${progress}%`;
+    bar.textContent = `${progress}%`;
+
+    const active =
+      status === 'RUNNING'
+      || status === 'QUEUED';
+
+    bar.classList.toggle(
+      'progress-bar-striped',
+      active
+    );
+
+    bar.classList.toggle(
+      'progress-bar-animated',
+      active
+    );
+  }
+
+  card.dataset.pipelineStatus = status;
+}
+
+function refreshPipelineCards() {
+  document
+    .querySelectorAll('[data-pipeline-card]')
+    .forEach((card) => {
+      const status = String(
+        card.dataset.pipelineStatus || ''
+      ).toUpperCase();
+
+      if (
+        status === 'RUNNING'
+        || status === 'QUEUED'
+      ) {
+        refreshPipelineCard(card).catch(() => {});
+      }
+    });
+}
+
+refreshPipelineCards();
+
+setInterval(
+  refreshPipelineCards,
+  4000
+);
 </script>
 {/literal}
