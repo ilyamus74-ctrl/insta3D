@@ -1,47 +1,190 @@
+
 #!/usr/bin/env python3
-import argparse, json, shutil
+
+import argparse
+import json
+import shutil
 from pathlib import Path
 
 
-def parse_blocks(text):
-    blocks=[]; cur=[]
-    for line in text.splitlines():
-        if line.strip()=='' and cur:
-            blocks.append(cur); cur=[]
-        elif line.strip()!='':
-            cur.append(line.rstrip('\n'))
-    if cur: blocks.append(cur)
-    return blocks
+def read_non_empty_lines(path: Path) -> list[str]:
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.strip()
+    ]
 
 
-def main():
-    ap=argparse.ArgumentParser(description='Filter COLMAP stereo/patch-match.cfg to images in current dense chunk')
-    ap.add_argument('cfg'); ap.add_argument('images_dir'); ap.add_argument('image_list')
-    ap.add_argument('--stats-json', default='')
-    args=ap.parse_args()
-    cfg=Path(args.cfg); images=Path(args.images_dir); image_list=Path(args.image_list)
-    allowed={p.name for p in images.iterdir() if p.is_file()} if images.is_dir() else set()
-    chunk={ln.strip() for ln in image_list.read_text().splitlines() if ln.strip()}
-    valid=allowed & chunk
-    if not cfg.exists():
-        stats={'blocks_before':0,'blocks_after':0,'removed_sources':0,'removed_blocks':0}
-        print(json.dumps(stats)); return 0
-    orig=cfg.with_name(cfg.name+'.original')
-    if not orig.exists(): shutil.copy2(cfg, orig)
-    blocks=parse_blocks(cfg.read_text())
-    out=[]; removed_sources=0; removed_blocks=0
-    for b in blocks:
-        ref=b[0].strip(); src=[x.strip() for x in b[1:] if x.strip()]
-        if ref not in valid:
-            removed_blocks += 1; removed_sources += len(src); continue
-        kept=[s for s in src if s in valid]
-        removed_sources += len(src)-len(kept)
-        if not kept:
-            removed_blocks += 1; continue
-        out.append([ref]+kept)
-    cfg.write_text('\n\n'.join('\n'.join(b) for b in out)+('\n' if out else ''))
-    stats={'blocks_before':len(blocks),'blocks_after':len(out),'removed_sources':removed_sources,'removed_blocks':removed_blocks}
-    if args.stats_json: Path(args.stats_json).write_text(json.dumps(stats, indent=2))
+def parse_source_line(line: str) -> list[str]:
+    return [
+        item.strip()
+        for item in line.split(",")
+        if item.strip()
+    ]
+
+
+def build_neighbour_sources(
+    reference: str,
+    ordered_images: list[str],
+    max_sources: int,
+) -> list[str]:
+    try:
+        index = ordered_images.index(reference)
+    except ValueError:
+        return []
+
+    result: list[str] = []
+
+    distance = 1
+    while len(result) < max_sources:
+        added = False
+
+        left = index - distance
+        right = index + distance
+
+        if left >= 0:
+            result.append(ordered_images[left])
+            added = True
+
+            if len(result) >= max_sources:
+                break
+
+        if right < len(ordered_images):
+            result.append(ordered_images[right])
+            added = True
+
+            if len(result) >= max_sources:
+                break
+
+        if not added:
+            break
+
+        distance += 1
+
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Filter COLMAP patch-match.cfg so every reference image and "
+            "source image belongs to the current dense chunk"
+        )
+    )
+
+    parser.add_argument("cfg")
+    parser.add_argument("images_dir")
+    parser.add_argument("image_list")
+    parser.add_argument("--stats-json", default="")
+    parser.add_argument("--max-sources", type=int, default=8)
+
+    args = parser.parse_args()
+
+    cfg_path = Path(args.cfg)
+    images_dir = Path(args.images_dir)
+    image_list_path = Path(args.image_list)
+
+    if not cfg_path.is_file():
+        raise RuntimeError(f"patch-match.cfg not found: {cfg_path}")
+
+    if not images_dir.is_dir():
+        raise RuntimeError(f"undistorted images directory not found: {images_dir}")
+
+    if not image_list_path.is_file():
+        raise RuntimeError(f"chunk image list not found: {image_list_path}")
+
+    existing_images = {
+        path.name
+        for path in images_dir.iterdir()
+        if path.is_file()
+    }
+
+    requested_images = read_non_empty_lines(image_list_path)
+
+    ordered_images = [
+        image
+        for image in requested_images
+        if image in existing_images
+    ]
+
+    if len(ordered_images) < 2:
+        raise RuntimeError(
+            f"Only {len(ordered_images)} usable images found in chunk"
+        )
+
+    original_path = cfg_path.with_name(cfg_path.name + ".original")
+
+    if not original_path.exists():
+        shutil.copy2(cfg_path, original_path)
+
+    original_lines = read_non_empty_lines(cfg_path)
+
+    original_pairs = 0
+    original_sources = 0
+
+    for index in range(0, len(original_lines) - 1, 2):
+        original_pairs += 1
+        original_sources += len(parse_source_line(original_lines[index + 1]))
+
+    output_lines: list[str] = []
+    generated_sources = 0
+    removed_references = 0
+
+    for reference in ordered_images:
+        sources = build_neighbour_sources(
+            reference=reference,
+            ordered_images=ordered_images,
+            max_sources=max(1, args.max_sources),
+        )
+
+        sources = [
+            source
+            for source in sources
+            if source != reference and source in existing_images
+        ]
+
+        if not sources:
+            removed_references += 1
+            continue
+
+        output_lines.append(reference)
+        output_lines.append(", ".join(sources))
+        generated_sources += len(sources)
+
+    if not output_lines:
+        raise RuntimeError(
+            "Generated patch-match.cfg contains no usable reference/source pairs"
+        )
+
+    cfg_path.write_text(
+        "\n".join(output_lines) + "\n",
+        encoding="utf-8",
+    )
+
+    stats = {
+        "original_pairs": original_pairs,
+        "original_sources": original_sources,
+        "chunk_requested_images": len(requested_images),
+        "chunk_existing_images": len(ordered_images),
+        "generated_pairs": len(output_lines) // 2,
+        "generated_sources": generated_sources,
+        "removed_references": removed_references,
+        "max_sources": max(1, args.max_sources),
+        "config_path": str(cfg_path),
+    }
+
+    if args.stats_json:
+        stats_path = Path(args.stats_json)
+        stats_path.parent.mkdir(parents=True, exist_ok=True)
+        stats_path.write_text(
+            json.dumps(stats, indent=2),
+            encoding="utf-8",
+        )
+
     print(json.dumps(stats))
+
     return 0
-if __name__=='__main__': raise SystemExit(main())
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
