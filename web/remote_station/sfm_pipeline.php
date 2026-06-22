@@ -49,7 +49,15 @@ function ensure_sfm_pipeline_tables(mysqli $db): void
         INDEX idx_pipeline_status (status),
         INDEX idx_pipeline_mode (capture_session_id, pipeline_mode)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
-    if (!$db->query($sql)) { throw new RuntimeException('failed to ensure sfm_pipeline_runs: ' . $db->error); }
+
+if (!$db->query($sql)) {
+    error_log(
+        'failed to ensure sfm_pipeline_runs: ' .
+        $db->error
+    );
+    return;
+}
+
     $res = $db->query("SHOW COLUMNS FROM sfm_remote_jobs LIKE 'pipeline_run_id'");
     $exists = $res && $res->num_rows > 0; if ($res) { $res->close(); }
     if (!$exists) { @$db->query("ALTER TABLE sfm_remote_jobs ADD COLUMN pipeline_run_id BIGINT UNSIGNED NULL AFTER capture_session_id, ADD INDEX idx_sfm_pipeline_run_id (pipeline_run_id)"); }

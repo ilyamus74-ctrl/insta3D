@@ -17,4 +17,3 @@ if($dbcnx->connect_error){
 
 
 ?>
-
