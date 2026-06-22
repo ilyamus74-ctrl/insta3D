@@ -625,9 +625,12 @@ function sync_running_jobs(mysqli $db): void
             } else {
                 set_job($db, $id, 'ERROR', $progress, $fetchMessage);
             }
-        } elseif ($remoteStatus === 'ERROR' || $remoteStatus === 'FAILED') {
-            set_job($db, $id, 'ERROR', $progress, $message);
-        } else {
+    } elseif (
+         $remoteStatus === 'FAILED'
+         || str_starts_with($remoteStatus, 'ERROR')
+    ) {
+         set_job($db, $id, 'ERROR', $progress, $message);
+    } else {
             set_job($db, $id, 'RUNNING', $progress, $message);
         }
     }
