@@ -1,17 +1,56 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $# -ne 8 ]]; then echo "Usage: $0 ./stations.conf <job_id> <parent_job_id> <sparse_job_id> <model_id> <chunk_id> <image_list_path> <mode>" >&2; exit 1; fi
-CONFIG="$1"; shift; source "$CONFIG"
-: "${STATION_HOST:?}"; : "${STATION_USER:?}"; : "${STATION_SSH_KEY:?}"; : "${STATION_BASE:?}"
-SSH=(ssh -i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new "${STATION_USER}@${STATION_HOST}")
+
+if [[ $# -ne 8 ]]; then
+  echo "Usage: $0 ./stations.conf <job_id> <parent_job_id> <sparse_job_id> <model_id> <chunk_id> <image_list_path> <mode>" >&2
+  exit 1
+fi
+
+CONFIG="$1"
+shift
+
+source "$CONFIG"
+
+: "${STATION_HOST:?}"
+: "${STATION_USER:?}"
+: "${STATION_SSH_KEY:?}"
+: "${STATION_BASE:?}"
+
+JOB_ID="$1"
 IMAGE_LIST_PATH="$6"
+
+SSH=(
+  ssh
+  -i "$STATION_SSH_KEY"
+  -o StrictHostKeyChecking=accept-new
+  "${STATION_USER}@${STATION_HOST}"
+)
+
 "${SSH[@]}" bash -s -- "$IMAGE_LIST_PATH" <<'REMOTE_IMAGE_LIST_CHECK'
 set -euo pipefail
+
 image_list_path="$1"
+
 if [[ ! -s "$image_list_path" ]]; then
   echo "Remote image list not found or empty: $image_list_path" >&2
   exit 2
 fi
 REMOTE_IMAGE_LIST_CHECK
-printf -v A '%q ' "$@"; printf -v B '%q' "$STATION_BASE"; printf -v CM '%q' "${COLMAP_MODE:-native}"; printf -v CB '%q' "${COLMAP_BIN:-colmap}"; printf -v CI '%q' "${COLMAP_IMAGE:-}"
-"${SSH[@]}" "STATION_BASE=$B COLMAP_MODE=$CM COLMAP_BIN=$CB COLMAP_IMAGE=$CI $B/scripts/process_colmap_dense_chunk.sh $A"
+
+printf -v A '%q ' "$@"
+printf -v B '%q' "$STATION_BASE"
+printf -v CM '%q' "${COLMAP_MODE:-native}"
+printf -v CB '%q' "${COLMAP_BIN:-colmap}"
+printf -v CI '%q' "${COLMAP_IMAGE:-}"
+printf -v LOG '%q' "$STATION_BASE/logs/job_${JOB_ID}.nohup.log"
+
+"${SSH[@]}" \
+  "mkdir -p $B/logs $B/status && \
+   STATION_BASE=$B \
+   COLMAP_MODE=$CM \
+   COLMAP_BIN=$CB \
+   COLMAP_IMAGE=$CI \
+   nohup $B/scripts/process_colmap_dense_chunk.sh $A \
+   > $LOG 2>&1 < /dev/null &"
+
+echo "Dense chunk job $JOB_ID started"
