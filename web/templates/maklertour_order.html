@@ -729,5 +729,22 @@ document.querySelectorAll('[data-pipeline-log-url]').forEach((el)=>{
   const load=()=>fetch(el.dataset.pipelineLogUrl).then(r=>r.text()).then(t=>{el.textContent=t; el.scrollTop=el.scrollHeight;}).catch(()=>{});
   load(); setInterval(load,5000);
 });
+function hasActivePipelineCard() {
+  return Array.from(
+    document.querySelectorAll('[data-pipeline-status]')
+  ).some((el) => {
+    const status = String(
+      el.dataset.pipelineStatus || ''
+    ).toUpperCase();
+
+    return status === 'QUEUED' || status === 'RUNNING';
+  });
+}
+
+if (hasActivePipelineCard()) {
+  setTimeout(() => {
+    window.location.reload();
+  }, 10000);
+}
 </script>
 {/literal}
