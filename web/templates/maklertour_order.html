@@ -218,6 +218,62 @@
                   </div>
                 {/foreach}
               {else}<div class="small text-muted">No phone videos found in storage.</div>{/if}
+              <div class="row g-3 mb-3 sfm-pipeline-cards">
+                {foreach from=$s.sfm_pipeline_cards item=pc key=pmode}
+                  {assign var=run value=$pc.run}
+                  <div class="col-md-4">
+                    <div class="card h-100 border-primary-subtle">
+                      <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                          <h6 class="mb-1">{$pc.preset.label|escape}</h6>
+                          {if $run}<span class="badge {if $run.status=='DONE'}bg-success{elseif $run.status=='ERROR'}bg-danger{elseif $run.status=='RUNNING' || $run.status=='QUEUED'}bg-primary{else}bg-secondary{/if}">{$run.status|escape}</span>{else}<span class="badge bg-secondary">NOT STARTED</span>{/if}
+                        </div>
+                        {if $run}
+                          <div class="small text-muted mb-1">Stage: {$run.stage|escape}</div>
+                          <div class="small mb-2">{$run.message|default:''|escape}</div>
+                          <div class="progress mb-2" style="height:18px"><div class="progress-bar {if $run.status=='RUNNING' || $run.status=='QUEUED'}progress-bar-striped progress-bar-animated{/if}" style="width: {$run.progress_percent|default:0}%">{$run.progress_percent|default:0}%</div></div>
+                          {if $run.status=='DONE'}
+                            <div class="small">Sparse model: {$run.sparse_model_id|default:'-'}</div>
+                            <div class="small">Registered images: {$run.registered_images|default:'-'}</div>
+                            <div class="small">Sparse points: {$run.sparse_points|default:'-'}</div>
+                            <div class="small">Dense points: {$run.dense_points|default:'-'}</div>
+                            <div class="small">Mesh: {$run.mesh_vertices|default:'-'} vertices / {$run.mesh_faces|default:'-'} faces</div>
+                          {/if}
+                          {if $run.status=='ERROR'}<div class="alert alert-danger small py-2 mt-2 mb-2">{$run.message|escape}</div>{/if}
+                          <div class="d-flex gap-2 flex-wrap mt-2">
+                            {if $run.output_point_cloud_path}<a class="btn btn-sm btn-outline-success" href="{$run.point_cloud_url|escape}">Download point cloud</a>{/if}
+                            {if $run.output_mesh_path}<a class="btn btn-sm btn-outline-success" href="{$run.mesh_url|escape}">Download mesh</a>{/if}
+                            <a class="btn btn-sm btn-outline-secondary" href="{$run.log_url|escape}" target="_blank">View pipeline log</a>
+                            <a class="btn btn-sm btn-outline-secondary" href="{$run.download_log_url|escape}">Download full log</a>
+                            {if $run.status=='DONE' || $run.status=='ERROR' || $run.status=='CANCELLED'}
+                              <form method="post" action="/order.php?id={$order.id}" class="d-inline">
+                                <input type="hidden" name="action" value="start_sfm_pipeline">
+                                <input type="hidden" name="capture_session_id" value="{$s.id}">
+                                <input type="hidden" name="pipeline_mode" value="{$pmode|escape}">
+                                {if $s.videos|@count > 0}<input type="hidden" name="video_scan_id" value="{$s.videos.0.id}">{/if}
+                                <button class="btn btn-sm btn-primary">{if $run.status=='ERROR'}Retry whole pipeline{else}Run again{/if}</button>
+                              </form>
+                            {/if}
+                          </div>
+                        {else}
+                          <form method="post" action="/order.php?id={$order.id}" class="mt-3">
+                            <input type="hidden" name="action" value="start_sfm_pipeline">
+                            <input type="hidden" name="capture_session_id" value="{$s.id}">
+                            <input type="hidden" name="pipeline_mode" value="{$pmode|escape}">
+                            {if $s.videos|@count > 0}<input type="hidden" name="video_scan_id" value="{$s.videos.0.id}">{/if}
+                            {if $s.sfm_disk_videos|@count > 0}<input type="hidden" name="video_filename" value="{$s.sfm_disk_videos.0.filename|escape}">{/if}
+                            <button class="btn btn-sm btn-primary">Generate {$pc.preset.label|escape}</button>
+                          </form>
+                        {/if}
+                        {if $run && ($run.status=='QUEUED' || $run.status=='RUNNING')}
+                          <pre class="sfm-pipeline-log small bg-light p-2 mt-2" data-pipeline-log-url="{$run.log_url|escape}" style="max-height:220px; overflow:auto; white-space:pre-wrap;"></pre>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                {/foreach}
+              </div>
+              <details class="mb-3"><summary class="small text-muted">Advanced / Legacy jobs</summary>
               <div class="card mb-3" data-sfm-pipeline-status>
                 <div class="card-body">
                   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
@@ -292,6 +348,7 @@
                   </div>
                 {else}<div class="small text-muted">No remote SfM jobs yet.</div>{/if}
               </div>
+              </details>
               <hr class="my-2">
               <div class="small">Status: <span data-sfm="status">NOT_STARTED</span></div>
               <div class="small">Metric: <span data-sfm="metric">NOT_READY</span></div>
@@ -501,20 +558,20 @@ function sfmApply(block, data){
   const job=data.latest_job||null, run=data.latest_run||null;
   const status=(job&&job.status)?job.status:(run&&run.status?run.status:'NOT_STARTED');
   const metric=(job&&job.metric_status)?job.metric_status:(run&&run.metric_status?run.metric_status:'NOT_READY');
-  block.querySelector('[data-sfm=\"status\"]').textContent=status;
-  block.querySelector('[data-sfm=\"metric\"]').textContent=metric;
-  block.querySelector('[data-sfm=\"frames\"]').textContent=(run&&run.frames_count)||0;
-  block.querySelector('[data-sfm=\"keyframes\"]').textContent=(run&&run.keyframes_count)||0;
-  block.querySelector('[data-sfm=\"markers\"]').textContent=(run&&run.marker_count)||((job&&job.markers_detected_count)||0);
-  block.querySelector('[data-sfm=\"poses\"]').textContent=(run&&run.poses_count)||0;
-  block.querySelector('[data-sfm=\"scale\"]').textContent=sfmScaleText(run);
+  block.querySelector('[data-sfm="status"]').textContent=status;
+  block.querySelector('[data-sfm="metric"]').textContent=metric;
+  block.querySelector('[data-sfm="frames"]').textContent=(run&&run.frames_count)||0;
+  block.querySelector('[data-sfm="keyframes"]').textContent=(run&&run.keyframes_count)||0;
+  block.querySelector('[data-sfm="markers"]').textContent=(run&&run.marker_count)||((job&&job.markers_detected_count)||0);
+  block.querySelector('[data-sfm="poses"]').textContent=(run&&run.poses_count)||0;
+  block.querySelector('[data-sfm="scale"]').textContent=sfmScaleText(run);
   const active=['NOT_STARTED','QUEUED','PENDING','RUNNING'].includes(status);
-  const runBtn=block.querySelector('[data-sfm-action=\"run\"]');
+  const runBtn=block.querySelector('[data-sfm-action="run"]');
   runBtn.disabled=active;
   runBtn.textContent=active?'SfM job already queued/running':'Run SfM pipeline';
-  block.querySelector('[data-sfm-link=\"tour\"]').style.display=(data.artifacts&&data.artifacts.sfm_summary&&data.artifacts.viewer_keyframes)?'':'none';
-  block.querySelector('[data-sfm-link=\"model\"]').style.display=(data.artifacts&&data.artifacts.sparse_3d)?'':'none';
-  block.querySelector('[data-sfm-link=\"diag\"]').style.display=run?'':'none';
+  block.querySelector('[data-sfm-link="tour"]').style.display=(data.artifacts&&data.artifacts.sfm_summary&&data.artifacts.viewer_keyframes)?'':'none';
+  block.querySelector('[data-sfm-link="model"]').style.display=(data.artifacts&&data.artifacts.sparse_3d)?'':'none';
+  block.querySelector('[data-sfm-link="diag"]').style.display=run?'':'none';
 }
 async function sfmRefresh(block, orderId, sessionId){
   const r=await fetch(`/api/sfm_video_pipeline.php?order_id=${orderId}&session_id=${sessionId}`);
@@ -553,11 +610,11 @@ async function sfmRun(block, orderId, sessionId){
   const d=await r.json(); if(!r.ok||!d.ok){ throw new Error(d.error||'enqueue_error'); }
   await sfmRefresh(block,orderId,sessionId);
 }
-document.querySelectorAll('[id^=\"sfmVideoBlock\"]').forEach((block)=>{
+document.querySelectorAll('[id^="sfmVideoBlock"]').forEach((block)=>{
   const sessionId=Number(block.getAttribute('data-session-id')); const orderId=Number({/literal}{$order.id}{literal});
   sfmRefresh(block,orderId,sessionId).catch(()=>{});
-  block.querySelector('[data-sfm-action=\"refresh\"]').addEventListener('click',()=>sfmRefresh(block,orderId,sessionId).catch((e)=>alert('SfM status error: '+e.message)));
-  block.querySelector('[data-sfm-action=\"run\"]').addEventListener('click',()=>sfmRun(block,orderId,sessionId).catch((e)=>alert('SfM enqueue error: '+e.message)));
+  block.querySelector('[data-sfm-action="refresh"]').addEventListener('click',()=>sfmRefresh(block,orderId,sessionId).catch((e)=>alert('SfM status error: '+e.message)));
+  block.querySelector('[data-sfm-action="run"]').addEventListener('click',()=>sfmRun(block,orderId,sessionId).catch((e)=>alert('SfM enqueue error: '+e.message)));
 });
 
 
@@ -621,3 +678,10 @@ setInterval(pollSfmRemoteJobs,4000); pollSfmRemoteJobs();
 </script>
 {/literal}
 {include file="maklertour_footer.html"}
+
+<script>
+document.querySelectorAll('[data-pipeline-log-url]').forEach((el)=>{
+  const load=()=>fetch(el.dataset.pipelineLogUrl).then(r=>r.text()).then(t=>{el.textContent=t; el.scrollTop=el.scrollHeight;}).catch(()=>{});
+  load(); setInterval(load,5000);
+});
+</script>
