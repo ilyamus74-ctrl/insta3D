@@ -28,6 +28,7 @@ if (!defined('APP_STORAGE_DIR')) {
     define('APP_STORAGE_DIR', __DIR__ . '/../storage');
 }
 require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
+require_once __DIR__ . '/sfm_dense_merge_contract.php';
 
 const SFM_REMOTE_BASE = '/home/makler/web/remote_station';
 const SFM_REMOTE_CONF = '/home/makler/web/remote_station/stations.conf';
@@ -785,7 +786,30 @@ function orchestrate_reconstruction_parents(mysqli $db): void
         } elseif($failed) { set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),'Chunk failed after retry; merge skipped'); continue; }
         if($done >= $total){
             $verticesTotal=0; for($i=0;$i<$total;$i++){ $verticesTotal+=chunk_result_vertices($parentRemote,$i); } if($verticesTotal<=0){ set_job($db,$pid,'ERROR',95,'Dense fusion produced zero vertices'); continue; }
-            $cmd=[SFM_REMOTE_BASE.'/run_colmap_dense_merge_job.sh', SFM_REMOTE_CONF, (string)$parentRemote, $mode, SFM_REMOTE_OUTPUT]; [$code,$output,$c]=run_command($cmd);
+            try {
+                $mergeMode = resolve_dense_merge_mode((string)$p['job_type']);
+                $parentOutputDir = remote_output_dir($parentRemote);
+                $outputPly = $parentOutputDir . '/merged/merged_fused.ply';
+                $inputPlyFiles = dense_merge_input_ply_files($parentOutputDir, $total);
+                $inputPlySizes = dense_merge_input_ply_sizes($inputPlyFiles);
+            } catch (Throwable $e) {
+                set_job($db, $pid, 'ERROR', 95, $e->getMessage());
+                worker_log("ERROR dense merge {$e->getMessage()}; child_job_id={$pid} parent_remote_job_id={$parentRemote}");
+                continue;
+            }
+            worker_log(
+                'starting dense merge: ' . json_encode([
+                    'parent_job_id' => $parentRemote,
+                    'child_job_id' => $pid,
+                    'child_job_type' => (string)$p['job_type'],
+                    'merge_mode' => $mergeMode,
+                    'parent_output_dir' => $parentOutputDir,
+                    'output_ply' => $outputPly,
+                    'input_ply' => $inputPlyFiles,
+                    'input_ply_sizes' => $inputPlySizes,
+                ], JSON_UNESCAPED_SLASHES)
+            );
+            $cmd=[SFM_REMOTE_BASE.'/run_colmap_dense_merge_job.sh', SFM_REMOTE_CONF, (string)$parentRemote, $mergeMode, SFM_REMOTE_OUTPUT]; [$code,$output,$c]=run_command($cmd);
             $mergeLog='/home/makler_storage/logs/job_'.$parentRemote.'_merge.log'; @mkdir(dirname($mergeLog),0775,true); @file_put_contents($mergeLog, '['.date('c').'] '.$c."\nexit_code=".$code."\n".$output."\n");
             if ($code === 0) {
                 $message = $output !== ''
