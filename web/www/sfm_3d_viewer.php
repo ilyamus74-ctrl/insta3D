@@ -4,6 +4,8 @@ require_once __DIR__ . '/bootstrap.php';
 auth_require_login();
 $orderId = (int)($_GET['order_id'] ?? 0);
 $sessionId = (int)($_GET['session_id'] ?? 0);
+$pipelineRunId = (int)($_GET['pipeline_run_id'] ?? 0);
+$artifact = in_array((string)($_GET['artifact'] ?? 'sparse'), ['sparse','dense','mesh'], true) ? (string)($_GET['artifact'] ?? 'sparse') : 'sparse';
 ?>
 <!doctype html>
 <html lang="ru">
@@ -25,7 +27,7 @@ body,html{height:100%}
 <a class="btn btn-outline-primary btn-sm" href="/sfm_tour_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open SfM tour</a>
 <a class="btn btn-outline-success btn-sm" href="/sfm_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open diagnostics</a>
 </div>
-<div id="viewer"></div>
+<div id="viewer"><div id="viewerStatus" class="text-light p-3">Loading...</div></div>
 
 <div class="controls-panel card">
   <div class="card-body small">
@@ -69,10 +71,14 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 
-const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>;
-const r=await fetch(`/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}`);
-const data=await r.json();
-if(!data.ok) throw new Error(data.error||'load failed');
+const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>;
+const statusEl=document.getElementById('viewerStatus');
+function showError(msg){ statusEl.className='text-danger p-3'; statusEl.textContent=msg; }
+const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}`;
+const r=await fetch(apiUrl);
+const data=await r.json().catch(()=>({ok:false,error:'PLY load failed'}));
+if(!data.ok){ showError(data.error||'Artifact not found'); throw new Error(data.error||'load failed'); }
+statusEl.textContent = initialArtifact==='dense' ? 'Loading dense point cloud...' : (initialArtifact==='mesh' ? 'Loading final mesh...' : 'Loading sparse point cloud...');
 
 const el=document.getElementById('viewer');
 const summaryEl=document.getElementById('summary');
@@ -85,6 +91,7 @@ camera.position.set(0,5,10);
 
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(el.clientWidth,el.clientHeight);
+statusEl.remove();
 el.appendChild(renderer.domElement);
 
 const controls=new OrbitControls(camera, renderer.domElement);
@@ -170,13 +177,15 @@ function getBoxFromObject(obj){
   return box.isEmpty() ? null : box;
 }
 
-function computeCombinedBox(includePoints=true, includeRoute=true, includeKeyframes=true){
+function computeCombinedBox(includePoints=true, includeRoute=true, includeKeyframes=true, includeDense=false, includeMesh=false){
   const box = new THREE.Box3();
   let hasAny = false;
   if(includePoints && pointsMesh){
     const pointBox=getBoxFromObject(pointsMesh);
     if(pointBox){ box.union(pointBox); hasAny=true; }
   }
+  if(includeDense && denseObject){ const denseBox=getBoxFromObject(denseObject); if(denseBox){ box.union(denseBox); hasAny=true; } }
+  if(includeMesh && meshObject){ const meshBox=getBoxFromObject(meshObject); if(meshBox){ box.union(meshBox); hasAny=true; } }
   if(includeRoute && trajectoryLine){
     const routeBox=getBoxFromObject(trajectoryLine);
     if(routeBox){ box.union(routeBox); hasAny=true; }
@@ -241,7 +250,8 @@ function setViewMode(name){
 
 function fitAll(){ const box=computeCombinedBox(true,true,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit all'); }
 function fitRoute(){ const box=computeCombinedBox(false,true,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit route'); }
-function fitCloud(){ const box=computeCombinedBox(true,false,false); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit cloud'); }
+function fitCloud(){ const box=computeCombinedBox(true,false,false,true,false); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit cloud'); }
+function fitMesh(){ const box=computeCombinedBox(false,false,false,false,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit mesh'); }
 
 function topView(){
   if(!latestCombinedBox) return;
@@ -331,11 +341,11 @@ key.forEach((k,i)=>{
   spheres.push(s);
 });
 
-if(data.dense && data.dense.available){
-  denseObject = await addPlyAsObject(data.dense.fused_ply_url, 'dense');
-  meshObject = await addPlyAsObject(data.dense.mesh_ply_url, 'mesh');
-}
-updateSceneBoundsAndCenter();
+if(data.dense && data.dense.available){ denseObject = await addPlyAsObject(data.dense.fused_ply_url, 'dense'); }
+if(data.mesh && data.mesh.available){ meshObject = await addPlyAsObject(data.mesh.mesh_ply_url, 'mesh'); } else if(data.dense && data.dense.mesh_ply_url){ meshObject = await addPlyAsObject(data.dense.mesh_ply_url, 'mesh'); }
+if(initialArtifact==='dense'){ document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=true; document.getElementById('toggleMesh').checked=false; document.getElementById('togglePath').checked=false; if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=true; if(meshObject) meshObject.visible=false; if(trajectoryLine) trajectoryLine.visible=false; fitCloud(); summaryEl.innerHTML=`Loaded ${formatNum(data.selected?.vertices || data.dense?.points || 0)} points`; }
+else if(initialArtifact==='mesh'){ document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=false; document.getElementById('toggleMesh').checked=true; document.getElementById('togglePath').checked=false; if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=false; if(meshObject) meshObject.visible=true; if(trajectoryLine) trajectoryLine.visible=false; fitMesh(); summaryEl.innerHTML=`Loaded ${formatNum(data.selected?.vertices || data.mesh?.vertices || 0)} vertices / ${formatNum(data.selected?.faces || data.mesh?.faces || 0)} faces`; }
+else { updateSceneBoundsAndCenter(); }
 
 const ray=new THREE.Raycaster();
 const mouse=new THREE.Vector2();
@@ -365,6 +375,8 @@ pointSizeSlider.addEventListener('input',()=>{
 });
 
 document.getElementById('togglePoints').addEventListener('change',(e)=>{if(pointsMesh) pointsMesh.visible=e.target.checked;});
+document.getElementById('toggleDenseCloud').addEventListener('change',(e)=>{if(denseObject) denseObject.visible=e.target.checked;});
+document.getElementById('toggleMesh').addEventListener('change',(e)=>{if(meshObject) meshObject.visible=e.target.checked;});
 document.getElementById('togglePath').addEventListener('change',(e)=>{if(trajectoryLine) trajectoryLine.visible=e.target.checked;});
 document.getElementById('toggleKeyframes').addEventListener('change',(e)=>{keyframeGroup.visible=e.target.checked;});
 document.getElementById('toggleAxes').addEventListener('change',(e)=>{axes.visible=e.target.checked;});
