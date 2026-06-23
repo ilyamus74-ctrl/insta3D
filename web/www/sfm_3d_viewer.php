@@ -278,20 +278,73 @@ function sideView(){
   setViewMode('Side view');
 }
 
-function addPlyAsObject(url, target){
-  return new Promise((resolve)=>{
-    new PLYLoader().load(url,(g)=>{
-      g.computeVertexNormals();
-      let obj;
-      if(g.index || (g.getAttribute('position') && g.getAttribute('position').count % 3 === 0 && g.getAttribute('normal'))){
-        obj = new THREE.Mesh(g, new THREE.MeshStandardMaterial({color:0xbfbfbf, metalness:0.1, roughness:0.8, side:THREE.DoubleSide}));
-      } else {
-        obj = new THREE.Points(g, new THREE.PointsMaterial({size:0.01,color:0x77ddff}));
+function addPlyAsObject(url, target) {
+  return new Promise((resolve) => {
+    new PLYLoader().load(
+      url,
+      (geometry) => {
+        let object = null;
+
+        if (target === 'dense' || target === 'sparse') {
+          const hasVertexColors =
+            geometry.hasAttribute('color');
+
+          const material =
+            new THREE.PointsMaterial({
+              size: 0.018,
+              vertexColors: hasVertexColors,
+              color: hasVertexColors
+                ? 0xffffff
+                : 0x77ddff,
+              sizeAttenuation: true
+            });
+
+          object = new THREE.Points(
+            geometry,
+            material
+          );
+        } else if (target === 'mesh') {
+          geometry.computeVertexNormals();
+
+          const hasVertexColors =
+            geometry.hasAttribute('color');
+
+          const material =
+            new THREE.MeshStandardMaterial({
+              color: hasVertexColors
+                ? 0xffffff
+                : 0xbfbfbf,
+              vertexColors: hasVertexColors,
+              metalness: 0.0,
+              roughness: 0.9,
+              side: THREE.DoubleSide
+            });
+
+          object = new THREE.Mesh(
+            geometry,
+            material
+          );
+        }
+
+        if (!object) {
+          resolve(null);
+          return;
+        }
+
+        object.visible = false;
+        rootGroup.add(object);
+        resolve(object);
+      },
+      undefined,
+      (error) => {
+        console.error(
+          `PLY load failed for ${target}`,
+          error
+        );
+
+        resolve(null);
       }
-      obj.visible=false;
-      rootGroup.add(obj);
-      resolve(obj);
-    },undefined,()=>resolve(null));
+    );
   });
 }
 
