@@ -77,9 +77,14 @@ ffmpeg -y \
   -q:v "$JPEG_QUALITY" \
   -progress pipe:1 \
   "$OUTPUT_DIR/frame_%06d.jpg" | while IFS= read -r line; do
-    if [[ "$line" == out_time_ms=* ]]; then
-      OUT_MS="${line#out_time_ms=}"
-      OUT_SEC=$((OUT_MS / 1000000))
+   if [[ "$line" == out_time_ms=* ]]; then
+     OUT_MS="${line#out_time_ms=}"
+
+     if [[ ! "$OUT_MS" =~ ^[0-9]+$ ]]; then
+       continue
+     fi
+
+     OUT_SEC=$((OUT_MS / 1000000))
       PROGRESS=$((OUT_SEC * 100 / DURATION_SEC))
       if (( PROGRESS > 99 )); then PROGRESS=99; fi
       ETA=$((DURATION_SEC - OUT_SEC))
