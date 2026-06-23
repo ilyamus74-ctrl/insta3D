@@ -122,14 +122,47 @@ def registered_images(model_dir):
             shutil.rmtree(tmp, ignore_errors=True)
 
 def ram_limit(mode, avail):
-    if avail < 6144: raise SystemExit('insufficient available RAM: MemAvailable below 6 GB')
-    if mode=='preview':
-        return (100,'MemAvailable >= 16 GB') if avail>=16384 else ((70,'MemAvailable 10-16 GB') if avail>=10240 else (45,'MemAvailable 6-10 GB'))
-    return (150,'MemAvailable >= 32 GB') if avail>=32768 else ((100,'MemAvailable 16-32 GB') if avail>=16384 else ((60,'MemAvailable 10-16 GB') if avail>=10240 else (35,'MemAvailable 6-10 GB')))
+    if avail < 6144:
+        raise SystemExit(
+            'insufficient available RAM: MemAvailable below 6 GB'
+        )
+
+    if mode == 'preview':
+        if avail >= 16384:
+            return 100, 'Preview: MemAvailable >= 16 GB'
+        if avail >= 10240:
+            return 70, 'Preview: MemAvailable 10-16 GB'
+        return 45, 'Preview: MemAvailable 6-10 GB'
+
+    if mode == 'standard':
+        if avail >= 32768:
+            return 100, 'Standard: MemAvailable >= 32 GB'
+        if avail >= 16384:
+            return 70, 'Standard: MemAvailable 16-32 GB'
+        if avail >= 10240:
+            return 45, 'Standard: MemAvailable 10-16 GB'
+        return 30, 'Standard: MemAvailable 6-10 GB'
+
+    if mode in ('fullhd', 'hq'):
+        if avail >= 32768:
+            return 80, 'Full HD/HQ: MemAvailable >= 32 GB'
+        if avail >= 16384:
+            return 55, 'Full HD/HQ: MemAvailable 16-32 GB'
+        if avail >= 10240:
+            return 35, 'Full HD/HQ: MemAvailable 10-16 GB'
+        return 20, 'Full HD/HQ: MemAvailable 6-10 GB'
+
+    raise SystemExit(f'unsupported mode: {mode}')
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument('--sparse-model-dir',required=True); ap.add_argument('--model-id',required=True,type=int); ap.add_argument('--mode',choices=['preview','hq'],required=True)
+    ap.add_argument('--sparse-model-dir', required=True)
+    ap.add_argument('--model-id', required=True, type=int)
+    ap.add_argument(
+        '--mode',
+        choices=['preview', 'standard', 'fullhd', 'hq'],
+        required=True
+    )
     ap.add_argument('--output-plan',required=True); ap.add_argument('--target-images-per-chunk',type=int,required=True); ap.add_argument('--max-images-per-chunk',type=int,required=True); ap.add_argument('--overlap-images',type=int,required=True)
     ap.add_argument('--sparse-job-id',type=int,default=0); ap.add_argument('--ram-reserve-mb',type=int,default=3000)
     args=ap.parse_args(); started=time.time(); total,avail=meminfo(); safe,reason=ram_limit(args.mode, avail)
