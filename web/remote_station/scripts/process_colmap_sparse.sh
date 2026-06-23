@@ -21,6 +21,7 @@ COLMAP_BIN="${COLMAP_BIN:-colmap}"
 COLMAP_IMAGE="${COLMAP_IMAGE:-}"
 COLMAP_MATCHER="${COLMAP_MATCHER:-sequential}"
 COLMAP_SEQUENTIAL_OVERLAP="${COLMAP_SEQUENTIAL_OVERLAP:-10}"
+COLMAP_LOOP_DETECTION="${COLMAP_LOOP_DETECTION:-0}"
 
 mkdir -p "$BASE/status" "$BASE/logs"
 
@@ -173,6 +174,7 @@ case "$COLMAP_MATCHER" in
       --database_path "$DATABASE_PATH" \
       --FeatureMatching.use_gpu 1 \
       --SequentialMatching.overlap "$COLMAP_SEQUENTIAL_OVERLAP" \
+      --SequentialMatching.loop_detection "$COLMAP_LOOP_DETECTION" \
       > "$COLMAP_LOG_DIR/sequential_matcher.log" 2>&1
     ;;
   exhaustive)

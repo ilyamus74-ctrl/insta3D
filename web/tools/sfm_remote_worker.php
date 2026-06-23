@@ -28,6 +28,7 @@ if (!defined('APP_STORAGE_DIR')) {
     define('APP_STORAGE_DIR', __DIR__ . '/../storage');
 }
 require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
+require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
 require_once __DIR__ . '/sfm_dense_merge_contract.php';
 
 const SFM_REMOTE_BASE = '/home/makler/web/remote_station';
@@ -149,7 +150,7 @@ function auto_chain_after_done(mysqli $db, array $job): void
 
     if ($type === 'EXTRACT_FRAMES') {
         $pipelineRunId = pipeline_run_for_job($job);
-        if ($pipelineRunId > 0) { sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued'); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done'); pipeline_log($pipelineRunId,'INFO','SPARSE','Started'); }
+        if ($pipelineRunId > 0) { $er=sfm_json_array((string)@file_get_contents(remote_output_dir($remote).'/frames/result.json')); $frames=(int)($er['frames'] ?? 0); $extra=$frames>0?['extracted_frames'=>$frames]:[]; sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued',$extra); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done frames='.$frames); pipeline_log($pipelineRunId,'INFO','SPARSE','Started'); }
         $st = $db->prepare("SELECT id FROM sfm_remote_jobs WHERE job_type='COLMAP_SPARSE' AND parent_remote_job_id=? LIMIT 1");
         if (!$st) {
             return;
@@ -168,9 +169,10 @@ function auto_chain_after_done(mysqli $db, array $job): void
         $log = $out . '/logs';
         $jt = 'COLMAP_SPARSE';
         $msg = 'Auto queued after extract frames';
-        $st = $db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path) VALUES (?,?,?,?,?,?,?,?,'QUEUED',0,?,?,?)");
+        $st = $db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path,parameters_json) VALUES (?,?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?)");
         if ($st) {
-            $st->bind_param('iiisiisssss', $orderId, $sessionId, $pipelineRunId, $jt, $rid, $remote, $input, $out, $msg, $result, $log);
+            $childParams=json_encode(['pipeline_run_id'=>$pipelineRunId,'settings'=>worker_run_parameters($db,$job)], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+            $st->bind_param('iiisiissssss', $orderId, $sessionId, $pipelineRunId, $jt, $rid, $remote, $input, $out, $msg, $result, $log, $childParams);
             $st->execute();
             $st->close();
             worker_log("auto queued COLMAP_SPARSE parent={$remote} remote_job_id={$rid}");
@@ -182,14 +184,14 @@ function auto_chain_after_done(mysqli $db, array $job): void
         $pipelineRunId=pipeline_run_for_job($job); $preset=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: [];
         $st=$db->prepare('SELECT parameters_json,pipeline_mode FROM sfm_pipeline_runs WHERE id=? LIMIT 1'); $st->bind_param('i',$pipelineRunId); $st->execute(); $run=$st->get_result()->fetch_assoc() ?: []; $st->close();
         $runParams=json_decode((string)($run['parameters_json'] ?? '{}'), true) ?: []; $mode=(string)($run['pipeline_mode'] ?? ($runParams['pipeline_mode'] ?? 'preview'));
-        $preset=sfm_pipeline_preset($mode);
+        $preset=sfm_pipeline_preset($mode); $runSettings=worker_run_parameters($db,$job); $dense=$runSettings['dense'] ?? [];
         $best=sfm_pipeline_best_sparse_model_worker($remote);
         foreach([0,1,2,3,4] as $mid){ $ms=sfm_sparse_stats_worker($remote,$mid); if($ms['registered_images']>0 || $ms['points']>0){ pipeline_log($pipelineRunId,'INFO','SPARSE','Model '.$mid.': images='.$ms['registered_images'].' points='.$ms['points']); } }
         if((int)$best['registered_images']<5 || (int)$best['points']<=0){ sfm_pipeline_fail($db,$pipelineRunId,'Sparse reconstruction failed: no model has at least 5 registered images and points',['sparse_remote_job_id'=>$remote]); return; }
         pipeline_log($pipelineRunId,'INFO','SPARSE','Selected model '.$best['model_id'].': registered_images='.$best['registered_images'].' points='.$best['points']);
-        sfm_pipeline_update($db,$pipelineRunId,'RUNNING','DENSE_PLAN',35,'Dense chunk planning queued',['sparse_model_id'=>(int)$best['model_id'],'registered_images'=>(int)$best['registered_images'],'sparse_points'=>(int)$best['points']]);
+        $rowRes=$db->query('SELECT extracted_frames FROM sfm_pipeline_runs WHERE id='.(int)$pipelineRunId); $row=$rowRes?$rowRes->fetch_assoc():[]; if($rowRes){$rowRes->close();} $ef=(int)($row['extracted_frames'] ?? 0); $extra=['sparse_model_id'=>(int)$best['model_id'],'registered_images'=>(int)$best['registered_images'],'selected_model_id'=>(int)$best['model_id'],'selected_model_points'=>(int)$best['points'],'sparse_points'=>(int)$best['points']]; if($ef>0){$extra['registration_ratio']=(string)round(((int)$best['registered_images'])*100/$ef,2);} sfm_pipeline_update($db,$pipelineRunId,'RUNNING','DENSE_PLAN',35,'Dense chunk planning queued',$extra);
         $rid=sfm_job_id($db); $jt='COLMAP_RECONSTRUCTION_PREVIEW'; $out=remote_output_dir($rid).'/merged/merged_fused.ply'; $result=remote_output_dir($rid).'/merged/result.json'; $log=remote_output_dir($rid).'/logs'; $msg='pipeline dense reconstruction queued';
-        $params=json_encode(['sparse_job_id'=>$remote,'model_id'=>(int)$best['model_id']]+$preset, JSON_UNESCAPED_SLASHES);
+        $params=json_encode(['sparse_job_id'=>$remote,'model_id'=>(int)$best['model_id'],'settings'=>worker_run_parameters($db,$job),'target_images_per_chunk'=>(int)($dense['target_images_per_chunk'] ?? $preset['target_images_per_chunk']),'max_images_per_chunk'=>(int)($dense['max_images_per_chunk'] ?? $preset['max_images_per_chunk']),'overlap_images'=>(int)($dense['chunk_overlap'] ?? $preset['overlap_images'])]+$preset, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
         $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,parameters_json) VALUES (?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)");
         if($st){ $st->bind_param('iiisiissssss',$orderId,$sessionId,$pipelineRunId,$jt,$rid,$remote,$out,$msg,$result,$log,$mode,$params); $st->execute(); $st->close(); pipeline_log($pipelineRunId,'INFO','DENSE_PLAN','Queued dense planning max_image_size='.$preset['max_image_size']); }
         return;
@@ -218,8 +220,9 @@ function auto_chain_after_done(mysqli $db, array $job): void
         $msg = 'Auto queued mesh after dense merge';
         $pipelineRunId = pipeline_run_for_job($job);
         $preset = in_array($mode, ['preview','standard','fullhd'], true) ? sfm_pipeline_preset($mode) : ['mesh_depth'=>($mode === 'hq' ? 9 : 7),'target_faces'=>($mode === 'hq' ? 500000 : 100000)];
-        $poissonDepth = (int)$preset['mesh_depth'];
-        $targetFaces = (int)$preset['target_faces'];
+        $mesh=(worker_run_parameters($db,$job)['mesh'] ?? []);
+        $poissonDepth = (int)($mesh['depth'] ?? $preset['mesh_depth']);
+        $targetFaces = (int)($mesh['target_faces'] ?? $preset['target_faces']);
         if($pipelineRunId>0){ pipeline_log($pipelineRunId,'INFO','MESH','Open3D queued depth='.$poissonDepth.' target_faces='.$targetFaces); }
         $pj = json_encode(['input_ply' => $inputPly, 'poisson_depth' => $poissonDepth, 'target_faces' => $targetFaces, 'trim_enabled' => false], JSON_UNESCAPED_SLASHES);
         $st = $db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,parameters_json) VALUES (?,?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)");
@@ -662,6 +665,7 @@ function claim_next_job(mysqli $db): ?array
     }
 }
 
+function worker_run_parameters(mysqli $db,array $job): array { $pid=pipeline_run_for_job($job); if($pid>0){ $st=$db->prepare('SELECT parameters_json,pipeline_mode FROM sfm_pipeline_runs WHERE id=? LIMIT 1'); if($st){$st->bind_param('i',$pid);$st->execute();$run=$st->get_result()->fetch_assoc() ?: [];$st->close(); $all=sfm_json_array((string)($run['parameters_json'] ?? '{}')); $mode=(string)($run['pipeline_mode'] ?? ($all['pipeline_mode'] ?? ($job['reconstruction_mode'] ?? 'preview'))); if(isset($all['mode_parameters']) && is_array($all['mode_parameters'])){return $all['mode_parameters'];} if(isset($all[$mode])){return sfm_mode_parameters(sfm_merge_settings(sfm_system_defaults(),[],[],$all),$mode);} }} $jp=sfm_json_array((string)($job['parameters_json'] ?? '{}')); return $jp['settings'] ?? []; }
 function launch_job(mysqli $db, array $job): void
 {
     $id = (int)$job['id'];
@@ -675,9 +679,10 @@ function launch_job(mysqli $db, array $job): void
         $params = json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: [];
         $sparse = (int)($params['sparse_job_id'] ?? $job['parent_remote_job_id'] ?? 0);
         $model = (int)($params['model_id'] ?? 0);
-        $target = (int)($params['target_images_per_chunk'] ?? ($mode === 'hq' ? 60 : 50));
-        $max = (int)($params['max_images_per_chunk'] ?? ($mode === 'hq' ? 100 : 80));
-        $overlap = (int)($params['overlap_images'] ?? ($mode === 'hq' ? 20 : 15));
+        $runSettings=worker_run_parameters($db,$job); $dense=$runSettings['dense'] ?? [];
+        $target = (int)($dense['target_images_per_chunk'] ?? $params['target_images_per_chunk'] ?? ($mode === 'hq' ? 60 : 50));
+        $max = (int)($dense['max_images_per_chunk'] ?? $params['max_images_per_chunk'] ?? ($mode === 'hq' ? 100 : 80));
+        $overlap = (int)($dense['chunk_overlap'] ?? $params['overlap_images'] ?? ($mode === 'hq' ? 20 : 15));
         $reserve = (int)($params['ram_reserve_mb'] ?? 3000);
         $outDir = remote_output_dir($remoteJobId);
         if (!is_dir($outDir)) { @mkdir($outDir, 0775, true); }
@@ -695,10 +700,10 @@ function launch_job(mysqli $db, array $job): void
         $pipelineRunId = pipeline_run_for_job($job);
         if ($pipelineRunId > 0) { sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued'); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done'); pipeline_log($pipelineRunId,'INFO','SPARSE','Started'); }
         $input = safe_session_video_path($db, $job);
-        $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input];
+        $rs=worker_run_parameters($db,$job); $ex=$rs['extract'] ?? []; $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)($ex['fps'] ?? ''), (string)($ex['max_frames'] ?? ''), (string)($ex['scale_width'] ?? ''), (string)($ex['jpeg_quality'] ?? '')];
     } elseif ($type === 'COLMAP_SPARSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
-        $args = [SFM_REMOTE_BASE . '/run_colmap_sparse_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, frames_path_for_parent($parent)];
+        $rs=worker_run_parameters($db,$job); $sp=$rs['sparse'] ?? []; $args = [SFM_REMOTE_BASE . '/run_colmap_sparse_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, frames_path_for_parent($parent), (string)($sp['matcher'] ?? ''), (string)($sp['sequential_overlap'] ?? ''), !empty($sp['loop_detection'])?'1':'0'];
     } elseif ($type === 'EXPORT_PLY') {
         $parent = (int)($job['parent_remote_job_id'] ?? $remoteJobId);
         $modelId = model_id_from_job($job);
@@ -706,11 +711,11 @@ function launch_job(mysqli $db, array $job): void
     } elseif ($type === 'COLMAP_DENSE_CHUNK') {
         $parentJobId = (int)($job['parent_remote_job_id'] ?? 0);
         $params = json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: [];
-        $args = [SFM_REMOTE_BASE . '/run_colmap_dense_chunk_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parentJobId, (string)($params['sparse_job_id'] ?? 0), (string)($params['model_id'] ?? 0), (string)($job['chunk_index'] ?? 0), (string)($params['image_list_path'] ?? ''), (string)($job['reconstruction_mode'] ?? 'preview')];
+        $settings=$params['settings'] ?? worker_run_parameters($db,$job); $dense=$settings['dense'] ?? []; $args = [SFM_REMOTE_BASE . '/run_colmap_dense_chunk_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parentJobId, (string)($params['sparse_job_id'] ?? 0), (string)($params['model_id'] ?? 0), (string)($job['chunk_index'] ?? 0), (string)($params['image_list_path'] ?? ''), (string)($job['reconstruction_mode'] ?? 'preview'), (string)($dense['max_image_size'] ?? ''), (string)($dense['num_src_images'] ?? '')];
     } elseif ($type === 'COLMAP_MESH') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         $mode = (string)($job['reconstruction_mode'] ?: 'preview');
-        $args = [SFM_REMOTE_BASE . '/run_colmap_mesh_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parent, $mode];
+        $mesh=(worker_run_parameters($db,$job)['mesh'] ?? []); $args = [SFM_REMOTE_BASE . '/run_colmap_mesh_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parent, $mode, (string)($mesh['engine'] ?? ''), (string)($mesh['depth'] ?? ''), (string)($mesh['target_faces'] ?? ''), (string)($mesh['density_quantile'] ?? '')];
     } elseif ($type === 'COLMAP_DENSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         if ($parent <= 0) {

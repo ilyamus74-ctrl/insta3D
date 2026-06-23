@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/bootstrap.php';
 require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
+require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
 auth_require_login();
 $user = auth_current_user(); $userId=(int)$user['id']; $role=$user['role'] ?? 'BROKER';
 $orderId=(int)($_GET['id']??0); if($orderId<=0){http_response_code(400);exit('Bad order id');}
@@ -174,6 +175,7 @@ function sfm_safe_uuid(string $uuid): string { $safe=preg_replace('/[^a-zA-Z0-9.
 function video_scan_safe_uuid(string $uuid,int $scanId): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:('scan_'.$scanId); }
 function video_scan_metadata_info(int $scanId,string $appScanUuid,string $videoDir): array { $safe=video_scan_safe_uuid($appScanUuid,$scanId); $defs=['camera_info'=>['_camera_info.json','View camera_info'],'manifest'=>['_manifest.json','View manifest'],'imu'=>['_imu.jsonl','Download imu']]; $out=[]; foreach($defs as $type=>$def){ $path=$videoDir.'/'.$safe.$def[0]; $exists=is_file($path); $out[$type]=['exists'=>$exists,'label'=>$def[1],'url'=>$exists?('/api/video_scan_metadata.php?scan_id='.$scanId.'&type='.$type):'']; } return $out; }
 function ensure_sfm_remote_jobs_chunk_columns(mysqli $dbcnx): void { foreach(['reconstruction_mode'=>'VARCHAR(20) NULL','chunk_index'=>'INT NULL','chunk_count'=>'INT NULL','retry_count'=>'INT NOT NULL DEFAULT 0','parameters_json'=>'LONGTEXT NULL'] as $c=>$def){ if(!column_exists($dbcnx,'sfm_remote_jobs',$c)){ @$dbcnx->query('ALTER TABLE sfm_remote_jobs ADD COLUMN '.$c.' '.$def); } } }
+function ensure_sfm_settings_pipeline_columns(mysqli $dbcnx): void { if(!table_exists($dbcnx,'sfm_user_settings')){ @$dbcnx->query("CREATE TABLE sfm_user_settings (user_id BIGINT UNSIGNED NOT NULL, settings_json LONGTEXT NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), PRIMARY KEY(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } if(!table_exists($dbcnx,'sfm_session_settings')){ @$dbcnx->query("CREATE TABLE sfm_session_settings (capture_session_id BIGINT UNSIGNED NOT NULL, user_id BIGINT UNSIGNED NOT NULL, settings_json LONGTEXT NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), PRIMARY KEY(capture_session_id,user_id), KEY idx_sfm_session_settings_user(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } foreach(['parameters_json'=>'LONGTEXT NULL','started_by_user_id'=>'BIGINT UNSIGNED NULL','extracted_frames'=>'INT NULL','registration_ratio'=>'DECIMAL(6,2) NULL','sparse_models_count'=>'INT NULL','selected_model_id'=>'INT NULL','selected_model_points'=>'INT NULL'] as $c=>$def){ if(table_exists($dbcnx,'sfm_pipeline_runs') && !column_exists($dbcnx,'sfm_pipeline_runs',$c)){ @$dbcnx->query('ALTER TABLE sfm_pipeline_runs ADD COLUMN '.$c.' '.$def); } } }
 function sfm_remote_output_dir(int $remoteJobId): string { return '/home/makler/web/remote_station/output/job_'.$remoteJobId; }
 function sfm_job_id(mysqli $dbcnx): int { do { $id=random_int(10000,999999999); $st=$dbcnx->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1'); if(!$st){return $id;} $st->bind_param('i',$id); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); } while($exists); return $id; }
 function sfm_session_for_order(mysqli $dbcnx,int $orderId,int $sessionId): ?array { $st=$dbcnx->prepare('SELECT id, app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1'); if(!$st){return null;} $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $row=$st->get_result()->fetch_assoc()?:null; $st->close(); return $row; }
@@ -218,7 +220,7 @@ function sfm_prepare_pipeline_dir(int $pipelineRunId): string {
   @chmod($log,0664);
   return $dir;
 }
-function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId,?int $videoScanId,string $mode,?int $previousPipelineRunId=null): int {
+function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId,?int $videoScanId,string $mode,int $startedByUserId=0,?int $previousPipelineRunId=null,?array $sameSettingsSnapshot=null): int {
   $preset=sfm_pipeline_preset($mode);
   if(!sfm_session_for_order($dbcnx,$orderId,$captureSessionId)){ throw new RuntimeException('Capture session not found'); }
   $st=$dbcnx->prepare("SELECT id FROM sfm_pipeline_runs WHERE capture_session_id=? AND pipeline_mode=? AND status IN ('QUEUED','RUNNING') LIMIT 1");
@@ -231,19 +233,22 @@ function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId
     if($st){ $st->bind_param('ii',$videoScanId,$captureSessionId); $st->execute(); $v=$st->get_result()->fetch_assoc(); $st->close(); if($v){ $videoPath=sfm_resolve_video_path($dbcnx,$orderId,$captureSessionId,(string)($v['filename'] ?? '')) ?? (string)($v['storage_path'] ?? ''); } }
   }
   if($videoPath===''){ throw new RuntimeException('Video path is invalid or outside session videos directory'); }
-  $params=json_encode($preset + ['pipeline_mode'=>$mode], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
-  $st=$dbcnx->prepare("INSERT INTO sfm_pipeline_runs (order_id,capture_session_id,video_scan_id,pipeline_mode,max_image_size,status,stage,progress_percent,message,parameters_json,started_at) VALUES (?,?,?,?,?,'QUEUED','QUEUED',0,?,?,NOW(6))");
+  if($sameSettingsSnapshot!==null){ $effective=$sameSettingsSnapshot; } else { $effective=sfm_merge_settings(sfm_system_defaults(), sfm_load_user_settings($dbcnx,$startedByUserId), sfm_load_session_settings($dbcnx,$captureSessionId,$startedByUserId), []); }
+  $effective=sfm_merge_settings(sfm_system_defaults(), [], [], $effective); sfm_validate_settings($effective);
+  $modeParams=sfm_mode_parameters($effective,$mode); $paramsArray=$effective + ['pipeline_mode'=>$mode,'mode_parameters'=>$modeParams];
+  $params=json_encode($paramsArray, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+  $st=$dbcnx->prepare("INSERT INTO sfm_pipeline_runs (order_id,capture_session_id,video_scan_id,pipeline_mode,parameters_json,started_by_user_id,max_image_size,status,stage,progress_percent,message,started_at) VALUES (?,?,?,?,?,? ,?,'QUEUED','QUEUED',0,?,NOW(6))");
   if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
-  $msg=$preset['label'].' queued'; $st->bind_param('iiisiss',$orderId,$captureSessionId,$videoScanId,$mode,$preset['max_image_size'],$msg,$params); $st->execute(); $pipelineRunId=(int)$dbcnx->insert_id; $st->close();
+  $msg=$preset['label'].' queued'; $maxImageSize=(int)$modeParams['dense']['max_image_size']; $st->bind_param('iiississ',$orderId,$captureSessionId,$videoScanId,$mode,$params,$startedByUserId,$maxImageSize,$msg); $st->execute(); $pipelineRunId=(int)$dbcnx->insert_id; $st->close();
   $localDir=sfm_prepare_pipeline_dir($pipelineRunId); $logPath=$localDir.'/pipeline.log';
   $remoteDir=sfm_pipeline_remote_output_dir($pipelineRunId); if(!is_dir($remoteDir)){ @mkdir($remoteDir,0775,true); }
   $st=$dbcnx->prepare('UPDATE sfm_pipeline_runs SET unified_log_path=? WHERE id=?'); if($st){$st->bind_param('si',$logPath,$pipelineRunId);$st->execute();$st->close();}
   pipeline_log($pipelineRunId,'INFO','PIPELINE',$preset['label'].($previousPipelineRunId?' restarted from previous pipeline_run_id='.$previousPipelineRunId:' started'));
-  pipeline_log($pipelineRunId,'INFO','PIPELINE','Parameters: max_image_size='.$preset['max_image_size'].' mesh_depth='.$preset['mesh_depth'].' target_faces='.$preset['target_faces']);
+  pipeline_log($pipelineRunId,'INFO','PIPELINE','Effective parameters: fps='.$modeParams['extract']['fps'].' max_frames='.$modeParams['extract']['max_frames'].' sequential_overlap='.$modeParams['sparse']['sequential_overlap'].' max_image_size='.$modeParams['dense']['max_image_size'].' num_src_images='.$modeParams['dense']['num_src_images'].' chunk_overlap='.$modeParams['dense']['chunk_overlap'].' mesh_depth='.$modeParams['mesh']['depth'].' target_faces='.$modeParams['mesh']['target_faces']);
   $rid=sfm_job_id($dbcnx); $out=sfm_remote_output_dir($rid); $result=$out.'/result.json'; $log=$out.'/logs'; $jt='EXTRACT_FRAMES'; $childMsg='pipeline extract frames queued';
   $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path,parameters_json) VALUES (?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?)");
   if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
-  $childParams=json_encode(['pipeline_run_id'=>$pipelineRunId,'frame_profile'=>$preset['frame_profile']], JSON_UNESCAPED_SLASHES);
+  $childParams=json_encode(['pipeline_run_id'=>$pipelineRunId,'frame_profile'=>$preset['frame_profile'],'settings'=>$modeParams], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
   $st->bind_param('iiisissssss',$orderId,$captureSessionId,$pipelineRunId,$jt,$rid,$videoPath,$out,$childMsg,$result,$log,$childParams); $st->execute(); $st->close();
   $st=$dbcnx->prepare("UPDATE sfm_pipeline_runs SET root_remote_job_id=?, stage='EXTRACT_FRAMES', progress_percent=5, message='Frame extraction queued' WHERE id=?"); if($st){$st->bind_param('ii',$rid,$pipelineRunId);$st->execute();$st->close();}
   pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Started, remote_job_id='.$rid);
@@ -305,6 +310,7 @@ function db_delete_or_soft_session_rows(mysqli $dbcnx,string $table,array $where
 
 ensure_sfm_remote_jobs_table($dbcnx);
 ensure_sfm_remote_jobs_chunk_columns($dbcnx);
+ensure_sfm_settings_pipeline_columns($dbcnx);
 //ensure_sfm_pipeline_tables($dbcnx);
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
@@ -387,12 +393,12 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      $captureSessionId=(int)($_POST['capture_session_id']??0);
      $videoScanId=(int)($_POST['video_scan_id']??0);
      $mode=(string)($_POST['pipeline_mode']??'');
-     start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,$videoScanId>0?$videoScanId:null,$mode);
+     start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,$videoScanId>0?$videoScanId:null,$mode,$userId);
      header('Location: /order.php?id='.$orderId.'&sfm_job_queued=1'); exit;
    }catch(Throwable $e){ $error=$e->getMessage(); }
  }
 
- if($action==='restart_sfm_pipeline' && $canDeleteMedia){
+ if(in_array($action,['restart_sfm_pipeline','restart_sfm_pipeline_same_settings'],true) && $canDeleteMedia){
    try{
      $pipelineRunId=(int)($_POST['pipeline_run_id']??0); $captureSessionId=(int)($_POST['capture_session_id']??0);
      if($pipelineRunId<=0||$captureSessionId<=0){ throw new RuntimeException('Bad pipeline restart request'); }
@@ -412,7 +418,8 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      $base='/home/makler/web/remote_station/output'; foreach($remoteIds as $rid){ if($rid>0){ safe_rrmdir(sfm_remote_output_dir($rid),$base); } } safe_rrmdir(sfm_pipeline_output_dir($pipelineRunId),$base);
      $st=$dbcnx->prepare('DELETE FROM sfm_remote_jobs WHERE pipeline_run_id=?'); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
      $st=$dbcnx->prepare('DELETE FROM sfm_pipeline_runs WHERE id=?'); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
-     start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,((int)($run['video_scan_id']??0))?:null,$mode,$pipelineRunId);
+     $sameSnapshot=null; if($action==='restart_sfm_pipeline_same_settings'){ $sameSnapshot=sfm_json_array((string)($run['parameters_json'] ?? '{}')); unset($sameSnapshot['pipeline_mode'],$sameSnapshot['mode_parameters']); }
+     start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,((int)($run['video_scan_id']??0))?:null,$mode,$userId,$pipelineRunId,$sameSnapshot);
      header('Location: /order.php?id='.$orderId.'&sfm_pipeline_restarted=1'); exit;
    }catch(Throwable $e){ $error=$e->getMessage(); }
  }
@@ -725,8 +732,10 @@ foreach($captureSessions as $idx=>$session){
   $captureSessions[$idx]['sfm_remote_jobs']=$sessionSfmJobs;
   $captureSessions[$idx]['sfm_pipeline']=sfm_enrich_session_jobs($sessionSfmJobs);
   $runs=$sfmPipelineRunsBySession[(int)$session['id']] ?? [];
-  $cards=[]; foreach(sfm_pipeline_modes() as $mode){ $preset=sfm_pipeline_preset($mode); $latest=null; foreach($runs as $run){ if((string)$run['pipeline_mode']===$mode){ $latest=$run; break; } } if($latest){ $latest['artifacts']=sfm_build_pipeline_artifacts($latest,$sessionSfmJobs); } $cards[$mode]=['mode'=>$mode,'preset'=>$preset,'run'=>$latest]; }
+  $cards=[]; foreach(sfm_pipeline_modes() as $mode){ $preset=sfm_pipeline_preset($mode); $latest=null; foreach($runs as $run){ if((string)$run['pipeline_mode']===$mode){ $latest=$run; break; } } if($latest){ $latest['artifacts']=sfm_build_pipeline_artifacts($latest,$sessionSfmJobs); $rp=sfm_json_array((string)($latest['parameters_json'] ?? '{}')); $latest['ui_parameters']=isset($rp['mode_parameters'])?$rp['mode_parameters']:sfm_mode_parameters(sfm_merge_settings(sfm_system_defaults(),[],[],$rp),(string)$latest['pipeline_mode']); $ef=(int)($latest['extracted_frames'] ?? 0); $ri=(int)($latest['registered_images'] ?? 0); $latest['ui_registration_ratio']=$ef>0?round($ri*100/$ef,1):(float)($latest['registration_ratio'] ?? 0); } $cards[$mode]=['mode'=>$mode,'preset'=>$preset,'run'=>$latest]; }
   $captureSessions[$idx]['sfm_pipeline_cards']=$cards;
+  $sys=sfm_system_defaults(); $usr=sfm_load_user_settings($dbcnx,$userId); $ses=sfm_load_session_settings($dbcnx,(int)$session['id'],$userId);
+  $captureSessions[$idx]['sfm_settings']=['system_defaults'=>$sys,'user_defaults'=>$usr,'session_overrides'=>$ses,'effective_settings'=>sfm_merge_settings($sys,$usr,$ses,[]),'api_url'=>'/api/sfm_settings.php?capture_session_id='.(int)$session['id']];
   $sid=(int)$session['id'];
   $captureSessions[$idx]['processing_job']=$processingJobsBySession[$sid] ?? null;
   $job = $captureSessions[$idx]['processing_job'] ?? null;

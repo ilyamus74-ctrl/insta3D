@@ -66,11 +66,15 @@ if [[ -z "$DURATION_SEC" || "$DURATION_SEC" -le 0 ]]; then
   DURATION_SEC=1
 fi
 
+FPS="${EXTRACT_FPS:-2}"; MAX_FRAMES="${EXTRACT_MAX_FRAMES:-360}"; SCALE_WIDTH="${EXTRACT_SCALE_WIDTH:-1920}"; JPEG_QUALITY="${EXTRACT_JPEG_QUALITY:-2}"
+rm -f "$OUTPUT_DIR"/frame_*.jpg
 write_status "RUNNING" 1 -1 "Extracting frames"
 
 ffmpeg -y \
   -i "$INPUT_VIDEO" \
-  -vf "fps=2,scale=1920:-1" \
+  -vf "fps=${FPS},scale=${SCALE_WIDTH}:-1" \
+  -frames:v "$MAX_FRAMES" \
+  -q:v "$JPEG_QUALITY" \
   -progress pipe:1 \
   "$OUTPUT_DIR/frame_%06d.jpg" | while IFS= read -r line; do
     if [[ "$line" == out_time_ms=* ]]; then
@@ -93,6 +97,9 @@ cat > "$OUTPUT_DIR/result.json" <<JSON
   "job_id": "$JOB_ID",
   "status": "DONE",
   "frames": $FRAME_COUNT,
+  "fps": $FPS,
+  "max_frames": $MAX_FRAMES,
+  "scale_width": $SCALE_WIDTH,
   "output_dir": "$OUTPUT_DIR",
   "finished_at": "$(date -Iseconds)"
 }

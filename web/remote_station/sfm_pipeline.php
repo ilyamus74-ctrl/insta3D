@@ -40,6 +40,12 @@ function ensure_sfm_pipeline_tables(mysqli $db): void
         output_result_json_path VARCHAR(500) NULL,
         unified_log_path VARCHAR(500) NULL,
         parameters_json LONGTEXT NULL,
+        started_by_user_id BIGINT UNSIGNED NULL,
+        extracted_frames INT NULL,
+        registration_ratio DECIMAL(6,2) NULL,
+        sparse_models_count INT NULL,
+        selected_model_id INT NULL,
+        selected_model_points INT NULL,
         error_json LONGTEXT NULL,
         started_at DATETIME(6) NULL,
         finished_at DATETIME(6) NULL,
@@ -61,6 +67,9 @@ if (!$db->query($sql)) {
     $res = $db->query("SHOW COLUMNS FROM sfm_remote_jobs LIKE 'pipeline_run_id'");
     $exists = $res && $res->num_rows > 0; if ($res) { $res->close(); }
     if (!$exists) { @$db->query("ALTER TABLE sfm_remote_jobs ADD COLUMN pipeline_run_id BIGINT UNSIGNED NULL AFTER capture_session_id, ADD INDEX idx_sfm_pipeline_run_id (pipeline_run_id)"); }
+    foreach(['parameters_json'=>'LONGTEXT NULL','started_by_user_id'=>'BIGINT UNSIGNED NULL','extracted_frames'=>'INT NULL','registration_ratio'=>'DECIMAL(6,2) NULL','sparse_models_count'=>'INT NULL','selected_model_id'=>'INT NULL','selected_model_points'=>'INT NULL'] as $c=>$def){ $r=$db->query("SHOW COLUMNS FROM sfm_pipeline_runs LIKE '".$db->real_escape_string($c)."'"); $ok=$r&&$r->num_rows>0; if($r){$r->close();} if(!$ok){ @$db->query('ALTER TABLE sfm_pipeline_runs ADD COLUMN '.$c.' '.$def); } }
+    @$db->query("ALTER TABLE sfm_pipeline_runs MODIFY status ENUM('QUEUED','RUNNING','DONE','ERROR','CANCELLED','CANCELLING','RESTARTING') NOT NULL DEFAULT 'QUEUED'");
+    @$db->query("ALTER TABLE sfm_pipeline_runs MODIFY stage ENUM('QUEUED','EXTRACT_FRAMES','SPARSE','DENSE_PLAN','DENSE','MERGE','MESH','FETCH_RESULT','DONE','ERROR','CANCELLED','CANCELLING') NOT NULL DEFAULT 'QUEUED'");
 }
 
 function pipeline_log(int $pipelineRunId, string $level, string $stage, string $message): void

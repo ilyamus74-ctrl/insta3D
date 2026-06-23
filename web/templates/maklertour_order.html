@@ -218,6 +218,27 @@
                   </div>
                 {/foreach}
               {else}<div class="small text-muted">No phone videos found in storage.</div>{/if}
+              <details class="mb-3 border rounded p-2 bg-light-subtle">
+                <summary class="fw-semibold">Processing settings</summary>
+                <div class="small text-muted mb-2">Effective settings source: System defaults{if $s.sfm_settings.user_defaults|@count > 0} → User defaults{/if}{if $s.sfm_settings.session_overrides|@count > 0} → Session override{/if}</div>
+                <form method="post" action="{$s.sfm_settings.api_url|escape}" class="small">
+                  <input type="hidden" name="secCode" value="{$secCode|escape}">
+                  <input type="hidden" name="settings_json" value='{$s.sfm_settings.effective_settings|json_encode|escape}'>
+                  <div class="row g-2">
+                    <div class="col-md-3"><strong>Frames</strong><br>FPS: {$s.sfm_settings.effective_settings.extract.fps|escape}<br>Maximum frames: {$s.sfm_settings.effective_settings.extract.max_frames|escape}<br>Extracted frame width: {$s.sfm_settings.effective_settings.extract.scale_width|escape}</div>
+                    <div class="col-md-3"><strong>Sparse reconstruction</strong><br>Matcher: {$s.sfm_settings.effective_settings.sparse.matcher|escape}<br>Sequential overlap: {$s.sfm_settings.effective_settings.sparse.sequential_overlap|escape}<br>Loop detection: {if $s.sfm_settings.effective_settings.sparse.loop_detection}yes{else}no{/if}</div>
+                    {foreach from=['preview','standard','fullhd'] item=smode}
+                      <div class="col-md-2"><strong>{$smode|escape}</strong><br>Max image size: {$s.sfm_settings.effective_settings[$smode].max_image_size|escape}<br>PatchMatch source images: {$s.sfm_settings.effective_settings[$smode].num_src_images|escape}<br>Chunk overlap: {$s.sfm_settings.effective_settings[$smode].chunk_overlap|escape}<br>Target/max images per chunk: {$s.sfm_settings.effective_settings[$smode].target_images_per_chunk|escape}/{$s.sfm_settings.effective_settings[$smode].max_images_per_chunk|escape}<br>Mesh depth: {$s.sfm_settings.effective_settings[$smode].mesh_depth|escape}<br>Target faces: {$s.sfm_settings.effective_settings[$smode].target_faces|escape}<br>Mesh engine: {$s.sfm_settings.effective_settings[$smode].mesh_engine|escape}<br>Density quantile: {$s.sfm_settings.effective_settings[$smode].density_quantile|escape}</div>
+                    {/foreach}
+                  </div>
+                  <div class="mt-2 d-flex gap-2 flex-wrap">
+                    <button name="action" value="save_user_defaults" class="btn btn-sm btn-outline-primary">Save as my defaults</button>
+                    <button name="action" value="save_session_overrides" class="btn btn-sm btn-outline-primary">Save for this session</button>
+                    <button name="action" value="reset_user_defaults" class="btn btn-sm btn-outline-secondary">Reset user defaults</button>
+                    <button name="action" value="reset_session_overrides" class="btn btn-sm btn-outline-secondary">Reset session overrides</button>
+                  </div>
+                </form>
+              </details>
               <div class="row g-3 mb-3 sfm-pipeline-cards">
                 {foreach from=$s.sfm_pipeline_cards item=pc key=pmode}
                   {assign var=run value=$pc.run}
@@ -247,6 +268,15 @@
                             </div>
                             {if $art.result_json.available}<div><span class="text-success">✓</span> Pipeline result — <a href="{$art.result_json.download_url|escape}">Download result JSON</a></div>{/if}
                           </div>
+                          {if $run.ui_parameters|default:null}
+                            <details class="border rounded p-2 bg-light-subtle small mt-2"><summary class="fw-semibold">Processing parameters</summary>
+                              <div>Frames: FPS {$run.ui_parameters.extract.fps|escape}, Max frames {$run.ui_parameters.extract.max_frames|escape}, Extracted {$run.extracted_frames|default:0|escape}</div>
+                              <div>Sparse: Matcher {$run.ui_parameters.sparse.matcher|escape}, Sequential overlap {$run.ui_parameters.sparse.sequential_overlap|escape}, Registered {$run.registered_images|default:0|escape} / {$run.extracted_frames|default:0|escape}, Registration ratio {$run.ui_registration_ratio|default:0|escape}%</div>
+                              {if $run.ui_registration_ratio|default:0 < 50 && $run.extracted_frames|default:0 > 0}<div class="text-danger">Low registration ratio: only {$run.registered_images|default:0|escape} of {$run.extracted_frames|default:0|escape} frames were registered.</div>{elseif $run.ui_registration_ratio|default:0 >= 70}<div class="text-success">Good registration ratio.</div>{/if}
+                              <div>Dense: Max image size {$run.ui_parameters.dense.max_image_size|escape}, Source images {$run.ui_parameters.dense.num_src_images|escape}, Chunk overlap {$run.ui_parameters.dense.chunk_overlap|escape}</div>
+                              <div>Mesh: Engine {$run.ui_parameters.mesh.engine|escape}, Depth {$run.ui_parameters.mesh.depth|escape}, Target faces {$run.ui_parameters.mesh.target_faces|escape}, Density quantile {$run.ui_parameters.mesh.density_quantile|escape}</div>
+                            </details>
+                          {/if}
                           <div class="d-flex gap-2 flex-wrap mt-2">
                             <a class="btn btn-sm btn-outline-secondary" href="{$run.log_url|escape}" target="_blank">View pipeline log</a>
                             <a class="btn btn-sm btn-outline-secondary" href="{$run.download_log_url|escape}">Download full log</a>
@@ -266,6 +296,12 @@
                                 <button type="submit" class="btn btn-sm btn-outline-danger">Restart from scratch</button>
                               </form>
                             {/if}
+                              <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('Restart with same immutable processing parameters from this pipeline snapshot?');">
+                                <input type="hidden" name="action" value="restart_sfm_pipeline_same_settings">
+                                <input type="hidden" name="pipeline_run_id" value="{$run.id}">
+                                <input type="hidden" name="capture_session_id" value="{$s.id}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Restart with same settings</button>
+                              </form>
                           </div>
                         {else}
                           <form method="post" action="/order.php?id={$order.id}" class="mt-3">
@@ -274,7 +310,7 @@
                             <input type="hidden" name="pipeline_mode" value="{$pmode|escape}">
                             {if $s.videos|@count > 0}<input type="hidden" name="video_scan_id" value="{$s.videos.0.id}">{/if}
                             {if $s.sfm_disk_videos|@count > 0}<input type="hidden" name="video_filename" value="{$s.sfm_disk_videos.0.filename|escape}">{/if}
-                            <button class="btn btn-sm btn-primary">Generate {$pc.preset.label|escape}</button>
+                            <button class="btn btn-sm btn-primary" onclick="return confirm('{$pc.preset.label|escape} will start with current effective processing settings.');">Start {$pc.preset.label|escape}</button>
                           </form>
                         {/if}
                         {if $run && ($run.status=='QUEUED' || $run.status=='RUNNING')}

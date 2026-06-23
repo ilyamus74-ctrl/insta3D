@@ -18,6 +18,8 @@ if [[ "$(realpath "$IMAGE_LIST_PATH")" != "$(realpath -m "$TARGET_IMAGE_LIST")" 
     cp "$IMAGE_LIST_PATH" "$TARGET_IMAGE_LIST"
 fi
 if [[ "$MODE" == "preview" ]]; then MAX_IMAGE_SIZE="${COLMAP_PREVIEW_MAX_IMAGE_SIZE:-640}"; SRC="${COLMAP_PREVIEW_NUM_SRC_IMAGES:-6}"; PMC="${COLMAP_PREVIEW_PATCHMATCH_CACHE_SIZE:-2}"; FC="${COLMAP_PREVIEW_FUSION_CACHE_SIZE:-2}"; else MAX_IMAGE_SIZE="${COLMAP_HQ_MAX_IMAGE_SIZE:-1600}"; SRC="${COLMAP_HQ_NUM_SRC_IMAGES:-8}"; PMC="${COLMAP_HQ_PATCHMATCH_CACHE_SIZE:-4}"; FC="${COLMAP_HQ_FUSION_CACHE_SIZE:-4}"; fi
+[[ -n "${DENSE_MAX_IMAGE_SIZE:-}" ]] && MAX_IMAGE_SIZE="$DENSE_MAX_IMAGE_SIZE"
+[[ -n "${DENSE_NUM_SRC_IMAGES:-}" ]] && SRC="$DENSE_NUM_SRC_IMAGES"
 avail_mb(){ awk '/MemAvailable:/ {print int($2/1024)}' /proc/meminfo; }
 jqstr(){ python3 -c 'import json,sys;print(json.dumps(sys.stdin.read())[1:-1])'; }
 status(){ local st="$1" pr="$2" msg; msg="$(printf '%s' "$3"|jqstr)"; cat > "$STATUS_FILE" <<JSON
