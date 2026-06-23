@@ -13,4 +13,21 @@ MIN_IN="${MESH_MIN_INPUT_VERTICES:-500}"; MIN_FACES="${MESH_MIN_OUTPUT_FACES:-10
 SSH=(ssh -i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new "${STATION_USER}@${STATION_HOST}")
 printf -v B '%q' "$STATION_BASE"; printf -v CM '%q' "$COLMAP_MODE"; printf -v CB '%q' "$COLMAP_BIN"; printf -v CI '%q' "$COLMAP_IMAGE"; printf -v ME '%q' "$MESH_ENGINE"; printf -v OP '%q' "$OPEN3D_PYTHON"
 printf -v A '%q ' "$MESH_JOB_ID" "$PARENT_JOB_ID" "$MODE" "$DEPTH" "$TARGET" "$MIN_IN" "$MIN_FACES"
-"${SSH[@]}" "mkdir -p '$STATION_BASE/logs'; { echo '[launcher] mesh job $MESH_JOB_ID parent $PARENT_JOB_ID mode $MODE'; STATION_BASE=$B COLMAP_MODE=$CM COLMAP_BIN=$CB COLMAP_IMAGE=$CI MESH_ENGINE=$ME OPEN3D_PYTHON=$OP nohup $B/scripts/process_colmap_mesh.sh $A > '$STATION_BASE/logs/job_${MESH_JOB_ID}_mesh_launcher.log' 2>&1 & echo launched; }"
+"${SSH[@]}" "
+mkdir -p '$STATION_BASE/logs'
+
+echo '[launcher] mesh job $MESH_JOB_ID parent $PARENT_JOB_ID mode $MODE'
+
+setsid -f env \
+  STATION_BASE=$B \
+  COLMAP_MODE=$CM \
+  COLMAP_BIN=$CB \
+  COLMAP_IMAGE=$CI \
+  MESH_ENGINE=$ME \
+  OPEN3D_PYTHON=$OP \
+  $B/scripts/process_colmap_mesh.sh $A \
+  > '$STATION_BASE/logs/job_${MESH_JOB_ID}_mesh_launcher.log' \
+  2>&1 < /dev/null
+
+echo launched
+"
