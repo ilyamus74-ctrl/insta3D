@@ -11,11 +11,11 @@ $artifact = in_array((string)($_GET['artifact'] ?? 'sparse'), ['sparse','dense',
 <html lang="ru">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SfM Sparse 3D Viewer</title>
+<title>SfM 3D Viewer</title>
 <link href="/assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
 <style>
 body,html{height:100%}
-#viewer{height:80vh;background:#111;border-radius:8px}
+#viewer{height:80vh;background:#252b3f;border-radius:8px}
 .overlay{position:absolute;right:20px;top:110px;z-index:10;max-width:320px}
 .controls-panel{position:absolute;left:20px;top:110px;z-index:10;max-width:320px}
 </style>
@@ -39,9 +39,17 @@ body,html{height:100%}
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleKeyframes" checked><label class="form-check-label" for="toggleKeyframes">Show keyframes</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleAxes" checked><label class="form-check-label" for="toggleAxes">Show axes</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleGrid" checked><label class="form-check-label" for="toggleGrid">Show floor grid</label></div>
-    <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="toggleOutlierFilter"><label class="form-check-label" for="toggleOutlierFilter">Use outlier filter</label></div>
-    <label for="pointSize" class="form-label mb-1">Point size: <span id="pointSizeValue">0.025</span></label>
-    <input type="range" class="form-range" id="pointSize" min="0.005" max="0.12" step="0.001" value="0.025">
+    <label for="displayPreset" class="form-label mb-1">Preset</label>
+    <select class="form-select form-select-sm mb-2" id="displayPreset">
+      <option value="natural">Natural</option><option value="bright">Bright</option><option value="contrast">High contrast</option><option value="meshlab" selected>MeshLab style</option>
+    </select>
+    <label for="outlierMode" class="form-label mb-1">Outlier filter</label>
+    <select class="form-select form-select-sm mb-2" id="outlierMode"><option value="off" selected>Off</option><option value="light">Light (0.5–99.5%)</option><option value="medium">Medium (1–99%)</option><option value="strong">Strong (2–98%)</option></select>
+    <label for="pointSize" class="form-label mb-1">Point size: <span id="pointSizeValue">2.25</span> px</label>
+    <input type="range" class="form-range" id="pointSize" min="0.5" max="8" step="0.25" value="2.25">
+    <label for="exposure" class="form-label mb-1">Exposure: <span id="exposureValue">1.60</span></label>
+    <input type="range" class="form-range" id="exposure" min="0.5" max="3" step="0.05" value="1.6">
+    <label for="backgroundColor" class="form-label mb-1">Background</label><input type="color" class="form-control form-control-color mb-2" id="backgroundColor" value="#252b3f">
     <div class="d-grid gap-1 mt-2">
       <button class="btn btn-outline-light btn-sm" id="fitAllBtn">Fit all</button>
       <button class="btn btn-outline-light btn-sm" id="fitRouteBtn">Fit route</button>
@@ -50,6 +58,17 @@ body,html{height:100%}
       <button class="btn btn-outline-light btn-sm" id="sideViewBtn">Side view</button>
       <button class="btn btn-outline-info btn-sm" id="cloudBeautyBtn">Cloud beauty</button>
     </div>
+    <div class="mt-2"><b>Orientation</b></div>
+    <div class="d-grid gap-1 mt-1">
+      <button class="btn btn-outline-warning btn-sm" id="flipVerticalBtn">Flip vertical</button>
+      <button class="btn btn-outline-light btn-sm" id="rotXpBtn">Rotate X +90°</button><button class="btn btn-outline-light btn-sm" id="rotXmBtn">Rotate X -90°</button>
+      <button class="btn btn-outline-light btn-sm" id="rotYpBtn">Rotate Y +90°</button><button class="btn btn-outline-light btn-sm" id="rotYmBtn">Rotate Y -90°</button>
+      <button class="btn btn-outline-light btn-sm" id="rotZpBtn">Rotate Z +90°</button><button class="btn btn-outline-light btn-sm" id="rotZmBtn">Rotate Z -90°</button>
+      <button class="btn btn-outline-light btn-sm" id="autoOrientBtn">Auto orient</button>
+      <button class="btn btn-outline-light btn-sm" id="resetOrientationBtn">Reset orientation</button>
+      <button class="btn btn-outline-success btn-sm" id="saveDefaultBtn">Set current orientation as default</button>
+    </div>
+    <div class="d-flex gap-2 mt-2"><button class="btn btn-outline-light btn-sm" id="setFloorBtn">Set floor here</button><button class="btn btn-outline-light btn-sm" id="raiseFloorBtn">Raise floor</button><button class="btn btn-outline-light btn-sm" id="lowerFloorBtn">Lower floor</button></div>
     <div class="d-flex gap-2 mt-2">
       <button class="btn btn-outline-warning btn-sm" id="hideOutliersBtn">Hide far outliers</button>
       <button class="btn btn-outline-light btn-sm" id="resetViewBtn">Reset view</button>
@@ -85,12 +104,15 @@ const summaryEl=document.getElementById('summary');
 const selectionEl=document.getElementById('selection');
 
 const scene=new THREE.Scene();
-scene.background=new THREE.Color(0x111111);
+scene.background=new THREE.Color(0x252b3f);
 const camera=new THREE.PerspectiveCamera(65,el.clientWidth/el.clientHeight,0.01,10000);
 camera.position.set(0,5,10);
 
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(el.clientWidth,el.clientHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.6;
 statusEl.remove();
 el.appendChild(renderer.domElement);
 
@@ -106,9 +128,12 @@ scene.add(rootGroup);
 let grid = null;
 
 let pointsMesh=null;
-let pointsMaterial=new THREE.PointsMaterial({size:0.025,vertexColors:true});
+let pointsMaterial=new THREE.PointsMaterial({size:2.25,vertexColors:true,sizeAttenuation:false,depthWrite:true,transparent:false});
 let originalPointGeometry=null;
 let filteredPointGeometry=null;
+const filteredGeometryCache={sparse:{},dense:{}};
+let pointStats={sparse:{original:0,displayed:0,filtered:0},dense:{original:0,displayed:0,filtered:0}};
+let floorOffset=0;
 let trajectoryLine=null;
 let denseObject=null;
 let meshObject=null;
@@ -126,9 +151,13 @@ let currentViewMode = 'Fit all';
 const formatNum=(v)=>typeof v==='number'?v.toLocaleString():v;
 function updateSummary(){
   const selectedText=selected ? selected.userData.keyframe_index : 'none';
-  summaryEl.innerHTML=`<b>Summary</b><br>view mode: ${currentViewMode}<br>points_count: ${formatNum(data.summary.points_count)}<br>camera_poses_count: ${formatNum(data.summary.camera_poses_count)}<br>keyframe_points_count: ${formatNum(data.summary.keyframe_points_count)}<br>point_size: ${pointsMaterial.size.toFixed(3)}<br>selected keyframe: ${selectedText}<br><span class="text-warning">Raw cloud may include outliers.</span>`;
+  summaryEl.innerHTML=`<b>Summary</b><br>view mode: ${currentViewMode}<br>artifact: ${artifactLabel()}<br>${artifactStatsHtml()}<br>camera_poses_count: ${formatNum(data.summary.camera_poses_count)}<br>keyframe_points_count: ${formatNum(data.summary.keyframe_points_count)}<br>point_size: ${getPointSize().toFixed(2)} px<br>orientation: X=${deg(rootGroup.rotation.x)}°, Y=${deg(rootGroup.rotation.y)}°, Z=${deg(rootGroup.rotation.z)}°<br>selected keyframe: ${selectedText}<br><span class="text-warning">Raw cloud may include outliers.</span>`;
 }
 
+function artifactLabel(){return initialArtifact==='dense'?'Dense point cloud':(initialArtifact==='mesh'?'Mesh':'Sparse point cloud');}
+function deg(r){return Math.round(THREE.MathUtils.radToDeg(r));}
+function getPointSize(){return parseFloat(document.getElementById('pointSize').value)||2.25;}
+function artifactStatsHtml(){const obj=initialArtifact==='dense'?denseObject:(initialArtifact==='mesh'?meshObject:pointsMesh); if(initialArtifact==='mesh'&&obj){const p=obj.geometry.getAttribute('position')?.count||0; const f=obj.geometry.index?obj.geometry.index.count/3:(obj.geometry.getAttribute('position')?.count||0)/3; return `vertices: ${formatNum(p)}<br>faces: ${formatNum(Math.floor(f))}`;} if(obj){const c=obj.geometry.getAttribute('position')?.count||0; const rgb=obj.geometry.hasAttribute('color')?'yes':'no'; const st=initialArtifact==='dense'?pointStats.dense:pointStats.sparse; return `points: ${formatNum(c)}<br>has RGB colors: ${rgb}<br>original/displayed/filtered: ${formatNum(st.original)} / ${formatNum(st.displayed)} / ${formatNum(st.filtered)}`;} return `points: ${formatNum(data.summary.points_count||0)}<br>camera_poses_count: ${formatNum(data.summary.camera_poses_count)}<br>keyframe_points_count: ${formatNum(data.summary.keyframe_points_count)}`;}
 function percentile(sorted, p){
   if(sorted.length===0) return 0;
   const i=(sorted.length-1)*p;
@@ -137,38 +166,39 @@ function percentile(sorted, p){
   return sorted[lo]*(hi-i)+sorted[hi]*(i-lo);
 }
 
-function createFilteredGeometry(geometry){
+function createFilteredGeometry(geometry, mode='medium', statsKey='sparse'){
   const pos=geometry.getAttribute('position');
   const col=geometry.getAttribute('color');
-  if(!pos||!col) return geometry;
+  if(!pos) return geometry;
+  const ranges={light:[0.005,0.995],medium:[0.01,0.99],strong:[0.02,0.98]};
+  if(mode==='off'||!ranges[mode]){pointStats[statsKey]={original:pos.count,displayed:pos.count,filtered:0};return geometry;}
+  const [loP,hiP]=ranges[mode];
   const xs=[], ys=[], zs=[];
   for(let i=0;i<pos.count;i++){ xs.push(pos.getX(i)); ys.push(pos.getY(i)); zs.push(pos.getZ(i)); }
   xs.sort((a,b)=>a-b); ys.sort((a,b)=>a-b); zs.sort((a,b)=>a-b);
-  const xMin=percentile(xs,0.01), xMax=percentile(xs,0.99);
-  const yMin=percentile(ys,0.01), yMax=percentile(ys,0.99);
-  const zMin=percentile(zs,0.01), zMax=percentile(zs,0.99);
+  const xMin=percentile(xs,loP), xMax=percentile(xs,hiP);
+  const yMin=percentile(ys,loP), yMax=percentile(ys,hiP);
+  const zMin=percentile(zs,loP), zMax=percentile(zs,hiP);
   const newPos=[], newCol=[];
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
     if(x<xMin||x>xMax||y<yMin||y>yMax||z<zMin||z>zMax) continue;
     newPos.push(x,y,z);
-    newCol.push(col.getX(i),col.getY(i),col.getZ(i));
+    if(col) newCol.push(col.getX(i),col.getY(i),col.getZ(i));
   }
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(newPos,3));
-  g.setAttribute('color',new THREE.Float32BufferAttribute(newCol,3));
+  if(col) g.setAttribute('color',new THREE.Float32BufferAttribute(newCol,3));
   g.computeBoundingSphere();
+  pointStats[statsKey]={original:pos.count,displayed:newPos.length/3,filtered:pos.count-newPos.length/3};
   return g;
 }
 
-function applyOutlierFilter(on){
-  if(!pointsMesh||!originalPointGeometry) return;
-  if(on){
-    if(!filteredPointGeometry) filteredPointGeometry=createFilteredGeometry(originalPointGeometry);
-    pointsMesh.geometry=filteredPointGeometry;
-  }else{
-    pointsMesh.geometry=originalPointGeometry;
-  }
+function applyOutlierFilter(mode){
+  mode=mode||document.getElementById('outlierMode').value;
+  if(pointsMesh&&originalPointGeometry){ if(!filteredGeometryCache.sparse[mode]) filteredGeometryCache.sparse[mode]=createFilteredGeometry(originalPointGeometry,mode,'sparse'); pointsMesh.geometry=filteredGeometryCache.sparse[mode]; }
+  if(denseObject){ const original=denseObject.userData.originalGeometry||denseObject.geometry; denseObject.userData.originalGeometry=original; if(!filteredGeometryCache.dense[mode]) filteredGeometryCache.dense[mode]=createFilteredGeometry(original,mode,'dense'); denseObject.geometry=filteredGeometryCache.dense[mode]; }
+  rebuildAfterTransform(false); updateSummary();
 }
 
 function getBoxFromObject(obj){
@@ -197,10 +227,11 @@ function computeCombinedBox(includePoints=true, includeRoute=true, includeKeyfra
   return hasAny ? box : null;
 }
 
+function pointPercentileY(p, fallback){ const obj=initialArtifact==='dense'?denseObject:(initialArtifact==='mesh'?meshObject:pointsMesh); const pos=obj?.geometry?.getAttribute('position'); if(!pos) return fallback; const ys=[]; const v=new THREE.Vector3(); for(let i=0;i<pos.count;i++){v.fromBufferAttribute(pos,i); obj.localToWorld(v); ys.push(v.y);} ys.sort((a,b)=>a-b); return percentile(ys,p);}
 function recreateGrid(box, center, radius){
   if(grid) scene.remove(grid);
   const gridSize=Math.max(10, radius * 2);
-  const floorY=box.min.y;
+  const floorY=pointPercentileY(0.02, box.min.y) + floorOffset;
   grid=new THREE.GridHelper(gridSize, 40);
   grid.position.set(0, floorY - center.y, 0);
   grid.visible=document.getElementById('toggleGrid').checked;
@@ -250,7 +281,7 @@ function setViewMode(name){
 
 function fitAll(){ const box=computeCombinedBox(true,true,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit all'); }
 function fitRoute(){ const box=computeCombinedBox(false,true,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit route'); }
-function fitCloud(){ const box=computeCombinedBox(true,false,false,true,false); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit cloud'); }
+function fitCloud(){ const box=initialArtifact==='dense'?computeCombinedBox(false,false,false,true,false):(initialArtifact==='mesh'?computeCombinedBox(false,false,false,false,true):computeCombinedBox(true,false,false,false,false)); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit cloud'); }
 function fitMesh(){ const box=computeCombinedBox(false,false,false,false,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit mesh'); }
 
 function topView(){
@@ -291,12 +322,14 @@ function addPlyAsObject(url, target) {
 
           const material =
             new THREE.PointsMaterial({
-              size: 0.018,
+              size: target === 'dense' ? getPointSize() : getPointSize(),
               vertexColors: hasVertexColors,
               color: hasVertexColors
                 ? 0xffffff
                 : 0x77ddff,
-              sizeAttenuation: true
+              sizeAttenuation: false,
+              depthWrite: true,
+              transparent: false
             });
 
           object = new THREE.Points(
@@ -359,9 +392,7 @@ function cloudBeauty(){
   keyframeGroup.visible=false;
   axes.visible=false;
   if(grid) grid.visible=false;
-  pointsMaterial.size=0.035;
-  pointSizeSlider.value='0.035';
-  pointSizeValue.textContent='0.035';
+  setPointSize(2.75);
   fitCloud();
   setViewMode('Cloud beauty');
 }
@@ -372,7 +403,7 @@ new PLYLoader().load(data.artifacts.sparse_points_ply_url,(g)=>{
   pointsMesh=new THREE.Points(g,pointsMaterial);
   rootGroup.add(pointsMesh);
 
-  applyOutlierFilter(document.getElementById('toggleOutlierFilter').checked);
+  applyOutlierFilter(document.getElementById('outlierMode').value);
   updateSceneBoundsAndCenter();
   updateSummary();
   if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
@@ -396,8 +427,8 @@ key.forEach((k,i)=>{
 
 if(data.dense && data.dense.available){ denseObject = await addPlyAsObject(data.dense.fused_ply_url, 'dense'); }
 if(data.mesh && data.mesh.available){ meshObject = await addPlyAsObject(data.mesh.mesh_ply_url, 'mesh'); } else if(data.dense && data.dense.mesh_ply_url){ meshObject = await addPlyAsObject(data.dense.mesh_ply_url, 'mesh'); }
-if(initialArtifact==='dense'){ document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=true; document.getElementById('toggleMesh').checked=false; document.getElementById('togglePath').checked=false; if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=true; if(meshObject) meshObject.visible=false; if(trajectoryLine) trajectoryLine.visible=false; fitCloud(); summaryEl.innerHTML=`Loaded ${formatNum(data.selected?.vertices || data.dense?.points || 0)} points`; }
-else if(initialArtifact==='mesh'){ document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=false; document.getElementById('toggleMesh').checked=true; document.getElementById('togglePath').checked=false; if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=false; if(meshObject) meshObject.visible=true; if(trajectoryLine) trajectoryLine.visible=false; fitMesh(); summaryEl.innerHTML=`Loaded ${formatNum(data.selected?.vertices || data.mesh?.vertices || 0)} vertices / ${formatNum(data.selected?.faces || data.mesh?.faces || 0)} faces`; }
+if(initialArtifact==='dense'){ document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=true; document.getElementById('toggleMesh').checked=false; document.getElementById('togglePath').checked=false; document.getElementById('toggleKeyframes').checked=false; if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=true; if(meshObject) meshObject.visible=false; if(trajectoryLine) trajectoryLine.visible=false; keyframeGroup.visible=false; applyOutlierFilter(document.getElementById('outlierMode').value); fitCloud(); updateSummary(); }
+else if(initialArtifact==='mesh'){ document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=false; document.getElementById('toggleMesh').checked=true; document.getElementById('togglePath').checked=false; document.getElementById('toggleKeyframes').checked=false; if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=false; if(meshObject) meshObject.visible=true; if(trajectoryLine) trajectoryLine.visible=false; keyframeGroup.visible=false; fitMesh(); updateSummary(); }
 else { updateSceneBoundsAndCenter(); }
 
 const ray=new THREE.Raycaster();
@@ -420,9 +451,9 @@ renderer.domElement.addEventListener('click',(ev)=>{
 
 const pointSizeSlider=document.getElementById('pointSize');
 const pointSizeValue=document.getElementById('pointSizeValue');
+function setPointSize(v){ pointsMaterial.size=v; if(denseObject?.material?.isPointsMaterial) denseObject.material.size=v; if(pointsMesh?.material?.isPointsMaterial) pointsMesh.material.size=v; pointSizeSlider.value=String(v); pointSizeValue.textContent=v.toFixed(2);}
 pointSizeSlider.addEventListener('input',()=>{
-  pointsMaterial.size=parseFloat(pointSizeSlider.value);
-  pointSizeValue.textContent=pointsMaterial.size.toFixed(3);
+  setPointSize(parseFloat(pointSizeSlider.value));
   updateSummary();
   if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
 });
@@ -434,16 +465,25 @@ document.getElementById('togglePath').addEventListener('change',(e)=>{if(traject
 document.getElementById('toggleKeyframes').addEventListener('change',(e)=>{keyframeGroup.visible=e.target.checked;});
 document.getElementById('toggleAxes').addEventListener('change',(e)=>{axes.visible=e.target.checked;});
 document.getElementById('toggleGrid').addEventListener('change',(e)=>{if(grid) grid.visible=e.target.checked;});
-document.getElementById('toggleOutlierFilter').addEventListener('change',(e)=>applyOutlierFilter(e.target.checked));
+document.getElementById('outlierMode').addEventListener('change',(e)=>applyOutlierFilter(e.target.value));
 document.getElementById('hideOutliersBtn').addEventListener('click',()=>{
-  const cb=document.getElementById('toggleOutlierFilter');
-  cb.checked=true;
-  applyOutlierFilter(true);
+  const cb=document.getElementById('outlierMode');
+  cb.value='medium';
+  applyOutlierFilter('medium');
 });
 const bindClick=(id,handler)=>{
   const btn=document.getElementById(id);
   if(btn) btn.addEventListener('click',handler);
 };
+
+
+const presets={natural:{exposure:1.2,pointSize:1.5,background:'#252b3f'},bright:{exposure:1.7,pointSize:2.25,background:'#252b3f'},contrast:{exposure:2.0,pointSize:2.75,background:'#202437'},meshlab:{exposure:1.5,pointSize:2.0,background:'#29305f'}};
+function applyDisplaySettings(sv){ if(!sv) return; if(sv.background){scene.background=new THREE.Color(sv.background); document.getElementById('backgroundColor').value=sv.background;} if(sv.exposure){renderer.toneMappingExposure=Number(sv.exposure); document.getElementById('exposure').value=String(sv.exposure); document.getElementById('exposureValue').textContent=Number(sv.exposure).toFixed(2);} if(sv.point_size){setPointSize(Number(sv.point_size));} if(sv.rotation){rootGroup.rotation.set(Number(sv.rotation.x||0),Number(sv.rotation.y||0),Number(sv.rotation.z||0));} if(sv.preset){document.getElementById('displayPreset').value=sv.preset;} }
+async function loadViewerSettings(){ try{ const rr=await fetch(`/api/sfm_viewer_settings.php?order_id=${orderId}&capture_session_id=${sessionId}&pipeline_run_id=${pipelineRunId||''}`); const js=await rr.json(); if(js.ok) applyDisplaySettings(js.settings); }catch(e){ console.warn('settings load failed',e);} }
+async function saveViewerSettings(){ const body={order_id:orderId,capture_session_id:sessionId,pipeline_run_id:pipelineRunId||null,settings:{rotation:{x:rootGroup.rotation.x,y:rootGroup.rotation.y,z:rootGroup.rotation.z},point_size:getPointSize(),exposure:renderer.toneMappingExposure,background:'#'+scene.background.getHexString(),use_outlier_filter:document.getElementById('outlierMode').value!=='off',outlier_mode:document.getElementById('outlierMode').value,preset:document.getElementById('displayPreset').value}}; await fetch('/api/sfm_viewer_settings.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+function rebuildAfterTransform(doFit=true){ const box=computeCombinedBox(initialArtifact==='sparse',false,false,initialArtifact==='dense',initialArtifact==='mesh'); if(!box) return; latestCombinedBox=box.clone(); const size=box.getSize(new THREE.Vector3()); const radius=Math.max(size.length()*0.5,0.1); recreateGrid(box, new THREE.Vector3(), radius); if(doFit) fitCloud(); controls.update(); }
+function rotateRoot(axis, radians){ rootGroup.rotateOnAxis(axis,radians); rebuildAfterTransform(true); updateSummary(); }
+function autoOrient(){ const obj=denseObject||pointsMesh||meshObject; if(!obj) return; const box=new THREE.Box3().setFromObject(obj); const size=box.getSize(new THREE.Vector3()); const minAxis=size.x<size.y&&size.x<size.z?'x':(size.y<size.z?'y':'z'); if(minAxis==='x') rotateRoot(new THREE.Vector3(0,0,1), Math.PI/2); else if(minAxis==='z') rotateRoot(new THREE.Vector3(1,0,0), Math.PI/2); selectionEl.innerHTML='Auto orient preview applied. Use “Set current orientation as default” to save.'; }
 
 bindClick('resetViewBtn',fitAll);
 bindClick('fitAllBtn',fitAll);
@@ -452,7 +492,18 @@ bindClick('fitCloudBtn',fitCloud);
 bindClick('topViewBtn',topView);
 bindClick('sideViewBtn',sideView);
 bindClick('cloudBeautyBtn',cloudBeauty);
+bindClick('flipVerticalBtn',()=>rotateRoot(new THREE.Vector3(1,0,0),Math.PI));
+bindClick('rotXpBtn',()=>rotateRoot(new THREE.Vector3(1,0,0),Math.PI/2)); bindClick('rotXmBtn',()=>rotateRoot(new THREE.Vector3(1,0,0),-Math.PI/2));
+bindClick('rotYpBtn',()=>rotateRoot(new THREE.Vector3(0,1,0),Math.PI/2)); bindClick('rotYmBtn',()=>rotateRoot(new THREE.Vector3(0,1,0),-Math.PI/2));
+bindClick('rotZpBtn',()=>rotateRoot(new THREE.Vector3(0,0,1),Math.PI/2)); bindClick('rotZmBtn',()=>rotateRoot(new THREE.Vector3(0,0,1),-Math.PI/2));
+bindClick('resetOrientationBtn',()=>{rootGroup.rotation.set(0,0,0); rebuildAfterTransform(true); updateSummary();}); bindClick('saveDefaultBtn',saveViewerSettings); bindClick('autoOrientBtn',autoOrient);
+bindClick('setFloorBtn',()=>{floorOffset=controls.target.y-pointPercentileY(0.02,0); rebuildAfterTransform(false);}); bindClick('raiseFloorBtn',()=>{floorOffset+=latestRadius*0.02; rebuildAfterTransform(false);}); bindClick('lowerFloorBtn',()=>{floorOffset-=latestRadius*0.02; rebuildAfterTransform(false);});
+document.getElementById('displayPreset').addEventListener('change',e=>{const p=presets[e.target.value]; applyDisplaySettings({preset:e.target.value,point_size:p.pointSize,exposure:p.exposure,background:p.background}); updateSummary();});
+document.getElementById('exposure').addEventListener('input',e=>{renderer.toneMappingExposure=parseFloat(e.target.value); document.getElementById('exposureValue').textContent=renderer.toneMappingExposure.toFixed(2);});
+document.getElementById('backgroundColor').addEventListener('input',e=>{scene.background=new THREE.Color(e.target.value);});
 
+await loadViewerSettings();
+rebuildAfterTransform(false);
 updateSummary();
 addEventListener('resize',()=>{camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();renderer.setSize(el.clientWidth,el.clientHeight);});
 (function anim(){requestAnimationFrame(anim);controls.update();renderer.render(scene,camera);})();

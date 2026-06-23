@@ -108,6 +108,8 @@ function ensure_sfm_remote_jobs_chunk_columns(mysqli $db): void
         'chunk_count' => "ALTER TABLE sfm_remote_jobs ADD COLUMN chunk_count INT NULL",
         'retry_count' => "ALTER TABLE sfm_remote_jobs ADD COLUMN retry_count INT NOT NULL DEFAULT 0",
         'parameters_json' => "ALTER TABLE sfm_remote_jobs ADD COLUMN parameters_json LONGTEXT NULL",
+        'cancel_requested_at' => "ALTER TABLE sfm_remote_jobs ADD COLUMN cancel_requested_at DATETIME(6) NULL",
+        'cancelled_at' => "ALTER TABLE sfm_remote_jobs ADD COLUMN cancelled_at DATETIME(6) NULL",
     ];
     foreach ($cols as $col => $sql) {
         $res = $db->query("SHOW COLUMNS FROM sfm_remote_jobs LIKE '" . $db->real_escape_string($col) . "'");
@@ -224,7 +226,7 @@ function auto_chain_after_done(mysqli $db, array $job): void
         $poissonDepth = (int)($mesh['depth'] ?? $preset['mesh_depth']);
         $targetFaces = (int)($mesh['target_faces'] ?? $preset['target_faces']);
         if($pipelineRunId>0){ pipeline_log($pipelineRunId,'INFO','MESH','Open3D queued depth='.$poissonDepth.' target_faces='.$targetFaces); }
-        $pj = json_encode(['input_ply' => $inputPly, 'poisson_depth' => $poissonDepth, 'target_faces' => $targetFaces, 'trim_enabled' => false], JSON_UNESCAPED_SLASHES);
+        $pj = json_encode(['input_ply' => $inputPly, 'poisson_depth' => $poissonDepth, 'target_faces' => $targetFaces, 'trim_enabled' => false, 'settings'=>['mesh'=>$mesh]], JSON_UNESCAPED_SLASHES);
         $st = $db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,parameters_json) VALUES (?,?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)");
         if ($st) {
             $st->bind_param('iiisiisssssss', $orderId, $sessionId, $pipelineRunId, $jt, $rid, $remote, $inputPly, $out, $msg, $result, $log, $mode, $pj);
@@ -715,7 +717,7 @@ function launch_job(mysqli $db, array $job): void
     } elseif ($type === 'COLMAP_MESH') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         $mode = (string)($job['reconstruction_mode'] ?: 'preview');
-        $mesh=(worker_run_parameters($db,$job)['mesh'] ?? []); $args = [SFM_REMOTE_BASE . '/run_colmap_mesh_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parent, $mode, (string)($mesh['engine'] ?? ''), (string)($mesh['depth'] ?? ''), (string)($mesh['target_faces'] ?? ''), (string)($mesh['density_quantile'] ?? '')];
+        $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: []; $mesh=($params['settings']['mesh'] ?? (worker_run_parameters($db,$job)['mesh'] ?? [])); $args = [SFM_REMOTE_BASE . '/run_colmap_mesh_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parent, $mode, (string)($mesh['engine'] ?? ''), (string)($mesh['depth'] ?? ''), (string)($mesh['target_faces'] ?? ''), (string)($mesh['density_quantile'] ?? ''), json_encode($mesh, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)];
     } elseif ($type === 'COLMAP_DENSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         if ($parent <= 0) {
@@ -1022,6 +1024,46 @@ try {
     $res->close();
 }
 
+function process_cancel_requests(mysqli $db): void
+{
+    $res = $db->query("SELECT * FROM sfm_remote_jobs WHERE status='CANCELLING' OR cancel_requested_at IS NOT NULL ORDER BY updated_at ASC LIMIT 10");
+    if (!$res) { return; }
+    while ($job = $res->fetch_assoc()) {
+        $id = (int)$job['id'];
+        $rid = (int)($job['remote_job_id'] ?? 0);
+        $parent = (int)($job['parent_remote_job_id'] ?? 0);
+        if ($parent <= 0) { $parent = $rid; }
+        try {
+            [$code, $output, $cmd] = run_command([SFM_REMOTE_BASE . '/cancel_remote_job.sh', SFM_REMOTE_CONF, (string)$rid, (string)$parent]);
+            $json = json_decode($output, true);
+            $ok = $code === 0 && is_array($json) && !empty($json['cancelled']);
+            if ($ok) {
+                $st=$db->prepare("UPDATE sfm_remote_jobs SET status='CANCELLED', progress_percent=100, message='Cancelled by worker', cancelled_at=NOW(6), updated_at=NOW(6) WHERE id=?");
+                if($st){$st->bind_param('i',$id);$st->execute();$st->close();}
+            } else {
+                $msg = 'Cancellation failed: ' . ($output !== '' ? mb_substr($output, 0, 1000) : ('exit code '.$code));
+                $st=$db->prepare("UPDATE sfm_remote_jobs SET status='CANCEL_ERROR', message=?, updated_at=NOW(6) WHERE id=?");
+                if($st){$st->bind_param('si',$msg,$id);$st->execute();$st->close();}
+            }
+            $pid = pipeline_run_for_job($job);
+            if ($pid > 0) {
+                $active = $db->query("SELECT COUNT(*) AS c FROM sfm_remote_jobs WHERE pipeline_run_id=".(int)$pid." AND status IN ('QUEUED','RUNNING','RUNNING_CHUNKS','PLANNING','MERGING','CANCELLING')");
+                $cnt = $active ? (int)($active->fetch_assoc()['c'] ?? 0) : 0; if($active){$active->close();}
+                if ($cnt === 0) {
+                    $err = $db->query("SELECT COUNT(*) AS c FROM sfm_remote_jobs WHERE pipeline_run_id=".(int)$pid." AND status='CANCEL_ERROR'");
+                    $ec = $err ? (int)($err->fetch_assoc()['c'] ?? 0) : 0; if($err){$err->close();}
+                    if ($ec > 0) { sfm_pipeline_update($db,$pid,'ERROR','CANCELLING',0,'Cancellation failed'); }
+                    else { sfm_pipeline_update($db,$pid,'CANCELLED','CANCELLED',100,'Cancelled by worker'); }
+                }
+            }
+        } catch (Throwable $e) {
+            $msg='Cancellation failed: '.$e->getMessage();
+            $st=$db->prepare("UPDATE sfm_remote_jobs SET status='CANCEL_ERROR', message=?, updated_at=NOW(6) WHERE id=?");
+            if($st){$st->bind_param('si',$msg,$id);$st->execute();$st->close();}
+        }
+    }
+    $res->close();
+}
 
 function reconcile_pipeline_runs(mysqli $db): void
 {
@@ -1059,6 +1101,7 @@ worker_log('SFM_REMOTE_CONF=' . SFM_REMOTE_CONF);
 worker_log('SFM_REMOTE_OUTPUT=' . SFM_REMOTE_OUTPUT);
 while (true) {
     try {
+        process_cancel_requests($dbcnx);
         sync_running_jobs($dbcnx);
         reconcile_pipeline_runs($dbcnx);
         orchestrate_reconstruction_parents($dbcnx);

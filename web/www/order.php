@@ -262,20 +262,17 @@ function sfm_cancel_remote_jobs(array $remoteIds): void {
   if($code!==0){ error_log('cancel_remote_jobs failed: '.implode(' | ',$out)); }
 }
 function sfm_cancel_pipeline_jobs(array $jobs): array {
-  $active=['QUEUED'=>1,'RUNNING'=>1,'RUNNING_CHUNKS'=>1,'PLANNING'=>1,'MERGING'=>1];
-  $results=[]; $failures=[];
+  global $dbcnx;
+  $active=['QUEUED'=>1,'RUNNING'=>1,'RUNNING_CHUNKS'=>1,'PLANNING'=>1,'MERGING'=>1,'CANCELLING'=>1];
+  $queued=[];
   foreach($jobs as $j){
     if(!isset($active[strtoupper((string)($j['status'] ?? ''))])){ continue; }
-    $rid=(int)($j['remote_job_id'] ?? 0); if($rid<=0){ continue; }
-    $parent=(int)($j['parent_remote_job_id'] ?? 0); if($parent<=0){ $parent=$rid; }
-    $cmd=[dirname(__DIR__).'/remote_station/cancel_remote_job.sh', dirname(__DIR__).'/remote_station/stations.conf', (string)$rid, (string)$parent];
-    @exec(implode(' ',array_map('escapeshellarg',$cmd)).' 2>&1',$out,$code);
-    $raw=implode("\n",$out); $json=json_decode($raw,true);
-    $entry=is_array($json)?$json:['cancelled'=>false,'output'=>$raw,'exit_code'=>$code,'remote_job_id'=>$rid];
-    $entry['remote_job_id']=$rid; $entry['parent_remote_job_id']=$parent; $results[]=$entry;
-    if($code!==0 || empty($entry['cancelled'])){ $failures[]=$entry; }
+    $id=(int)($j['id'] ?? 0); if($id<=0){ continue; }
+    $st=$dbcnx->prepare("UPDATE sfm_remote_jobs SET status='CANCELLING', cancel_requested_at=COALESCE(cancel_requested_at,NOW(6)), message='Cancellation requested; worker will stop remote job', updated_at=NOW(6) WHERE id=?");
+    if($st){ $st->bind_param('i',$id); $st->execute(); $st->close(); }
+    $queued[]=['id'=>$id,'remote_job_id'=>(int)($j['remote_job_id'] ?? 0),'status'=>'CANCELLING'];
   }
-  return ['ok'=>empty($failures),'results'=>$results,'failures'=>$failures];
+  return ['ok'=>true,'queued'=>$queued,'message'=>'Cancellation queued for worker'];
 }
 function sfm_delete_remote_pipeline_outputs(int $pipelineRunId,array $remoteIds): void {
   if($pipelineRunId<=0){return;}
@@ -411,8 +408,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      $st->bind_param('i',$pipelineRunId); $st->execute(); $rs=$st->get_result(); $jobs=[]; while($j=$rs->fetch_assoc()){$jobs[]=$j;} $st->close();
      $st=$dbcnx->prepare("UPDATE sfm_pipeline_runs SET status='RESTARTING', stage='CANCELLING', updated_at=NOW(6), message='Cancelling remote jobs before restart' WHERE id=?"); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
      $cancel=sfm_cancel_pipeline_jobs($jobs);
-     pipeline_log($pipelineRunId,$cancel['ok']?'INFO':'ERROR','CANCELLING','Cancellation result: '.json_encode($cancel,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-     if(!$cancel['ok']){ throw new RuntimeException('Cancellation failed: '.json_encode($cancel['failures'],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)); }
+     pipeline_log($pipelineRunId,'INFO','CANCELLING','Cancellation queued for worker: '.json_encode($cancel,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
      error_log('pipeline_run_id='.$pipelineRunId.' restarted from scratch by user_id='.$userId);
      $remoteIds=array_map(fn($j)=>(int)$j['remote_job_id'],$jobs); sfm_delete_remote_pipeline_outputs($pipelineRunId,$remoteIds);
      $base='/home/makler/web/remote_station/output'; foreach($remoteIds as $rid){ if($rid>0){ safe_rrmdir(sfm_remote_output_dir($rid),$base); } } safe_rrmdir(sfm_pipeline_output_dir($pipelineRunId),$base);
@@ -435,11 +431,8 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      $st->bind_param('i',$pipelineRunId); $st->execute(); $rs=$st->get_result(); $jobs=[]; while($j=$rs->fetch_assoc()){$jobs[]=$j;} $st->close();
      $st=$dbcnx->prepare("UPDATE sfm_pipeline_runs SET status='CANCELLING', stage='CANCELLING', updated_at=NOW(6), message='Cancelling remote jobs' WHERE id=?"); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
      $cancel=sfm_cancel_pipeline_jobs($jobs);
-     pipeline_log($pipelineRunId,$cancel['ok']?'INFO':'ERROR','CANCELLING','Cancellation result: '.json_encode($cancel,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-     if(!$cancel['ok']){ throw new RuntimeException('Cancellation failed: '.json_encode($cancel['failures'],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)); }
-     $st=$dbcnx->prepare("UPDATE sfm_remote_jobs SET status='CANCELLED', message='Cancelled by user', updated_at=NOW(6) WHERE pipeline_run_id=? AND status IN ('QUEUED','RUNNING','RUNNING_CHUNKS','PLANNING','MERGING')"); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
-     $st=$dbcnx->prepare("UPDATE sfm_pipeline_runs SET status='CANCELLED', stage='CANCELLED', finished_at=NOW(6), updated_at=NOW(6), message='Cancelled by user' WHERE id=?"); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
-     header('Location: /order.php?id='.$orderId.'&sfm_pipeline_cancelled=1'); exit;
+     pipeline_log($pipelineRunId,'INFO','CANCELLING','Cancellation queued for worker: '.json_encode($cancel,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
+     header('Location: /order.php?id='.$orderId.'&sfm_pipeline_cancelling=1'); exit;
    }catch(Throwable $e){ $error=$e->getMessage(); }
  }
 
