@@ -19,10 +19,11 @@ except Exception: d={}
 print(d.get(sys.argv[2], sys.argv[3]))
 PY
 }
-STAT_NB=$(read_mesh_json statistical_nb_neighbors 24); STAT_STD=$(read_mesh_json statistical_std_ratio 2.0); RADIUS_NB=$(read_mesh_json radius_nb_points 6); RADIUS_MULT=$(read_mesh_json radius_multiplier 3.0); CROP_LOW=$(read_mesh_json crop_low_percentile 0.01); CROP_HIGH=$(read_mesh_json crop_high_percentile 0.99); MIN_COMP=$(read_mesh_json minimum_component_ratio 0.001); MAX_EDGE=$(read_mesh_json maximum_triangle_edge_multiplier 20.0)
+STAT_NB=$(read_mesh_json statistical_nb_neighbors 24); STAT_STD=$(read_mesh_json statistical_std_ratio 2.0); RADIUS_NB=$(read_mesh_json radius_nb_points 6); RADIUS_MULT=$(read_mesh_json radius_multiplier 3.0); CROP_LOW=$(read_mesh_json crop_low_percentile 0.01); CROP_HIGH=$(read_mesh_json crop_high_percentile 0.99); MIN_COMP=$(read_mesh_json minimum_component_ratio 0.001); MAX_EDGE=$(read_mesh_json maximum_triangle_edge_multiplier 20.0); SUPPORT_ENABLED=$(read_mesh_json remove_unsupported_poisson_surfaces 1); SUPPORT_MULT=$(read_mesh_json support_distance_multiplier 3.0); SUPPORT_MIN=$(read_mesh_json support_min_retained_face_ratio 0.05)
 MIN_IN="${MESH_MIN_INPUT_VERTICES:-500}"; MIN_FACES="${MESH_MIN_OUTPUT_FACES:-100}"
 SSH=(ssh -i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new "${STATION_USER}@${STATION_HOST}")
 printf -v B '%q' "$STATION_BASE"; printf -v DQ '%q' "$DENSITY_QUANTILE"; printf -v SN '%q' "$STAT_NB"; printf -v SS '%q' "$STAT_STD"; printf -v RN '%q' "$RADIUS_NB"; printf -v RM '%q' "$RADIUS_MULT"; printf -v CL '%q' "$CROP_LOW"; printf -v CH '%q' "$CROP_HIGH"; printf -v MC '%q' "$MIN_COMP"; printf -v MX '%q' "$MAX_EDGE"; printf -v CM '%q' "$COLMAP_MODE"; printf -v CB '%q' "$COLMAP_BIN"; printf -v CI '%q' "$COLMAP_IMAGE"; printf -v ME '%q' "$MESH_ENGINE"; printf -v OP '%q' "$OPEN3D_PYTHON"
+printf -v SE '%q' "$SUPPORT_ENABLED"; printf -v SM '%q' "$SUPPORT_MULT"; printf -v SF '%q' "$SUPPORT_MIN"
 printf -v A '%q ' "$MESH_JOB_ID" "$PARENT_JOB_ID" "$MODE" "$DEPTH" "$TARGET" "$MIN_IN" "$MIN_FACES"
 "${SSH[@]}" "
 mkdir -p '$STATION_BASE/logs'
@@ -42,7 +43,7 @@ setsid -f env \
   OPEN3D_STANDARD_STATISTICAL_NB_NEIGHBORS=$SN OPEN3D_PREVIEW_STATISTICAL_NB_NEIGHBORS=$SN OPEN3D_HQ_STATISTICAL_NB_NEIGHBORS=$SN OPEN3D_FULLHD_STATISTICAL_NB_NEIGHBORS=$SN \
   OPEN3D_STANDARD_STATISTICAL_STD_RATIO=$SS OPEN3D_PREVIEW_STATISTICAL_STD_RATIO=$SS OPEN3D_HQ_STATISTICAL_STD_RATIO=$SS OPEN3D_FULLHD_STATISTICAL_STD_RATIO=$SS \
   OPEN3D_STANDARD_RADIUS_NB_POINTS=$RN OPEN3D_PREVIEW_RADIUS_NB_POINTS=$RN OPEN3D_HQ_RADIUS_NB_POINTS=$RN OPEN3D_FULLHD_RADIUS_NB_POINTS=$RN \
-  OPEN3D_RADIUS_MULTIPLIER=$RM OPEN3D_CROP_LOW_PERCENTILE=$CL OPEN3D_CROP_HIGH_PERCENTILE=$CH OPEN3D_MINIMUM_COMPONENT_RATIO=$MC OPEN3D_MAXIMUM_TRIANGLE_EDGE_MULTIPLIER=$MX \
+  OPEN3D_RADIUS_MULTIPLIER=$RM OPEN3D_CROP_LOW_PERCENTILE=$CL OPEN3D_CROP_HIGH_PERCENTILE=$CH OPEN3D_MINIMUM_COMPONENT_RATIO=$MC OPEN3D_MAXIMUM_TRIANGLE_EDGE_MULTIPLIER=$MX OPEN3D_SUPPORT_ENABLED=$SE OPEN3D_SUPPORT_DISTANCE_MULTIPLIER=$SM OPEN3D_SUPPORT_MIN_RETAINED_FACE_RATIO=$SF \
   $B/scripts/process_colmap_mesh.sh $A \
   > '$STATION_BASE/logs/job_${MESH_JOB_ID}_mesh_launcher.log' \
   2>&1 < /dev/null

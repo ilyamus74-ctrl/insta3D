@@ -197,11 +197,52 @@ run_colmap mapper \
   --output_path "$SPARSE_DIR" \
   > "$COLMAP_LOG_DIR/mapper.log" 2>&1
 
+
+run_sparse_diagnostics() {
+  local model_dir="$1"
+  local out_json="$model_dir/sparse_diagnostics.json"
+  local selected_json=""
+  for candidate in \
+    "$(dirname "$FRAMES_DIR")/quality/selected_frames.json" \
+    "$OUTPUT_DIR/../quality/selected_frames.json" \
+    "$BASE/output/job_${JOB_ID}/quality/selected_frames.json"; do
+    if [[ -f "$candidate" ]]; then selected_json="$candidate"; break; fi
+  done
+  local imu_jsonl=""
+  for candidate in \
+    "$(dirname "$FRAMES_DIR")/scan_imu.jsonl" \
+    "$OUTPUT_DIR/../scan_imu.jsonl" \
+    "$BASE/input/job_${JOB_ID}/scan_imu.jsonl"; do
+    if [[ -f "$candidate" ]]; then imu_jsonl="$candidate"; break; fi
+  done
+  local cmd=(python3 "$BASE/scripts/analyze_sparse_trajectory.py" --model-dir "$model_dir" --output-json "$out_json")
+  [[ -n "$selected_json" ]] && cmd+=(--selected-frames-json "$selected_json")
+  [[ -n "$imu_jsonl" ]] && cmd+=(--imu-jsonl "$imu_jsonl")
+  if "${cmd[@]}" >> "$LOG_FILE" 2>&1; then
+    python3 - "$out_json" <<'PYDIAG' >> "$LOG_FILE" 2>/dev/null || true
+import json,sys
+d=json.load(open(sys.argv[1])); r=d.get('registration_ratio'); rp=d.get('reprojection',{}); tr=d.get('trajectory',{}); imu=d.get('imu',{})
+if r is not None: print(f"SPARSE_DIAGNOSTICS | Registration ratio={r*100:.1f}%")
+print(f"SPARSE_DIAGNOSTICS | Reprojection median={rp.get('median_px',0):.2f}px p95={rp.get('p95_px',0):.2f}px")
+print(f"SPARSE_DIAGNOSTICS | Position jumps={tr.get('position_jumps',0)} rotation jumps={tr.get('rotation_jumps',0)}")
+print(f"SPARSE_DIAGNOSTICS | Pose clusters={tr.get('pose_clusters',0)} largest={tr.get('largest_cluster_images',0)} secondary={tr.get('secondary_cluster_images',0)}")
+print(f"SPARSE_DIAGNOSTICS | IMU rotation mismatches={imu.get('rotation_mismatches',0)}")
+for w in d.get('warnings',[]): print('SPARSE_DIAGNOSTICS | WARNING '+str(w.get('type','warning')).lower().replace('_',' '))
+PYDIAG
+  else
+    echo "WARNING | SPARSE_DIAGNOSTICS | Diagnostics failed for $model_dir" >> "$LOG_FILE"
+  fi
+}
+
 MODEL_COUNT=$(find "$SPARSE_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 if [[ "$MODEL_COUNT" == "0" ]]; then
   write_status "ERROR" 0 -1 "COLMAP finished but produced zero sparse models"
   exit 1
 fi
+
+for model_dir in "$SPARSE_DIR"/*; do
+  [[ -d "$model_dir" ]] && run_sparse_diagnostics "$model_dir"
+done
 
 cat > "$OUTPUT_DIR/result.json" <<JSON
 {

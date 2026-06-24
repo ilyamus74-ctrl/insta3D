@@ -50,9 +50,14 @@ def main():
     ap.add_argument('--radius-nb-points',type=int,default=6); ap.add_argument('--radius-multiplier',type=float,default=3.0); ap.add_argument('--density-quantile',type=float,default=0.12)
     ap.add_argument('--crop-low-percentile',type=float,default=0.01); ap.add_argument('--crop-high-percentile',type=float,default=0.99)
     ap.add_argument('--maximum-triangle-edge-multiplier',type=float,default=20.0)
+    ap.add_argument('--remove-unsupported-poisson-surfaces',action='store_true',default=True)
+    ap.add_argument('--no-remove-unsupported-poisson-surfaces',dest='remove_unsupported_poisson_surfaces',action='store_false')
+    ap.add_argument('--support-distance-multiplier',type=float,default=3.0)
+    ap.add_argument('--support-min-retained-face-ratio',type=float,default=0.05)
+    ap.add_argument('--support-strict-mean-distance',action='store_true',default=False)
     ap.add_argument('--component-min-triangles',type=int,default=100); ap.add_argument('--component-min-largest-ratio',type=float,default=0.001); ap.add_argument('--minimum-component-ratio',type=float,dest='component_min_largest_ratio')
     a=ap.parse_args(); start=time.time(); out=Path(a.output_ply); mdir=out.parent; sf=status_file(a.output_ply)
-    stats={'status':'ERROR','engine':'open3d','mode':a.mode,'input_ply':a.input_ply,'output_ply':a.output_ply,'mesh_depth':a.mesh_depth,'target_faces':a.target_faces,'requested_mesh_depth':a.mesh_depth,'resolved_mesh_depth':a.mesh_depth,'requested_target_faces':a.target_faces,'resolved_target_faces':a.target_faces,'density_quantile':a.density_quantile,'long_edge_filter_fallback_used':False,'component_filter_fallback_used':False,'crop_fallback_used':False}
+    stats={'status':'ERROR','engine':'open3d','mode':a.mode,'input_ply':a.input_ply,'output_ply':a.output_ply,'mesh_depth':a.mesh_depth,'target_faces':a.target_faces,'requested_mesh_depth':a.mesh_depth,'resolved_mesh_depth':a.mesh_depth,'requested_target_faces':a.target_faces,'resolved_target_faces':a.target_faces,'density_quantile':a.density_quantile,'long_edge_filter_fallback_used':False,'component_filter_fallback_used':False,'crop_fallback_used':False,'support_filter_fallback_used':False,'support_filter_enabled':True}
     try:
         import numpy as np, open3d as o3d
         status(sf,5,'Loading dense cloud'); pcd=o3d.io.read_point_cloud(a.input_ply); stats['input_points']=len(pcd.points)
@@ -95,8 +100,32 @@ def main():
         if not is_usable_mesh(mesh_crop_candidate, mesh_component_filtered): mesh_cropped=clone_mesh(mesh_component_filtered); stats['crop_fallback_used']=True; stats['crop_fallback_reason']='Crop retained too few faces'
         else: mesh_cropped=mesh_crop_candidate
         save_stage(mdir,'cropped',mesh_cropped,stats)
+        status(sf,92,'Dense support filtering')
+        mesh_supported=clone_mesh(mesh_cropped); faces_before_support=mesh_face_count(mesh_supported); stats['faces_before_support_filter']=faces_before_support
+        stats['support_distance_multiplier']=a.support_distance_multiplier; stats['support_min_retained_face_ratio']=a.support_min_retained_face_ratio; stats['support_strict_mean_distance']=a.support_strict_mean_distance
+        stats['support_filter_enabled']=bool(a.remove_unsupported_poisson_surfaces)
+        if a.remove_unsupported_poisson_surfaces and is_non_empty_mesh(mesh_supported) and len(pcd.points)>1:
+            kd=o3d.geometry.KDTreeFlann(pcd); dense_dists=np.asarray(pcd.compute_nearest_neighbor_distance(),dtype=float); spacing=float(np.median(dense_dists[dense_dists>0])) if np.any(dense_dists>0) else med
+            support_threshold=float(spacing*a.support_distance_multiplier) if spacing>0 else 0.0; stats['median_point_spacing']=spacing; stats['support_filter_threshold']=support_threshold
+            v=np.asarray(mesh_supported.vertices); vertex_dists=np.zeros(len(v),dtype=float)
+            for vi,pt in enumerate(v):
+                _,_,d2=kd.search_knn_vector_3d(pt,1); vertex_dists[vi]=float(np.sqrt(d2[0])) if d2 else float('inf')
+            tris=np.asarray(mesh_supported.triangles)
+            if len(tris) and support_threshold>0:
+                tri_d=vertex_dists[tris]
+                unsupported=(tri_d.mean(axis=1)>support_threshold) if a.support_strict_mean_distance else np.all(tri_d>support_threshold,axis=1)
+                mesh_supported.remove_triangles_by_mask(unsupported); cleanup(mesh_supported); removed=int(unsupported.sum())
+            else: removed=0
+            stats['unsupported_faces_removed']=removed; stats['faces_after_support_filter']=mesh_face_count(mesh_supported)
+            min_faces=max(MIN_ABSOLUTE_FINAL_FACES, min(MIN_REASONABLE_FINAL_FACES, int(faces_before_support*a.support_min_retained_face_ratio)))
+            if faces_before_support>=MIN_REASONABLE_FINAL_FACES: min_faces=max(min_faces, MIN_REASONABLE_FINAL_FACES)
+            if mesh_face_count(mesh_supported)<min_faces or not is_non_empty_mesh(mesh_supported):
+                mesh_supported=clone_mesh(mesh_cropped); stats['support_filter_fallback_used']=True; stats['support_filter_fallback_reason']='Dense support filtering retained too few faces'; stats['faces_after_support_filter']=mesh_face_count(mesh_supported)
+        else:
+            stats['support_filter_threshold']=0.0; stats['unsupported_faces_removed']=0; stats['faces_after_support_filter']=faces_before_support
+        save_stage(mdir,'support_filtered',mesh_supported,stats)
         status(sf,94,'Simplifying mesh')
-        stages=[('cropped',mesh_cropped),('component_filtered',mesh_component_filtered),('edge_filtered',mesh_edge_filtered),('density_filtered',mesh_density_filtered),('raw_poisson',mesh_raw_poisson)]
+        stages=[('support_filtered',mesh_supported),('cropped',mesh_cropped),('component_filtered',mesh_component_filtered),('edge_filtered',mesh_edge_filtered),('density_filtered',mesh_density_filtered),('raw_poisson',mesh_raw_poisson)]
         final_stage=None; final_mesh=None
         for stage_name,candidate in stages:
             if is_non_empty_mesh(candidate): final_stage=stage_name; final_mesh=clone_mesh(candidate); break
@@ -110,7 +139,7 @@ def main():
         if mesh_face_count(final_mesh)>a.target_faces: final_mesh=final_mesh.simplify_quadric_decimation(target_number_of_triangles=a.target_faces); cleanup(final_mesh)
         if not is_non_empty_mesh(final_mesh): raise RuntimeError('Final mesh is empty')
         final_mesh.compute_vertex_normals(); final_mesh.compute_triangle_normals(); status(sf,98,'Saving mesh'); o3d.io.write_triangle_mesh(str(out),final_mesh,write_ascii=False,compressed=False)
-        final_faces=mesh_face_count(final_mesh); retained_ratio=(final_faces/raw_faces) if raw_faces>0 else 0.0; fallback_used=any(bool(stats.get(k)) for k in ('density_filter_fallback_used','long_edge_filter_fallback_used','component_filter_fallback_used','crop_fallback_used','final_quality_fallback_used'))
+        final_faces=mesh_face_count(final_mesh); retained_ratio=(final_faces/raw_faces) if raw_faces>0 else 0.0; fallback_used=any(bool(stats.get(k)) for k in ('density_filter_fallback_used','long_edge_filter_fallback_used','component_filter_fallback_used','crop_fallback_used','support_filter_fallback_used','final_quality_fallback_used'))
         stats.update({'status':'DONE','fallback_used':fallback_used,'selected_final_stage':final_stage,'final_retained_face_ratio':retained_ratio,'final_vertices':mesh_vertex_count(final_mesh),'final_faces':final_faces,'vertices':mesh_vertex_count(final_mesh),'faces':final_faces,'duration_sec':round(time.time()-start,3),'finished_at':now()})
         write_json(mdir/'mesh_stats.json',stats); write_json(a.result_json or (mdir/'mesh_result.json'),stats); status(sf,100,'Done'); return 0
     except Exception as e:

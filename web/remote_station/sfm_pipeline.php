@@ -46,6 +46,10 @@ function ensure_sfm_pipeline_tables(mysqli $db): void
         sparse_models_count INT NULL,
         selected_model_id INT NULL,
         selected_model_points INT NULL,
+        sparse_diagnostics_json LONGTEXT NULL,
+        sparse_reprojection_p95 DECIMAL(8,3) NULL,
+        sparse_position_jumps INT NULL,
+        sparse_pose_clusters INT NULL,
         error_json LONGTEXT NULL,
         started_at DATETIME(6) NULL,
         finished_at DATETIME(6) NULL,
@@ -67,7 +71,7 @@ if (!$db->query($sql)) {
     $res = $db->query("SHOW COLUMNS FROM sfm_remote_jobs LIKE 'pipeline_run_id'");
     $exists = $res && $res->num_rows > 0; if ($res) { $res->close(); }
     if (!$exists) { @$db->query("ALTER TABLE sfm_remote_jobs ADD COLUMN pipeline_run_id BIGINT UNSIGNED NULL AFTER capture_session_id, ADD INDEX idx_sfm_pipeline_run_id (pipeline_run_id)"); }
-    foreach(['parameters_json'=>'LONGTEXT NULL','started_by_user_id'=>'BIGINT UNSIGNED NULL','extracted_frames'=>'INT NULL','registration_ratio'=>'DECIMAL(6,2) NULL','sparse_models_count'=>'INT NULL','selected_model_id'=>'INT NULL','selected_model_points'=>'INT NULL'] as $c=>$def){ $r=$db->query("SHOW COLUMNS FROM sfm_pipeline_runs LIKE '".$db->real_escape_string($c)."'"); $ok=$r&&$r->num_rows>0; if($r){$r->close();} if(!$ok){ @$db->query('ALTER TABLE sfm_pipeline_runs ADD COLUMN '.$c.' '.$def); } }
+    foreach(['parameters_json'=>'LONGTEXT NULL','started_by_user_id'=>'BIGINT UNSIGNED NULL','extracted_frames'=>'INT NULL','registration_ratio'=>'DECIMAL(6,2) NULL','sparse_models_count'=>'INT NULL','selected_model_id'=>'INT NULL','selected_model_points'=>'INT NULL','sparse_diagnostics_json'=>'LONGTEXT NULL','sparse_reprojection_p95'=>'DECIMAL(8,3) NULL','sparse_position_jumps'=>'INT NULL','sparse_pose_clusters'=>'INT NULL'] as $c=>$def){ $r=$db->query("SHOW COLUMNS FROM sfm_pipeline_runs LIKE '".$db->real_escape_string($c)."'"); $ok=$r&&$r->num_rows>0; if($r){$r->close();} if(!$ok){ @$db->query('ALTER TABLE sfm_pipeline_runs ADD COLUMN '.$c.' '.$def); } }
     @$db->query("ALTER TABLE sfm_pipeline_runs MODIFY status ENUM('QUEUED','RUNNING','DONE','ERROR','CANCELLED','CANCELLING','RESTARTING') NOT NULL DEFAULT 'QUEUED'");
     @$db->query("ALTER TABLE sfm_pipeline_runs MODIFY stage ENUM('QUEUED','EXTRACT_FRAMES','SPARSE','DENSE_PLAN','DENSE','MERGE','MESH','FETCH_RESULT','DONE','ERROR','CANCELLED','CANCELLING') NOT NULL DEFAULT 'QUEUED'");
 }
@@ -107,4 +111,37 @@ function sfm_pipeline_last_log(string $path, int $lines=300): string
     if ($path === '' || !is_file($path) || !is_readable($path)) { return ''; }
     $data = @file($path, FILE_IGNORE_NEW_LINES); if (!$data) { return ''; }
     return implode("\n", array_slice($data, -$lines));
+}
+
+function sfm_sparse_geometry_confidence(?array $diagnostics): string
+{
+    if (!$diagnostics || ($diagnostics['status'] ?? '') !== 'DONE') { return 'Unknown'; }
+    $ratio = (float)($diagnostics['registration_ratio'] ?? 0.0);
+    $reproj = (float)($diagnostics['reprojection']['median_px'] ?? 0.0);
+    $jumps = (int)($diagnostics['trajectory']['position_jumps'] ?? 0) + (int)($diagnostics['trajectory']['rotation_jumps'] ?? 0);
+    $clusters = (int)($diagnostics['trajectory']['pose_clusters'] ?? 0);
+    $imu = (int)($diagnostics['imu']['rotation_mismatches'] ?? 0);
+    if ($clusters > 1 || $jumps >= 3 || $imu > 0 || $reproj >= 3.0) { return 'High risk'; }
+    if ($ratio > 0.70 && $jumps <= 1 && $clusters <= 1 && $reproj < 1.5) { return 'Good'; }
+    return 'Warning';
+}
+
+function sfm_sparse_diagnostics_summary(?array $diagnostics): array
+{
+    if (!$diagnostics || ($diagnostics['status'] ?? '') !== 'DONE') { return []; }
+    $registered = (int)($diagnostics['registered_images'] ?? 0);
+    $selected = (int)($diagnostics['selected_frames'] ?? 0);
+    $ratio = $selected > 0 ? ($registered / $selected * 100.0) : ((float)($diagnostics['registration_ratio'] ?? 0) * 100.0);
+    return [
+        'registration' => sprintf('%d / %d — %.1f%%', $registered, $selected, $ratio),
+        'median_reprojection_error' => sprintf('%.2f px', (float)($diagnostics['reprojection']['median_px'] ?? 0)),
+        'p95_reprojection_error' => sprintf('%.2f px', (float)($diagnostics['reprojection']['p95_px'] ?? 0)),
+        'position_jumps' => (int)($diagnostics['trajectory']['position_jumps'] ?? 0),
+        'rotation_jumps' => (int)($diagnostics['trajectory']['rotation_jumps'] ?? 0),
+        'pose_clusters' => (int)($diagnostics['trajectory']['pose_clusters'] ?? 0),
+        'largest_pose_cluster' => (int)($diagnostics['trajectory']['largest_cluster_images'] ?? 0),
+        'suspicious_images' => count($diagnostics['suspicious_images'] ?? []),
+        'imu_comparison' => !empty($diagnostics['imu']['available']) ? 'available' : 'unavailable',
+        'overall_geometry_confidence' => sfm_sparse_geometry_confidence($diagnostics),
+    ];
 }
