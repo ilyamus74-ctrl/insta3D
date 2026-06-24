@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 8 ]]; then
-  echo "Usage: $0 ./stations.conf <job_id> <parent_job_id> <sparse_job_id> <model_id> <chunk_id> <image_list_path> <mode>" >&2
+if [[ $# -ne 8 && $# -ne 10 ]]; then
+  echo "Usage: $0 ./stations.conf <job_id> <parent_job_id> <sparse_job_id> <model_id> <chunk_id> <image_list_path> <mode> [max_image_size] [num_src_images]" >&2
   exit 1
 fi
 
