@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 if [[ $# -ne 3 ]]; then echo "Usage: $0 <job_id> <input_video> <output_dir>" >&2; exit 1; fi
 JOB_ID="$1"; INPUT_VIDEO="$2"; OUTPUT_DIR="$3"
-BASE="${STATION_BASE:-/home/makler_storage}"; STATUS_FILE="$BASE/status/job_${JOB_ID}.json"; LOG_FILE="$BASE/logs/job_${JOB_ID}.log"; PARAM_FILE="$BASE/input/job_${JOB_ID}/parameters.json"
+STATION_BASE="${STATION_BASE:-/home/makler_storage}"; BASE="$STATION_BASE"; STATUS_FILE="$BASE/status/job_${JOB_ID}.json"; LOG_FILE="$BASE/logs/job_${JOB_ID}.log"; PARAM_FILE="$BASE/input/job_${JOB_ID}/parameters.json"
 JOB_ROOT="$(dirname "$OUTPUT_DIR")"; [[ "$(basename "$OUTPUT_DIR")" == "frames" ]] || JOB_ROOT="$OUTPUT_DIR"
 mkdir -p "$JOB_ROOT" "$JOB_ROOT/frames" "$JOB_ROOT/quality" "$BASE/status" "$BASE/logs"
 json_escape(){ python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])'; }
@@ -44,11 +44,11 @@ print(max(1, round(float('$TARGET')*float('$CAND_MULT'))))
 PY
 )
   echo "INFO | EXTRACT_FRAMES | Video duration=$DURATION_SEC source_fps=$SOURCE_FPS"
-  echo "INFO | EXTRACT_FRAMES | Sampling mode=$SAMPLING_MODE target=$TARGET candidates=$CANDIDATES"
+  echo "INFO | EXTRACT_FRAMES | Sampling mode=$SAMPLING_MODE Target frames=$TARGET Candidate frames=$CANDIDATES"
   write_status RUNNING 5 -1 "Selecting quality frames"
   KEEP_ARG=(); [[ "$KEEP" == "true" || "$KEEP" == "1" ]] && KEEP_ARG=(--keep-candidates)
   UPSCALE_ARG=(); [[ "$ALLOW" == "true" || "$ALLOW" == "1" ]] && UPSCALE_ARG=(--allow-upscale)
-  SUMMARY=$(python3 "$(dirname "$0")/select_quality_frames.py" --video "$INPUT_VIDEO" --output-dir "$JOB_ROOT" --sampling-mode "$SAMPLING_MODE" --target-frames "$TARGET" --candidate-multiplier "$CAND_MULT" --min-fps "$MIN_FPS" --max-fps "$MAX_FPS" --scale-width "$SCALE" --jpeg-quality "$JPEG" "${KEEP_ARG[@]}" "${UPSCALE_ARG[@]}")
+  SUMMARY=$(python3 "$STATION_BASE/scripts/select_quality_frames.py" --video "$INPUT_VIDEO" --output-dir "$JOB_ROOT" --sampling-mode "$SAMPLING_MODE" --target-frames "$TARGET" --candidate-multiplier "$CAND_MULT" --min-fps "$MIN_FPS" --max-fps "$MAX_FPS" --scale-width "$SCALE" --jpeg-quality "$JPEG" "${KEEP_ARG[@]}" "${UPSCALE_ARG[@]}")
   FRAME_COUNT=$(find "$JOB_ROOT/frames" -type f -name 'frame_*.jpg' | wc -l | tr -d ' ')
   [[ "$FRAME_COUNT" -gt 0 ]] || { write_status ERROR 0 -1 "No frames selected"; exit 2; }
   python3 - "$JOB_ROOT" "$JOB_ID" "$SUMMARY" <<'PY'

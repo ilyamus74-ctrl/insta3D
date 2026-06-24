@@ -692,7 +692,7 @@ foreach($captureSessions as $idx=>$session){
         $scanRow=$videosByFilename[$filename] ?? null;
         $metadata=['camera_info'=>['exists'=>false,'url'=>'','label'=>'View camera_info'],'manifest'=>['exists'=>false,'url'=>'','label'=>'View manifest'],'imu'=>['exists'=>false,'url'=>'','label'=>'Download imu']];
         if($scanRow){ $metadata=video_scan_metadata_info((int)$scanRow['id'],(string)($scanRow['app_scan_uuid'] ?? ''),$realVideoDir); }
-        $diskVideos[]=['filename'=>$filename,'path'=>$rv,'size_human'=>bytes_human((float)filesize($rv)),'modified_at'=>date('Y-m-d H:i:s',(int)filemtime($rv)),'metadata'=>$metadata];
+        $diskVideos[]=['filename'=>$filename,'path'=>$rv,'size_human'=>bytes_human((float)filesize($rv)),'modified_at'=>date('Y-m-d H:i:s',(int)filemtime($rv)),'duration_sec'=>$scanRow?(int)($scanRow['duration_sec'] ?? 0):0,'fps'=>0,'metadata'=>$metadata];
       }
     }
   }
@@ -728,7 +728,8 @@ foreach($captureSessions as $idx=>$session){
   $cards=[]; foreach(sfm_pipeline_modes() as $mode){ $preset=sfm_pipeline_preset($mode); $latest=null; foreach($runs as $run){ if((string)$run['pipeline_mode']===$mode){ $latest=$run; break; } } if($latest){ $latest['artifacts']=sfm_build_pipeline_artifacts($latest,$sessionSfmJobs); $rp=sfm_json_array((string)($latest['parameters_json'] ?? '{}')); $latest['ui_parameters']=isset($rp['mode_parameters'])?$rp['mode_parameters']:sfm_mode_parameters(sfm_merge_settings(sfm_system_defaults(),[],[],$rp),(string)$latest['pipeline_mode']); $ef=(int)($latest['extracted_frames'] ?? 0); $ri=(int)($latest['registered_images'] ?? 0); $latest['ui_registration_ratio']=$ef>0?round($ri*100/$ef,1):(float)($latest['registration_ratio'] ?? 0); } $cards[$mode]=['mode'=>$mode,'preset'=>$preset,'run'=>$latest]; }
   $captureSessions[$idx]['sfm_pipeline_cards']=$cards;
   $sys=sfm_system_defaults(); $usr=sfm_load_user_settings($dbcnx,$userId); $ses=sfm_load_session_settings($dbcnx,(int)$session['id'],$userId);
-  $captureSessions[$idx]['sfm_settings']=['system_defaults'=>$sys,'user_defaults'=>$usr,'session_overrides'=>$ses,'effective_settings'=>sfm_merge_settings($sys,$usr,$ses,[]),'api_url'=>'/api/sfm_settings.php?capture_session_id='.(int)$session['id']];
+  $firstVideo=$diskVideos[0] ?? []; $captureSessions[$idx]['sfm_video_metadata']=['duration_sec'=>(float)($firstVideo['duration_sec'] ?? 0),'fps'=>(float)($firstVideo['fps'] ?? 0)];
+  $captureSessions[$idx]['sfm_settings']=['system_defaults'=>$sys,'user_defaults'=>$usr,'session_overrides'=>$ses,'quality_profiles'=>sfm_quality_profiles(),'effective_settings'=>sfm_merge_settings($sys,$usr,$ses,[]),'api_url'=>'/api/sfm_settings.php?capture_session_id='.(int)$session['id']];
   $sid=(int)$session['id'];
   $captureSessions[$idx]['processing_job']=$processingJobsBySession[$sid] ?? null;
   $job = $captureSessions[$idx]['processing_job'] ?? null;

@@ -218,81 +218,145 @@
                   </div>
                 {/foreach}
               {else}<div class="small text-muted">No phone videos found in storage.</div>{/if}
-              <details class="mb-3 border rounded p-2 bg-light-subtle">
+              <details class="mb-3 border rounded p-2 bg-light-subtle" open>
                 <summary class="fw-semibold">Processing settings</summary>
                 <div class="small text-muted mb-2">Effective settings source: System defaults{if $s.sfm_settings.user_defaults|@count > 0} → User defaults{/if}{if $s.sfm_settings.session_overrides|@count > 0} → Session override{/if}</div>
-                <form class="sfm-settings-form" data-session-id="{$s.id}" data-api-url="{$s.sfm_settings.api_url|escape}">
+                <form class="sfm-settings-form" data-session-id="{$s.id}" data-api-url="{$s.sfm_settings.api_url|escape}" data-video-duration="{$s.sfm_video_metadata.duration_sec|default:''|escape}" data-video-fps="{$s.sfm_video_metadata.fps|default:''|escape}" data-quality-profiles="{$s.sfm_settings.quality_profiles|json_encode|escape:'html'}">
                   <input type="hidden" name="secCode" value="{$secCode|escape}">
-                  <div class="row g-2 small">
-                    <div class="col-md-3">
-                      <div class="fw-semibold mb-1">Frames</div>
-                      <label class="form-label w-100">FPS
-                        <input type="number" step="0.5" min="0.5" max="10" name="extract.fps" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.extract.fps|string_format:'%.2f'|escape}">
-                      </label>
-                      <label class="form-label w-100">Maximum frames
-                        <input type="number" min="30" max="2000" name="extract.max_frames" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.extract.max_frames|escape}">
-                      </label>
-                      <label class="form-label w-100">Extracted frame width
-                        <input type="number" min="640" max="3840" step="1" name="extract.scale_width" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.extract.scale_width|escape}">
-                      </label>
-                    </div>
-                    <div class="col-md-3">
-                      <div class="fw-semibold mb-1">Sparse reconstruction</div>
-                      <label class="form-label w-100">Matcher
-                        <select name="sparse.matcher" class="form-select form-select-sm">
-                          <option value="sequential" {if $s.sfm_settings.effective_settings.sparse.matcher == 'sequential'}selected{/if}>Sequential</option>
-                          <option value="exhaustive" {if $s.sfm_settings.effective_settings.sparse.matcher == 'exhaustive'}selected{/if}>Exhaustive</option>
-                        </select>
-                      </label>
-                      <label class="form-label w-100">Sequential overlap
-                        <input type="number" min="5" max="100" name="sparse.sequential_overlap" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.sparse.sequential_overlap|escape}">
-                      </label>
-                      <div class="form-check mt-2">
-                        <input type="checkbox" name="sparse.loop_detection" value="1" class="form-check-input" id="sfm-loop-{$s.id}" {if $s.sfm_settings.effective_settings.sparse.loop_detection}checked{/if}>
-                        <label class="form-check-label" for="sfm-loop-{$s.id}">Loop detection</label>
+                  <div class="card border-primary-subtle mb-3">
+                    <div class="card-body">
+                      <h6 class="fw-semibold mb-3">Video processing</h6>
+                      <div class="row g-3 small">
+                        <div class="col-md-3">
+                          <label class="form-label w-100">Use complete video
+                            <select class="form-select form-select-sm" disabled readonly>
+                              <option selected>Yes</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label w-100">Quality profile
+                            <select name="quality_profile" class="form-select form-select-sm">
+                              <option value="fast">Fast</option>
+                              <option value="balanced" selected>Balanced</option>
+                              <option value="detailed">Detailed</option>
+                              <option value="maximum">Maximum</option>
+                              <option value="custom">Custom</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label w-100">Sampling mode
+                            <select name="extract.sampling_mode" class="form-select form-select-sm">
+                              <option value="auto_quality" {if $s.sfm_settings.effective_settings.extract.sampling_mode == 'auto_quality'}selected{/if}>Auto quality</option>
+                              <option value="auto_uniform" {if $s.sfm_settings.effective_settings.extract.sampling_mode == 'auto_uniform'}selected{/if}>Auto uniform</option>
+                              <option value="manual" {if $s.sfm_settings.effective_settings.extract.sampling_mode == 'manual'}selected{/if}>Manual</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label w-100">Resolution
+                            <select name="processing_resolution" class="form-select form-select-sm">
+                              <option value="preview" selected>Preview 640</option>
+                              <option value="standard">Standard 1600</option>
+                              <option value="fullhd">Full HD 1920</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label w-100">Target frames
+                            <input type="number" name="extract.target_frames" min="30" max="5000" step="1" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.extract.target_frames|default:400|escape}">
+                          </label>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label w-100">Candidate multiplier
+                            <input type="number" name="extract.candidate_multiplier" min="1" max="5" step="0.1" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.extract.candidate_multiplier|default:1.5|escape}">
+                          </label>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label w-100">Minimum sampling FPS
+                            <input type="number" name="extract.minimum_sampling_fps" min="0.01" max="30" step="0.01" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.extract.minimum_sampling_fps|default:0.25|escape}">
+                          </label>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label w-100">Maximum sampling FPS
+                            <input type="number" name="extract.maximum_sampling_fps" min="0.1" max="60" step="0.1" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.extract.maximum_sampling_fps|default:10|escape}">
+                          </label>
+                        </div>
+                        <div class="col-12">
+                          <div class="fw-semibold mb-1">Frame quality selection</div>
+                          <div class="row g-2">
+                            <div class="col-md-4 form-check ms-3"><input type="checkbox" name="extract.quality_filter" value="1" class="form-check-input" id="sfm-quality-filter-{$s.id}" {if $s.sfm_settings.effective_settings.extract.quality_filter}checked{/if}><label class="form-check-label" for="sfm-quality-filter-{$s.id}">Remove blurred frames</label></div>
+                            <div class="col-md-4 form-check ms-3"><input type="checkbox" class="form-check-input" checked disabled><label class="form-check-label">Remove near-duplicates</label></div>
+                            <div class="col-md-4 form-check ms-3"><input type="checkbox" class="form-check-input" checked disabled><label class="form-check-label">Reject severely dark frames</label></div>
+                            <div class="col-md-4 form-check ms-3"><input type="checkbox" class="form-check-input" checked disabled><label class="form-check-label">Reject severely overexposed frames</label></div>
+                            <div class="col-md-4 form-check ms-3"><input type="checkbox" class="form-check-input" checked disabled><label class="form-check-label">Preserve full timeline coverage</label></div>
+                            <div class="col-md-4 form-check ms-3"><input type="checkbox" name="extract.allow_upscale" value="1" class="form-check-input" id="sfm-allow-upscale-{$s.id}" {if $s.sfm_settings.effective_settings.extract.allow_upscale}checked{/if}><label class="form-check-label" for="sfm-allow-upscale-{$s.id}">Allow upscale</label></div>
+                            <div class="col-md-4 form-check ms-3"><input type="checkbox" name="extract.keep_candidate_frames" value="1" class="form-check-input" id="sfm-keep-candidates-{$s.id}" {if $s.sfm_settings.effective_settings.extract.keep_candidate_frames}checked{/if}><label class="form-check-label" for="sfm-keep-candidates-{$s.id}">Keep candidate frames</label></div>
+                          </div>
+                        </div>
+                        <div class="col-md-3 sfm-manual-extract-fields">
+                          <label class="form-label w-100">FPS
+                            <input type="number" step="0.5" min="0.5" max="10" name="extract.fps" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.extract.fps|string_format:'%.2f'|escape}">
+                          </label>
+                        </div>
+                        <div class="col-md-3 sfm-manual-extract-fields">
+                          <label class="form-label w-100">Maximum frames
+                            <input type="number" min="30" max="2000" name="extract.max_frames" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.extract.max_frames|escape}">
+                          </label>
+                        </div>
+                        <input type="hidden" name="extract.scale_width" value="{$s.sfm_settings.effective_settings.extract.scale_width|escape}">
                       </div>
+                      <div class="alert alert-info small mt-3 mb-0 sfm-processing-summary">Video metadata not loaded</div>
                     </div>
-                    {foreach from=['preview','standard','fullhd'] item=smode}
-                      <div class="col-md-2">
-                        <div class="fw-semibold mb-1">{$smode|escape}</div>
-                        <label class="form-label w-100">Max image size
-                          <input type="number" name="{$smode}.max_image_size" min="320" max="3840" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].max_image_size|escape}">
-                        </label>
-                        <label class="form-label w-100">PatchMatch source images
-                          <input type="number" name="{$smode}.num_src_images" min="2" max="50" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].num_src_images|escape}">
-                        </label>
-                        <label class="form-label w-100">Chunk overlap
-                          <input type="number" name="{$smode}.chunk_overlap" min="0" max="60" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].chunk_overlap|escape}">
-                        </label>
-                        <label class="form-label w-100">Target images per chunk
-                          <input type="number" name="{$smode}.target_images_per_chunk" min="10" max="200" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].target_images_per_chunk|escape}">
-                        </label>
-                        <label class="form-label w-100">Max images per chunk
-                          <input type="number" name="{$smode}.max_images_per_chunk" min="10" max="300" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].max_images_per_chunk|escape}">
-                        </label>
-                        <label class="form-label w-100">Mesh depth
-                          <input type="number" name="{$smode}.mesh_depth" min="5" max="12" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].mesh_depth|escape}">
-                        </label>
-                        <label class="form-label w-100">Target faces
-                          <input type="number" name="{$smode}.target_faces" min="10000" max="2000000" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].target_faces|escape}">
-                        </label>
-                        <label class="form-label w-100">Mesh engine
-                          <select name="{$smode}.mesh_engine" class="form-select form-select-sm">
-                            <option value="open3d" {if $s.sfm_settings.effective_settings[$smode].mesh_engine == 'open3d'}selected{/if}>Open3D</option>
-                            <option value="colmap" {if $s.sfm_settings.effective_settings[$smode].mesh_engine == 'colmap'}selected{/if}>COLMAP</option>
+                  </div>
+
+                  <details class="mt-3">
+                    <summary>Advanced settings</summary>
+                    <div class="row g-2 small mt-2">
+                      <div class="col-md-4">
+                        <div class="fw-semibold mb-1">Sparse</div>
+                        <label class="form-label w-100">Matcher
+                          <select name="sparse.matcher" class="form-select form-select-sm">
+                            <option value="sequential" {if $s.sfm_settings.effective_settings.sparse.matcher == 'sequential'}selected{/if}>Sequential</option>
+                            <option value="exhaustive" {if $s.sfm_settings.effective_settings.sparse.matcher == 'exhaustive'}selected{/if}>Exhaustive</option>
                           </select>
                         </label>
-                        <label class="form-label w-100">Density quantile
-                          <input type="number" name="{$smode}.density_quantile" min="0" max="0.30" step="0.01" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].density_quantile|string_format:'%.2f'|escape}">
+                        <label class="form-label w-100">Sequential overlap mode
+                          <select name="auto_parameters.sequential_overlap" class="form-select form-select-sm" data-auto-toggle="sparse.sequential_overlap">
+                            <option value="1" {if $s.sfm_settings.effective_settings.auto_parameters.sequential_overlap|default:1}selected{/if}>Auto</option>
+                            <option value="0" {if !$s.sfm_settings.effective_settings.auto_parameters.sequential_overlap|default:1}selected{/if}>Manual</option>
+                          </select>
                         </label>
+                        <label class="form-label w-100 sfm-manual-auto-field" data-manual-for="sparse.sequential_overlap">Sequential overlap
+                          <input type="number" min="5" max="100" name="sparse.sequential_overlap" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings.sparse.sequential_overlap|escape}">
+                        </label>
+                        <div class="form-check mt-2"><input type="checkbox" name="sparse.loop_detection" value="1" class="form-check-input" id="sfm-loop-{$s.id}" {if $s.sfm_settings.effective_settings.sparse.loop_detection}checked{/if}><label class="form-check-label" for="sfm-loop-{$s.id}">Loop detection</label></div>
                       </div>
-                    {/foreach}
-                  </div>
+                      {foreach from=['preview','standard','fullhd'] item=smode}
+                        <div class="col-md-4">
+                          <div class="fw-semibold mb-1">Dense / Mesh: {$smode|escape}</div>
+                          <label class="form-label w-100">Max image size <input type="number" name="{$smode}.max_image_size" min="320" max="3840" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].max_image_size|escape}"></label>
+                          {foreach from=['num_src_images'=>'PatchMatch source images','chunk_overlap'=>'Chunk overlap','target_images_per_chunk'=>'Target images per chunk','max_images_per_chunk'=>'Max images per chunk'] item=label key=key}
+                            <label class="form-label w-100">{$label}
+                              <select name="auto_parameters.{$key}" class="form-select form-select-sm mb-1" data-auto-toggle="{$smode}.{$key}"><option value="1" {if $s.sfm_settings.effective_settings.auto_parameters[$key]|default:1}selected{/if}>Auto</option><option value="0" {if !$s.sfm_settings.effective_settings.auto_parameters[$key]|default:1}selected{/if}>Manual</option></select>
+                              <input type="number" name="{$smode}.{$key}" min="0" max="300" class="form-control form-control-sm sfm-manual-auto-field" data-manual-for="{$smode}.{$key}" value="{$s.sfm_settings.effective_settings[$smode][$key]|escape}">
+                            </label>
+                          {/foreach}
+                          <label class="form-label w-100">Mesh depth <input type="number" name="{$smode}.mesh_depth" min="5" max="12" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].mesh_depth|escape}"></label>
+                          <label class="form-label w-100">Target faces <input type="number" name="{$smode}.target_faces" min="10000" max="2000000" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].target_faces|escape}"></label>
+                          <label class="form-label w-100">Mesh engine <select name="{$smode}.mesh_engine" class="form-select form-select-sm"><option value="open3d" {if $s.sfm_settings.effective_settings[$smode].mesh_engine == 'open3d'}selected{/if}>Open3D</option><option value="colmap" {if $s.sfm_settings.effective_settings[$smode].mesh_engine == 'colmap'}selected{/if}>COLMAP</option></select></label>
+                          <label class="form-label w-100">Density quantile <input type="number" name="{$smode}.density_quantile" min="0" max="0.30" step="0.01" class="form-control form-control-sm" value="{$s.sfm_settings.effective_settings[$smode].density_quantile|string_format:'%.2f'|escape}"></label>
+                        </div>
+                      {/foreach}
+                    </div>
+                  </details>
                   <div class="mt-2 d-flex gap-2 flex-wrap">
                     <button type="button" data-sfm-settings-action="save_user_defaults" class="btn btn-sm btn-outline-primary">Save as my defaults</button>
                     <button type="button" data-sfm-settings-action="save_session_overrides" class="btn btn-sm btn-outline-primary">Save for this session</button>
                     <button type="button" data-sfm-settings-action="reset_user_defaults" class="btn btn-sm btn-outline-secondary">Reset user defaults</button>
                     <button type="button" data-sfm-settings-action="reset_session_overrides" class="btn btn-sm btn-outline-secondary">Reset session overrides</button>
+                    <button type="button" class="btn btn-sm btn-primary" data-start-selected-resolution>Start selected resolution</button>
                   </div>
                   <div class="sfm-settings-message mt-2 d-none" role="alert"></div>
                 </form>
@@ -301,7 +365,7 @@
                 {foreach from=$s.sfm_pipeline_cards item=pc key=pmode}
                   {assign var=run value=$pc.run}
                   <div class="col-md-4">
-                    <div class="card h-100 border-primary-subtle" data-pipeline-card{if $run} data-pipeline-run-id="{$run.id}" data-pipeline-status="{$run.status|escape}"{/if}>
+                    <div class="card h-100 border-primary-subtle" data-pipeline-card data-pipeline-mode="{$pmode|escape}"{if $run} data-pipeline-run-id="{$run.id}" data-pipeline-status="{$run.status|escape}"{/if}>
                       <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start gap-2">
                           <h6 class="mb-1">{$pc.preset.label|escape}</h6>
@@ -362,7 +426,7 @@
                               </form>
                           </div>
                         {else}
-                          <form method="post" action="/order.php?id={$order.id}" class="mt-3">
+                          <form method="post" action="/order.php?id={$order.id}" class="mt-3" data-start-pipeline-mode="{$pmode|escape}">
                             <input type="hidden" name="action" value="start_sfm_pipeline">
                             <input type="hidden" name="capture_session_id" value="{$s.id}">
                             <input type="hidden" name="pipeline_mode" value="{$pmode|escape}">
@@ -812,6 +876,13 @@ function sfmSettingsValue(form, name) {
         return null;
     }
 
+    if (!el.type && typeof el.length === 'number' && el.length > 0) {
+        const first = el[0];
+        if (first.type === 'checkbox') return first.checked;
+        if (first.type === 'number') return Number(first.value);
+        return first.value;
+    }
+
     if (el.type === 'checkbox') {
         return el.checked;
     }
@@ -823,67 +894,57 @@ function sfmSettingsValue(form, name) {
     return el.value;
 }
 
+const SFM_QUALITY_PROFILES = {
+    fast: {target_frames: 240, resolution: 'preview', max_image_size: 640, quality_filter: true},
+    balanced: {target_frames: 400, resolution: 'preview', max_image_size: 640, quality_filter: true},
+    detailed: {target_frames: 550, resolution: 'standard', max_image_size: 1600, quality_filter: true},
+    maximum: {target_frames: 750, resolution: 'fullhd', max_image_size: 1920, quality_filter: true}
+};
+
 function sfmSettingsFromForm(form) {
     const modes = ['preview', 'standard', 'fullhd'];
 
     const settings = {
         extract: {
+            sampling_mode: sfmSettingsValue(form, 'extract.sampling_mode'),
+            target_frames: sfmSettingsValue(form, 'extract.target_frames'),
+            candidate_multiplier: sfmSettingsValue(form, 'extract.candidate_multiplier'),
+            minimum_sampling_fps: sfmSettingsValue(form, 'extract.minimum_sampling_fps'),
+            maximum_sampling_fps: sfmSettingsValue(form, 'extract.maximum_sampling_fps'),
+            quality_filter: sfmSettingsValue(form, 'extract.quality_filter'),
+            allow_upscale: sfmSettingsValue(form, 'extract.allow_upscale'),
+            keep_candidate_frames: sfmSettingsValue(form, 'extract.keep_candidate_frames'),
+            scale_width: sfmSettingsValue(form, 'extract.scale_width'),
             fps: sfmSettingsValue(form, 'extract.fps'),
-            max_frames: sfmSettingsValue(form, 'extract.max_frames'),
-            scale_width: sfmSettingsValue(form, 'extract.scale_width')
+            max_frames: sfmSettingsValue(form, 'extract.max_frames')
+        },
+
+        auto_parameters: {
+            sequential_overlap: sfmSettingsValue(form, 'auto_parameters.sequential_overlap'),
+            num_src_images: sfmSettingsValue(form, 'auto_parameters.num_src_images'),
+            chunk_overlap: sfmSettingsValue(form, 'auto_parameters.chunk_overlap'),
+            target_images_per_chunk: sfmSettingsValue(form, 'auto_parameters.target_images_per_chunk'),
+            max_images_per_chunk: sfmSettingsValue(form, 'auto_parameters.max_images_per_chunk')
         },
 
         sparse: {
             matcher: sfmSettingsValue(form, 'sparse.matcher'),
-            sequential_overlap: sfmSettingsValue(
-                form,
-                'sparse.sequential_overlap'
-            ),
-            loop_detection: sfmSettingsValue(
-                form,
-                'sparse.loop_detection'
-            )
+            sequential_overlap: sfmSettingsValue(form, 'sparse.sequential_overlap'),
+            loop_detection: sfmSettingsValue(form, 'sparse.loop_detection')
         }
     };
 
     modes.forEach((mode) => {
         settings[mode] = {
-            max_image_size: sfmSettingsValue(
-                form,
-                `${mode}.max_image_size`
-            ),
-            num_src_images: sfmSettingsValue(
-                form,
-                `${mode}.num_src_images`
-            ),
-            chunk_overlap: sfmSettingsValue(
-                form,
-                `${mode}.chunk_overlap`
-            ),
-            target_images_per_chunk: sfmSettingsValue(
-                form,
-                `${mode}.target_images_per_chunk`
-            ),
-            max_images_per_chunk: sfmSettingsValue(
-                form,
-                `${mode}.max_images_per_chunk`
-            ),
-            mesh_depth: sfmSettingsValue(
-                form,
-                `${mode}.mesh_depth`
-            ),
-            target_faces: sfmSettingsValue(
-                form,
-                `${mode}.target_faces`
-            ),
-            mesh_engine: sfmSettingsValue(
-                form,
-                `${mode}.mesh_engine`
-            ),
-            density_quantile: sfmSettingsValue(
-                form,
-                `${mode}.density_quantile`
-            )
+            max_image_size: sfmSettingsValue(form, `${mode}.max_image_size`),
+            num_src_images: sfmSettingsValue(form, `${mode}.num_src_images`),
+            chunk_overlap: sfmSettingsValue(form, `${mode}.chunk_overlap`),
+            target_images_per_chunk: sfmSettingsValue(form, `${mode}.target_images_per_chunk`),
+            max_images_per_chunk: sfmSettingsValue(form, `${mode}.max_images_per_chunk`),
+            mesh_depth: sfmSettingsValue(form, `${mode}.mesh_depth`),
+            target_faces: sfmSettingsValue(form, `${mode}.target_faces`),
+            mesh_engine: sfmSettingsValue(form, `${mode}.mesh_engine`),
+            density_quantile: sfmSettingsValue(form, `${mode}.density_quantile`)
         };
     });
 
@@ -892,6 +953,22 @@ function sfmSettingsFromForm(form) {
 
 function validateSfmSettingsForm(form) {
     const settings = sfmSettingsFromForm(form);
+
+    if (settings.extract.target_frames < 30 || settings.extract.target_frames > 5000) {
+        return 'target_frames must be between 30 and 5000';
+    }
+
+    if (settings.extract.candidate_multiplier < 1 || settings.extract.candidate_multiplier > 5) {
+        return 'candidate_multiplier must be between 1 and 5';
+    }
+
+    if (settings.extract.minimum_sampling_fps >= settings.extract.maximum_sampling_fps) {
+        return 'minimum_sampling_fps must be less than maximum_sampling_fps';
+    }
+
+    if (settings.extract.maximum_sampling_fps > 60) {
+        return 'maximum_sampling_fps must be less than or equal to 60';
+    }
 
     for (const mode of ['preview', 'standard', 'fullhd']) {
         const modeSettings = settings[mode];
@@ -923,28 +1000,19 @@ async function saveSfmSettings(form, action) {
     body.set('action', action);
     body.set('secCode', csrf);
 
-    if (
-        action === 'save_user_defaults' ||
-        action === 'save_session_overrides'
-    ) {
+    if (action === 'save_user_defaults' || action === 'save_session_overrides') {
         const validationError = validateSfmSettingsForm(form);
 
         if (validationError) {
             throw new Error(validationError);
         }
 
-        body.set(
-            'settings_json',
-            JSON.stringify(sfmSettingsFromForm(form))
-        );
+        body.set('settings_json', JSON.stringify(sfmSettingsFromForm(form)));
     }
 
     const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-            'Content-Type':
-                'application/x-www-form-urlencoded;charset=UTF-8'
-        },
+        headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'},
         body: body.toString()
     });
 
@@ -958,39 +1026,33 @@ async function saveSfmSettings(form, action) {
 }
 
 function showSfmSettingsMessage(form, message, success) {
-    const box = form.querySelector(
-        '.sfm-settings-message'
-    );
+    const box = form.querySelector('.sfm-settings-message');
 
-    box.classList.remove(
-        'd-none',
-        'alert-success',
-        'alert-danger'
-    );
-
-    box.classList.add(
-        'alert',
-        success ? 'alert-success' : 'alert-danger'
-    );
+    box.classList.remove('d-none', 'alert-success', 'alert-danger');
+    box.classList.add('alert', success ? 'alert-success' : 'alert-danger');
 
     const labels = {
         save_user_defaults: 'User defaults saved',
-        save_session_overrides:
-            'Session settings saved',
-        reset_user_defaults:
-            'User defaults reset',
-        reset_session_overrides:
-            'Session overrides reset'
+        save_session_overrides: 'Session settings saved',
+        reset_user_defaults: 'User defaults reset',
+        reset_session_overrides: 'Session overrides reset'
     };
 
-    box.textContent =
-        labels[message] || String(message);
+    box.textContent = labels[message] || String(message);
 }
 
 function setSfmField(form, name, value) {
     const el = form.elements.namedItem(name);
 
     if (!el) {
+        return;
+    }
+
+    if (!el.type && typeof el.length === 'number' && el.length > 0) {
+        Array.from(el).forEach((item) => {
+            if (item.type === 'checkbox') item.checked = Boolean(value);
+            else item.value = value ?? '';
+        });
         return;
     }
 
@@ -1003,50 +1065,151 @@ function setSfmField(form, name, value) {
 }
 
 function applySfmEffectiveSettings(form, settings) {
-    setSfmField(form, 'extract.fps', settings.extract.fps);
-    setSfmField(
-        form,
-        'extract.max_frames',
-        settings.extract.max_frames
-    );
-    setSfmField(
-        form,
-        'extract.scale_width',
-        settings.extract.scale_width
-    );
+    if (!settings) return;
+    const extract = settings.extract || {};
+    setSfmField(form, 'extract.sampling_mode', extract.sampling_mode || 'auto_quality');
+    setSfmField(form, 'extract.target_frames', extract.target_frames);
+    setSfmField(form, 'extract.candidate_multiplier', extract.candidate_multiplier);
+    setSfmField(form, 'extract.minimum_sampling_fps', extract.minimum_sampling_fps);
+    setSfmField(form, 'extract.maximum_sampling_fps', extract.maximum_sampling_fps);
+    setSfmField(form, 'extract.quality_filter', extract.quality_filter);
+    setSfmField(form, 'extract.allow_upscale', extract.allow_upscale);
+    setSfmField(form, 'extract.keep_candidate_frames', extract.keep_candidate_frames);
+    setSfmField(form, 'extract.scale_width', extract.scale_width);
+    setSfmField(form, 'extract.fps', extract.fps);
+    setSfmField(form, 'extract.max_frames', extract.max_frames);
 
-    setSfmField(
-        form,
-        'sparse.matcher',
-        settings.sparse.matcher
-    );
-    setSfmField(
-        form,
-        'sparse.sequential_overlap',
-        settings.sparse.sequential_overlap
-    );
-    setSfmField(
-        form,
-        'sparse.loop_detection',
-        settings.sparse.loop_detection
-    );
+    Object.entries(settings.auto_parameters || {}).forEach(([key, value]) => {
+        setSfmField(form, `auto_parameters.${key}`, value ? '1' : '0');
+    });
+
+    setSfmField(form, 'sparse.matcher', settings.sparse?.matcher);
+    setSfmField(form, 'sparse.sequential_overlap', settings.sparse?.sequential_overlap);
+    setSfmField(form, 'sparse.loop_detection', settings.sparse?.loop_detection);
 
     ['preview', 'standard', 'fullhd'].forEach((mode) => {
-        Object.entries(settings[mode] || {}).forEach(
-            ([key, value]) => {
-                setSfmField(
-                    form,
-                    `${mode}.${key}`,
-                    value
-                );
-            }
-        );
+        Object.entries(settings[mode] || {}).forEach(([key, value]) => {
+            setSfmField(form, `${mode}.${key}`, value);
+        });
     });
+
+    sfmRefreshFormUi(form);
+}
+
+function sfmFormatDuration(seconds) {
+    const total = Math.round(Number(seconds));
+    const minutes = Math.floor(total / 60);
+    const secs = total % 60;
+    return minutes > 0 ? `${minutes}m ${secs}s` : `${secs}s`;
+}
+
+function sfmUpdateProcessingSummary(form) {
+    const box = form.querySelector('.sfm-processing-summary');
+    if (!box) return;
+    const duration = Number(form.dataset.videoDuration || 0);
+    const sourceFps = Number(form.dataset.videoFps || 0);
+    if (!(duration > 0) || !(sourceFps > 0)) {
+        box.textContent = 'Video metadata not loaded';
+        return;
+    }
+    const target = Number(sfmSettingsValue(form, 'extract.target_frames') || 0);
+    const multiplier = Number(sfmSettingsValue(form, 'extract.candidate_multiplier') || 1);
+    const candidates = Math.round(target * multiplier);
+    const effectiveFps = Math.min(sourceFps, target / duration);
+    const interval = effectiveFps > 0 ? 1 / effectiveFps : 0;
+    box.innerHTML = [
+        `Video duration: ${sfmFormatDuration(duration)}`,
+        `Source FPS: ${sourceFps.toFixed(2)}`,
+        `Target frames: ${target}`,
+        `Candidate frames: ${candidates}`,
+        `Estimated effective FPS: ${effectiveFps.toFixed(2)}`,
+        `Estimated interval: ${interval.toFixed(2)} sec`,
+        'Coverage: complete video'
+    ].join('<br>');
+}
+
+function sfmRefreshAutoManualVisibility(form) {
+    form.querySelectorAll('[data-auto-toggle]').forEach((select) => {
+        const target = select.dataset.autoToggle;
+        form.querySelectorAll(`[data-manual-for="${target}"]`).forEach((el) => {
+            el.classList.toggle('d-none', select.value !== '0');
+        });
+    });
+}
+
+function sfmRefreshSamplingVisibility(form) {
+    const manual = sfmSettingsValue(form, 'extract.sampling_mode') === 'manual';
+    form.querySelectorAll('.sfm-manual-extract-fields').forEach((el) => {
+        el.classList.toggle('d-none', !manual);
+    });
+}
+
+function sfmApplyQualityProfile(form, profileName) {
+    const profiles = JSON.parse(form.dataset.qualityProfiles || '{}');
+    const rawProfile = profiles[profileName] || SFM_QUALITY_PROFILES[profileName];
+    const profile = rawProfile ? {target_frames: rawProfile.target_frames, resolution: rawProfile.resolution || rawProfile.resolution_mode, max_image_size: rawProfile.max_image_size, quality_filter: rawProfile.quality_filter} : null;
+    if (!profile) return;
+    setSfmField(form, 'extract.target_frames', profile.target_frames);
+    setSfmField(form, 'extract.quality_filter', profile.quality_filter);
+    setSfmField(form, 'processing_resolution', profile.resolution);
+    setSfmField(form, 'extract.scale_width', profile.max_image_size);
+    setSfmField(form, `${profile.resolution}.max_image_size`, profile.max_image_size);
+    sfmRefreshFormUi(form);
+}
+
+function sfmMarkCustomProfile(form) {
+    setSfmField(form, 'quality_profile', 'custom');
+}
+
+function sfmRefreshFormUi(form) {
+    sfmRefreshSamplingVisibility(form);
+    sfmRefreshAutoManualVisibility(form);
+    sfmUpdateProcessingSummary(form);
+}
+
+function sfmStartSelectedResolution(form) {
+    const mode = sfmSettingsValue(form, 'processing_resolution') || 'preview';
+    const block = form.closest('[data-session-id]') || form.closest('.card');
+    const startForm = (block || document).querySelector(`[data-start-pipeline-mode="${mode}"]`);
+    if (!startForm) {
+        showSfmSettingsMessage(form, `No available ${mode} pipeline start card`, false);
+        return;
+    }
+    if (confirm(`${mode} will start with current effective processing settings.`)) {
+        startForm.submit();
+    }
 }
 
 document
     .querySelectorAll('.sfm-settings-form')
     .forEach((form) => {
+        sfmRefreshFormUi(form);
+
+        const profile = form.elements.namedItem('quality_profile');
+        if (profile) {
+            profile.addEventListener('change', () => sfmApplyQualityProfile(form, profile.value));
+        }
+
+        ['extract.target_frames', 'extract.quality_filter', 'processing_resolution'].forEach((name) => {
+            const field = form.elements.namedItem(name);
+            if (field) field.addEventListener('change', () => sfmMarkCustomProfile(form));
+        });
+
+        ['extract.sampling_mode', 'extract.target_frames', 'extract.candidate_multiplier', 'extract.minimum_sampling_fps', 'extract.maximum_sampling_fps'].forEach((name) => {
+            const field = form.elements.namedItem(name);
+            if (field) field.addEventListener('input', () => sfmRefreshFormUi(form));
+            if (field) field.addEventListener('change', () => sfmRefreshFormUi(form));
+        });
+
+        form.querySelectorAll('[data-auto-toggle]').forEach((field) => {
+            field.addEventListener('change', () => sfmRefreshAutoManualVisibility(form));
+        });
+
+        const startSelected = form.querySelector('[data-start-selected-resolution]');
+        if (startSelected) {
+            startSelected.addEventListener('click', () => sfmStartSelectedResolution(form));
+        }
+
         form
             .querySelectorAll('[data-sfm-settings-action]')
             .forEach((button) => {
