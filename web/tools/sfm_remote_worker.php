@@ -140,6 +140,47 @@ function remote_output_dir(int $remoteJobId): string
     return rtrim(SFM_REMOTE_OUTPUT, '/') . '/job_' . $remoteJobId;
 }
 
+function pipeline_log_extract_quality_summary(mysqli $db, int $pipelineRunId, string $jobOutputDir): void
+{
+    $path = rtrim($jobOutputDir, '/') . '/quality/quality_summary.json';
+    if (!is_file($path)) {
+        pipeline_log($pipelineRunId, 'WARNING', 'FRAME_SELECTION', 'quality_summary.json not found');
+        return;
+    }
+    $data = json_decode((string)file_get_contents($path), true);
+    if (!is_array($data)) {
+        pipeline_log($pipelineRunId, 'WARNING', 'FRAME_SELECTION', 'Invalid quality_summary.json');
+        return;
+    }
+    $coverage = is_array($data['coverage'] ?? null) ? $data['coverage'] : [];
+    pipeline_log($pipelineRunId, 'INFO', 'EXTRACT_FRAMES', sprintf('Video duration=%s source_fps=%s', $data['video_duration_sec'] ?? 0, $data['source_fps'] ?? 0));
+    pipeline_log($pipelineRunId, 'INFO', 'EXTRACT_FRAMES', sprintf('Sampling mode=%s target=%d candidates=%d', $data['sampling_mode'] ?? 'unknown', (int)($data['target_frames'] ?? 0), (int)($data['candidate_frames'] ?? 0)));
+    pipeline_log($pipelineRunId, 'INFO', 'FRAME_QUALITY', sprintf('Blur rejected=%d dark=%d overexposed=%d duplicates=%d fallback=%d', (int)($data['rejected_blur'] ?? 0), (int)($data['rejected_dark'] ?? 0), (int)($data['rejected_overexposed'] ?? 0), (int)($data['rejected_duplicate'] ?? 0), (int)($data['fallback_frames'] ?? 0)));
+    pipeline_log($pipelineRunId, 'INFO', 'FRAME_SELECTION', sprintf('Selected=%d coverage=%s%% max_gap=%s sec', (int)($data['selected_frames'] ?? 0), $coverage['coverage_percent'] ?? 0, $coverage['maximum_gap_sec'] ?? 0));
+    pipeline_log($pipelineRunId, 'INFO', 'FRAME_SELECTION', sprintf('First timestamp=%s last timestamp=%s', $coverage['first_timestamp_sec'] ?? 0, $coverage['last_timestamp_sec'] ?? 0));
+
+    $actual = [
+        'video_duration_sec' => $data['video_duration_sec'] ?? null,
+        'source_fps' => $data['source_fps'] ?? null,
+        'candidate_frames' => $data['candidate_frames'] ?? null,
+        'extracted_frames' => $data['extracted_frames'] ?? ($data['selected_frames'] ?? null),
+        'selected_frames' => $data['selected_frames'] ?? null,
+        'coverage_percent' => $coverage['coverage_percent'] ?? null,
+        'first_timestamp_sec' => $coverage['first_timestamp_sec'] ?? null,
+        'last_timestamp_sec' => $coverage['last_timestamp_sec'] ?? null,
+    ];
+    $actual = array_filter($actual, static fn($v) => $v !== null);
+    $res = $db->query('SELECT parameters_json FROM sfm_pipeline_runs WHERE id=' . (int)$pipelineRunId . ' LIMIT 1');
+    $params = $res ? sfm_json_array((string)($res->fetch_assoc()['parameters_json'] ?? '{}')) : [];
+    if ($res) { $res->close(); }
+    $params['actual_statistics'] = array_replace($params['actual_statistics'] ?? [], $actual);
+    $json = json_encode($params, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $selected = (int)($data['selected_frames'] ?? 0);
+    $extracted = (int)($actual['extracted_frames'] ?? $selected);
+    $st = $db->prepare('UPDATE sfm_pipeline_runs SET parameters_json=?, extracted_frames=? WHERE id=?');
+    if ($st) { $st->bind_param('sii', $json, $extracted, $pipelineRunId); $st->execute(); $st->close(); }
+}
+
 function auto_chain_after_done(mysqli $db, array $job): void
 {
     $type = (string)$job['job_type'];
@@ -152,7 +193,6 @@ function auto_chain_after_done(mysqli $db, array $job): void
 
     if ($type === 'EXTRACT_FRAMES') {
         $pipelineRunId = pipeline_run_for_job($job);
-        if ($pipelineRunId > 0) { $er=sfm_json_array((string)@file_get_contents(remote_output_dir($remote).'/frames/result.json')); $frames=(int)($er['frames'] ?? 0); $extra=$frames>0?['extracted_frames'=>$frames]:[]; sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued',$extra); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done frames='.$frames); pipeline_log($pipelineRunId,'INFO','SPARSE','Started'); }
         $st = $db->prepare("SELECT id FROM sfm_remote_jobs WHERE job_type='COLMAP_SPARSE' AND parent_remote_job_id=? LIMIT 1");
         if (!$st) {
             return;
@@ -164,6 +204,7 @@ function auto_chain_after_done(mysqli $db, array $job): void
         if ($exists) {
             return;
         }
+        if ($pipelineRunId > 0) { pipeline_log_extract_quality_summary($db, $pipelineRunId, remote_output_dir($remote)); $er=sfm_json_array((string)@file_get_contents(remote_output_dir($remote).'/result.json')); $frames=(int)($er['frames'] ?? 0); $extra=$frames>0?['extracted_frames'=>$frames]:[]; sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued',$extra); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done'); pipeline_log($pipelineRunId,'INFO','SPARSE','Started'); }
         $rid = sfm_job_id($db);
         $input = frames_path_for_parent($remote);
         $out = remote_output_dir($rid);
@@ -700,7 +741,7 @@ function launch_job(mysqli $db, array $job): void
     }
     if ($type === 'EXTRACT_FRAMES') {
         $pipelineRunId = pipeline_run_for_job($job);
-        if ($pipelineRunId > 0) { sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued'); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done'); pipeline_log($pipelineRunId,'INFO','SPARSE','Started'); }
+        if ($pipelineRunId > 0) { sfm_pipeline_update($db,$pipelineRunId,'RUNNING','EXTRACT_FRAMES',1,'Extracting and selecting frames'); }
         $input = safe_session_video_path($db, $job);
         $rs=worker_run_parameters($db,$job); $ex=$rs['extract'] ?? []; $extractJson=json_encode(['extract'=>$ex], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)($ex['fps'] ?? ''), (string)($ex['max_frames'] ?? ''), (string)($ex['scale_width'] ?? ''), (string)($ex['jpeg_quality'] ?? ''), $extractJson];
     } elseif ($type === 'COLMAP_SPARSE') {

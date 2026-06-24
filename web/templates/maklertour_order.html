@@ -1167,18 +1167,103 @@ function sfmRefreshFormUi(form) {
     sfmUpdateProcessingSummary(form);
 }
 
-function sfmStartSelectedResolution(form) {
+async function sfmStartSelectedResolution(form) {
+    const validationError = validateSfmSettingsForm(form);
+
+    if (validationError) {
+        showSfmSettingsMessage(form, validationError, false);
+        return;
+    }
+
     const mode = sfmSettingsValue(form, 'processing_resolution') || 'preview';
     const block = form.closest('[data-session-id]') || form.closest('.card');
     const startForm = (block || document).querySelector(`[data-start-pipeline-mode="${mode}"]`);
+
     if (!startForm) {
         showSfmSettingsMessage(form, `No available ${mode} pipeline start card`, false);
         return;
     }
-    if (confirm(`${mode} will start with current effective processing settings.`)) {
+
+    try {
+        showSfmSettingsMessage(form, 'Saving settings before start...', true);
+
+        const data = await saveSfmSettings(form, 'save_session_overrides');
+
+        if (data && data.effective_settings) {
+            applySfmEffectiveSettings(form, data.effective_settings);
+        }
+
+        const settings = sfmSettingsFromForm(form);
+        const extract = settings.extract || {};
+        const confirmText = [
+            `Start ${mode}?`,
+            '',
+            `Sampling mode: ${extract.sampling_mode}`,
+            `Target frames: ${extract.target_frames}`,
+            `Candidate multiplier: ${extract.candidate_multiplier}`,
+            `Quality filter: ${extract.quality_filter ? 'yes' : 'no'}`
+        ].join('\n');
+
+        if (!window.confirm(confirmText)) {
+            return;
+        }
+
+        startForm.dataset.settingsSaved = '1';
         startForm.submit();
+    } catch (error) {
+        showSfmSettingsMessage(
+            form,
+            error.message || 'Unable to save settings before start',
+            false
+        );
     }
 }
+
+
+document
+    .querySelectorAll('form[data-start-pipeline-mode]')
+    .forEach((startForm) => {
+        startForm.addEventListener('submit', async (event) => {
+            if (startForm.dataset.settingsSaved === '1') {
+                return;
+            }
+
+            event.preventDefault();
+
+            const sessionBlock = startForm.closest('[data-session-id]');
+            const settingsForm = sessionBlock?.querySelector('.sfm-settings-form');
+
+            if (!settingsForm) {
+                startForm.dataset.settingsSaved = '1';
+                startForm.submit();
+                return;
+            }
+
+            const validationError = validateSfmSettingsForm(settingsForm);
+
+            if (validationError) {
+                showSfmSettingsMessage(settingsForm, validationError, false);
+                return;
+            }
+
+            try {
+                const data = await saveSfmSettings(settingsForm, 'save_session_overrides');
+
+                if (data && data.effective_settings) {
+                    applySfmEffectiveSettings(settingsForm, data.effective_settings);
+                }
+
+                startForm.dataset.settingsSaved = '1';
+                startForm.submit();
+            } catch (error) {
+                showSfmSettingsMessage(
+                    settingsForm,
+                    error.message || 'Settings save failed',
+                    false
+                );
+            }
+        });
+    });
 
 document
     .querySelectorAll('.sfm-settings-form')
