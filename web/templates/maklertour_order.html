@@ -411,7 +411,7 @@
                               </form>
                             {/if}
                             {if $run.status=='QUEUED' || $run.status=='RUNNING' || $run.status=='RUNNING_CHUNKS' || $run.status=='PLANNING' || $run.status=='MERGING' || $run.status=='DONE' || $run.status=='ERROR' || $run.status=='CANCELLED'}
-                              <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('{if $run.status=='QUEUED' || $run.status=='RUNNING'}This pipeline branch is active; its running or queued remote task will be stopped. {/if}Delete all files and jobs for this pipeline branch and start it again from the original video?');">
+                              <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('{if $run.status=='QUEUED' || $run.status=='RUNNING'}This pipeline branch is active; its running or queued remote task will be stopped. {/if}Delete all files and jobs for this pipeline branch and start it again from the original video?');" data-restart-pipeline-current-settings data-pipeline-mode="{$pmode|escape}">
                                 <input type="hidden" name="action" value="restart_sfm_pipeline">
                                 <input type="hidden" name="pipeline_run_id" value="{$run.id}">
                                 <input type="hidden" name="capture_session_id" value="{$s.id}">
@@ -1510,5 +1510,94 @@ setInterval(
   refreshPipelineCards,
   4000
 );
+
+document
+    .querySelectorAll(
+        'form[data-restart-pipeline-current-settings]'
+    )
+    .forEach((restartForm) => {
+        restartForm.addEventListener(
+            'submit',
+            async (event) => {
+                if (
+                    restartForm.dataset.settingsSaved === '1'
+                ) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                const sessionBlock =
+                    restartForm.closest(
+                        '[data-session-id]'
+                    );
+
+                const settingsForm =
+                    sessionBlock?.querySelector(
+                        '.sfm-settings-form'
+                    );
+
+                if (!settingsForm) {
+                    alert(
+                        'Processing settings form not found'
+                    );
+                    return;
+                }
+
+                const validationError =
+                    validateSfmSettingsForm(
+                        settingsForm
+                    );
+
+                if (validationError) {
+                    showSfmSettingsMessage(
+                        settingsForm,
+                        validationError,
+                        false
+                    );
+                    return;
+                }
+
+                const mode =
+                    restartForm.dataset.pipelineMode ||
+                    'preview';
+
+                if (!window.confirm(
+                    `Restart ${mode} from scratch using the settings currently shown?`
+                )) {
+                    return;
+                }
+
+                try {
+                    const data =
+                        await saveSfmSettings(
+                            settingsForm,
+                            'save_session_overrides'
+                        );
+
+                    if (
+                        data &&
+                        data.effective_settings
+                    ) {
+                        applySfmEffectiveSettings(
+                            settingsForm,
+                            data.effective_settings
+                        );
+                    }
+
+                    restartForm.dataset.settingsSaved = '1';
+                    restartForm.submit();
+                } catch (error) {
+                    showSfmSettingsMessage(
+                        settingsForm,
+                        error.message ||
+                            'Unable to save settings',
+                        false
+                    );
+                }
+            }
+        );
+    });
+
 </script>
 {/literal}
