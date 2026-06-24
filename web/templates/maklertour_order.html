@@ -180,6 +180,33 @@
   View SfM tour
 </a>
 
+          <div class="card border-warning-subtle mb-3 mt-2" id="debugPublicBlock{$s.id}">
+            <div class="card-body py-2">
+              <div class="fw-semibold">Debug public access</div>
+              {assign var=dbg value=$s.debug_public_link}
+              <div class="small mb-2">
+                Status: <span data-debug-status>{if $dbg}{$dbg.status|escape}{else}Not created{/if}</span>
+                {if $dbg} · Created at: {$dbg.created_at|escape} · Expires at: {$dbg.expires_at|default:'No expiration'|escape} · Access count: {$dbg.access_count|default:0} · Last access: {$dbg.last_accessed_at|default:'Never'|escape}{/if}
+              </div>
+              <div class="row g-2 small mb-2">
+                <div class="col-md-3"><select class="form-select form-select-sm" data-debug-expires><option value="24h">24 hours</option><option value="7d" selected>7 days</option><option value="30d">30 days</option><option value="none">No expiration</option></select></div>
+                <div class="col-md-9 d-flex flex-wrap gap-2">
+                  <label><input type="checkbox" data-debug-opt="source_video" checked> Include source video</label>
+                  <label><input type="checkbox" data-debug-opt="selected_frames" checked> Include selected frames</label>
+                  <label><input type="checkbox" data-debug-opt="candidate_frames"> Include candidate frames</label>
+                  <label><input type="checkbox" data-debug-opt="point_clouds" checked> Include point clouds</label>
+                  <label><input type="checkbox" data-debug-opt="meshes" checked> Include meshes</label>
+                  <label><input type="checkbox" data-debug-opt="logs" checked> Include logs</label>
+                  <label><input type="checkbox" data-debug-opt="imu" checked> Include IMU</label>
+                </div>
+              </div>
+              <div class="input-group input-group-sm mb-2" data-debug-link-row style="display:none"><input class="form-control" readonly data-debug-url><button class="btn btn-outline-secondary" type="button" onclick="copyDebugLink({$s.id})">Copy debug link</button><a class="btn btn-outline-primary" target="_blank" data-debug-open>Open debug link</a></div>
+              <button type="button" class="btn btn-sm btn-outline-warning" onclick="createDebugLink({$s.id})">Create debug public link</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" onclick="createDebugLink({$s.id})">Regenerate link</button>
+              <button type="button" class="btn btn-sm btn-outline-danger" onclick="revokeDebugLink({$s.id})">Revoke link</button>
+            </div>
+          </div>
+
           <div class="card border-light bg-light-subtle mb-3 mt-2" id="sfmVideoBlock{$s.id}" data-session-id="{$s.id}">
             <div class="card-body py-2">
               <div class="fw-semibold">SfM Video Reconstruction</div>
@@ -1355,6 +1382,15 @@ function pollSfmRemoteJobs(){
   });
 }
 setInterval(pollSfmRemoteJobs,4000); pollSfmRemoteJobs();
+
+async function createDebugLink(sessionId){
+  const box=document.getElementById('debugPublicBlock'+sessionId); const opts={}; box.querySelectorAll('[data-debug-opt]').forEach(i=>opts[i.dataset.debugOpt]=i.checked);
+  const r=await fetch('/api/debug_public_link_create.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId),expires:box.querySelector('[data-debug-expires]').value,options:opts})}); const d=await r.json(); if(!r.ok||!d.ok)return alert(d.error||'Ошибка');
+  const abs=new URL(d.url, window.location.origin).href; box.querySelector('[data-debug-link-row]').style.display='flex'; box.querySelector('[data-debug-url]').value=abs; box.querySelector('[data-debug-open]').href=abs; box.querySelector('[data-debug-status]').textContent='Active';
+}
+function copyDebugLink(sessionId){const i=document.querySelector('#debugPublicBlock'+sessionId+' [data-debug-url]'); if(i){i.select(); navigator.clipboard&&navigator.clipboard.writeText(i.value);}}
+async function revokeDebugLink(sessionId){if(!confirm('Revoke debug public link?'))return; const r=await fetch('/api/debug_public_link_revoke.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:Number(sessionId)})}); const d=await r.json(); if(!r.ok||!d.ok)return alert(d.error||'Ошибка'); const box=document.getElementById('debugPublicBlock'+sessionId); box.querySelector('[data-debug-status]').textContent='Revoked'; box.querySelector('[data-debug-link-row]').style.display='none';}
+
 </script>
 {/literal}
 {include file="maklertour_footer.html"}

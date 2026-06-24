@@ -1,9 +1,17 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/bootstrap.php';
-auth_require_login();
-$orderId = (int)($_GET['order_id'] ?? 0);
-$sessionId = (int)($_GET['session_id'] ?? 0);
+require_once dirname(__DIR__) . '/libs/sfm_debug_public_lib.php';
+$debugToken = (string)($_GET['debug_token'] ?? '');
+$debugPublic = null;
+if ($debugToken !== '') {
+    sfm_debug_public_headers();
+    $debugPublic = sfm_debug_public_validate($dbcnx, $debugToken, true);
+} else {
+    auth_require_login();
+}
+$orderId = (int)($_GET['order_id'] ?? ($debugPublic['order_id'] ?? 0));
+$sessionId = (int)($_GET['session_id'] ?? ($debugPublic['capture_session_id'] ?? 0));
 $pipelineRunId = (int)($_GET['pipeline_run_id'] ?? 0);
 $artifact = in_array((string)($_GET['artifact'] ?? 'sparse'), ['sparse','dense','mesh'], true) ? (string)($_GET['artifact'] ?? 'sparse') : 'sparse';
 ?>
@@ -23,9 +31,9 @@ body,html{height:100%}
 <body class="p-3">
 <div class="container-fluid position-relative">
 <div class="d-flex gap-2 mb-2">
-<a class="btn btn-outline-secondary btn-sm" href="/order.php?id=<?php echo $orderId; ?>">← Back to order</a>
+<?php if (!$debugPublic): ?><a class="btn btn-outline-secondary btn-sm" href="/order.php?id=<?php echo $orderId; ?>">← Back to order</a>
 <a class="btn btn-outline-primary btn-sm" href="/sfm_tour_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open SfM tour</a>
-<a class="btn btn-outline-success btn-sm" href="/sfm_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open diagnostics</a>
+<a class="btn btn-outline-success btn-sm" href="/sfm_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open diagnostics</a><?php else: ?><span class="badge bg-warning text-dark">Read-only debug public access</span><?php endif; ?>
 </div>
 <div id="viewer"><div id="viewerStatus" class="text-light p-3">Loading...</div></div>
 
@@ -90,10 +98,10 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 
-const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>;
+const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
 const statusEl=document.getElementById('viewerStatus');
 function showError(msg){ statusEl.className='text-danger p-3'; statusEl.textContent=msg; }
-const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}`;
+const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
 const r=await fetch(apiUrl);
 const data=await r.json().catch(()=>({ok:false,error:'PLY load failed'}));
 if(!data.ok){ showError(data.error||'Artifact not found'); throw new Error(data.error||'load failed'); }
@@ -480,7 +488,7 @@ const bindClick=(id,handler)=>{
 const presets={natural:{exposure:1.2,pointSize:1.5,background:'#252b3f'},bright:{exposure:1.7,pointSize:2.25,background:'#252b3f'},contrast:{exposure:2.0,pointSize:2.75,background:'#202437'},meshlab:{exposure:1.5,pointSize:2.0,background:'#29305f'}};
 function applyDisplaySettings(sv){ if(!sv) return; if(sv.background){scene.background=new THREE.Color(sv.background); document.getElementById('backgroundColor').value=sv.background;} if(sv.exposure){renderer.toneMappingExposure=Number(sv.exposure); document.getElementById('exposure').value=String(sv.exposure); document.getElementById('exposureValue').textContent=Number(sv.exposure).toFixed(2);} if(sv.point_size){setPointSize(Number(sv.point_size));} if(sv.rotation){rootGroup.rotation.set(Number(sv.rotation.x||0),Number(sv.rotation.y||0),Number(sv.rotation.z||0));} if(sv.preset){document.getElementById('displayPreset').value=sv.preset;} }
 async function loadViewerSettings(){ try{ const rr=await fetch(`/api/sfm_viewer_settings.php?order_id=${orderId}&capture_session_id=${sessionId}&pipeline_run_id=${pipelineRunId||''}`); const js=await rr.json(); if(js.ok) applyDisplaySettings(js.settings); }catch(e){ console.warn('settings load failed',e);} }
-async function saveViewerSettings(){ const body={order_id:orderId,capture_session_id:sessionId,pipeline_run_id:pipelineRunId||null,settings:{rotation:{x:rootGroup.rotation.x,y:rootGroup.rotation.y,z:rootGroup.rotation.z},point_size:getPointSize(),exposure:renderer.toneMappingExposure,background:'#'+scene.background.getHexString(),use_outlier_filter:document.getElementById('outlierMode').value!=='off',outlier_mode:document.getElementById('outlierMode').value,preset:document.getElementById('displayPreset').value}}; await fetch('/api/sfm_viewer_settings.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+async function saveViewerSettings(){ if(debugToken) return; const body={order_id:orderId,capture_session_id:sessionId,pipeline_run_id:pipelineRunId||null,settings:{rotation:{x:rootGroup.rotation.x,y:rootGroup.rotation.y,z:rootGroup.rotation.z},point_size:getPointSize(),exposure:renderer.toneMappingExposure,background:'#'+scene.background.getHexString(),use_outlier_filter:document.getElementById('outlierMode').value!=='off',outlier_mode:document.getElementById('outlierMode').value,preset:document.getElementById('displayPreset').value}}; await fetch('/api/sfm_viewer_settings.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
 function rebuildAfterTransform(doFit=true){ const box=computeCombinedBox(initialArtifact==='sparse',false,false,initialArtifact==='dense',initialArtifact==='mesh'); if(!box) return; latestCombinedBox=box.clone(); const size=box.getSize(new THREE.Vector3()); const radius=Math.max(size.length()*0.5,0.1); recreateGrid(box, new THREE.Vector3(), radius); if(doFit) fitCloud(); controls.update(); }
 function rotateRoot(axis, radians){ rootGroup.rotateOnAxis(axis,radians); rebuildAfterTransform(true); updateSummary(); }
 function autoOrient(){ const obj=denseObject||pointsMesh||meshObject; if(!obj) return; const box=new THREE.Box3().setFromObject(obj); const size=box.getSize(new THREE.Vector3()); const minAxis=size.x<size.y&&size.x<size.z?'x':(size.y<size.z?'y':'z'); if(minAxis==='x') rotateRoot(new THREE.Vector3(0,0,1), Math.PI/2); else if(minAxis==='z') rotateRoot(new THREE.Vector3(1,0,0), Math.PI/2); selectionEl.innerHTML='Auto orient preview applied. Use “Set current orientation as default” to save.'; }

@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/bootstrap.php';
 require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
 require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
+require_once dirname(__DIR__) . '/libs/sfm_debug_public_lib.php';
 auth_require_login();
 $user = auth_current_user(); $userId=(int)$user['id']; $role=$user['role'] ?? 'BROKER';
 $orderId=(int)($_GET['id']??0); if($orderId<=0){http_response_code(400);exit('Bad order id');}
@@ -789,10 +790,16 @@ if ($hasPublicTourLinks) {
     }
 }
 
+$debugLinksBySession=[];
+sfm_debug_public_ensure_schema($dbcnx);
+$stmt=$dbcnx->prepare("SELECT * FROM sfm_debug_public_links WHERE order_id=? ORDER BY id DESC");
+if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($r=$rs->fetch_assoc()){ $sid=(int)$r['capture_session_id']; if(!isset($debugLinksBySession[$sid])){ $r['status']=!empty($r['revoked_at'])?'Revoked':((!empty($r['expires_at']) && strtotime((string)$r['expires_at'])<=time())?'Expired':'Active'); $debugLinksBySession[$sid]=$r; } } $stmt->close(); }
 foreach ($captureSessions as $idx => $session) {
     $sid = (int)$session['id'];
     $captureSessions[$idx]['public_link'] = $publicLinksBySession[$sid] ?? null;
+    $captureSessions[$idx]['debug_public_link'] = $debugLinksBySession[$sid] ?? null;
 }
+
 
 $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),'videos'=>count($videoScans)];
 

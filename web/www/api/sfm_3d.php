@@ -2,12 +2,12 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__,2) . '/libs/sfm_debug_public_lib.php';
 header('Content-Type: application/json; charset=utf-8');
-auth_require_login();
-
-$user = auth_current_user();
-$userId = (int)$user['id'];
-$role = (string)($user['role'] ?? 'BROKER');
+$debugToken=(string)($_GET['debug_token'] ?? '');
+$debugPublic=null;
+if($debugToken!==''){ sfm_debug_public_headers(); $debugPublic=sfm_debug_public_validate($dbcnx,$debugToken,true); $userId=0; $role='DEBUG_PUBLIC'; }
+else { auth_require_login(); $user = auth_current_user(); $userId = (int)$user['id']; $role = (string)($user['role'] ?? 'BROKER'); }
 
 function api3d_json(array $payload, int $code = 200): void {
     http_response_code($code);
@@ -38,7 +38,7 @@ if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     $pid=(int)$pipelineRunId; $st->bind_param('i',$pid); $st->execute(); $run=$st->get_result()->fetch_assoc(); $st->close();
     if(!$run) api3d_json(['ok'=>false,'error'=>'pipeline_not_found'],404);
     $order=['broker_id'=>$run['broker_id'],'operator_id'=>$run['operator_id'],'is_published'=>$run['is_published'] ?? 0,'status'=>$run['order_status'] ?? ''];
-    if(!can_view_order($order,$userId,$role)) api3d_json(['ok'=>false,'error'=>'forbidden'],403);
+    if($debugPublic){ if((int)$debugPublic['capture_session_id'] !== (int)$run['capture_session_id']) api3d_json(['ok'=>false,'error'=>'forbidden'],403); } elseif(!can_view_order($order,$userId,$role)) api3d_json(['ok'=>false,'error'=>'forbidden'],403);
     $jobs=[]; $st=$dbcnx->prepare('SELECT * FROM sfm_remote_jobs WHERE pipeline_run_id=? ORDER BY created_at DESC, id DESC');
     if($st){$st->bind_param('i',$pid); $st->execute(); $rs=$st->get_result(); while($j=$rs->fetch_assoc()) $jobs[]=$j; $st->close();}
     $sparse=$recon=$mesh=null; foreach($jobs as $j){$jt=(string)$j['job_type']; if($jt==='COLMAP_SPARSE')$sparse=$j; elseif(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true))$recon=$j; elseif($jt==='COLMAP_MESH')$mesh=$j;}
@@ -49,7 +49,7 @@ if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     $selectedPath=['sparse'=>$sparsePath,'dense'=>$densePath,'mesh'=>$meshPath][$artifact]; $selectedInfo=api3d_ply_info($selectedPath);
     if(!$selectedInfo['valid'] || ($artifact==='mesh' && $selectedInfo['faces']<=0)) api3d_json(['ok'=>false,'error'=>$artifact==='mesh'?'Pipeline has no mesh artifact':'Artifact not found'],404);
     $sparseInfo=api3d_ply_info($sparsePath); $denseInfo=api3d_ply_info($densePath); $meshInfo=api3d_ply_info($meshPath);
-    api3d_json(['ok'=>true,'pipeline_run_id'=>$pid,'artifact'=>$artifact,'summary'=>['points_count'=>$sparseInfo['vertices'],'camera_poses_count'=>0,'keyframe_points_count'=>0], 'artifacts'=>['sparse_points_ply_url'=>'/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact=sparse','camera_trajectory_url'=>'data:application/json,[]','keyframe_points_url'=>'data:application/json,[]'], 'dense'=>['available'=>$denseInfo['valid'],'fused_ply_url'=>'/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact=dense','points'=>$denseInfo['vertices']], 'mesh'=>['available'=>$meshInfo['valid']&&$meshInfo['faces']>0,'mesh_ply_url'=>'/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact=mesh','vertices'=>$meshInfo['vertices'],'faces'=>$meshInfo['faces']], 'selected'=>['artifact'=>$artifact,'vertices'=>$selectedInfo['vertices'],'faces'=>$selectedInfo['faces']]]);
+    api3d_json(['ok'=>true,'pipeline_run_id'=>$pid,'artifact'=>$artifact,'summary'=>['points_count'=>$sparseInfo['vertices'],'camera_poses_count'=>0,'keyframe_points_count'=>0], 'artifacts'=>['sparse_points_ply_url'=>($debugPublic?'/debug_share_file.php?token='.rawurlencode($debugToken).'&pipeline_run_id='.$pid.'&artifact_type=sparse_ply':'/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact=sparse'),'camera_trajectory_url'=>'data:application/json,[]','keyframe_points_url'=>'data:application/json,[]'], 'dense'=>['available'=>$denseInfo['valid'],'fused_ply_url'=>($debugPublic?'/debug_share_file.php?token='.rawurlencode($debugToken).'&pipeline_run_id='.$pid.'&artifact_type=dense_ply':'/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact=dense'),'points'=>$denseInfo['vertices']], 'mesh'=>['available'=>$meshInfo['valid']&&$meshInfo['faces']>0,'mesh_ply_url'=>($debugPublic?'/debug_share_file.php?token='.rawurlencode($debugToken).'&pipeline_run_id='.$pid.'&artifact_type=mesh_ply':'/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact=mesh'),'vertices'=>$meshInfo['vertices'],'faces'=>$meshInfo['faces']], 'selected'=>['artifact'=>$artifact,'vertices'=>$selectedInfo['vertices'],'faces'=>$selectedInfo['faces']]]);
 }
 
 $orderId = filter_var((string)($_GET['order_id'] ?? ''), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -61,7 +61,7 @@ $stmt = $dbcnx->prepare('SELECT id, broker_id, operator_id, is_published, status
 if (!$stmt) api3d_json(['ok'=>false,'error'=>'db_prepare_order_failed'],500);
 $stmt->bind_param('i', $orderId); $stmt->execute(); $order = $stmt->get_result()->fetch_assoc(); $stmt->close();
 if (!$order) api3d_json(['ok'=>false,'error'=>'order_not_found'],404);
-if (!can_view_order($order, $userId, $role)) api3d_json(['ok'=>false,'error'=>'forbidden'],403);
+if($debugPublic){ if((int)$debugPublic['order_id']!==$orderId || (int)$debugPublic['capture_session_id']!==$sessionId) api3d_json(['ok'=>false,'error'=>'forbidden'],403); } elseif (!can_view_order($order, $userId, $role)) api3d_json(['ok'=>false,'error'=>'forbidden'],403);
 
 $stmt = $dbcnx->prepare('SELECT session_dir FROM video_sfm_runs WHERE order_id = ? AND session_id = ? ORDER BY id DESC LIMIT 1');
 if (!$stmt) api3d_json(['ok'=>false,'error'=>'db_prepare_run_failed'],500);
