@@ -1,7 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-if [[ $# -ne 7 ]]; then echo "Usage: $0 <job_id> <parent_job_id> <sparse_job_id> <model_id> <chunk_id> <image_list_path> <mode>" >&2; exit 1; fi
-JOB_ID="$1"; PARENT_JOB_ID="$2"; SPARSE_JOB_ID="$3"; MODEL_ID="$4"; CHUNK_ID="$5"; IMAGE_LIST_PATH="$6"; MODE="$7"
+if [[ $# -ne 7 && $# -ne 9 ]]; then
+  echo "Usage: $0 <job_id> <parent_job_id> <sparse_job_id> <model_id> <chunk_id> <image_list_path> <mode> [max_image_size] [num_src_images]" >&2
+  exit 1
+fi
+
+JOB_ID="$1"
+PARENT_JOB_ID="$2"
+SPARSE_JOB_ID="$3"
+MODEL_ID="$4"
+CHUNK_ID="$5"
+IMAGE_LIST_PATH="$6"
+MODE="$7"
+
+ARG_MAX_IMAGE_SIZE="${8:-}"
+ARG_NUM_SRC_IMAGES="${9:-}"
+
 BASE="${STATION_BASE:-/home/makler_storage}"; COLMAP_MODE="${COLMAP_MODE:-native}"; COLMAP_BIN="${COLMAP_BIN:-colmap}"; COLMAP_IMAGE="${COLMAP_IMAGE:-}"
 PARENT_DIR="$BASE/output/job_${PARENT_JOB_ID}"; SPARSE_JOB_DIR="$BASE/output/job_${SPARSE_JOB_ID}/colmap"; SPARSE_MODEL_DIR="$SPARSE_JOB_DIR/sparse/${MODEL_ID}"
 CHUNK_DIR="$PARENT_DIR/chunks/chunk_${CHUNK_ID}"; UNDISTORTED_DIR="$CHUNK_DIR/undistorted"; LOG_DIR="$CHUNK_DIR/logs"; FUSED_PLY="$CHUNK_DIR/fused.ply"; STATUS_FILE="$BASE/status/job_${JOB_ID}.json"
@@ -20,6 +34,8 @@ fi
 if [[ "$MODE" == "preview" ]]; then MAX_IMAGE_SIZE="${COLMAP_PREVIEW_MAX_IMAGE_SIZE:-640}"; SRC="${COLMAP_PREVIEW_NUM_SRC_IMAGES:-6}"; PMC="${COLMAP_PREVIEW_PATCHMATCH_CACHE_SIZE:-2}"; FC="${COLMAP_PREVIEW_FUSION_CACHE_SIZE:-2}"; else MAX_IMAGE_SIZE="${COLMAP_HQ_MAX_IMAGE_SIZE:-1600}"; SRC="${COLMAP_HQ_NUM_SRC_IMAGES:-8}"; PMC="${COLMAP_HQ_PATCHMATCH_CACHE_SIZE:-4}"; FC="${COLMAP_HQ_FUSION_CACHE_SIZE:-4}"; fi
 [[ -n "${DENSE_MAX_IMAGE_SIZE:-}" ]] && MAX_IMAGE_SIZE="$DENSE_MAX_IMAGE_SIZE"
 [[ -n "${DENSE_NUM_SRC_IMAGES:-}" ]] && SRC="$DENSE_NUM_SRC_IMAGES"
+[[ -n "$ARG_MAX_IMAGE_SIZE" ]] && MAX_IMAGE_SIZE="$ARG_MAX_IMAGE_SIZE"
+[[ -n "$ARG_NUM_SRC_IMAGES" ]] && SRC="$ARG_NUM_SRC_IMAGES"
 avail_mb(){ awk '/MemAvailable:/ {print int($2/1024)}' /proc/meminfo; }
 jqstr(){ python3 -c 'import json,sys;print(json.dumps(sys.stdin.read())[1:-1])'; }
 status(){ local st="$1" pr="$2" msg; msg="$(printf '%s' "$3"|jqstr)"; cat > "$STATUS_FILE" <<JSON
