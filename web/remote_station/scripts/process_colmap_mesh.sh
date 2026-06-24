@@ -8,8 +8,19 @@ case "$MODE" in
   full|fullhd|1920) O3D_DEPTH="${OPEN3D_FULLHD_DEPTH:-9}"; O3D_TARGET="${OPEN3D_FULLHD_TARGET_FACES:-500000}"; O3D_DQ="${OPEN3D_FULLHD_DENSITY_QUANTILE:-0.12}"; O3D_NB="${OPEN3D_FULLHD_STATISTICAL_NB_NEIGHBORS:-30}"; O3D_STD="${OPEN3D_FULLHD_STATISTICAL_STD_RATIO:-1.8}"; O3D_RADIUS_NB="${OPEN3D_FULLHD_RADIUS_NB_POINTS:-8}" ;;
   standard|1600) O3D_DEPTH="${OPEN3D_STANDARD_DEPTH:-8}"; O3D_TARGET="${OPEN3D_STANDARD_TARGET_FACES:-250000}"; O3D_DQ="${OPEN3D_STANDARD_DENSITY_QUANTILE:-0.12}"; O3D_NB="${OPEN3D_STANDARD_STATISTICAL_NB_NEIGHBORS:-24}"; O3D_STD="${OPEN3D_STANDARD_STATISTICAL_STD_RATIO:-2.0}"; O3D_RADIUS_NB="${OPEN3D_STANDARD_RADIUS_NB_POINTS:-6}" ;;
   hq) O3D_DEPTH="${OPEN3D_HQ_DEPTH:-9}"; O3D_TARGET="${OPEN3D_HQ_TARGET_FACES:-500000}"; O3D_DQ="${OPEN3D_HQ_DENSITY_QUANTILE:-0.12}"; O3D_NB="${OPEN3D_HQ_STATISTICAL_NB_NEIGHBORS:-30}"; O3D_STD="${OPEN3D_HQ_STATISTICAL_STD_RATIO:-1.8}"; O3D_RADIUS_NB="${OPEN3D_HQ_RADIUS_NB_POINTS:-8}" ;;
-  *) O3D_DEPTH="${OPEN3D_PREVIEW_DEPTH:-7}"; O3D_TARGET="${OPEN3D_PREVIEW_TARGET_FACES:-100000}"; O3D_DQ="${OPEN3D_PREVIEW_DENSITY_QUANTILE:-0.12}"; O3D_NB="${OPEN3D_PREVIEW_STATISTICAL_NB_NEIGHBORS:-20}"; O3D_STD="${OPEN3D_PREVIEW_STATISTICAL_STD_RATIO:-2.0}"; O3D_RADIUS_NB="${OPEN3D_PREVIEW_RADIUS_NB_POINTS:-5}" ;;
+  *) O3D_DEPTH="${OPEN3D_PREVIEW_DEPTH:-7}"; O3D_TARGET="${OPEN3D_PREVIEW_TARGET_FACES:-100000}"; O3D_DQ="${OPEN3D_PREVIEW_DENSITY_QUANTILE:-0.05}"; O3D_NB="${OPEN3D_PREVIEW_STATISTICAL_NB_NEIGHBORS:-20}"; O3D_STD="${OPEN3D_PREVIEW_STATISTICAL_STD_RATIO:-2.0}"; O3D_RADIUS_NB="${OPEN3D_PREVIEW_RADIUS_NB_POINTS:-5}" ;;
 esac
+if [[ -n "${DEPTH:-}" && "$DEPTH" =~ ^[0-9]+$ ]]; then
+  O3D_DEPTH="$DEPTH"
+fi
+
+if [[ -n "${TARGET_FACES:-}" && "$TARGET_FACES" =~ ^[0-9]+$ ]]; then
+  O3D_TARGET="$TARGET_FACES"
+fi
+
+if [[ -n "${MESH_DENSITY_QUANTILE:-}" ]]; then
+  O3D_DQ="$MESH_DENSITY_QUANTILE"
+fi
 INPUT_PLY="$BASE/output/job_${PARENT_JOB_ID}/merged/merged_fused.ply"; MESH_DIR="$BASE/output/job_${JOB_ID}/mesh"; LOG_DIR="$MESH_DIR/logs"; STATUS_FILE="$BASE/status/job_${JOB_ID}.json"
 COLMAP_PLY="$MESH_DIR/mesh_colmap.ply"; OPEN3D_PLY="$MESH_DIR/mesh_open3d.ply"; FINAL_PLY="$MESH_DIR/mesh_final.ply"; RESULT_JSON="$MESH_DIR/mesh_result.json"; START=$(date +%s)
 mkdir -p "$BASE/status" "$MESH_DIR" "$LOG_DIR"
@@ -46,8 +57,22 @@ result={'status':'DONE','engine':'$engine','mode':'$MODE','job_id':'$JOB_ID','pa
 result.update({k:v for k,v in extra.items() if k not in ('status','output_ply')}); result['status']='DONE'; result['engine']='$engine'; result['output_ply']='$FINAL_PLY'; result['vertices']=int('$v'); result['faces']=int('$f')
 json.dump(result, open('$RESULT_JSON','w'), ensure_ascii=False, indent=2)
 PY
-status DONE 100 "$msg: $v vertices, $f faces"; }
-run_open3d(){ status RUNNING 5 "Loading dense cloud"; set +e; "$OPEN3D_PYTHON" "$OPEN3D_MESH_SCRIPT" "$INPUT_PLY" "$OPEN3D_PLY" "$O3D_DEPTH" "$O3D_TARGET" --result-json "$RESULT_JSON.open3d" --mode "$MODE" --density-quantile "$O3D_DQ" --statistical-nb-neighbors "$O3D_NB" --statistical-std-ratio "$O3D_STD" --radius-nb-points "$O3D_RADIUS_NB" --radius-multiplier "${OPEN3D_RADIUS_MULTIPLIER:-3.0}" --crop-low-percentile "${OPEN3D_CROP_LOW_PERCENTILE:-0.01}" --crop-high-percentile "${OPEN3D_CROP_HIGH_PERCENTILE:-0.99}" --minimum-component-ratio "${OPEN3D_MINIMUM_COMPONENT_RATIO:-0.01}" --maximum-triangle-edge-multiplier "${OPEN3D_MAXIMUM_TRIANGLE_EDGE_MULTIPLIER:-8.0}" > "$LOG_DIR/open3d_mesh.log" 2>&1; local ec=$?; set -e; if [[ $ec -eq 0 ]]; then finish_result open3d "$OPEN3D_PLY" "Mesh completed"; return 0; fi; local m; m=$(python3 -c "import json;print(json.load(open('$RESULT_JSON.open3d')).get('message','Open3D failed'))" 2>/dev/null || echo Open3D failed); status ERROR 65 "Open3D mesh generation failed: $m"; cp -f "$RESULT_JSON.open3d" "$RESULT_JSON" 2>/dev/null || true; return 1; }
+status DONE 100 "$msg: $v vertices, $f faces"
+if [[ -f "$MESH_DIR/mesh_stats.json" ]]; then
+  python3 - "$MESH_DIR/mesh_stats.json" <<'PY' >> "$LOG_DIR/open3d_mesh.log" 2>/dev/null || true
+import json,sys
+d=json.load(open(sys.argv[1]))
+print(f"MESH | Raw Poisson faces={d.get('raw_poisson_faces', d.get('poisson_faces_before_filter', 0))}")
+print(f"MESH | Density filtered faces={d.get('density_filtered_faces', 0)}")
+print(f"MESH | Long-edge filtered faces={d.get('edge_filtered_faces', 0)}")
+print(f"MESH | Component filtered faces={d.get('component_filtered_faces', 0)}")
+print(f"MESH | Component fallback used={str(bool(d.get('component_filter_fallback_used'))).lower()}")
+print(f"MESH | Final stage={d.get('selected_final_stage', '')}")
+print(f"MESH | Done vertices={d.get('final_vertices', d.get('vertices', 0))} faces={d.get('final_faces', d.get('faces', 0))}")
+PY
+fi
+}
+run_open3d(){ status RUNNING 5 "Loading dense cloud"; set +e; "$OPEN3D_PYTHON" "$OPEN3D_MESH_SCRIPT" "$INPUT_PLY" "$OPEN3D_PLY" "$O3D_DEPTH" "$O3D_TARGET" --result-json "$RESULT_JSON.open3d" --mode "$MODE" --density-quantile "$O3D_DQ" --statistical-nb-neighbors "$O3D_NB" --statistical-std-ratio "$O3D_STD" --radius-nb-points "$O3D_RADIUS_NB" --radius-multiplier "${OPEN3D_RADIUS_MULTIPLIER:-3.0}" --crop-low-percentile "${OPEN3D_CROP_LOW_PERCENTILE:-0.01}" --crop-high-percentile "${OPEN3D_CROP_HIGH_PERCENTILE:-0.99}" --minimum-component-ratio "${OPEN3D_MINIMUM_COMPONENT_RATIO:-0.001}" --maximum-triangle-edge-multiplier "${OPEN3D_MAXIMUM_TRIANGLE_EDGE_MULTIPLIER:-20.0}" > "$LOG_DIR/open3d_mesh.log" 2>&1; local ec=$?; set -e; if [[ $ec -eq 0 ]]; then finish_result open3d "$OPEN3D_PLY" "Mesh completed"; return 0; fi; local m; m=$(python3 -c "import json;print(json.load(open('$RESULT_JSON.open3d')).get('message','Open3D failed'))" 2>/dev/null || echo Open3D failed); status ERROR 65 "Open3D mesh generation failed: $m"; cp -f "$RESULT_JSON.open3d" "$RESULT_JSON" 2>/dev/null || true; return 1; }
 status RUNNING 5 "Validating input PLY"; [[ -f "$INPUT_PLY" ]] || { status ERROR 5 "Input PLY not found"; exit 0; }
 ply_header "$INPUT_PLY" > "$MESH_DIR/input_header.json"; IN_V=$(python3 -c "import json;print(json.load(open('$MESH_DIR/input_header.json')).get('vertices',0))")
 if (( IN_V <= 0 || IN_V < MIN_INPUT )); then status ERROR 5 "Input point cloud has too few vertices: $IN_V"; exit 0; fi
