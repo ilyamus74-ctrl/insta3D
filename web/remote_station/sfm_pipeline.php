@@ -71,9 +71,42 @@ if (!$db->query($sql)) {
     $res = $db->query("SHOW COLUMNS FROM sfm_remote_jobs LIKE 'pipeline_run_id'");
     $exists = $res && $res->num_rows > 0; if ($res) { $res->close(); }
     if (!$exists) { @$db->query("ALTER TABLE sfm_remote_jobs ADD COLUMN pipeline_run_id BIGINT UNSIGNED NULL AFTER capture_session_id, ADD INDEX idx_sfm_pipeline_run_id (pipeline_run_id)"); }
-    foreach(['parameters_json'=>'LONGTEXT NULL','started_by_user_id'=>'BIGINT UNSIGNED NULL','extracted_frames'=>'INT NULL','registration_ratio'=>'DECIMAL(6,2) NULL','sparse_models_count'=>'INT NULL','selected_model_id'=>'INT NULL','selected_model_points'=>'INT NULL','sparse_diagnostics_json'=>'LONGTEXT NULL','sparse_reprojection_p95'=>'DECIMAL(8,3) NULL','sparse_position_jumps'=>'INT NULL','sparse_pose_clusters'=>'INT NULL'] as $c=>$def){ $r=$db->query("SHOW COLUMNS FROM sfm_pipeline_runs LIKE '".$db->real_escape_string($c)."'"); $ok=$r&&$r->num_rows>0; if($r){$r->close();} if(!$ok){ @$db->query('ALTER TABLE sfm_pipeline_runs ADD COLUMN '.$c.' '.$def); } }
+    foreach(['parameters_json'=>'LONGTEXT NULL','started_by_user_id'=>'BIGINT UNSIGNED NULL','extracted_frames'=>'INT NULL','registration_ratio'=>'DECIMAL(6,2) NULL','sparse_models_count'=>'INT NULL','selected_model_id'=>'INT NULL','selected_model_points'=>'INT NULL','sparse_diagnostics_json'=>'LONGTEXT NULL','sparse_reprojection_p95'=>'DECIMAL(8,3) NULL','sparse_position_jumps'=>'INT NULL','sparse_pose_clusters'=>'INT NULL','sparse_diagnostics_path'=>'VARCHAR(1024) NULL','camera_trajectory_path'=>'VARCHAR(1024) NULL','world_alignment_path'=>'VARCHAR(1024) NULL','completed_stage'=>'VARCHAR(64) NULL','run_scope'=>'VARCHAR(32) NULL','source_pipeline_run_id'=>'BIGINT UNSIGNED NULL'] as $c=>$def){ $r=$db->query("SHOW COLUMNS FROM sfm_pipeline_runs LIKE '".$db->real_escape_string($c)."'"); $ok=$r&&$r->num_rows>0; if($r){$r->close();} if(!$ok){ @$db->query('ALTER TABLE sfm_pipeline_runs ADD COLUMN '.$c.' '.$def); } }
     @$db->query("ALTER TABLE sfm_pipeline_runs MODIFY status ENUM('QUEUED','RUNNING','DONE','ERROR','CANCELLED','CANCELLING','RESTARTING') NOT NULL DEFAULT 'QUEUED'");
-    @$db->query("ALTER TABLE sfm_pipeline_runs MODIFY stage ENUM('QUEUED','EXTRACT_FRAMES','SPARSE','DENSE_PLAN','DENSE','MERGE','MESH','FETCH_RESULT','DONE','ERROR','CANCELLED','CANCELLING') NOT NULL DEFAULT 'QUEUED'");
+    @$db->query("ALTER TABLE sfm_pipeline_runs MODIFY stage ENUM('QUEUED','EXTRACT_FRAMES','SPARSE','SPARSE_COMPLETE','DENSE_PLAN','DENSE','MERGE','MESH','FETCH_RESULT','DONE','ERROR','CANCELLED','CANCELLING') NOT NULL DEFAULT 'QUEUED'");
+}
+
+function sfm_pipeline_integrate_sparse_artifacts(mysqli $db, int $pipelineRunId, int $sparseRemoteJobId, int $modelId): array
+{
+    $modelDir = '/home/makler/web/remote_station/output/job_' . $sparseRemoteJobId . '/colmap/sparse/' . $modelId;
+    $diagPath = $modelDir . '/sparse_diagnostics.json';
+    $trajPath = $modelDir . '/camera_trajectory.json';
+    $alignPath = $modelDir . '/world_alignment.json';
+    $extra = [];
+    if (is_file($diagPath)) { $extra['sparse_diagnostics_path'] = $diagPath; }
+    if (is_file($trajPath)) { $extra['camera_trajectory_path'] = $trajPath; }
+    if (is_file($alignPath)) { $extra['world_alignment_path'] = $alignPath; }
+    if (is_file($diagPath)) {
+        $diag = json_decode((string)file_get_contents($diagPath), true) ?: [];
+        $sum = sfm_sparse_diagnostics_summary($diag);
+        $ratio = $diag['registration_ratio'] ?? null;
+        if ($ratio !== null) { pipeline_log($pipelineRunId, 'INFO', 'SPARSE_DIAGNOSTICS', 'Registration ratio=' . sprintf('%.1f%%', (float)$ratio * 100.0)); }
+        pipeline_log($pipelineRunId, 'INFO', 'SPARSE_DIAGNOSTICS', 'Reprojection median=' . sprintf('%.2fpx', (float)($diag['reprojection']['median_px'] ?? 0)));
+        pipeline_log($pipelineRunId, 'INFO', 'SPARSE_DIAGNOSTICS', 'Reprojection p95=' . sprintf('%.2fpx', (float)($diag['reprojection']['p95_px'] ?? 0)));
+        pipeline_log($pipelineRunId, 'INFO', 'SPARSE_DIAGNOSTICS', 'Position jumps=' . (int)($diag['trajectory']['position_jumps'] ?? 0));
+        pipeline_log($pipelineRunId, 'INFO', 'SPARSE_DIAGNOSTICS', 'Rotation jumps=' . (int)($diag['trajectory']['rotation_jumps'] ?? 0));
+        pipeline_log($pipelineRunId, 'INFO', 'SPARSE_DIAGNOSTICS', 'Pose clusters=' . (int)($diag['trajectory']['pose_clusters'] ?? 0));
+        pipeline_log($pipelineRunId, 'INFO', 'SPARSE_DIAGNOSTICS', 'Suspicious images=' . count($diag['suspicious_images'] ?? []));
+        pipeline_log($pipelineRunId, 'INFO', 'SPARSE_DIAGNOSTICS', 'IMU rotation mismatches=' . (int)($diag['imu']['rotation_mismatches'] ?? 0));
+        pipeline_log($pipelineRunId, 'INFO', 'SPARSE_DIAGNOSTICS', 'Geometry confidence=' . sfm_sparse_geometry_confidence($diag));
+        $extra['sparse_diagnostics_json'] = json_encode($sum, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+        $extra['sparse_reprojection_p95'] = (string)((float)($diag['reprojection']['p95_px'] ?? 0));
+        $extra['sparse_position_jumps'] = (int)($diag['trajectory']['position_jumps'] ?? 0);
+        $extra['sparse_pose_clusters'] = (int)($diag['trajectory']['pose_clusters'] ?? 0);
+    } else {
+        pipeline_log($pipelineRunId, 'WARNING', 'SPARSE_DIAGNOSTICS', 'Selected model diagnostics not found: model=' . $modelId);
+    }
+    return $extra;
 }
 
 function pipeline_log(int $pipelineRunId, string $level, string $stage, string $message): void

@@ -7,7 +7,7 @@ const SFM_DEBUG_PUBLIC_DEFAULT_OPTIONS = [
 ];
 const SFM_DEBUG_PUBLIC_ARTIFACT_TYPES = [
     'source_video','camera_info','manifest','imu','selected_frames','quality_summary','frame_quality','rejected_frames',
-    'sparse_diagnostics','sparse_ply','dense_ply','mesh_ply','mesh_stats','pipeline_result','pipeline_log','full_log',
+    'sparse_diagnostics','camera_trajectory','world_alignment','world_alignment_override','sparse_ply','dense_ply','mesh_ply','mesh_stats','pipeline_result','pipeline_log','full_log',
     'selected_frame_preview','candidate_frame_preview','debug_bundle'
 ];
 
@@ -64,6 +64,20 @@ function sfm_debug_public_inside(string $path, array $bases): ?string {
     foreach($bases as $base){ $rb=realpath($base); if($rb!==false){ $rb=rtrim($rb,DIRECTORY_SEPARATOR); if($real===$rb || str_starts_with($real,$rb.DIRECTORY_SEPARATOR)) return $real; } }
     return null;
 }
+
+function sfm_debug_public_selected_sparse_model(array $run, string $sparseBase): int {
+    foreach (['sparse_model_id','selected_model_id'] as $k) { if (isset($run[$k]) && is_numeric($run[$k]) && (int)$run[$k] >= 0) return (int)$run[$k]; }
+    $sparseDir = $sparseBase . '/sparse'; $best = -1; $bestImages = -1;
+    if (is_dir($sparseDir)) {
+        foreach (scandir($sparseDir) ?: [] as $name) {
+            if (!preg_match('/^\d+$/', $name)) continue;
+            $diag = $sparseDir . '/' . $name . '/sparse_diagnostics.json'; $images = 0;
+            if (is_file($diag)) { $d=json_decode((string)file_get_contents($diag), true) ?: []; $images=(int)($d['registered_images'] ?? 0); }
+            if ($images > $bestImages) { $bestImages=$images; $best=(int)$name; }
+        }
+    }
+    return $best >= 0 ? $best : 0;
+}
 function sfm_debug_public_run(mysqli $db, array $link, int $pipelineRunId): ?array {
     if($pipelineRunId<=0) return null;
     $st=$db->prepare('SELECT * FROM sfm_pipeline_runs WHERE id=? AND order_id=? AND capture_session_id=? LIMIT 1'); if(!$st) return null;
@@ -85,10 +99,10 @@ function sfm_debug_public_artifact_path(mysqli $db, array $link, int $pipelineRu
         $run=sfm_debug_public_run($db,$link,$pipelineRunId); if(!$run) return null;
         $jobs=sfm_debug_public_jobs($db,$link,$pipelineRunId); $sparse=$recon=$mesh=$extract=null; foreach($jobs as $j){ $jt=(string)$j['job_type']; if($jt==='COLMAP_SPARSE')$sparse=$j; elseif(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true))$recon=$j; elseif($jt==='COLMAP_MESH')$mesh=$j; elseif($jt==='EXTRACT_FRAMES')$extract=$j; }
         foreach([$sparse,$recon,$mesh,$extract] as $j){ if($j) $bases[]=sfm_debug_public_remote_base((int)$j['remote_job_id']); }
-        $model=(int)($run['sparse_model_id'] ?? 0); if($model===0) $model=(int)($run['selected_model_id'] ?? 0);
+        $model=0;
         $map=[];
         if($extract){ $eb=sfm_debug_public_remote_base((int)$extract['remote_job_id']); $map += ['selected_frames'=>$eb.'/selected_frames.json','quality_summary'=>$eb.'/quality_summary.json','frame_quality'=>$eb.'/frame_quality.json','rejected_frames'=>$eb.'/rejected_frames.json','full_log'=>(string)($extract['log_path'] ?? '')]; }
-        if($sparse){ $sb=sfm_debug_public_remote_base((int)$sparse['remote_job_id']); $map += ['sparse_diagnostics'=>$sb.'/sparse_diagnostics.json','sparse_ply'=>$sb.'/colmap/sparse/'.$model.'/model.ply']; }
+        if($sparse){ $sb=sfm_debug_public_remote_base((int)$sparse['remote_job_id']); $model=sfm_debug_public_selected_sparse_model($run,$sb.'/colmap'); $map += ['sparse_diagnostics'=>$sb.'/colmap/sparse/'.$model.'/sparse_diagnostics.json','camera_trajectory'=>$sb.'/colmap/sparse/'.$model.'/camera_trajectory.json','world_alignment'=>$sb.'/colmap/sparse/'.$model.'/world_alignment.json','world_alignment_override'=>$sb.'/colmap/sparse/'.$model.'/world_alignment_override.json','sparse_ply'=>$sb.'/colmap/sparse/'.$model.'/model.ply']; }
         if($recon){ $rb=sfm_debug_public_remote_base((int)$recon['remote_job_id']); $map += ['dense_ply'=>$rb.'/merged/merged_fused.ply']; }
         if($mesh){ $mb=sfm_debug_public_remote_base((int)$mesh['remote_job_id']); $map += ['mesh_ply'=>$mb.'/mesh/mesh_final.ply','mesh_stats'=>$mb.'/mesh/mesh_stats.json']; }
         $map['pipeline_result']=(string)($run['output_result_json_path'] ?? ''); $map['pipeline_log']=(string)($run['unified_log_path'] ?? '');

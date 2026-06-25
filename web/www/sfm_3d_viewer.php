@@ -45,6 +45,8 @@ body,html{height:100%}
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleMesh"><label class="form-check-label" for="toggleMesh">Show mesh</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="togglePath" checked><label class="form-check-label" for="togglePath">Show camera path</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleKeyframes" checked><label class="form-check-label" for="toggleKeyframes">Show keyframes</label></div>
+    <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleSuspicious" checked><label class="form-check-label" for="toggleSuspicious">Show suspicious poses</label></div>
+    <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleClusters" checked><label class="form-check-label" for="toggleClusters">Show pose clusters</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleAxes" checked><label class="form-check-label" for="toggleAxes">Show axes</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleGrid" checked><label class="form-check-label" for="toggleGrid">Show floor grid</label></div>
     <label for="displayPreset" class="form-label mb-1">Preset</label>
@@ -72,9 +74,12 @@ body,html{height:100%}
       <button class="btn btn-outline-light btn-sm" id="rotXpBtn">Rotate X +90°</button><button class="btn btn-outline-light btn-sm" id="rotXmBtn">Rotate X -90°</button>
       <button class="btn btn-outline-light btn-sm" id="rotYpBtn">Rotate Y +90°</button><button class="btn btn-outline-light btn-sm" id="rotYmBtn">Rotate Y -90°</button>
       <button class="btn btn-outline-light btn-sm" id="rotZpBtn">Rotate Z +90°</button><button class="btn btn-outline-light btn-sm" id="rotZmBtn">Rotate Z -90°</button>
-      <button class="btn btn-outline-light btn-sm" id="autoOrientBtn">Auto orient</button>
+      <button class="btn btn-outline-light btn-sm" id="autoOrientBtn">Auto orientation</button>
+      <button class="btn btn-outline-light btn-sm" id="imuGravityBtn">IMU gravity</button>
+      <button class="btn btn-outline-light btn-sm" id="floorPlaneBtn">Floor plane</button>
+      <button class="btn btn-outline-light btn-sm" id="manualOrientationBtn">Manual orientation</button>
       <button class="btn btn-outline-light btn-sm" id="resetOrientationBtn">Reset orientation</button>
-      <button class="btn btn-outline-success btn-sm" id="saveDefaultBtn">Set current orientation as default</button>
+      <button class="btn btn-outline-success btn-sm" id="saveDefaultBtn">Save manual orientation</button>
     </div>
     <div class="d-flex gap-2 mt-2"><button class="btn btn-outline-light btn-sm" id="setFloorBtn">Set floor here</button><button class="btn btn-outline-light btn-sm" id="raiseFloorBtn">Raise floor</button><button class="btn btn-outline-light btn-sm" id="lowerFloorBtn">Lower floor</button></div>
     <div class="d-flex gap-2 mt-2">
@@ -143,6 +148,7 @@ const filteredGeometryCache={sparse:{},dense:{}};
 let pointStats={sparse:{original:0,displayed:0,filtered:0},dense:{original:0,displayed:0,filtered:0}};
 let floorOffset=0;
 let trajectoryLine=null;
+let cameraTrajectoryAvailable=!!data.summary.camera_trajectory_available;
 let denseObject=null;
 let meshObject=null;
 const keyframeGroup = new THREE.Group();
@@ -417,20 +423,27 @@ new PLYLoader().load(data.artifacts.sparse_points_ply_url,(g)=>{
   if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
 });
 
-const traj=await (await fetch(data.artifacts.camera_trajectory_url)).json();
-const pts=traj.map(p=>new THREE.Vector3(p.x,p.y,p.z));
+let traj={poses:[]};
+try { const tr=await fetch(data.artifacts.camera_trajectory_url); if(tr.ok) traj=await tr.json(); } catch(e) { console.warn('Camera trajectory artifact not available', e); }
+const poses=(traj.poses||traj||[]).slice().sort((a,b)=>(a.timestamp_sec||0)-(b.timestamp_sec||0));
+const pts=poses.map(p=>new THREE.Vector3(...(p.camera_center||[p.x||0,p.y||0,p.z||0])));
 if(pts.length>1){
-  trajectoryLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x00aaff}));
+  trajectoryLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x00ff66}));
   rootGroup.add(trajectoryLine);
+} else {
+  selectionEl.innerHTML='<span class="text-warning">Camera trajectory artifact not available</span>';
 }
-
-const key=await (await fetch(data.artifacts.keyframe_points_url)).json();
-key.forEach((k,i)=>{
-  const s=new THREE.Mesh(new THREE.SphereGeometry(0.08,12,12),new THREE.MeshBasicMaterial({color:0xff5533}));
-  s.position.set(k.x,k.y,k.z);
-  s.userData={...k,i};
-  keyframeGroup.add(s);
-  spheres.push(s);
+poses.forEach((k,i)=>{
+  const warnings=k.warnings||[];
+  let color=0x00ff66;
+  if(warnings.includes('POSITION_JUMP')) color=0xff0000;
+  else if(warnings.includes('ROTATION_JUMP')) color=0xff9900;
+  else if(warnings.includes('VISUAL_IMU_ROTATION_MISMATCH')) color=0xaa00ff;
+  else if((k.pose_cluster||0)!==0) color=0xffff00;
+  const s=new THREE.Mesh(new THREE.SphereGeometry(0.08,12,12),new THREE.MeshBasicMaterial({color}));
+  const c=k.camera_center||[k.x||0,k.y||0,k.z||0]; s.position.set(c[0],c[1],c[2]);
+  s.userData={...k,keyframe_index:i+1,keyframe_name:k.name||`pose ${i+1}`,baseColor:color};
+  keyframeGroup.add(s); spheres.push(s);
 });
 
 if(data.dense && data.dense.available){ denseObject = await addPlyAsObject(data.dense.fused_ply_url, 'dense'); }
@@ -448,11 +461,11 @@ renderer.domElement.addEventListener('click',(ev)=>{
   ray.setFromCamera(mouse,camera);
   const hit=ray.intersectObjects(spheres)[0];
   if(!hit) return;
-  if(selected) selected.material.color.set(0xff5533);
+  if(selected) selected.material.color.set(selected.userData.baseColor||0xff5533);
   selected=hit.object;
   selected.material.color.set(0x00ff88);
   const k=selected.userData;
-  selectionEl.innerHTML=`<b>Keyframe ${k.keyframe_index}</b><br>${k.keyframe_name}<br>${k.preview_url?`<a href="${k.preview_url}" target="_blank">Preview</a><br>`:''}<a href="/sfm_tour_viewer.php?order_id=${orderId}&session_id=${sessionId}">Open in SfM tour</a>`;
+  selectionEl.innerHTML=`<b>${k.name||k.keyframe_name}</b><br>timestamp: ${k.timestamp_sec??''}<br>camera center: ${(k.camera_center||[]).map(v=>Number(v).toFixed(3)).join(', ')}<br>position step: ${Number(k.position_step||0).toFixed(3)}<br>rotation step: ${Number(k.rotation_step_deg||0).toFixed(2)}°<br>reprojection error: ${Number(k.reprojection_error||0).toFixed(2)} px<br>suspicion score: ${Number(k.suspicion_score||0).toFixed(2)}<br>warnings: ${(k.warnings||[]).join(', ')||'none'}`;
   updateSummary();
   if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
 });
@@ -471,6 +484,8 @@ document.getElementById('toggleDenseCloud').addEventListener('change',(e)=>{if(d
 document.getElementById('toggleMesh').addEventListener('change',(e)=>{if(meshObject) meshObject.visible=e.target.checked;});
 document.getElementById('togglePath').addEventListener('change',(e)=>{if(trajectoryLine) trajectoryLine.visible=e.target.checked;});
 document.getElementById('toggleKeyframes').addEventListener('change',(e)=>{keyframeGroup.visible=e.target.checked;});
+document.getElementById('toggleSuspicious').addEventListener('change',(e)=>{const on=e.target.checked; spheres.forEach(s=>{ if((s.userData.suspicion_score||0)>0 || (s.userData.warnings||[]).length) s.visible=on; });});
+document.getElementById('toggleClusters').addEventListener('change',(e)=>{const on=e.target.checked; spheres.forEach(s=>{ if((s.userData.pose_cluster||0)!==0) s.visible=on; });});
 document.getElementById('toggleAxes').addEventListener('change',(e)=>{axes.visible=e.target.checked;});
 document.getElementById('toggleGrid').addEventListener('change',(e)=>{if(grid) grid.visible=e.target.checked;});
 document.getElementById('outlierMode').addEventListener('change',(e)=>applyOutlierFilter(e.target.value));

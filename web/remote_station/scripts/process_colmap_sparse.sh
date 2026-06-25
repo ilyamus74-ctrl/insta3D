@@ -241,7 +241,17 @@ if [[ "$MODEL_COUNT" == "0" ]]; then
 fi
 
 for model_dir in "$SPARSE_DIR"/*; do
-  [[ -d "$model_dir" ]] && run_sparse_diagnostics "$model_dir"
+  if [[ -d "$model_dir" ]]; then
+    run_sparse_diagnostics "$model_dir"
+    python3 "$BASE/scripts/build_camera_trajectory.py" --model-dir "$model_dir" --diagnostics-json "$model_dir/sparse_diagnostics.json" --output-json "$model_dir/camera_trajectory.json" >> "$LOG_FILE" 2>&1 || echo "WARNING | CAMERA_TRAJECTORY | Failed for $model_dir" >> "$LOG_FILE"
+    imu_jsonl=""
+    for candidate in "$(dirname "$FRAMES_DIR")/scan_imu.jsonl" "$OUTPUT_DIR/../scan_imu.jsonl" "$BASE/input/job_${JOB_ID}/scan_imu.jsonl"; do
+      if [[ -f "$candidate" ]]; then imu_jsonl="$candidate"; break; fi
+    done
+    align_cmd=(python3 "$BASE/scripts/build_world_alignment.py" --model-dir "$model_dir" --camera-trajectory "$model_dir/camera_trajectory.json" --output-json "$model_dir/world_alignment.json")
+    [[ -n "$imu_jsonl" ]] && align_cmd+=(--imu-jsonl "$imu_jsonl")
+    "${align_cmd[@]}" >> "$LOG_FILE" 2>&1 || echo "WARNING | WORLD_ALIGNMENT | Failed for $model_dir" >> "$LOG_FILE"
+  fi
 done
 
 cat > "$OUTPUT_DIR/result.json" <<JSON
