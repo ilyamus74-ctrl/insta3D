@@ -94,7 +94,30 @@ function sfm_debug_public_artifact_path(mysqli $db, array $link, int $pipelineRu
     if(in_array($type,['source_video','camera_info','manifest','imu'],true)){
         $name=basename($fileId); if($name==='') return null; $videoDir=$sessionBase.'/videos';
         if($type==='source_video'){ $path=$videoDir.'/'.$name; $mime='video/mp4'; }
-        else { $stem=preg_replace('/\.mp4$/i','',$name); $suffix=['camera_info'=>'_camera_info.json','manifest'=>'_manifest.json','imu'=>'_imu.jsonl'][$type]; $path=$videoDir.'/'.$stem.$suffix; $mime=$type==='imu'?'text/plain; charset=utf-8':'application/json'; }
+else {
+    $filenameStem = preg_replace('/\.mp4$/i', '', $name);
+    $baseStem = preg_replace('/_video$/i', '', $filenameStem);
+
+    $suffix = [
+        'camera_info' => '_camera_info.json',
+        'manifest'    => '_manifest.json',
+        'imu'         => '_imu.jsonl',
+    ][$type];
+
+    foreach (array_unique([$baseStem, $filenameStem]) as $stem) {
+        $candidate = $videoDir . '/' . $stem . $suffix;
+
+        if (is_file($candidate)) {
+            $path = $candidate;
+            break;
+        }
+    }
+
+    $mime = $type === 'imu'
+        ? 'text/plain; charset=utf-8'
+        : 'application/json';
+}
+
     } else {
         $run=sfm_debug_public_run($db,$link,$pipelineRunId); if(!$run) return null;
         $jobs=sfm_debug_public_jobs($db,$link,$pipelineRunId); $sparse=$recon=$mesh=$extract=null; foreach($jobs as $j){ $jt=(string)$j['job_type']; if($jt==='COLMAP_SPARSE')$sparse=$j; elseif(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true))$recon=$j; elseif($jt==='COLMAP_MESH')$mesh=$j; elseif($jt==='EXTRACT_FRAMES')$extract=$j; }
