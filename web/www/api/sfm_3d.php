@@ -93,7 +93,7 @@ $prefix = 'orders/' . $orderId . '/sessions/' . $sessionDir . '/sfm/3d/';
 $densePrefix = 'orders/' . $orderId . '/sessions/' . $sessionDir . '/sfm/';
 $denseSummaryPath = '/home/makler/web/storage/' . $densePrefix . 'mesh/dense_model_summary.json';
 $denseSummary = null;
-$denseAvailable = is_file('/home/makler/web/storage/' . $densePrefix . 'dense/fused.ply') && is_file('/home/makler/web/storage/' . $densePrefix . 'mesh/poisson_mesh.ply');
+$denseAvailable = is_file('/home/makler/web/storage/' . $densePrefix . 'dense/fused.ply');
 if ($denseAvailable && is_file($denseSummaryPath)) {
     $denseSummary = json_decode((string)file_get_contents($denseSummaryPath), true);
     if (!is_array($denseSummary)) $denseSummary = null;

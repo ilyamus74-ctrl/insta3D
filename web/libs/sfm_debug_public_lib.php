@@ -143,7 +143,7 @@ else {
             $jt=(string)$j['job_type'];
             if($fullLogJob===null && trim((string)($j['log_path'] ?? ''))!=='') $fullLogJob=$j;
             if($jt==='COLMAP_SPARSE' && $sparse===null)$sparse=$j;
-            elseif(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true) && $recon===null)$recon=$j;
+            elseif(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true) && $recon===null && strtoupper((string)($j['status'] ?? ''))==='DONE')$recon=$j;
             elseif($jt==='COLMAP_MESH' && $mesh===null)$mesh=$j;
             elseif($jt==='EXTRACT_FRAMES' && $extract===null)$extract=$j;
         }
@@ -170,7 +170,9 @@ else {
                 'sparse_ply'=>$sparseModel.'/model.ply',
             ];
         }
-        if($recon){ $rb=sfm_debug_public_job_output_base($recon); $map += ['dense_ply'=>sfm_debug_public_first_existing_path([(string)($run['output_point_cloud_path'] ?? ''),$rb.'/merged/merged_fused.ply'])]; }
+        $denseCandidates=[(string)($run['output_point_cloud_path'] ?? '')];
+        if($recon){ $rb=sfm_debug_public_job_output_base($recon); $denseCandidates[]=$rb.'/merged/merged_fused.ply'; }
+        $map += ['dense_ply'=>sfm_debug_public_first_existing_path($denseCandidates)];
         if($mesh){
             $mb=sfm_debug_public_job_output_base($mesh); $meshPath=sfm_debug_public_first_existing_path([(string)($run['output_mesh_path'] ?? ''),$mb.'/mesh/mesh_final.ply']);
             $map += ['mesh_ply'=>$meshPath,'mesh_stats'=>sfm_debug_public_first_existing_path([$meshPath!==''?dirname($meshPath).'/mesh_stats.json':'',$mb.'/mesh/mesh_stats.json'])];

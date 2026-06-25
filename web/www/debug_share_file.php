@@ -12,7 +12,7 @@ if($type==='debug_bundle'){
     $zip->addFromString('session_summary.json',json_encode($summary,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
     $runs=[]; $st=$dbcnx->prepare('SELECT id,pipeline_mode,status,stage,started_at,finished_at,parameters_json,registration_ratio,dense_points,mesh_vertices,mesh_faces FROM sfm_pipeline_runs WHERE capture_session_id=? ORDER BY id DESC'); if($st){$sid=(int)$link['capture_session_id'];$st->bind_param('i',$sid);$st->execute();$rs=$st->get_result();while($r=$rs->fetch_assoc())$runs[]=$r;$st->close();}
     $zip->addFromString('pipeline_runs.json',json_encode($runs,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
-    foreach($runs as $r){ foreach(['selected_frames','quality_summary','sparse_diagnostics','pipeline_log','mesh_stats','pipeline_result'] as $t){ $a=sfm_debug_public_artifact_path($dbcnx,$link,(int)$r['id'],$t); if($a && filesize($a['path'])<20*1024*1024) $zip->addFile($a['path'],'run_'.$r['id'].'/'.basename($a['path'])); } }
+    foreach($runs as $r){ foreach(['selected_frames','quality_summary','sparse_diagnostics','pipeline_log','mesh_stats','pipeline_result','dense_ply'] as $t){ $a=sfm_debug_public_artifact_path($dbcnx,$link,(int)$r['id'],$t); if($a && filesize($a['path'])<20*1024*1024) $zip->addFile($a['path'],'run_'.$r['id'].'/'.basename($a['path'])); } }
     $zip->close(); header('Content-Type: application/zip'); header('Content-Disposition: attachment; filename="debug_bundle_session_'.(int)$link['capture_session_id'].'.zip"'); header('Content-Length: '.filesize($tmp)); readfile($tmp); @unlink($tmp); exit;
 }
 $a=sfm_debug_public_artifact_path($dbcnx,$link,$pid,$type,$fileId); if(!$a) sfm_debug_public_fail(404);
