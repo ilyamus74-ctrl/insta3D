@@ -21,7 +21,6 @@ function api3d_ply_info(string $path): array {
     while(($line=fgets($fh))!==false){ $line=trim($line); if(preg_match('/^element\s+vertex\s+(\d+)$/',$line,$m)) $out['vertices']=(int)$m[1]; if(preg_match('/^element\s+face\s+(\d+)$/',$line,$m)) $out['faces']=(int)$m[1]; if($line==='end_header'){ $out['valid']=$out['vertices']>0; break; } }
     fclose($fh); return $out;
 }
-function api3d_remote_dir(int $id): string { return '/home/makler/web/remote_station/output/job_'.$id; }
 function can_view_order(array $order, int $userId, string $role): bool {
     return $role === 'ADMIN' || ((int)$order['broker_id'] === $userId)
         || ($role === 'OPERATOR' && ((int)$order['operator_id'] === $userId || ((int)$order['is_published'] === 1 && (string)$order['status'] === 'NEW' && $order['operator_id'] === null)));
@@ -33,26 +32,32 @@ $artifact = (string)($_GET['artifact'] ?? 'sparse');
 if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     if (!in_array($artifact, ['sparse','dense','mesh'], true)) api3d_json(['ok'=>false,'error'=>'bad_artifact'],400);
     require_once dirname(__DIR__, 2) . '/remote_station/sfm_pipeline.php'; ensure_sfm_pipeline_tables($dbcnx);
-    $st=$dbcnx->prepare('SELECT r.*, o.broker_id, o.operator_id, o.is_published, o.status AS order_status FROM sfm_pipeline_runs r JOIN tour_orders o ON o.id=r.order_id WHERE r.id=? LIMIT 1');
+    $st=$dbcnx->prepare('SELECT r.*, cs.app_session_uuid, o.broker_id, o.operator_id, o.is_published, o.status AS order_status FROM sfm_pipeline_runs r JOIN capture_sessions cs ON cs.id=r.capture_session_id JOIN tour_orders o ON o.id=r.order_id WHERE r.id=? LIMIT 1');
     if(!$st) api3d_json(['ok'=>false,'error'=>'db_prepare_pipeline_failed'],500);
     $pid=(int)$pipelineRunId; $st->bind_param('i',$pid); $st->execute(); $run=$st->get_result()->fetch_assoc(); $st->close();
     if(!$run) api3d_json(['ok'=>false,'error'=>'pipeline_not_found'],404);
     $order=['broker_id'=>$run['broker_id'],'operator_id'=>$run['operator_id'],'is_published'=>$run['is_published'] ?? 0,'status'=>$run['order_status'] ?? ''];
     if($debugPublic){ if((int)$debugPublic['capture_session_id'] !== (int)$run['capture_session_id']) api3d_json(['ok'=>false,'error'=>'forbidden'],403); } elseif(!can_view_order($order,$userId,$role)) api3d_json(['ok'=>false,'error'=>'forbidden'],403);
-    $jobs=[]; $st=$dbcnx->prepare('SELECT * FROM sfm_remote_jobs WHERE pipeline_run_id=? ORDER BY created_at DESC, id DESC');
-    if($st){$st->bind_param('i',$pid); $st->execute(); $rs=$st->get_result(); while($j=$rs->fetch_assoc()) $jobs[]=$j; $st->close();}
-    $sparse=$recon=$mesh=null; foreach($jobs as $j){$jt=(string)$j['job_type']; if($jt==='COLMAP_SPARSE')$sparse=$j; elseif(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true))$recon=$j; elseif($jt==='COLMAP_MESH')$mesh=$j;}
-    $model=(int)($run['sparse_model_id'] ?? 0); if($model===0 && $recon){$params=json_decode((string)($recon['parameters_json'] ?? '{}'),true); if(is_array($params)&&isset($params['model_id']))$model=(int)$params['model_id'];}
-    $sparsePath=$sparse?api3d_remote_dir((int)$sparse['remote_job_id']).'/colmap/sparse/'.$model.'/model.ply':'';
-    $densePath=$recon?api3d_remote_dir((int)$recon['remote_job_id']).'/merged/merged_fused.ply':'';
-    $meshPath=$mesh?api3d_remote_dir((int)$mesh['remote_job_id']).'/mesh/mesh_final.ply':'';
-    $selectedPath=['sparse'=>$sparsePath,'dense'=>$densePath,'mesh'=>$meshPath][$artifact]; $selectedInfo=api3d_ply_info($selectedPath);
+    $resolverLink = $debugPublic ?: [
+        'order_id'=>(int)$run['order_id'],
+        'capture_session_id'=>(int)$run['capture_session_id'],
+        'app_session_uuid'=>(string)($run['app_session_uuid'] ?? ''),
+    ];
+    $artifactTypes=['sparse'=>'sparse_ply','dense'=>'dense_ply','mesh'=>'mesh_ply'];
+    $resolved=[];
+    foreach(['sparse_ply','dense_ply','mesh_ply','camera_trajectory','sparse_diagnostics','world_alignment'] as $atype){
+        $resolved[$atype]=sfm_debug_public_artifact_path($dbcnx,$resolverLink,$pid,$atype);
+    }
+    $selected=$resolved[$artifactTypes[$artifact]] ?? null;
+    $selectedInfo=$selected ? api3d_ply_info($selected['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
     if(!$selectedInfo['valid'] || ($artifact==='mesh' && $selectedInfo['faces']<=0)) api3d_json(['ok'=>false,'error'=>$artifact==='mesh'?'Pipeline has no mesh artifact':'Artifact not found'],404);
-    $sparseInfo=api3d_ply_info($sparsePath); $denseInfo=api3d_ply_info($densePath); $meshInfo=api3d_ply_info($meshPath);
-    $trajPath=(string)($run['camera_trajectory_path'] ?? ($sparse?api3d_remote_dir((int)$sparse['remote_job_id']).'/colmap/sparse/'.$model.'/camera_trajectory.json':'')); $diagPath=(string)($run['sparse_diagnostics_path'] ?? ($sparse?api3d_remote_dir((int)$sparse['remote_job_id']).'/colmap/sparse/'.$model.'/sparse_diagnostics.json':'')); $alignPath=(string)($run['world_alignment_path'] ?? ($sparse?api3d_remote_dir((int)$sparse['remote_job_id']).'/colmap/sparse/'.$model.'/world_alignment.json':''));
-    $poses=0; if(is_file($trajPath)){ $tj=json_decode((string)file_get_contents($trajPath),true); if(is_array($tj)){$poses=count($tj['poses'] ?? []);} }
+    $sparseInfo=($resolved['sparse_ply'] ?? null) ? api3d_ply_info($resolved['sparse_ply']['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
+    $denseInfo=($resolved['dense_ply'] ?? null) ? api3d_ply_info($resolved['dense_ply']['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
+    $meshInfo=($resolved['mesh_ply'] ?? null) ? api3d_ply_info($resolved['mesh_ply']['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
+    $trajPath=(string)(($resolved['camera_trajectory']['path'] ?? ''));
+    $poses=0; if($trajPath!=='' && is_file($trajPath)){ $tj=json_decode((string)file_get_contents($trajPath),true); if(is_array($tj)){$poses=count($tj['poses'] ?? []);} }
     $artifactUrl=function($atype) use($debugPublic,$debugToken,$pid){ if($debugPublic){return '/debug_share_file.php?token='.rawurlencode($debugToken).'&pipeline_run_id='.$pid.'&artifact_type='.$atype;} $m=['sparse_ply'=>'sparse','dense_ply'=>'dense','mesh_ply'=>'mesh']; return '/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact='.($m[$atype] ?? $atype); };
-    api3d_json(['ok'=>true,'pipeline_run_id'=>$pid,'artifact'=>$artifact,'summary'=>['points_count'=>$sparseInfo['vertices'],'camera_poses_count'=>$poses,'keyframe_points_count'=>$poses,'camera_trajectory_available'=>is_file($trajPath)], 'artifacts'=>['sparse_points_ply_url'=>$artifactUrl('sparse_ply'),'camera_trajectory_url'=>$artifactUrl('camera_trajectory'),'sparse_diagnostics_url'=>$artifactUrl('sparse_diagnostics'),'world_alignment_url'=>$artifactUrl('world_alignment'),'keyframe_points_url'=>$artifactUrl('camera_trajectory')], 'dense'=>['available'=>$denseInfo['valid'],'fused_ply_url'=>$artifactUrl('dense_ply'),'points'=>$denseInfo['vertices']], 'mesh'=>['available'=>$meshInfo['valid']&&$meshInfo['faces']>0,'mesh_ply_url'=>$artifactUrl('mesh_ply'),'vertices'=>$meshInfo['vertices'],'faces'=>$meshInfo['faces']], 'selected'=>['artifact'=>$artifact,'vertices'=>$selectedInfo['vertices'],'faces'=>$selectedInfo['faces']]]);
+    api3d_json(['ok'=>true,'pipeline_run_id'=>$pid,'artifact'=>$artifact,'summary'=>['points_count'=>$sparseInfo['vertices'],'camera_poses_count'=>$poses,'keyframe_points_count'=>$poses,'camera_trajectory_available'=>$trajPath!=='' && is_file($trajPath)], 'artifacts'=>['sparse_points_ply_url'=>$artifactUrl('sparse_ply'),'camera_trajectory_url'=>$artifactUrl('camera_trajectory'),'sparse_diagnostics_url'=>$artifactUrl('sparse_diagnostics'),'world_alignment_url'=>$artifactUrl('world_alignment'),'keyframe_points_url'=>$artifactUrl('camera_trajectory')], 'dense'=>['available'=>$denseInfo['valid'],'fused_ply_url'=>$artifactUrl('dense_ply'),'points'=>$denseInfo['vertices']], 'mesh'=>['available'=>$meshInfo['valid']&&$meshInfo['faces']>0,'mesh_ply_url'=>$artifactUrl('mesh_ply'),'vertices'=>$meshInfo['vertices'],'faces'=>$meshInfo['faces']], 'selected'=>['artifact'=>$artifact,'vertices'=>$selectedInfo['vertices'],'faces'=>$selectedInfo['faces']]]);
 }
 
 $orderId = filter_var((string)($_GET['order_id'] ?? ''), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);

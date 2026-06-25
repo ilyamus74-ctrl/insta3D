@@ -59,6 +59,23 @@ function sfm_debug_public_rate_limit(string $token): void {
 }
 function sfm_debug_public_session_base(array $link): string { return '/home/makler/web/storage/orders/'.(int)$link['order_id'].'/sessions/'.sfm_debug_public_safe_uuid((string)$link['app_session_uuid']); }
 function sfm_debug_public_remote_base(int $remoteJobId): string { return '/home/makler/web/remote_station/output/job_'.$remoteJobId; }
+function sfm_debug_public_job_output_base(array $job): string {
+    $out = trim((string)($job['output_path'] ?? ''));
+    if ($out !== '') return rtrim($out, DIRECTORY_SEPARATOR);
+    $rid = (int)($job['remote_job_id'] ?? 0);
+    return $rid > 0 ? sfm_debug_public_remote_base($rid) : '';
+}
+function sfm_debug_public_add_path_base(array &$bases, string $path): void {
+    $path = trim($path);
+    if ($path === '') return;
+    $dir = is_dir($path) ? $path : dirname($path);
+    if ($dir !== '' && $dir !== '.' && !in_array($dir, $bases, true)) $bases[] = $dir;
+}
+function sfm_debug_public_first_existing_path(array $paths): string {
+    foreach ($paths as $path) { if (is_string($path) && $path !== '' && is_file($path)) return $path; }
+    foreach ($paths as $path) { if (is_string($path) && $path !== '') return $path; }
+    return '';
+}
 function sfm_debug_public_inside(string $path, array $bases): ?string {
     $real=realpath($path); if($real===false || !is_file($real) || is_link($path)) return null;
     foreach($bases as $base){ $rb=realpath($base); if($rb!==false){ $rb=rtrim($rb,DIRECTORY_SEPARATOR); if($real===$rb || str_starts_with($real,$rb.DIRECTORY_SEPARATOR)) return $real; } }
@@ -120,15 +137,47 @@ else {
 
     } else {
         $run=sfm_debug_public_run($db,$link,$pipelineRunId); if(!$run) return null;
-        $jobs=sfm_debug_public_jobs($db,$link,$pipelineRunId); $sparse=$recon=$mesh=$extract=null; foreach($jobs as $j){ $jt=(string)$j['job_type']; if($jt==='COLMAP_SPARSE')$sparse=$j; elseif(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true))$recon=$j; elseif($jt==='COLMAP_MESH')$mesh=$j; elseif($jt==='EXTRACT_FRAMES')$extract=$j; }
-        foreach([$sparse,$recon,$mesh,$extract] as $j){ if($j) $bases[]=sfm_debug_public_remote_base((int)$j['remote_job_id']); }
-        $model=0;
-        $map=[];
-        if($extract){ $eb=sfm_debug_public_remote_base((int)$extract['remote_job_id']); $map += ['selected_frames'=>$eb.'/selected_frames.json','quality_summary'=>$eb.'/quality_summary.json','frame_quality'=>$eb.'/frame_quality.json','rejected_frames'=>$eb.'/rejected_frames.json','full_log'=>(string)($extract['log_path'] ?? '')]; }
-        if($sparse){ $sb=sfm_debug_public_remote_base((int)$sparse['remote_job_id']); $model=sfm_debug_public_selected_sparse_model($run,$sb.'/colmap'); $map += ['sparse_diagnostics'=>$sb.'/colmap/sparse/'.$model.'/sparse_diagnostics.json','camera_trajectory'=>$sb.'/colmap/sparse/'.$model.'/camera_trajectory.json','world_alignment'=>$sb.'/colmap/sparse/'.$model.'/world_alignment.json','world_alignment_override'=>$sb.'/colmap/sparse/'.$model.'/world_alignment_override.json','sparse_ply'=>$sb.'/colmap/sparse/'.$model.'/model.ply']; }
-        if($recon){ $rb=sfm_debug_public_remote_base((int)$recon['remote_job_id']); $map += ['dense_ply'=>$rb.'/merged/merged_fused.ply']; }
-        if($mesh){ $mb=sfm_debug_public_remote_base((int)$mesh['remote_job_id']); $map += ['mesh_ply'=>$mb.'/mesh/mesh_final.ply','mesh_stats'=>$mb.'/mesh/mesh_stats.json']; }
-        $map['pipeline_result']=(string)($run['output_result_json_path'] ?? ''); $map['pipeline_log']=(string)($run['unified_log_path'] ?? '');
+        $jobs=sfm_debug_public_jobs($db,$link,$pipelineRunId);
+        $sparse=$recon=$mesh=$extract=$fullLogJob=null;
+        foreach($jobs as $j){
+            $jt=(string)$j['job_type'];
+            if($fullLogJob===null && trim((string)($j['log_path'] ?? ''))!=='') $fullLogJob=$j;
+            if($jt==='COLMAP_SPARSE' && $sparse===null)$sparse=$j;
+            elseif(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true) && $recon===null)$recon=$j;
+            elseif($jt==='COLMAP_MESH' && $mesh===null)$mesh=$j;
+            elseif($jt==='EXTRACT_FRAMES' && $extract===null)$extract=$j;
+        }
+        foreach(['output_point_cloud_path','output_mesh_path','output_result_json_path','unified_log_path','sparse_diagnostics_path','camera_trajectory_path','world_alignment_path'] as $k){ sfm_debug_public_add_path_base($bases,(string)($run[$k] ?? '')); }
+        foreach($jobs as $j){ foreach(['output_path','result_json_path','log_path'] as $k){ sfm_debug_public_add_path_base($bases,(string)($j[$k] ?? '')); } }
+        $model=0; $map=[];
+        if($extract){
+            $eb=sfm_debug_public_job_output_base($extract);
+            $map += [
+                'selected_frames'=>sfm_debug_public_first_existing_path([$eb.'/quality/selected_frames.json',$eb.'/selected_frames.json']),
+                'quality_summary'=>sfm_debug_public_first_existing_path([$eb.'/quality/quality_summary.json',$eb.'/quality_summary.json']),
+                'frame_quality'=>sfm_debug_public_first_existing_path([$eb.'/quality/frame_quality.json',$eb.'/frame_quality.json']),
+                'rejected_frames'=>sfm_debug_public_first_existing_path([$eb.'/quality/rejected_frames.json',$eb.'/rejected_frames.json']),
+            ];
+        }
+        if($sparse){
+            $sb=sfm_debug_public_job_output_base($sparse); $colmapBase=(basename($sb)==='colmap')?$sb:$sb.'/colmap'; $model=sfm_debug_public_selected_sparse_model($run,$colmapBase);
+            $sparseModel=$colmapBase.'/sparse/'.$model;
+            $map += [
+                'sparse_diagnostics'=>sfm_debug_public_first_existing_path([(string)($run['sparse_diagnostics_path'] ?? ''),$sparseModel.'/sparse_diagnostics.json']),
+                'camera_trajectory'=>sfm_debug_public_first_existing_path([(string)($run['camera_trajectory_path'] ?? ''),$sparseModel.'/camera_trajectory.json']),
+                'world_alignment'=>sfm_debug_public_first_existing_path([(string)($run['world_alignment_path'] ?? ''),$sparseModel.'/world_alignment.json']),
+                'world_alignment_override'=>$sparseModel.'/world_alignment_override.json',
+                'sparse_ply'=>$sparseModel.'/model.ply',
+            ];
+        }
+        if($recon){ $rb=sfm_debug_public_job_output_base($recon); $map += ['dense_ply'=>sfm_debug_public_first_existing_path([(string)($run['output_point_cloud_path'] ?? ''),$rb.'/merged/merged_fused.ply'])]; }
+        if($mesh){
+            $mb=sfm_debug_public_job_output_base($mesh); $meshPath=sfm_debug_public_first_existing_path([(string)($run['output_mesh_path'] ?? ''),$mb.'/mesh/mesh_final.ply']);
+            $map += ['mesh_ply'=>$meshPath,'mesh_stats'=>sfm_debug_public_first_existing_path([$meshPath!==''?dirname($meshPath).'/mesh_stats.json':'',$mb.'/mesh/mesh_stats.json'])];
+        }
+        $map['pipeline_result']=(string)($run['output_result_json_path'] ?? '');
+        $map['pipeline_log']=(string)($run['unified_log_path'] ?? '');
+        $map['full_log']=$fullLogJob ? (string)($fullLogJob['log_path'] ?? '') : '';
         $path=$map[$type] ?? ''; $mime=str_ends_with($type,'ply')?'model/ply':(str_contains($type,'log')?'text/plain; charset=utf-8':'application/json');
     }
     $real=sfm_debug_public_inside($path,$bases); if(!$real) return null;
