@@ -21,6 +21,15 @@ function api3d_ply_info(string $path): array {
     while(($line=fgets($fh))!==false){ $line=trim($line); if(preg_match('/^element\s+vertex\s+(\d+)$/',$line,$m)) $out['vertices']=(int)$m[1]; if(preg_match('/^element\s+face\s+(\d+)$/',$line,$m)) $out['faces']=(int)$m[1]; if($line==='end_header'){ $out['valid']=$out['vertices']>0; break; } }
     fclose($fh); return $out;
 }
+function api3d_safe_pipeline_artifact(string $path): ?array {
+    $path=trim($path); if($path==='') return null;
+    $real=realpath($path); if($real===false || !is_file($real) || is_link($path)) return null;
+    foreach(['/home/makler/web/remote_station/output','/home/makler_storage/output'] as $base){
+        $rb=realpath($base); if($rb===false) continue; $rb=rtrim($rb,DIRECTORY_SEPARATOR);
+        if($real===$rb || str_starts_with($real,$rb.DIRECTORY_SEPARATOR)) return ['path'=>$real,'mime'=>'model/ply','download'=>true,'name'=>basename($real)];
+    }
+    return null;
+}
 function can_view_order(array $order, int $userId, string $role): bool {
     return $role === 'ADMIN' || ((int)$order['broker_id'] === $userId)
         || ($role === 'OPERATOR' && ((int)$order['operator_id'] === $userId || ((int)$order['is_published'] === 1 && (string)$order['status'] === 'NEW' && $order['operator_id'] === null)));
@@ -47,6 +56,20 @@ if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     $resolved=[];
     foreach(['sparse_ply','dense_ply','mesh_ply','camera_trajectory','sparse_diagnostics','world_alignment'] as $atype){
         $resolved[$atype]=sfm_debug_public_artifact_path($dbcnx,$resolverLink,$pid,$atype);
+    }
+    if(!($resolved['dense_ply'] ?? null)){
+        $denseCandidates=[(string)($run['output_point_cloud_path'] ?? '')];
+        $dst=$dbcnx->prepare("SELECT remote_job_id,output_path FROM sfm_remote_jobs WHERE pipeline_run_id=? AND job_type IN ('COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ') AND status='DONE' ORDER BY created_at DESC,id DESC");
+        if($dst){
+            $dst->bind_param('i',$pid); $dst->execute(); $drs=$dst->get_result();
+            while($dj=$drs->fetch_assoc()){
+                $out=trim((string)($dj['output_path'] ?? ''));
+                if($out!==''){ $denseCandidates[]=$out; $denseCandidates[]=rtrim($out,DIRECTORY_SEPARATOR).'/merged/merged_fused.ply'; }
+                $rid=(int)($dj['remote_job_id'] ?? 0); if($rid>0) $denseCandidates[]='/home/makler/web/remote_station/output/job_'.$rid.'/merged/merged_fused.ply';
+            }
+            $dst->close();
+        }
+        foreach(array_unique($denseCandidates) as $candidate){ $fallback=api3d_safe_pipeline_artifact($candidate); if($fallback){$resolved['dense_ply']=$fallback; break;} }
     }
     $selected=$resolved[$artifactTypes[$artifact]] ?? null;
     $selectedInfo=$selected ? api3d_ply_info($selected['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
