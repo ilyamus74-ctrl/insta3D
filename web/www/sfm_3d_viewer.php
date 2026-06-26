@@ -105,10 +105,11 @@ import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 
 const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
 const statusEl=document.getElementById('viewerStatus');
-function showError(msg){ statusEl.className='text-danger p-3'; statusEl.textContent=msg; }
+function showError(msg){ statusEl.className='text-danger p-3'; statusEl.textContent=msg; if(!statusEl.isConnected) document.getElementById('viewer').prepend(statusEl); }
 const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
 const r=await fetch(apiUrl);
-const data=await r.json().catch(()=>({ok:false,error:'PLY load failed'}));
+const apiContentType=(r.headers.get('Content-Type')||'').toLowerCase();
+const data=(r.ok && apiContentType.includes('application/json')) ? await r.json().catch(()=>({ok:false,error:'Bad API JSON response'})) : {ok:false,error:`API returned HTTP ${r.status}`};
 if(!data.ok){ showError(data.error||'Artifact not found'); throw new Error(data.error||'load failed'); }
 statusEl.textContent = initialArtifact==='dense' ? 'Loading dense point cloud...' : (initialArtifact==='mesh' ? 'Loading final mesh...' : 'Loading sparse point cloud...');
 
@@ -323,76 +324,110 @@ function sideView(){
   setViewMode('Side view');
 }
 
-function addPlyAsObject(url, target) {
-  return new Promise((resolve) => {
-    new PLYLoader().load(
-      url,
-      (geometry) => {
-        let object = null;
+async function fetchArtifactArrayBuffer(url, label) {
+  if (!url) throw new Error(`${label} URL is missing`);
+  const response = await fetch(url);
+  const contentType = (response.headers.get('Content-Type') || '').toLowerCase();
+  if (!response.ok) {
+    throw new Error(`${label} returned HTTP ${response.status}`);
+  }
+  if (contentType.includes('text/html') || contentType.includes('application/json')) {
+    throw new Error(`${label} returned ${contentType || 'unexpected content type'} instead of PLY`);
+  }
+  const buffer = await response.arrayBuffer();
+  const magic = new TextDecoder('ascii').decode(buffer.slice(0, 3));
+  if (magic !== 'ply') {
+    throw new Error(`${label} response is not a PLY file`);
+  }
+  return buffer;
+}
 
-        if (target === 'dense' || target === 'sparse') {
-          const hasVertexColors =
-            geometry.hasAttribute('color');
+async function loadPlyGeometry(url, label) {
+  const buffer = await fetchArtifactArrayBuffer(url, label);
+  return new PLYLoader().parse(buffer);
+}
 
-          const material =
-            new THREE.PointsMaterial({
-              size: target === 'dense' ? getPointSize() : getPointSize(),
-              vertexColors: hasVertexColors,
-              color: hasVertexColors
-                ? 0xffffff
-                : 0x77ddff,
-              sizeAttenuation: false,
-              depthWrite: true,
-              transparent: false
-            });
+function createObjectFromGeometry(geometry, target) {
+  let object = null;
 
-          object = new THREE.Points(
-            geometry,
-            material
-          );
-        } else if (target === 'mesh') {
-          geometry.computeVertexNormals();
+  if (target === 'dense' || target === 'sparse') {
+    const hasVertexColors = geometry.hasAttribute('color');
+    const material = new THREE.PointsMaterial({
+      size: getPointSize(),
+      vertexColors: hasVertexColors,
+      color: hasVertexColors ? 0xffffff : 0x77ddff,
+      sizeAttenuation: false,
+      depthWrite: true,
+      transparent: false
+    });
 
-          const hasVertexColors =
-            geometry.hasAttribute('color');
+    object = new THREE.Points(geometry, material);
+  } else if (target === 'mesh') {
+    geometry.computeVertexNormals();
+    const hasVertexColors = geometry.hasAttribute('color');
+    const material = new THREE.MeshStandardMaterial({
+      color: hasVertexColors ? 0xffffff : 0xbfbfbf,
+      vertexColors: hasVertexColors,
+      metalness: 0.0,
+      roughness: 0.9,
+      side: THREE.DoubleSide
+    });
 
-          const material =
-            new THREE.MeshStandardMaterial({
-              color: hasVertexColors
-                ? 0xffffff
-                : 0xbfbfbf,
-              vertexColors: hasVertexColors,
-              metalness: 0.0,
-              roughness: 0.9,
-              side: THREE.DoubleSide
-            });
+    object = new THREE.Mesh(geometry, material);
+  }
 
-          object = new THREE.Mesh(
-            geometry,
-            material
-          );
-        }
+  if (!object) return null;
+  object.visible = false;
+  rootGroup.add(object);
+  return object;
+}
 
-        if (!object) {
-          resolve(null);
-          return;
-        }
+async function addPlyAsObject(url, target, required = false) {
+  try {
+    const geometry = await loadPlyGeometry(url, target);
+    const object = createObjectFromGeometry(geometry, target);
+    if (!object) throw new Error(`Unsupported PLY target: ${target}`);
+    return object;
+  } catch (error) {
+    if (required) {
+      console.error(`Required PLY load failed for ${target}`, error);
+      throw error;
+    }
+    console.warn(`Optional PLY load failed for ${target}`, error);
+    return null;
+  }
+}
 
-        object.visible = false;
-        rootGroup.add(object);
-        resolve(object);
-      },
-      undefined,
-      (error) => {
-        console.error(
-          `PLY load failed for ${target}`,
-          error
-        );
+function sparseArtifactAvailable() {
+  return !!(
+    (data.sparse && data.sparse.available) ||
+    ((data.summary?.points_count || 0) > 0 && (data.sparse?.sparse_ply_url || data.artifacts?.sparse_points_ply_url))
+  );
+}
 
-        resolve(null);
-      }
-    );
-  });
+function sparseArtifactUrl() {
+  return data.sparse?.sparse_ply_url || data.artifacts?.sparse_points_ply_url || '';
+}
+
+async function loadCameraTrajectory() {
+  const url = data.artifacts?.camera_trajectory_url;
+  if (!url) return {poses: []};
+  try {
+    const response = await fetch(url);
+    const contentType = (response.headers.get('Content-Type') || '').toLowerCase();
+    if (!response.ok) {
+      console.warn(`Camera trajectory artifact not available: HTTP ${response.status}`);
+      return {poses: []};
+    }
+    if (!contentType.includes('application/json') && !contentType.includes('text/json') && !contentType.includes('+json')) {
+      console.warn(`Camera trajectory artifact has unexpected content type: ${contentType || 'unknown'}`);
+      return {poses: []};
+    }
+    return await response.json();
+  } catch(e) {
+    console.warn('Camera trajectory artifact not available', e);
+    return {poses: []};
+  }
 }
 
 function cloudBeauty(){
@@ -411,20 +446,56 @@ function cloudBeauty(){
   setViewMode('Cloud beauty');
 }
 
-new PLYLoader().load(data.artifacts.sparse_points_ply_url,(g)=>{
-  originalPointGeometry=g;
-  g.computeBoundingBox();
-  pointsMesh=new THREE.Points(g,pointsMaterial);
-  rootGroup.add(pointsMesh);
+const selectedLoaders = {
+  dense: async () => {
+    if (!(data.dense && data.dense.available && data.dense.fused_ply_url)) throw new Error('Dense point cloud is not available');
+    denseObject = await addPlyAsObject(data.dense.fused_ply_url, 'dense', true);
+    if (!denseObject) throw new Error('Dense point cloud could not be loaded');
+  },
+  mesh: async () => {
+    const meshUrl = data.mesh?.mesh_ply_url || data.dense?.mesh_ply_url;
+    if (!((data.mesh && data.mesh.available) || meshUrl)) throw new Error('Mesh is not available');
+    meshObject = await addPlyAsObject(meshUrl, 'mesh', true);
+    if (!meshObject) throw new Error('Mesh could not be loaded');
+  },
+  sparse: async () => {
+    if (!sparseArtifactAvailable()) throw new Error('Sparse point cloud is not available');
+    const geometry = await loadPlyGeometry(sparseArtifactUrl(), 'sparse');
+    originalPointGeometry = geometry;
+    geometry.computeBoundingBox();
+    pointsMesh = createObjectFromGeometry(geometry, 'sparse');
+    if (pointsMesh) pointsMesh.visible = true;
+  }
+};
 
-  applyOutlierFilter(document.getElementById('outlierMode').value);
-  updateSceneBoundsAndCenter();
-  updateSummary();
-  if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
-});
+try {
+  await selectedLoaders[initialArtifact]();
+} catch (error) {
+  showError(error.message || `Failed to load ${initialArtifact} artifact`);
+  throw error;
+}
 
-let traj={poses:[]};
-try { const tr=await fetch(data.artifacts.camera_trajectory_url); if(tr.ok) traj=await tr.json(); } catch(e) { console.warn('Camera trajectory artifact not available', e); }
+if (initialArtifact !== 'dense' && data.dense && data.dense.available && data.dense.fused_ply_url) {
+  denseObject = await addPlyAsObject(data.dense.fused_ply_url, 'dense');
+}
+if (initialArtifact !== 'mesh') {
+  const meshUrl = data.mesh?.mesh_ply_url || data.dense?.mesh_ply_url;
+  if ((data.mesh && data.mesh.available && data.mesh.mesh_ply_url) || meshUrl) {
+    meshObject = await addPlyAsObject(meshUrl, 'mesh');
+  }
+}
+if (initialArtifact !== 'sparse' && sparseArtifactAvailable()) {
+  try {
+    const geometry = await loadPlyGeometry(sparseArtifactUrl(), 'sparse');
+    originalPointGeometry = geometry;
+    geometry.computeBoundingBox();
+    pointsMesh = createObjectFromGeometry(geometry, 'sparse');
+  } catch (error) {
+    console.warn('Optional sparse point cloud is not available', error);
+  }
+}
+
+const traj = await loadCameraTrajectory();
 const poses=(traj.poses||traj||[]).slice().sort((a,b)=>(a.timestamp_sec||0)-(b.timestamp_sec||0));
 const pts=poses.map(p=>new THREE.Vector3(...(p.camera_center||[p.x||0,p.y||0,p.z||0])));
 if(pts.length>1){
@@ -446,11 +517,16 @@ poses.forEach((k,i)=>{
   keyframeGroup.add(s); spheres.push(s);
 });
 
-if(data.dense && data.dense.available){ denseObject = await addPlyAsObject(data.dense.fused_ply_url, 'dense'); }
-if(data.mesh && data.mesh.available){ meshObject = await addPlyAsObject(data.mesh.mesh_ply_url, 'mesh'); } else if(data.dense && data.dense.mesh_ply_url){ meshObject = await addPlyAsObject(data.dense.mesh_ply_url, 'mesh'); }
-if(initialArtifact==='dense'){ document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=true; document.getElementById('toggleMesh').checked=false; document.getElementById('togglePath').checked=false; document.getElementById('toggleKeyframes').checked=false; if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=true; if(meshObject) meshObject.visible=false; if(trajectoryLine) trajectoryLine.visible=false; keyframeGroup.visible=false; applyOutlierFilter(document.getElementById('outlierMode').value); fitCloud(); updateSummary(); }
-else if(initialArtifact==='mesh'){ document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=false; document.getElementById('toggleMesh').checked=true; document.getElementById('togglePath').checked=false; document.getElementById('toggleKeyframes').checked=false; if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=false; if(meshObject) meshObject.visible=true; if(trajectoryLine) trajectoryLine.visible=false; keyframeGroup.visible=false; fitMesh(); updateSummary(); }
-else { updateSceneBoundsAndCenter(); }
+if(pointsMesh && originalPointGeometry) applyOutlierFilter(document.getElementById('outlierMode').value);
+if(initialArtifact==='dense'){
+  document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=true; document.getElementById('toggleMesh').checked=false; document.getElementById('togglePath').checked=false; document.getElementById('toggleKeyframes').checked=false;
+  if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=true; if(meshObject) meshObject.visible=false; if(trajectoryLine) trajectoryLine.visible=false; keyframeGroup.visible=false; applyOutlierFilter(document.getElementById('outlierMode').value); fitCloud(); updateSummary();
+}
+else if(initialArtifact==='mesh'){
+  document.getElementById('togglePoints').checked=false; document.getElementById('toggleDenseCloud').checked=false; document.getElementById('toggleMesh').checked=true; document.getElementById('togglePath').checked=false; document.getElementById('toggleKeyframes').checked=false; if(pointsMesh) pointsMesh.visible=false; if(denseObject) denseObject.visible=false; if(meshObject) meshObject.visible=true; if(trajectoryLine) trajectoryLine.visible=false; keyframeGroup.visible=false; fitMesh(); updateSummary();
+}
+else { updateSceneBoundsAndCenter(); updateSummary(); }
+if(data.dense && data.dense.available){ summaryEl.innerHTML += `<br><span class="text-success">Dense model ready</span>`; } else { summaryEl.innerHTML += `<br><span class="text-muted">Dense model not generated</span>`; }
 
 const ray=new THREE.Raycaster();
 const mouse=new THREE.Vector2();

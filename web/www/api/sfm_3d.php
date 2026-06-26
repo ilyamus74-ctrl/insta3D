@@ -57,7 +57,7 @@ if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     $trajPath=(string)(($resolved['camera_trajectory']['path'] ?? ''));
     $poses=0; if($trajPath!=='' && is_file($trajPath)){ $tj=json_decode((string)file_get_contents($trajPath),true); if(is_array($tj)){$poses=count($tj['poses'] ?? []);} }
     $artifactUrl=function($atype) use($debugPublic,$debugToken,$pid){ if($debugPublic){return '/debug_share_file.php?token='.rawurlencode($debugToken).'&pipeline_run_id='.$pid.'&artifact_type='.$atype;} $m=['sparse_ply'=>'sparse','dense_ply'=>'dense','mesh_ply'=>'mesh']; return '/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact='.($m[$atype] ?? $atype); };
-    api3d_json(['ok'=>true,'pipeline_run_id'=>$pid,'artifact'=>$artifact,'summary'=>['points_count'=>$sparseInfo['vertices'],'camera_poses_count'=>$poses,'keyframe_points_count'=>$poses,'camera_trajectory_available'=>$trajPath!=='' && is_file($trajPath)], 'artifacts'=>['sparse_points_ply_url'=>$artifactUrl('sparse_ply'),'camera_trajectory_url'=>$artifactUrl('camera_trajectory'),'sparse_diagnostics_url'=>$artifactUrl('sparse_diagnostics'),'world_alignment_url'=>$artifactUrl('world_alignment'),'keyframe_points_url'=>$artifactUrl('camera_trajectory')], 'dense'=>['available'=>$denseInfo['valid'],'fused_ply_url'=>$artifactUrl('dense_ply'),'points'=>$denseInfo['vertices']], 'mesh'=>['available'=>$meshInfo['valid']&&$meshInfo['faces']>0,'mesh_ply_url'=>$artifactUrl('mesh_ply'),'vertices'=>$meshInfo['vertices'],'faces'=>$meshInfo['faces']], 'selected'=>['artifact'=>$artifact,'vertices'=>$selectedInfo['vertices'],'faces'=>$selectedInfo['faces']]]);
+    api3d_json(['ok'=>true,'pipeline_run_id'=>$pid,'artifact'=>$artifact,'summary'=>['points_count'=>$sparseInfo['vertices'],'camera_poses_count'=>$poses,'keyframe_points_count'=>$poses,'camera_trajectory_available'=>$trajPath!=='' && is_file($trajPath)], 'artifacts'=>['sparse_points_ply_url'=>$artifactUrl('sparse_ply'),'camera_trajectory_url'=>$artifactUrl('camera_trajectory'),'sparse_diagnostics_url'=>$artifactUrl('sparse_diagnostics'),'world_alignment_url'=>$artifactUrl('world_alignment'),'keyframe_points_url'=>$artifactUrl('camera_trajectory')], 'sparse'=>['available'=>$sparseInfo['valid'],'points'=>$sparseInfo['vertices'],'sparse_ply_url'=>$artifactUrl('sparse_ply')], 'dense'=>['available'=>$denseInfo['valid'],'fused_ply_url'=>$artifactUrl('dense_ply'),'points'=>$denseInfo['vertices']], 'mesh'=>['available'=>$meshInfo['valid']&&$meshInfo['faces']>0,'mesh_ply_url'=>$artifactUrl('mesh_ply'),'vertices'=>$meshInfo['vertices'],'faces'=>$meshInfo['faces']], 'selected'=>['artifact'=>$artifact,'vertices'=>$selectedInfo['vertices'],'faces'=>$selectedInfo['faces']]]);
 }
 
 $orderId = filter_var((string)($_GET['order_id'] ?? ''), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -98,6 +98,7 @@ if ($denseAvailable && is_file($denseSummaryPath)) {
     $denseSummary = json_decode((string)file_get_contents($denseSummaryPath), true);
     if (!is_array($denseSummary)) $denseSummary = null;
 }
+$sparseInfo = api3d_ply_info($plyPath);
 api3d_json([
     'ok' => true,
     'summary' => $summary,
@@ -105,6 +106,11 @@ api3d_json([
         'sparse_points_ply_url' => '/media.php?path=' . rawurlencode($prefix . 'sparse_points.ply'),
         'camera_trajectory_url' => '/media.php?path=' . rawurlencode($prefix . 'camera_trajectory.json'),
         'keyframe_points_url' => '/media.php?path=' . rawurlencode($prefix . 'keyframe_points_3d.json'),
+    ],
+    'sparse' => [
+        'available' => $sparseInfo['valid'],
+        'points' => $sparseInfo['vertices'],
+        'sparse_ply_url' => '/media.php?path=' . rawurlencode($prefix . 'sparse_points.ply'),
     ],
 
     'dense' => $denseAvailable ? [
