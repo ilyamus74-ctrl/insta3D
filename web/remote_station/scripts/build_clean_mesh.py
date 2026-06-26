@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, datetime, json, os, sys, time, traceback
+import argparse, datetime, json, os, re, sys, time, traceback
 from pathlib import Path
 
 MIN_RETAINED_FACE_RATIO = 0.05
@@ -8,6 +8,11 @@ MIN_ABSOLUTE_FINAL_FACES = 100
 
 
 def now(): return datetime.datetime.now(datetime.timezone.utc).isoformat()
+ANSI_ESCAPE_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+def strip_ansi(value):
+    return ANSI_ESCAPE_RE.sub('', str(value))
+
 def write_json(path, payload):
     Path(path).parent.mkdir(parents=True, exist_ok=True); tmp=str(path)+'.tmp'
     with open(tmp,'w',encoding='utf-8') as f: json.dump(payload,f,ensure_ascii=False,indent=2)
@@ -19,7 +24,7 @@ def status_file(output_ply):
         return base/'status'/f'{job}.json'
     except Exception: return None
 def status(path, pr, msg):
-    if path: write_json(path, {'status':'RUNNING' if pr<100 else 'DONE','progress_percent':pr,'message':msg,'updated_at':now()})
+    if path: write_json(path, {'status':'RUNNING' if pr<100 else 'DONE','progress_percent':pr,'message':strip_ansi(msg),'updated_at':now()})
 def cleanup(mesh):
     mesh.remove_degenerate_triangles(); mesh.remove_duplicated_triangles(); mesh.remove_duplicated_vertices(); mesh.remove_non_manifold_edges(); mesh.remove_unreferenced_vertices(); return mesh
 def clone_mesh(mesh):
@@ -35,6 +40,33 @@ def is_usable_mesh(candidate, previous):
     if candidate_faces <= 0 or mesh_vertex_count(candidate) <= 0: return False
     if previous_faces <= 0: return True
     return candidate_faces >= minimum_acceptable_faces(previous_faces)
+
+def apply_density_filter_before_cleanup(mesh_raw_poisson, dens, density_quantile, np_module=None):
+    """Apply Open3D Poisson densities to an unmodified Poisson mesh copy.
+
+    Open3D returns one density per vertex in the original Poisson mesh.  Any
+    vertex-changing cleanup on that mesh before this function would invalidate
+    the density-to-vertex mapping, so this function validates the lengths before
+    masking and only cleans the density-filtered copy after the mask is applied.
+    """
+    np = np_module
+    if np is None:
+        import numpy as np
+    dens_np = np.asarray(dens, dtype=float)
+    vertex_count = mesh_vertex_count(mesh_raw_poisson)
+    if len(dens_np) != vertex_count:
+        raise RuntimeError(
+            'Poisson density count does not match Poisson mesh vertex count before cleanup: '
+            f'density_count={len(dens_np)}, vertex_count={vertex_count}'
+        )
+    mesh_density_filtered = clone_mesh(mesh_raw_poisson)
+    threshold = float(np.quantile(dens_np, density_quantile))
+    mask = dens_np < threshold
+    removed_vertices = int(mask.sum())
+    mesh_density_filtered.remove_vertices_by_mask(mask)
+    cleanup(mesh_density_filtered)
+    return mesh_density_filtered, dens_np, threshold, removed_vertices
+
 def save_stage(mdir, name, mesh, stats):
     import open3d as o3d
     if mesh is not None: o3d.io.write_triangle_mesh(str(mdir/f'mesh_{name}.ply'), mesh, write_ascii=False, compressed=False)
@@ -76,13 +108,14 @@ def main():
         normal_radius=max(adaptive_radius*2.0, med*8.0); status(sf,45,'Estimating normals'); pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=normal_radius,max_nn=30))
         status(sf,55,'Orienting normals')
         try: pcd.orient_normals_consistent_tangent_plane(k=30)
-        except Exception as e: stats['normal_orientation_warning']=str(e); pcd.orient_normals_towards_camera_location(pcd.get_center())
+        except Exception as e: stats['normal_orientation_warning']=strip_ansi(e); pcd.orient_normals_towards_camera_location(pcd.get_center())
         status(sf,65,'Poisson reconstruction'); mesh_raw_poisson,dens=o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd,depth=a.mesh_depth,scale=1.05,linear_fit=False)
-        cleanup(mesh_raw_poisson); stats['poisson_vertices_before_filter']=mesh_vertex_count(mesh_raw_poisson); stats['poisson_faces_before_filter']=mesh_face_count(mesh_raw_poisson); stats['poisson_vertices']=stats['poisson_vertices_before_filter']; stats['poisson_faces']=stats['poisson_faces_before_filter']; stats['raw_poisson_faces']=mesh_face_count(mesh_raw_poisson); save_stage(mdir,'raw_poisson',mesh_raw_poisson,stats)
+        stats['poisson_vertex_count_before_cleanup']=mesh_vertex_count(mesh_raw_poisson); stats['poisson_density_count']=len(dens); stats['poisson_faces_before_filter']=mesh_face_count(mesh_raw_poisson)
         if not is_non_empty_mesh(mesh_raw_poisson): raise RuntimeError('Raw Poisson mesh is empty')
-        status(sf,75,'Density filtering'); mesh_density_filtered=clone_mesh(mesh_raw_poisson); dens=np.asarray(dens); thr=float(np.quantile(dens,a.density_quantile)); mask=dens<thr; mesh_density_filtered.remove_vertices_by_mask(mask); cleanup(mesh_density_filtered)
+        status(sf,75,'Density filtering'); mesh_density_filtered,dens_np,thr,removed_by_density=apply_density_filter_before_cleanup(mesh_raw_poisson,dens,a.density_quantile,np)
+        cleanup(mesh_raw_poisson); stats['poisson_vertex_count_after_cleanup']=mesh_vertex_count(mesh_raw_poisson); stats['poisson_vertices_before_filter']=stats['poisson_vertex_count_before_cleanup']; stats['poisson_vertices']=mesh_vertex_count(mesh_raw_poisson); stats['poisson_faces']=mesh_face_count(mesh_raw_poisson); stats['raw_poisson_faces']=mesh_face_count(mesh_raw_poisson); save_stage(mdir,'raw_poisson',mesh_raw_poisson,stats)
         if not is_usable_mesh(mesh_density_filtered, mesh_raw_poisson): mesh_density_filtered=clone_mesh(mesh_raw_poisson); stats['density_filter_fallback_used']=True; stats['density_filter_fallback_reason']='Density filtering retained too few faces'
-        stats['density_threshold']=thr; stats['vertices_removed_by_density']=int(mask.sum()); stats['vertices_after_density_filter']=mesh_vertex_count(mesh_density_filtered); save_stage(mdir,'density_filtered',mesh_density_filtered,stats)
+        stats['density_threshold']=thr; stats['density_mask_removed_vertices']=removed_by_density; stats['vertices_removed_by_density']=removed_by_density; stats['vertices_after_density_filter']=mesh_vertex_count(mesh_density_filtered); save_stage(mdir,'density_filtered',mesh_density_filtered,stats)
         status(sf,80,'Removing long triangles'); mesh_edge_filtered=clone_mesh(mesh_density_filtered)
         verts=np.asarray(mesh_edge_filtered.vertices); tris=np.asarray(mesh_edge_filtered.triangles); edge_threshold=med*a.maximum_triangle_edge_multiplier if med>0 else float('inf'); removed_long=0
         if len(tris) and np.isfinite(edge_threshold):
@@ -143,5 +176,7 @@ def main():
         stats.update({'status':'DONE','fallback_used':fallback_used,'selected_final_stage':final_stage,'final_retained_face_ratio':retained_ratio,'final_vertices':mesh_vertex_count(final_mesh),'final_faces':final_faces,'vertices':mesh_vertex_count(final_mesh),'faces':final_faces,'duration_sec':round(time.time()-start,3),'finished_at':now()})
         write_json(mdir/'mesh_stats.json',stats); write_json(a.result_json or (mdir/'mesh_result.json'),stats); status(sf,100,'Done'); return 0
     except Exception as e:
-        stats.update({'status':'ERROR','message':str(e),'traceback':traceback.format_exc(),'duration_sec':round(time.time()-start,3),'finished_at':now()}); write_json(a.result_json or (mdir/'mesh_result.json'),stats); write_json(mdir/'mesh_stats.json',stats); return 1
+        err=strip_ansi(e); stats.update({'status':'ERROR','message':err,'traceback':strip_ansi(traceback.format_exc()),'duration_sec':round(time.time()-start,3),'finished_at':now()})
+        if sf: write_json(sf, {'status':'ERROR','progress_percent':0,'message':err,'updated_at':now()})
+        write_json(a.result_json or (mdir/'mesh_result.json'),stats); write_json(mdir/'mesh_stats.json',stats); return 1
 if __name__=='__main__': sys.exit(main())
