@@ -2,6 +2,7 @@
 import argparse,json,math,os,re,struct,statistics,time,traceback
 from collections import defaultdict,deque
 from pathlib import Path
+from imu_utils import parse_imu_jsonl, interpolate_quaternion, quat_angle_deg, integrate_gyro_deg
 
 CAMERA_MODELS={0:('SIMPLE_PINHOLE',3),1:('PINHOLE',4),2:('SIMPLE_RADIAL',4),3:('RADIAL',5),4:('OPENCV',8),5:('OPENCV_FISHEYE',8),6:('FULL_OPENCV',12),7:('FOV',5),8:('SIMPLE_RADIAL_FISHEYE',4),9:('RADIAL_FISHEYE',5),10:('THIN_PRISM_FISHEYE',12)}
 
@@ -74,28 +75,25 @@ def timestamps(path):
             if nm: mp[nm]=float(r.get('timestamp_sec',i))
     return mp,total
 def load_imu(path):
-    rows=[]
-    if not path or not Path(path).exists(): return rows
-    for line in Path(path).read_text(errors='replace').splitlines():
-        try: r=json.loads(line)
-        except Exception: continue
-        ts=r.get('timestamp_sec',r.get('time',r.get('t')))
-        if ts is None: continue
-        q=r.get('quaternion') or r.get('orientation') or r.get('q')
-        g=r.get('gyro') or r.get('gyroscope')
-        rows.append({'t':float(ts),'q':q,'gyro':g})
-    return sorted(rows,key=lambda r:r['t'])
-def imu_delta(rows,t0,t1):
-    if not rows or t0 is None or t1 is None: return None
-    qs=[r for r in rows if r.get('q') is not None]
-    if qs:
-        a=min(qs,key=lambda r:abs(r['t']-t0)); b=min(qs,key=lambda r:abs(r['t']-t1)); return qang(a['q'],b['q'])
-    seg=[r for r in rows if t0<=r['t']<=t1 and r.get('gyro')]
-    if len(seg)<2: return None
-    s=0.0
-    for a,b in zip(seg,seg[1:]):
-        g=a['gyro']; dt=max(0,b['t']-a['t']); s += math.sqrt(sum(float(x)*float(x) for x in g[:3]))*dt
-    return math.degrees(s)
+    return parse_imu_jsonl(path)
+def imu_delta(data,t0,t1,max_gap=0.1):
+    if not data or not data.records or t0 is None or t1 is None: return None,None
+    rv=data.by_sensor('rotation_vector')
+    q0=interpolate_quaternion(rv,t0,max_gap); q1=interpolate_quaternion(rv,t1,max_gap)
+    if q0 and q1:
+        return quat_angle_deg(q0,q1),'rotation_vector'
+    gd=integrate_gyro_deg(data.by_sensor('gyro'),t0,t1)
+    return (gd,'gyro') if gd is not None else (None,None)
+
+def imu_summary(data, rec, mism, comparisons, diffs):
+    counts=data.counts() if data else {}
+    ts=[r['t_sec'] for r in data.records] if data else []
+    dur=(max(ts)-min(ts)) if len(ts)>1 else 0.0
+    coverage=0.0
+    if rec and ts:
+        span=max(1e-9, rec[-1]['timestamp_sec']-rec[0]['timestamp_sec'])
+        coverage=max(0,min(100,(min(max(ts),rec[-1]['timestamp_sec'])-max(min(ts),rec[0]['timestamp_sec']))/span*100))
+    return {'available':bool(data and data.records),'sync_method':(data.sync_info.get('method') if data else 'unavailable'),'sync_quality':(data.sync_info.get('quality') if data else 'unavailable'),'gyro_samples':counts.get('gyro',0),'accel_samples':counts.get('accel',0),'gravity_samples':counts.get('gravity',0),'rotation_vector_samples':counts.get('rotation_vector',0),'duration_sec':dur,'coverage_percent':coverage,'median_sample_interval_ms':(data.median_interval_ms() if data else {}),'rotation_comparisons':comparisons,'rotation_mismatches':len(mism),'mean_rotation_difference_deg':(sum(diffs)/len(diffs) if diffs else 0.0),'p95_rotation_difference_deg':pct(diffs,95),'mismatches':mism}
 def clusters(records,radius):
     n=len(records); adj=[[] for _ in range(n)]
     if radius<=0: return [{'id':0,'indices':list(range(n))}] if n else []
@@ -151,14 +149,17 @@ def main():
                 if nm not in reg and start_gap is None: start_gap=tsmap[nm]
                 if nm in reg and start_gap is not None: gaps.append({'from_sec':start_gap,'to_sec':prev_t if prev_t is not None else tsmap[nm],'duration_sec':(prev_t if prev_t is not None else tsmap[nm])-start_gap}); start_gap=None
                 prev_t=tsmap[nm]
-        imu_rows=load_imu(a.imu_jsonl); mism=[]
+        imu_rows=load_imu(a.imu_jsonl); mism=[]; comparisons=0; diffs=[]
+        allow_mismatch = bool(imu_rows.records) and imu_rows.sync_info.get('quality') != 'unavailable'
         for i in range(1,len(rec)):
-            ideg=imu_delta(imu_rows,rec[i-1]['timestamp_sec'],rec[i]['timestamp_sec'])
-            if ideg is not None and abs(rec[i]['rotation_step_deg_from_previous']-ideg)>a.imu_mismatch_threshold_deg:
-                rec[i]['warnings'].append('VISUAL_IMU_ROTATION_MISMATCH'); mism.append({'type':'VISUAL_IMU_ROTATION_MISMATCH','image':rec[i]['name'],'visual_rotation_deg':rec[i]['rotation_step_deg_from_previous'],'imu_rotation_deg':ideg,'difference_deg':abs(rec[i]['rotation_step_deg_from_previous']-ideg)})
+            ideg,src=imu_delta(imu_rows,rec[i-1]['timestamp_sec'],rec[i]['timestamp_sec'])
+            if ideg is not None:
+                comparisons+=1; diff=abs(rec[i]['rotation_step_deg_from_previous']-ideg); diffs.append(diff)
+                if allow_mismatch and diff>a.imu_mismatch_threshold_deg:
+                    rec[i]['warnings'].append('VISUAL_IMU_ROTATION_MISMATCH'); mism.append({'type':'VISUAL_IMU_ROTATION_MISMATCH','image':rec[i]['name'],'previous_image':rec[i-1]['name'],'from_sec':rec[i-1]['timestamp_sec'],'to_sec':rec[i]['timestamp_sec'],'visual_rotation_deg':rec[i]['rotation_step_deg_from_previous'],'imu_rotation_deg':ideg,'difference_deg':diff,'imu_source':src})
         warnings=[]
         if len(cls)>1 and (sum('POSITION_JUMP' in r['warnings'] or 'ROTATION_JUMP' in r['warnings'] for r in rec)>=1): warnings.append({'type':'POSSIBLE_FALSE_MODEL_MERGE','severity':'HIGH','message':'A secondary camera cluster is linked through suspicious pose jumps.'})
-        out={'status':'DONE','model_id':int(Path(a.model_dir).name) if Path(a.model_dir).name.isdigit() else None,'registered_images':len(rec),'selected_frames':selected or len(tsmap) or None,'registration_ratio':(len(rec)/(selected or len(tsmap))) if (selected or len(tsmap)) else None,'reprojection':{'mean_px':sum(all_err)/len(all_err) if all_err else 0.0,'median_px':gmed,'p95_px':pct(all_err,95),'high_error_images':sum('HIGH_REPROJECTION_ERROR' in r['warnings'] for r in rec),'high_error_threshold_px':high_thr},'trajectory':{'median_position_step':mstep,'p95_position_step':p95step,'max_position_step':max(steps or [0]),'position_jumps':sum('POSITION_JUMP' in r['warnings'] for r in rec),'median_rotation_step_deg':mrot,'p95_rotation_step_deg':p95rot,'max_rotation_step_deg':max(rots or [0]),'rotation_jumps':sum('ROTATION_JUMP' in r['warnings'] for r in rec),'pose_clusters':len(cls),'largest_cluster_images':largest,'secondary_cluster_images':sum(sizes[1:]) if len(sizes)>1 else 0,'clusters':[{'cluster_id':c['id'],'images':len(c['indices']),'start_sec':rec[min(c['indices'])]['timestamp_sec'],'end_sec':rec[max(c['indices'])]['timestamp_sec']} for c in cls]},'registration_gaps':{'count':len(gaps),'maximum_gap_sec':max([g['duration_sec'] for g in gaps] or [0]),'longest_unregistered_interval_sec':max([g['duration_sec'] for g in gaps] or [0]),'items':gaps},'imu':{'available':bool(imu_rows),'alignment_quality':'approximate' if imu_rows else 'unavailable','rotation_mismatches':len(mism),'mismatches':mism},'warnings':warnings,'events':events,'suspicious_images':[r for r in rec if r['suspicion_score']>=0.35 or r['warnings']],'images':rec,'duration_sec':round(time.time()-started,3)}
+        out={'status':'DONE','model_id':int(Path(a.model_dir).name) if Path(a.model_dir).name.isdigit() else None,'registered_images':len(rec),'selected_frames':selected or len(tsmap) or None,'registration_ratio':(len(rec)/(selected or len(tsmap))) if (selected or len(tsmap)) else None,'reprojection':{'mean_px':sum(all_err)/len(all_err) if all_err else 0.0,'median_px':gmed,'p95_px':pct(all_err,95),'high_error_images':sum('HIGH_REPROJECTION_ERROR' in r['warnings'] for r in rec),'high_error_threshold_px':high_thr},'trajectory':{'median_position_step':mstep,'p95_position_step':p95step,'max_position_step':max(steps or [0]),'position_jumps':sum('POSITION_JUMP' in r['warnings'] for r in rec),'median_rotation_step_deg':mrot,'p95_rotation_step_deg':p95rot,'max_rotation_step_deg':max(rots or [0]),'rotation_jumps':sum('ROTATION_JUMP' in r['warnings'] for r in rec),'pose_clusters':len(cls),'largest_cluster_images':largest,'secondary_cluster_images':sum(sizes[1:]) if len(sizes)>1 else 0,'clusters':[{'cluster_id':c['id'],'images':len(c['indices']),'start_sec':rec[min(c['indices'])]['timestamp_sec'],'end_sec':rec[max(c['indices'])]['timestamp_sec']} for c in cls]},'registration_gaps':{'count':len(gaps),'maximum_gap_sec':max([g['duration_sec'] for g in gaps] or [0]),'longest_unregistered_interval_sec':max([g['duration_sec'] for g in gaps] or [0]),'items':gaps},'imu':imu_summary(imu_rows, rec, mism, comparisons, diffs),'warnings':warnings,'events':events,'suspicious_images':[r for r in rec if r['suspicion_score']>=0.35 or r['warnings']],'images':rec,'duration_sec':round(time.time()-started,3)}
     except Exception as e:
         out={'status':'ERROR','message':str(e),'traceback':traceback.format_exc()}
     Path(a.output_json).parent.mkdir(parents=True,exist_ok=True); Path(a.output_json).write_text(json.dumps(out,indent=2,ensure_ascii=False))

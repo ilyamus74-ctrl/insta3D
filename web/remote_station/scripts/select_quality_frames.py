@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse, json, math, os, shutil, subprocess, statistics
 from pathlib import Path
+from imu_utils import parse_imu_jsonl, frame_motion_at
 try:
     import cv2
     import numpy as np
@@ -54,8 +55,13 @@ def percentile(vals, pct):
     return vals[int(k)] if f==c else vals[f]*(c-k)+vals[c]*(k-f)
 
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--video',required=True); ap.add_argument('--output-dir',required=True); ap.add_argument('--sampling-mode',default='auto_quality'); ap.add_argument('--target-frames',type=int,default=400); ap.add_argument('--candidate-multiplier',type=float,default=1.5); ap.add_argument('--min-fps',type=float,default=.25); ap.add_argument('--max-fps',type=float,default=10); ap.add_argument('--scale-width',type=int,default=1920); ap.add_argument('--allow-upscale',action='store_true'); ap.add_argument('--jpeg-quality',type=int,default=2); ap.add_argument('--keep-candidates',action='store_true')
+    ap=argparse.ArgumentParser(); ap.add_argument('--video',required=True); ap.add_argument('--output-dir',required=True); ap.add_argument('--sampling-mode',default='auto_quality'); ap.add_argument('--target-frames',type=int,default=400); ap.add_argument('--candidate-multiplier',type=float,default=1.5); ap.add_argument('--min-fps',type=float,default=.25); ap.add_argument('--max-fps',type=float,default=10); ap.add_argument('--scale-width',type=int,default=1920); ap.add_argument('--allow-upscale',action='store_true'); ap.add_argument('--jpeg-quality',type=int,default=2); ap.add_argument('--keep-candidates',action='store_true'); ap.add_argument('--imu-jsonl'); ap.add_argument('--imu-settings',default='{}')
     a=ap.parse_args(); out=Path(a.output_dir); cand=out/'candidates'; frames=out/'frames'; qual=out/'quality'
+    imu=parse_imu_jsonl(a.imu_jsonl) if a.imu_jsonl else None
+    imu_cfg={'enabled':True,'prefer_stable_frames':True,'soft_gyro_threshold_deg_sec':45,'hard_gyro_threshold_deg_sec':120,'accel_deviation_threshold':2.5,'motion_penalty_weight':0.25,'maximum_imu_rejection_ratio':0.20,'allow_coverage_fallback':True}
+    try: imu_cfg.update(json.loads(a.imu_settings) if a.imu_settings else {})
+    except Exception: pass
+    imu_enabled=bool(imu and imu.records and imu.sync_info.get('quality') in ('exact','good'))
     frames.mkdir(parents=True,exist_ok=True); qual.mkdir(parents=True,exist_ok=True)
     for p in frames.glob('frame_*.jpg'): p.unlink()
     info=ffprobe(a.video); duration=max(info['duration'], .001)
@@ -66,7 +72,12 @@ def main():
     for i,p in enumerate(files):
         m=metric(p, prev); 
         if not m: continue
-        prev=m['_thumb']; m.update({'candidate':p.name,'timestamp_sec':min(duration,(i+0.5)*interval),'index':i,'selected':False,'rejected_reason':''}); rows.append(m)
+        prev=m['_thumb']; ts=min(duration,(i+0.5)*interval); m.update({'candidate':p.name,'timestamp_sec':ts,'index':i,'selected':False,'rejected_reason':''})
+        mot=frame_motion_at(imu,ts) if imu_enabled else {}
+        av=mot.get('angular_velocity_deg_sec'); adev=mot.get('accel_deviation')
+        score=max((av or 0)/max(float(imu_cfg.get('hard_gyro_threshold_deg_sec',120)),1), (adev or 0)/max(float(imu_cfg.get('accel_deviation_threshold',2.5)),.1))
+        m.update({'imu_available':bool(imu_enabled),'imu_sync_quality':(imu.sync_info.get('quality') if imu else 'unavailable'),'angular_velocity_rad_sec':mot.get('angular_velocity_rad_sec'),'angular_velocity_deg_sec':av,'acceleration_magnitude':mot.get('acceleration_magnitude'),'accel_deviation':adev,'imu_motion_score':score,'imu_penalized':False})
+        rows.append(m)
     sharp_thr=percentile([r['sharpness'] for r in rows],15); med=percentile([r['sharpness'] for r in rows],50); mx=max([r['sharpness'] for r in rows] or [0]); mn=min([r['sharpness'] for r in rows] or [0])
     for r in rows:
         reasons=[]
@@ -76,7 +87,13 @@ def main():
             if r['brightness_mean']>225 or r['overexposure_ratio']>.50: reasons.append('overexposed')
             if r['contrast']<12: reasons.append('low_contrast')
             if r['index']>0 and r['motion_change_score']<0.012: reasons.append('duplicate')
-        r['quality_score']=max(0,min(1, .55*(r['sharpness']/(mx or 1))+.25*(r['contrast']/80)+.20*r['motion_change_score']*10))
+            if imu_enabled and imu_cfg.get('enabled',True):
+                av=r.get('angular_velocity_deg_sec')
+                if av is not None and av>=float(imu_cfg.get('hard_gyro_threshold_deg_sec',120)): reasons.append('imu_motion')
+                elif av is not None and av>=float(imu_cfg.get('soft_gyro_threshold_deg_sec',45)): r['imu_penalized']=True
+        base=.55*(r['sharpness']/(mx or 1))+.25*(r['contrast']/80)+.20*r['motion_change_score']*10
+        if r.get('imu_penalized'): base-=float(imu_cfg.get('motion_penalty_weight',0.25))*r.get('imu_motion_score',0)
+        r['quality_score']=max(0,min(1, base))
         r['rejected_reason']=','.join(reasons)
     selected=[]; bins=max(1,min(a.target_frames,len(rows)))
     for b in range(bins):
@@ -94,7 +111,7 @@ def main():
         return {k:(round(v,4) if isinstance(v,float) else v) for k,v in r.items() if not k.startswith('_') and k not in ('selected','index')}
     sel={'video_duration_sec':round(duration,4),'source_fps':round(info['fps'],4),'target_frames':a.target_frames,'candidate_frames':actual,'selected_frames':len(selected),'first_timestamp_sec':round(first,4),'last_timestamp_sec':round(last,4),'effective_sampling_fps':round((len(selected)/duration),4),'coverage_percent':round(coverage,2),'frames':[pub(r) for r in selected]}
     rejected=[pub(r) for r in rows if not r.get('selected')]
-    summary={'status':'DONE','sampling_mode':a.sampling_mode,'video_duration_sec':round(duration,4),'source_fps':round(info['fps'],4),'target_frames':a.target_frames,'candidate_frames':actual,'selected_frames':len(selected),'rejected_blur':sum('blur' in r['rejected_reason'] for r in rows),'rejected_dark':sum('dark' in r['rejected_reason'] for r in rows),'rejected_overexposed':sum('overexposed' in r['rejected_reason'] for r in rows),'rejected_duplicate':sum('duplicate' in r['rejected_reason'] for r in rows),'fallback_frames':sum(r.get('selection_reason')=='fallback_time_coverage' for r in selected),'sharpness':{'min':round(mn,3),'median':round(med,3),'max':round(mx,3)},'coverage':{'first_timestamp_sec':round(first,4),'last_timestamp_sec':round(last,4),'coverage_percent':round(coverage,2),'maximum_gap_sec':round(max(gaps or [0]),4)},'source_width':info['width'],'source_height':info['height'],'rotation':info['rotation'],'output_width':a.scale_width,'output_height':None,'upscaled':False}
+    summary={'status':'DONE','sampling_mode':a.sampling_mode,'video_duration_sec':round(duration,4),'source_fps':round(info['fps'],4),'target_frames':a.target_frames,'candidate_frames':actual,'selected_frames':len(selected),'rejected_blur':sum('blur' in r['rejected_reason'] for r in rows),'rejected_dark':sum('dark' in r['rejected_reason'] for r in rows),'rejected_overexposed':sum('overexposed' in r['rejected_reason'] for r in rows),'rejected_duplicate':sum('duplicate' in r['rejected_reason'] for r in rows),'imu':({'available':bool(imu and imu.records),'sync_method':imu.sync_info.get('method'),'sync_quality':imu.sync_info.get('quality'),'counts':imu.counts()} if imu else {'available':False}),'imu_soft_penalized':sum(bool(r.get('imu_penalized')) for r in rows),'imu_hard_rejected':sum('imu_motion' in r['rejected_reason'] for r in rows),'fallback_frames':sum(r.get('selection_reason')=='fallback_time_coverage' for r in selected),'sharpness':{'min':round(mn,3),'median':round(med,3),'max':round(mx,3)},'coverage':{'first_timestamp_sec':round(first,4),'last_timestamp_sec':round(last,4),'coverage_percent':round(coverage,2),'maximum_gap_sec':round(max(gaps or [0]),4)},'source_width':info['width'],'source_height':info['height'],'rotation':info['rotation'],'output_width':a.scale_width,'output_height':None,'upscaled':False}
     (qual/'frame_quality.json').write_text(json.dumps([pub(r) for r in rows],indent=2),encoding='utf-8'); (qual/'selected_frames.json').write_text(json.dumps(sel,indent=2),encoding='utf-8'); (qual/'rejected_frames.json').write_text(json.dumps(rejected,indent=2),encoding='utf-8'); (qual/'quality_summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
     if not a.keep_candidates: shutil.rmtree(cand, ignore_errors=True)
     print(json.dumps(summary))

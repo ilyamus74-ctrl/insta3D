@@ -212,7 +212,8 @@ run_sparse_diagnostics() {
   for candidate in \
     "$(dirname "$FRAMES_DIR")/scan_imu.jsonl" \
     "$OUTPUT_DIR/../scan_imu.jsonl" \
-    "$BASE/input/job_${JOB_ID}/scan_imu.jsonl"; do
+    "$BASE/input/job_${JOB_ID}/scan_imu.jsonl" \
+    "$BASE/input/job_$(basename "$(dirname "$FRAMES_DIR")" | sed s/job_//)/scan_imu.jsonl"; do
     if [[ -f "$candidate" ]]; then imu_jsonl="$candidate"; break; fi
   done
   local cmd=(python3 "$BASE/scripts/analyze_sparse_trajectory.py" --model-dir "$model_dir" --output-json "$out_json")
@@ -245,7 +246,8 @@ for model_dir in "$SPARSE_DIR"/*; do
     run_sparse_diagnostics "$model_dir"
     python3 "$BASE/scripts/build_camera_trajectory.py" --model-dir "$model_dir" --diagnostics-json "$model_dir/sparse_diagnostics.json" --output-json "$model_dir/camera_trajectory.json" >> "$LOG_FILE" 2>&1 || echo "WARNING | CAMERA_TRAJECTORY | Failed for $model_dir" >> "$LOG_FILE"
     imu_jsonl=""
-    for candidate in "$(dirname "$FRAMES_DIR")/scan_imu.jsonl" "$OUTPUT_DIR/../scan_imu.jsonl" "$BASE/input/job_${JOB_ID}/scan_imu.jsonl"; do
+    for candidate in "$(dirname "$FRAMES_DIR")/scan_imu.jsonl" "$OUTPUT_DIR/../scan_imu.jsonl" "$BASE/input/job_${JOB_ID}/scan_imu.jsonl" \
+    "$BASE/input/job_$(basename "$(dirname "$FRAMES_DIR")" | sed s/job_//)/scan_imu.jsonl"; do
       if [[ -f "$candidate" ]]; then imu_jsonl="$candidate"; break; fi
     done
     align_cmd=(python3 "$BASE/scripts/build_world_alignment.py" --model-dir "$model_dir" --camera-trajectory "$model_dir/camera_trajectory.json" --output-json "$model_dir/world_alignment.json")
