@@ -71,6 +71,51 @@ function sfm_debug_public_add_path_base(array &$bases, string $path): void {
     $dir = is_dir($path) ? $path : dirname($path);
     if ($dir !== '' && $dir !== '.' && !in_array($dir, $bases, true)) $bases[] = $dir;
 }
+
+function sfm_debug_public_allowed_remote_output_bases(): array {
+    return array_values(array_filter([
+        realpath('/home/makler/web/remote_station/output'),
+        realpath('/home/makler_storage/output'),
+    ], static fn($p) => is_string($p) && $p !== ''));
+}
+function sfm_debug_public_safe_existing_file_in_bases(string $path, ?array $allowedBases = null): ?string {
+    $path = trim($path);
+    if ($path === '' || is_link($path)) return null;
+    $real = realpath($path);
+    if ($real === false || !is_file($real)) return null;
+    $allowedBases = $allowedBases ?? sfm_debug_public_allowed_remote_output_bases();
+    foreach ($allowedBases as $base) {
+        $base = rtrim((string)$base, DIRECTORY_SEPARATOR);
+        if ($base !== '' && ($real === $base || str_starts_with($real, $base . DIRECTORY_SEPARATOR))) return $real;
+    }
+    return null;
+}
+function sfm_debug_public_dense_ply_candidates_for_job(array $job): array {
+    $paths = [];
+    $out = trim((string)($job['output_path'] ?? ''));
+    if ($out !== '') {
+        $paths[] = $out;
+        if (!preg_match('/\.ply$/i', $out)) $paths[] = rtrim($out, DIRECTORY_SEPARATOR) . '/merged/merged_fused.ply';
+    }
+    $rid = (int)($job['remote_job_id'] ?? 0);
+    if ($rid > 0) $paths[] = sfm_debug_public_remote_base($rid) . '/merged/merged_fused.ply';
+    return array_values(array_unique(array_filter($paths, static fn($p) => is_string($p) && trim($p) !== '')));
+}
+function sfm_debug_public_resolve_dense_ply_path(array $run, array $jobs): ?string {
+    $allowedBases = sfm_debug_public_allowed_remote_output_bases();
+    $runPath = sfm_debug_public_safe_existing_file_in_bases((string)($run['output_point_cloud_path'] ?? ''), $allowedBases);
+    if ($runPath !== null) return $runPath;
+    foreach ($jobs as $job) {
+        if (!in_array((string)($job['job_type'] ?? ''), ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) continue;
+        if (strtoupper((string)($job['status'] ?? '')) !== 'DONE') continue;
+        foreach (sfm_debug_public_dense_ply_candidates_for_job($job) as $candidate) {
+            $resolved = sfm_debug_public_safe_existing_file_in_bases($candidate, $allowedBases);
+            if ($resolved !== null) return $resolved;
+        }
+    }
+    return null;
+}
+
 function sfm_debug_public_first_existing_path(array $paths): string {
     foreach ($paths as $path) { if (is_string($path) && $path !== '' && is_file($path)) return $path; }
     foreach ($paths as $path) { if (is_string($path) && $path !== '') return $path; }
@@ -170,9 +215,9 @@ else {
                 'sparse_ply'=>$sparseModel.'/model.ply',
             ];
         }
-        $denseCandidates=[(string)($run['output_point_cloud_path'] ?? '')];
-        if($recon){ $rb=sfm_debug_public_job_output_base($recon); $denseCandidates[]=$rb.'/merged/merged_fused.ply'; }
-        $map += ['dense_ply'=>sfm_debug_public_first_existing_path($denseCandidates)];
+        $densePath=sfm_debug_public_resolve_dense_ply_path($run,$jobs);
+        if($densePath!==null){ foreach(sfm_debug_public_allowed_remote_output_bases() as $ab){ sfm_debug_public_add_path_base($bases,$ab); } }
+        $map += ['dense_ply'=>$densePath ?? ''];
         if($mesh){
             $mb=sfm_debug_public_job_output_base($mesh); $meshPath=sfm_debug_public_first_existing_path([(string)($run['output_mesh_path'] ?? ''),$mb.'/mesh/mesh_final.ply']);
             $map += ['mesh_ply'=>$meshPath,'mesh_stats'=>sfm_debug_public_first_existing_path([$meshPath!==''?dirname($meshPath).'/mesh_stats.json':'',$mb.'/mesh/mesh_stats.json'])];
