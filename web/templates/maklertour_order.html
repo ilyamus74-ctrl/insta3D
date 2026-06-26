@@ -388,17 +388,25 @@
                   <div class="sfm-settings-message mt-2 d-none" role="alert"></div>
                 </form>
               </details>
+              {foreach from=$s.sfm_disk_videos item=dv}
+                {if !$dv.is_orphan|default:false}
+                  <div class="border rounded p-2 mb-3 bg-white" data-video-scan-id="{$dv.video_scan_id|escape}">
+                    <div class="fw-semibold">Reconstruction for {$dv.filename|escape}</div>
+                    <div class="small text-muted">Video scan ID: {$dv.video_scan_id|escape} · Uploaded: {$dv.uploaded_at|escape} · Duration: {$dv.duration_sec|default:0|escape} sec · Size: {$dv.size_human|escape}</div>
               <div class="row g-3 mb-3 sfm-pipeline-cards">
-                {foreach from=$s.sfm_pipeline_cards item=pc key=pmode}
+                {foreach from=$dv.sfm_pipeline_cards item=pc key=pmode}
                   {assign var=run value=$pc.run}
                   <div class="col-md-4">
-                    <div class="card h-100 border-primary-subtle" data-pipeline-card data-pipeline-mode="{$pmode|escape}"{if $run} data-pipeline-run-id="{$run.id}" data-pipeline-status="{$run.status|escape}"{/if}>
+                    <div class="card h-100 border-primary-subtle" data-pipeline-card data-video-scan-id="{$dv.video_scan_id|escape}" data-pipeline-mode="{$pmode|escape}"{if $run} data-pipeline-run-id="{$run.id}" data-pipeline-status="{$run.status|escape}"{/if}>
                       <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start gap-2">
                           <h6 class="mb-1">{$pc.preset.label|escape}</h6>
                           {if $run}<span class="badge {if $run.status=='DONE'}bg-success{elseif $run.status=='ERROR'}bg-danger{elseif $run.status=='RUNNING' || $run.status=='QUEUED' || $run.status=='CANCELLING' || $run.status=='RESTARTING'}bg-primary{else}bg-secondary{/if}" data-pipeline-status-label>{$run.status|escape}</span>{else}<span class="badge bg-secondary" data-pipeline-status-label>NOT STARTED</span>{/if}
                         </div>
                         {if $run}
+                          <div class="small text-muted">Source video: <strong>{$run.source_filename|default:$dv.filename|escape}</strong></div>
+                          <div class="small text-muted">Video scan ID: {$run.video_scan_id|default:$dv.video_scan_id|escape} · Pipeline run ID: {$run.id|escape}</div>
+                          <div class="small text-muted">Uploaded: {$dv.uploaded_at|escape} · Duration: {$dv.duration_sec|default:0|escape} sec</div>
                           <div class="small text-muted mb-1">Stage: <span data-pipeline-stage>{$run.stage|escape}</span></div>
                           <div class="small mb-2" data-pipeline-message>{$run.display_message|default:$run.message|default:''|escape}</div>
                           <div class="progress mb-2" style="height:18px"><div class="progress-bar {if $run.status=='RUNNING' || $run.status=='QUEUED'}progress-bar-striped progress-bar-animated{/if}" data-pipeline-progress style="width: {$run.progress_percent|default:0}%">{$run.progress_percent|default:0}%</div></div>
@@ -438,14 +446,14 @@
                               </form>
                             {/if}
                             {if $run.status=='QUEUED' || $run.status=='RUNNING' || $run.status=='RUNNING_CHUNKS' || $run.status=='PLANNING' || $run.status=='MERGING' || $run.status=='DONE' || $run.status=='ERROR' || $run.status=='CANCELLED'}
-                              <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('{if $run.status=='QUEUED' || $run.status=='RUNNING'}This pipeline branch is active; its running or queued remote task will be stopped. {/if}Delete all files and jobs for this pipeline branch and start it again from the original video?');" data-restart-pipeline-current-settings data-pipeline-mode="{$pmode|escape}">
+                              <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('{if $run.status=='QUEUED' || $run.status=='RUNNING'}This pipeline branch is active; its running or queued remote task will be stopped. {/if}Delete all files and jobs for this pipeline branch and start it again from {$run.source_filename|default:$dv.filename|escape}?');" data-restart-pipeline-current-settings data-video-scan-id="{$dv.video_scan_id|escape}" data-pipeline-mode="{$pmode|escape}">
                                 <input type="hidden" name="action" value="restart_sfm_pipeline">
                                 <input type="hidden" name="pipeline_run_id" value="{$run.id}">
                                 <input type="hidden" name="capture_session_id" value="{$s.id}">
                                 <button type="submit" class="btn btn-sm btn-outline-danger">Restart from scratch</button>
                               </form>
                             {/if}
-                              <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('Restart with same immutable processing parameters from this pipeline snapshot?');">
+                              <form method="post" action="/order.php?id={$order.id}" class="d-inline" onsubmit="return confirm('Restart {$pc.preset.label|escape} for {$run.source_filename|default:$dv.filename|escape} with same immutable processing parameters from this pipeline snapshot?');">
                                 <input type="hidden" name="action" value="restart_sfm_pipeline_same_settings">
                                 <input type="hidden" name="pipeline_run_id" value="{$run.id}">
                                 <input type="hidden" name="capture_session_id" value="{$s.id}">
@@ -457,10 +465,18 @@
                             <input type="hidden" name="action" value="start_sfm_pipeline">
                             <input type="hidden" name="capture_session_id" value="{$s.id}">
                             <input type="hidden" name="pipeline_mode" value="{$pmode|escape}">
-                            {if $s.videos|@count > 0}<input type="hidden" name="video_scan_id" value="{$s.videos.0.id}">{/if}
-                            {if $s.sfm_disk_videos|@count > 0}<input type="hidden" name="video_filename" value="{$s.sfm_disk_videos.0.filename|escape}">{/if}
-                            <button class="btn btn-sm btn-primary" onclick="return confirm('{$pc.preset.label|escape} will start with current effective processing settings.');">Start {$pc.preset.label|escape}</button>
+                            <input type="hidden" name="video_scan_id" value="{$dv.video_scan_id|escape}">
+                            <button class="btn btn-sm btn-primary" {if $dv.is_orphan|default:false}disabled{/if} onclick="return confirm('Start {$pc.preset.label|escape} for {$dv.filename|escape}?');">Start {$pc.preset.label|escape}</button>
                           </form>
+                        {/if}
+                        {if $pc.history|default:[]|@count > 1}
+                          <details class="small mt-2"><summary>Run history</summary>
+                            <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Run</th><th>Video</th><th>Mode</th><th>Status</th><th>Started</th><th>Finished</th><th>Images</th><th>Dense</th><th>Mesh</th></tr></thead><tbody>
+                            {foreach from=$pc.history item=hr}
+                              <tr><td>{$hr.id|escape}</td><td>{$hr.video_scan_id|escape}<br>{$hr.source_filename|escape}</td><td>{$hr.pipeline_mode|escape}</td><td>{$hr.status|escape}</td><td>{$hr.started_at|escape}</td><td>{$hr.finished_at|escape}</td><td>{$hr.registered_images|default:0|escape}</td><td>{$hr.dense_points|default:0|escape}</td><td>{$hr.mesh_vertices|default:0|escape}/{$hr.mesh_faces|default:0|escape}</td></tr>
+                            {/foreach}
+                            </tbody></table></div>
+                          </details>
                         {/if}
                         {if $run && ($run.status=='QUEUED' || $run.status=='RUNNING')}
                           <pre class="sfm-pipeline-log small bg-light p-2 mt-2" data-pipeline-log-url="{$run.log_url|escape}" style="max-height:220px; overflow:auto; white-space:pre-wrap;"></pre>
@@ -470,6 +486,16 @@
                   </div>
                 {/foreach}
               </div>
+                  </div>
+                {/if}
+              {/foreach}
+              {if $s.sfm_legacy_pipeline_runs|default:[]|@count > 0}
+                <details class="mb-3"><summary class="small text-muted">Legacy runs — source video unknown</summary>
+                  <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Run</th><th>Mode</th><th>Status</th><th>Started</th><th>Finished</th><th>Images</th><th>Dense</th><th>Mesh</th></tr></thead><tbody>
+                  {foreach from=$s.sfm_legacy_pipeline_runs item=lr}<tr><td>{$lr.id|escape}</td><td>{$lr.pipeline_mode|escape}</td><td>{$lr.status|escape}</td><td>{$lr.started_at|escape}</td><td>{$lr.finished_at|escape}</td><td>{$lr.registered_images|default:0|escape}</td><td>{$lr.dense_points|default:0|escape}</td><td>{$lr.mesh_vertices|default:0|escape}/{$lr.mesh_faces|default:0|escape}</td></tr>{/foreach}
+                  </tbody></table></div>
+                </details>
+              {/if}
               <details class="mb-3"><summary class="small text-muted">Advanced / Legacy jobs</summary>
               <div class="card mb-3" data-sfm-pipeline-status>
                 <div class="card-body">

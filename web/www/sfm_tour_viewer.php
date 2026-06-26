@@ -5,6 +5,8 @@ auth_require_login();
 
 $orderId = (int)($_GET['order_id'] ?? 0);
 $sessionId = (int)($_GET['session_id'] ?? 0);
+$videoScanId = (int)($_GET['video_scan_id'] ?? 0);
+$pipelineRunId = (int)($_GET['pipeline_run_id'] ?? 0);
 ?>
 <!doctype html>
 <html lang="ru">
@@ -89,6 +91,8 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
 <script>
 const orderId = <?php echo json_encode($orderId); ?>;
 const sessionId = <?php echo json_encode($sessionId); ?>;
+const videoScanId = <?php echo json_encode($videoScanId); ?>;
+const pipelineRunId = <?php echo json_encode($pipelineRunId); ?>;
 const statusBox = document.getElementById('statusBox');
 const planSvg = document.getElementById('planSvg');
 const panoViewer = document.getElementById('panoViewer');
@@ -320,7 +324,7 @@ async function load(){
     statusBox.textContent = 'Missing order_id/session_id';
     return;
   }
-  const r = await fetch(`/api/sfm_run.php?order_id=${encodeURIComponent(orderId)}&session_id=${encodeURIComponent(sessionId)}`);
+  const r = await fetch(`/api/sfm_run.php?order_id=${encodeURIComponent(orderId)}&session_id=${encodeURIComponent(sessionId)}${videoScanId>0?'&video_scan_id='+encodeURIComponent(videoScanId):''}${pipelineRunId>0?'&pipeline_run_id='+encodeURIComponent(pipelineRunId):''}`);
   const j = await r.json();
   if (!j.ok) {
     statusBox.className = 'alert alert-warning mb-0 py-2 px-3';

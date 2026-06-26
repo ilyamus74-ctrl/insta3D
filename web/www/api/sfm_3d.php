@@ -29,6 +29,7 @@ function can_view_order(array $order, int $userId, string $role): bool {
 
 $pipelineRunId = filter_var((string)($_GET['pipeline_run_id'] ?? ''), FILTER_VALIDATE_INT, ['options'=>['min_range'=>1]]);
 $artifact = (string)($_GET['artifact'] ?? 'sparse');
+$requestedVideoScanId = (int)($_GET['video_scan_id'] ?? 0);
 if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     if (!in_array($artifact, ['sparse','dense','mesh'], true)) api3d_json(['ok'=>false,'error'=>'bad_artifact'],400);
     require_once dirname(__DIR__, 2) . '/remote_station/sfm_pipeline.php'; ensure_sfm_pipeline_tables($dbcnx);
@@ -36,6 +37,7 @@ if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     if(!$st) api3d_json(['ok'=>false,'error'=>'db_prepare_pipeline_failed'],500);
     $pid=(int)$pipelineRunId; $st->bind_param('i',$pid); $st->execute(); $run=$st->get_result()->fetch_assoc(); $st->close();
     if(!$run) api3d_json(['ok'=>false,'error'=>'pipeline_not_found'],404);
+    if($requestedVideoScanId>0 && (int)($run['video_scan_id'] ?? 0)!==$requestedVideoScanId) api3d_json(['ok'=>false,'error'=>'pipeline_video_mismatch'],403);
     $order=['broker_id'=>$run['broker_id'],'operator_id'=>$run['operator_id'],'is_published'=>$run['is_published'] ?? 0,'status'=>$run['order_status'] ?? ''];
     if($debugPublic){ if((int)$debugPublic['capture_session_id'] !== (int)$run['capture_session_id']) api3d_json(['ok'=>false,'error'=>'forbidden'],403); } elseif(!can_view_order($order,$userId,$role)) api3d_json(['ok'=>false,'error'=>'forbidden'],403);
     $resolverLink = $debugPublic ?: [
@@ -56,8 +58,9 @@ if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     $meshInfo=($resolved['mesh_ply'] ?? null) ? api3d_ply_info($resolved['mesh_ply']['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
     $trajPath=(string)(($resolved['camera_trajectory']['path'] ?? ''));
     $poses=0; if($trajPath!=='' && is_file($trajPath)){ $tj=json_decode((string)file_get_contents($trajPath),true); if(is_array($tj)){$poses=count($tj['poses'] ?? []);} }
+    $runParams=json_decode((string)($run['parameters_json'] ?? '{}'),true); if(!is_array($runParams)){$runParams=[];} $sourceVideoFilename=(string)($runParams['source_video']['filename'] ?? '');
     $artifactUrl=function($atype) use($debugPublic,$debugToken,$pid){ if($debugPublic){return '/debug_share_file.php?token='.rawurlencode($debugToken).'&pipeline_run_id='.$pid.'&artifact_type='.$atype;} $m=['sparse_ply'=>'sparse','dense_ply'=>'dense','mesh_ply'=>'mesh']; return '/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact='.($m[$atype] ?? $atype); };
-    api3d_json(['ok'=>true,'pipeline_run_id'=>$pid,'artifact'=>$artifact,'summary'=>['points_count'=>$sparseInfo['vertices'],'camera_poses_count'=>$poses,'keyframe_points_count'=>$poses,'camera_trajectory_available'=>$trajPath!=='' && is_file($trajPath)], 'artifacts'=>['sparse_points_ply_url'=>$artifactUrl('sparse_ply'),'camera_trajectory_url'=>$artifactUrl('camera_trajectory'),'sparse_diagnostics_url'=>$artifactUrl('sparse_diagnostics'),'world_alignment_url'=>$artifactUrl('world_alignment'),'keyframe_points_url'=>$artifactUrl('camera_trajectory')], 'sparse'=>['available'=>$sparseInfo['valid'],'points'=>$sparseInfo['vertices'],'sparse_ply_url'=>$artifactUrl('sparse_ply')], 'dense'=>['available'=>$denseInfo['valid'],'fused_ply_url'=>$artifactUrl('dense_ply'),'points'=>$denseInfo['vertices']], 'mesh'=>['available'=>$meshInfo['valid']&&$meshInfo['faces']>0,'mesh_ply_url'=>$artifactUrl('mesh_ply'),'vertices'=>$meshInfo['vertices'],'faces'=>$meshInfo['faces']], 'selected'=>['artifact'=>$artifact,'vertices'=>$selectedInfo['vertices'],'faces'=>$selectedInfo['faces']]]);
+    api3d_json(['ok'=>true,'pipeline_run_id'=>$pid,'video_scan_id'=>(int)($run['video_scan_id'] ?? 0),'source_video_filename'=>$sourceVideoFilename,'pipeline_mode'=>(string)($run['pipeline_mode'] ?? ''),'status'=>(string)($run['status'] ?? ''),'artifact'=>$artifact,'summary'=>['points_count'=>$sparseInfo['vertices'],'camera_poses_count'=>$poses,'keyframe_points_count'=>$poses,'camera_trajectory_available'=>$trajPath!=='' && is_file($trajPath)], 'artifacts'=>['sparse_points_ply_url'=>$artifactUrl('sparse_ply'),'camera_trajectory_url'=>$artifactUrl('camera_trajectory'),'sparse_diagnostics_url'=>$artifactUrl('sparse_diagnostics'),'world_alignment_url'=>$artifactUrl('world_alignment'),'keyframe_points_url'=>$artifactUrl('camera_trajectory')], 'sparse'=>['available'=>$sparseInfo['valid'],'points'=>$sparseInfo['vertices'],'sparse_ply_url'=>$artifactUrl('sparse_ply')], 'dense'=>['available'=>$denseInfo['valid'],'fused_ply_url'=>$artifactUrl('dense_ply'),'points'=>$denseInfo['vertices']], 'mesh'=>['available'=>$meshInfo['valid']&&$meshInfo['faces']>0,'mesh_ply_url'=>$artifactUrl('mesh_ply'),'vertices'=>$meshInfo['vertices'],'faces'=>$meshInfo['faces']], 'selected'=>['artifact'=>$artifact,'vertices'=>$selectedInfo['vertices'],'faces'=>$selectedInfo['faces']]]);
 }
 
 $orderId = filter_var((string)($_GET['order_id'] ?? ''), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -71,6 +74,13 @@ $stmt->bind_param('i', $orderId); $stmt->execute(); $order = $stmt->get_result()
 if (!$order) api3d_json(['ok'=>false,'error'=>'order_not_found'],404);
 if($debugPublic){ if((int)$debugPublic['order_id']!==$orderId || (int)$debugPublic['capture_session_id']!==$sessionId) api3d_json(['ok'=>false,'error'=>'forbidden'],403); } elseif (!can_view_order($order, $userId, $role)) api3d_json(['ok'=>false,'error'=>'forbidden'],403);
 
+if($requestedVideoScanId>0){
+    require_once dirname(__DIR__, 2) . '/remote_station/sfm_pipeline.php'; ensure_sfm_pipeline_tables($dbcnx);
+    $st=$dbcnx->prepare("SELECT id FROM sfm_pipeline_runs WHERE order_id=? AND capture_session_id=? AND video_scan_id=? AND status='DONE' ORDER BY finished_at DESC, id DESC LIMIT 1");
+    if($st){ $st->bind_param('iii',$orderId,$sessionId,$requestedVideoScanId); $st->execute(); $rr=$st->get_result()->fetch_assoc(); $st->close(); if($rr){ $_GET['pipeline_run_id']=(int)$rr['id']; $_GET['artifact']=$artifact; $qs=http_build_query(['order_id'=>$orderId,'session_id'=>$sessionId,'video_scan_id'=>$requestedVideoScanId,'pipeline_run_id'=>(int)$rr['id'],'artifact'=>$artifact]); header('Location: /api/sfm_3d.php?'.$qs, true, 302); exit; } }
+    api3d_json(['ok'=>false,'error'=>'sfm_pipeline_run_not_found_for_video'],404);
+}
+$vc=0; $st=$dbcnx->prepare('SELECT COUNT(*) c FROM video_scans WHERE session_id=? AND deleted_at IS NULL'); if($st){$st->bind_param('i',$sessionId);$st->execute();$row=$st->get_result()->fetch_assoc();$st->close();$vc=(int)($row['c'] ?? 0);} if($vc>1){api3d_json(['ok'=>false,'error'=>'Multiple source videos found. Select a video.'],400);}
 $stmt = $dbcnx->prepare('SELECT session_dir FROM video_sfm_runs WHERE order_id = ? AND session_id = ? ORDER BY id DESC LIMIT 1');
 if (!$stmt) api3d_json(['ok'=>false,'error'=>'db_prepare_run_failed'],500);
 $stmt->bind_param('ii', $orderId, $sessionId); $stmt->execute(); $run = $stmt->get_result()->fetch_assoc(); $stmt->close();

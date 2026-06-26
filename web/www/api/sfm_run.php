@@ -113,6 +113,8 @@ if (!can_view_order($order, $userId, $role)) {
     api_json(['ok' => false, 'error' => 'forbidden'], 403);
 }
 
+$videoScanId=(int)($_GET['video_scan_id'] ?? 0); $pipelineRunId=(int)($_GET['pipeline_run_id'] ?? 0);
+if ($sessionId !== null && $videoScanId<=0 && $pipelineRunId<=0) { $vc=0; $st=$dbcnx->prepare('SELECT COUNT(*) c FROM video_scans WHERE session_id=? AND deleted_at IS NULL'); if($st){$st->bind_param('i',$sessionId);$st->execute();$row=$st->get_result()->fetch_assoc();$st->close();$vc=(int)($row['c'] ?? 0);} if($vc>1){ api_json(['ok'=>false,'error'=>'Multiple source videos found. Select a video.'],400); } }
 if ($sessionId !== null) {
     $stmt = $dbcnx->prepare('SELECT * FROM video_sfm_runs WHERE order_id = ? AND session_id = ? ORDER BY id DESC LIMIT 1');
     if (!$stmt) {

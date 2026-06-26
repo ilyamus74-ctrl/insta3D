@@ -13,6 +13,7 @@ if ($debugToken !== '') {
 $orderId = (int)($_GET['order_id'] ?? ($debugPublic['order_id'] ?? 0));
 $sessionId = (int)($_GET['session_id'] ?? ($debugPublic['capture_session_id'] ?? 0));
 $pipelineRunId = (int)($_GET['pipeline_run_id'] ?? 0);
+$videoScanId = (int)($_GET['video_scan_id'] ?? 0);
 $artifact = in_array((string)($_GET['artifact'] ?? 'sparse'), ['sparse','dense','mesh'], true) ? (string)($_GET['artifact'] ?? 'sparse') : 'sparse';
 ?>
 <!doctype html>
@@ -35,6 +36,7 @@ body,html{height:100%}
 <a class="btn btn-outline-primary btn-sm" href="/sfm_tour_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open SfM tour</a>
 <a class="btn btn-outline-success btn-sm" href="/sfm_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open diagnostics</a><?php else: ?><span class="badge bg-warning text-dark">Read-only debug public access</span><?php endif; ?>
 </div>
+<div class="alert alert-light border small" id="sourceHeader">Source video: loading…</div>
 <div id="viewer"><div id="viewerStatus" class="text-light p-3">Loading...</div></div>
 
 <div class="controls-panel card">
@@ -103,14 +105,15 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 
-const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
+const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,videoScanId=<?php echo json_encode($videoScanId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
 const statusEl=document.getElementById('viewerStatus');
 function showError(msg){ statusEl.className='text-danger p-3'; statusEl.textContent=msg; if(!statusEl.isConnected) document.getElementById('viewer').prepend(statusEl); }
-const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
+const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&video_scan_id=${videoScanId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${videoScanId>0?'&video_scan_id='+videoScanId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
 const r=await fetch(apiUrl);
 const apiContentType=(r.headers.get('Content-Type')||'').toLowerCase();
 const data=(r.ok && apiContentType.includes('application/json')) ? await r.json().catch(()=>({ok:false,error:'Bad API JSON response'})) : {ok:false,error:`API returned HTTP ${r.status}`};
 if(!data.ok){ showError(data.error||'Artifact not found'); throw new Error(data.error||'load failed'); }
+document.getElementById('sourceHeader').innerHTML = `<b>Source video:</b> ${data.source_video_filename||'unknown'} · <b>Video scan:</b> ${data.video_scan_id||videoScanId||'-'} · <b>Pipeline run:</b> ${data.pipeline_run_id||pipelineRunId||'-'} · <b>Mode:</b> ${data.pipeline_mode||'-'} · <b>Status:</b> ${data.status||'-'}`;
 statusEl.textContent = initialArtifact==='dense' ? 'Loading dense point cloud...' : (initialArtifact==='mesh' ? 'Loading final mesh...' : 'Loading sparse point cloud...');
 
 const el=document.getElementById('viewer');

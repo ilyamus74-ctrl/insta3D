@@ -57,7 +57,8 @@ function ensure_sfm_pipeline_tables(mysqli $db): void
         updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
         INDEX idx_pipeline_session (capture_session_id),
         INDEX idx_pipeline_status (status),
-        INDEX idx_pipeline_mode (capture_session_id, pipeline_mode)
+        INDEX idx_pipeline_mode (capture_session_id, pipeline_mode),
+        INDEX idx_pipeline_video_mode (capture_session_id, video_scan_id, pipeline_mode, status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
 
 if (!$db->query($sql)) {
@@ -73,6 +74,7 @@ if (!$db->query($sql)) {
     if (!$exists) { @$db->query("ALTER TABLE sfm_remote_jobs ADD COLUMN pipeline_run_id BIGINT UNSIGNED NULL AFTER capture_session_id, ADD INDEX idx_sfm_pipeline_run_id (pipeline_run_id)"); }
     foreach(['parameters_json'=>'LONGTEXT NULL','started_by_user_id'=>'BIGINT UNSIGNED NULL','extracted_frames'=>'INT NULL','registration_ratio'=>'DECIMAL(6,2) NULL','sparse_models_count'=>'INT NULL','selected_model_id'=>'INT NULL','selected_model_points'=>'INT NULL','sparse_diagnostics_json'=>'LONGTEXT NULL','sparse_reprojection_p95'=>'DECIMAL(8,3) NULL','sparse_position_jumps'=>'INT NULL','sparse_pose_clusters'=>'INT NULL','sparse_diagnostics_path'=>'VARCHAR(1024) NULL','camera_trajectory_path'=>'VARCHAR(1024) NULL','world_alignment_path'=>'VARCHAR(1024) NULL','completed_stage'=>'VARCHAR(64) NULL','run_scope'=>'VARCHAR(32) NULL','source_pipeline_run_id'=>'BIGINT UNSIGNED NULL'] as $c=>$def){ $r=$db->query("SHOW COLUMNS FROM sfm_pipeline_runs LIKE '".$db->real_escape_string($c)."'"); $ok=$r&&$r->num_rows>0; if($r){$r->close();} if(!$ok){ @$db->query('ALTER TABLE sfm_pipeline_runs ADD COLUMN '.$c.' '.$def); } }
     @$db->query("ALTER TABLE sfm_pipeline_runs MODIFY status ENUM('QUEUED','RUNNING','DONE','ERROR','CANCELLED','CANCELLING','RESTARTING') NOT NULL DEFAULT 'QUEUED'");
+    @$db->query("ALTER TABLE sfm_pipeline_runs ADD INDEX idx_pipeline_video_mode (capture_session_id, video_scan_id, pipeline_mode, status)");
     @$db->query("ALTER TABLE sfm_pipeline_runs MODIFY stage ENUM('QUEUED','EXTRACT_FRAMES','SPARSE','SPARSE_COMPLETE','DENSE_PLAN','DENSE','MERGE','MESH','FETCH_RESULT','DONE','ERROR','CANCELLED','CANCELLING') NOT NULL DEFAULT 'QUEUED'");
 }
 

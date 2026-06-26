@@ -4,6 +4,8 @@ require_once __DIR__ . '/bootstrap.php';
 auth_require_login();
 $orderId = (int)($_GET['order_id'] ?? 0);
 $sessionId = (int)($_GET['session_id'] ?? 0);
+$videoScanId = (int)($_GET['video_scan_id'] ?? 0);
+$pipelineRunId = (int)($_GET['pipeline_run_id'] ?? 0);
 ?>
 <!doctype html>
 <html lang="ru">
@@ -64,6 +66,8 @@ $sessionId = (int)($_GET['session_id'] ?? 0);
 <script>
 const orderId = <?php echo json_encode($orderId); ?>;
 const sessionId = <?php echo json_encode($sessionId); ?>;
+const videoScanId = <?php echo json_encode($videoScanId); ?>;
+const pipelineRunId = <?php echo json_encode($pipelineRunId); ?>;
 const statusBox = document.getElementById('statusBox');
 const summary = document.getElementById('summary');
 const svg = document.getElementById('trajSvg');
@@ -185,7 +189,7 @@ toggleKeyframeList.addEventListener('click', (e)=>{
 
 async function load(){
   if (!orderId || !sessionId) { statusBox.textContent = 'Missing order_id/session_id'; statusBox.className='alert alert-danger'; return; }
-  const r = await fetch(`/api/sfm_run.php?order_id=${encodeURIComponent(orderId)}&session_id=${encodeURIComponent(sessionId)}`);
+  const r = await fetch(`/api/sfm_run.php?order_id=${encodeURIComponent(orderId)}&session_id=${encodeURIComponent(sessionId)}${videoScanId>0?'&video_scan_id='+encodeURIComponent(videoScanId):''}${pipelineRunId>0?'&pipeline_run_id='+encodeURIComponent(pipelineRunId):''}`);
   const j = await r.json();
   if (!j.ok) { statusBox.textContent = (j.error === 'SfM run not found') ? 'No SfM reconstruction yet' : ('Error: ' + j.error); statusBox.className = 'alert alert-warning'; return; }
   statusBox.textContent = `SfM status: ${j.run.status} | Metric: ${j.run.metric_status}`; statusBox.className = 'alert alert-success';

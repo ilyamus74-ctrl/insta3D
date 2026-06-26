@@ -13,6 +13,7 @@ $pipelineRunId=(int)($_GET['pipeline_run_id'] ?? 0); $artifact=(string)($_GET['a
 if($pipelineRunId<=0 || !in_array($artifact,['sparse','dense','mesh','result','sparse_diagnostics','camera_trajectory','world_alignment','world_alignment_override'],true)){ fail_art(400,'Bad request'); }
 $st=$dbcnx->prepare('SELECT r.*, o.broker_id, o.operator_id FROM sfm_pipeline_runs r JOIN tour_orders o ON o.id=r.order_id WHERE r.id=? LIMIT 1'); if(!$st){fail_art(500,'DB prepare error');}
 $st->bind_param('i',$pipelineRunId); $st->execute(); $run=$st->get_result()->fetch_assoc(); $st->close(); if(!$run){fail_art(404,'Pipeline run not found');}
+$requestedVideoScanId=(int)($_GET['video_scan_id'] ?? 0); if($requestedVideoScanId>0 && (int)($run['video_scan_id'] ?? 0)!==$requestedVideoScanId){ fail_art(403,'Pipeline run does not belong to requested video'); }
 $can=$role==='ADMIN' || (int)$run['broker_id']===$userId || ($role==='OPERATOR' && (int)$run['operator_id']===$userId); if(!$can){fail_art(403,'Forbidden');}
 $jobs=[]; $st=$dbcnx->prepare('SELECT * FROM sfm_remote_jobs WHERE pipeline_run_id=? AND order_id=? AND capture_session_id=? ORDER BY created_at DESC, id DESC'); if($st){$oid=(int)$run['order_id']; $sid=(int)$run['capture_session_id']; $st->bind_param('iii',$pipelineRunId,$oid,$sid); $st->execute(); $rs=$st->get_result(); while($j=$rs->fetch_assoc()){$jobs[]=$j;} $st->close();}
 $path=''; $name=''; $ctype='application/octet-stream';
