@@ -49,8 +49,7 @@ def main():
             'fallback_used': True,
             'reason': reason
         }
-        g=est['gravity']; R=rot_from_to(g,[0,0,-1])
-        out={'status':'ALIGNED','source':'imu_gravity','imu_available':True,'imu':summary,'coordinate_system_from':'COLMAP','coordinate_system_to':'Z_UP','rotation_matrix':R,'quaternion':mat_quat(R),'translation':[0,0,0],'gravity_colmap':g,'gravity_world':[0,0,-1],'samples_total':est['samples_total'],'samples_used':est['samples_used'],'samples_rejected':est['samples_rejected'],'sync_quality':est['sync_quality'],'gravity_stddev':est['gravity_stddev'],'confidence':est['confidence'],'fallback_used':False}
+
     elif imu and imu.records:
         reason='IMU parsed but gravity confidence is too low for safe hard alignment'
         if not est: reason='IMU parsed but not enough usable gravity samples for safe hard alignment'
