@@ -61,6 +61,10 @@ class ImuData:
             ds=[(b-a)*1000 for a,b in zip(ts,ts[1:]) if b>=a]
             if ds: out[s]=statistics.median(ds)
         return out
+    def summary(self):
+        ts=[r['t_sec'] for r in self.records if r.get('t_sec') is not None]
+        tr=[min(ts),max(ts)] if ts else [None,None]
+        return {'available':bool(self.records),'samples':self.counts(),'time_range_sec':tr,'duration_sec':(tr[1]-tr[0]) if ts and tr[0] is not None else 0.0,'bad_lines':self.bad_json_lines,'bad_records':self.bad_records,'unknown_sensors':self.unknown_sensors,'metadata':self.metadata,'sync_method':self.sync_info.get('method','unavailable'),'sync_quality':self.sync_info.get('quality','unavailable')}
 
 def _timestamp(obj,state):
     if 'video_t_sec' in obj:

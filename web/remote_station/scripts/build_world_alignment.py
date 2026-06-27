@@ -21,11 +21,18 @@ def mat_quat(R):
     return [1,0,0,0]
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--model-dir',required=True); ap.add_argument('--camera-trajectory',required=True); ap.add_argument('--imu-jsonl'); ap.add_argument('--dense-ply'); ap.add_argument('--output-json',required=True)
-    a=ap.parse_args(); imu=parse_imu_jsonl(a.imu_jsonl) if a.imu_jsonl else None; est=estimate_gravity(imu) if imu else None
-    if est and est['confidence']>0.05:
+    a=ap.parse_args(); imu=parse_imu_jsonl(a.imu_jsonl) if a.imu_jsonl else None; summary=imu.summary() if imu else {'available':False,'samples':{}}
+    if imu and imu.records:
+        c=imu.counts(); print(f"IMU | Parsed gyro={c.get('gyro',0)} gravity={c.get('gravity',0)} rotation_vector={c.get('rotation_vector',0)} accel={c.get('accel',0)} duration={imu.duration():.3f}")
+    est=estimate_gravity(imu) if imu else None
+    if est and est['confidence']>=0.70 and est['source']=='imu_gravity':
         g=est['gravity']; R=rot_from_to(g,[0,0,-1])
-        out={'status':'DONE','source':est['source'],'coordinate_system_from':'COLMAP','coordinate_system_to':'Z_UP','rotation_matrix':R,'quaternion':mat_quat(R),'translation':[0,0,0],'gravity_colmap':g,'gravity_world':[0,0,-1],'samples_total':est['samples_total'],'samples_used':est['samples_used'],'samples_rejected':est['samples_rejected'],'sync_quality':est['sync_quality'],'gravity_stddev':est['gravity_stddev'],'confidence':est['confidence'],'fallback_used':False}
+        out={'status':'ALIGNED','source':'imu_gravity','imu_available':True,'imu':summary,'coordinate_system_from':'COLMAP','coordinate_system_to':'Z_UP','rotation_matrix':R,'quaternion':mat_quat(R),'translation':[0,0,0],'gravity_colmap':g,'gravity_world':[0,0,-1],'samples_total':est['samples_total'],'samples_used':est['samples_used'],'samples_rejected':est['samples_rejected'],'sync_quality':est['sync_quality'],'gravity_stddev':est['gravity_stddev'],'confidence':est['confidence'],'fallback_used':False}
+    elif imu and imu.records:
+        reason='IMU parsed but gravity confidence is too low for safe hard alignment'
+        if not est: reason='IMU parsed but not enough usable gravity samples for safe hard alignment'
+        out={'status':'UNALIGNED','source':'imu_available_but_low_confidence','imu_available':True,'imu':summary,'coordinate_system_from':'COLMAP','coordinate_system_to':'Z_UP','rotation_matrix':[[1,0,0],[0,1,0],[0,0,1]],'quaternion':[1,0,0,0],'translation':[0,0,0],'gravity_colmap':est.get('gravity') if est else None,'gravity_world':[0,0,-1],'samples_total':sum(imu.counts().values()),'samples_used':0,'samples_rejected':sum(imu.counts().values()),'sync_quality':imu.sync_info.get('quality','unavailable'),'gravity_stddev':est.get('gravity_stddev') if est else None,'confidence':est.get('confidence',0.0) if est else 0.0,'fallback_used':True,'reason':reason}
     else:
-        out={'status':'UNALIGNED','source':'no_imu','coordinate_system_from':'COLMAP','coordinate_system_to':'Z_UP','rotation_matrix':[[1,0,0],[0,1,0],[0,0,1]],'quaternion':[1,0,0,0],'translation':[0,0,0],'gravity_colmap':None,'gravity_world':[0,0,-1],'samples_total':sum(imu.counts().values()) if imu else 0,'samples_used':0,'samples_rejected':sum(imu.counts().values()) if imu else 0,'sync_quality':imu.sync_info.get('quality','unavailable') if imu else 'unavailable','gravity_stddev':None,'confidence':0.0,'fallback_used':True}
+        out={'status':'UNALIGNED','source':'no_imu','imu_available':False,'imu':summary,'coordinate_system_from':'COLMAP','coordinate_system_to':'Z_UP','rotation_matrix':[[1,0,0],[0,1,0],[0,0,1]],'quaternion':[1,0,0,0],'translation':[0,0,0],'gravity_colmap':None,'gravity_world':[0,0,-1],'samples_total':0,'samples_used':0,'samples_rejected':0,'sync_quality':'unavailable','gravity_stddev':None,'confidence':0.0,'fallback_used':True,'reason':'No valid IMU JSONL was provided'}
     Path(a.output_json).write_text(json.dumps(out,indent=2))
 if __name__=='__main__': main()

@@ -194,7 +194,26 @@ function sfm_load_source_video(mysqli $dbcnx,int $orderId,int $sessionId,int $vi
   $v['resolved_path']=$videoPath; $v['filename']=(string)($v['filename'] ?: basename($videoPath));
   return $v;
 }
-function sfm_source_video_snapshot(array $v): array { return ['video_scan_id'=>(int)$v['id'],'filename'=>(string)($v['filename'] ?? ''),'storage_path'=>(string)($v['storage_path'] ?? ''),'app_scan_uuid'=>(string)($v['app_scan_uuid'] ?? ''),'created_at'=>(string)($v['created_at'] ?? ''),'duration_sec'=>(float)($v['duration_sec'] ?? 0),'size_bytes'=>(int)($v['size_bytes'] ?? 0)]; }
+
+function sfm_resolve_video_sidecar_files(string $videoPath): array {
+  $videoReal=realpath($videoPath);
+  if($videoReal===false || !is_file($videoReal)){ return ['imu_jsonl_path'=>null,'camera_info_path'=>null,'manifest_path'=>null]; }
+  $dir=dirname($videoReal); $dirReal=realpath($dir); if($dirReal===false){ return ['imu_jsonl_path'=>null,'camera_info_path'=>null,'manifest_path'=>null]; }
+  $stem=pathinfo($videoReal, PATHINFO_FILENAME); $base=preg_replace('/_video$/','',$stem);
+  $defs=['imu_jsonl_path'=>[$stem.'_imu.jsonl',$base.'_imu.jsonl'],'camera_info_path'=>[$stem.'_camera_info.json',$base.'_camera_info.json'],'manifest_path'=>[$stem.'_manifest.json',$base.'_manifest.json']];
+  $out=['imu_jsonl_path'=>null,'camera_info_path'=>null,'manifest_path'=>null];
+  foreach($defs as $key=>$names){
+    foreach(array_unique($names) as $name){
+      $candidate=$dirReal.DIRECTORY_SEPARATOR.$name; $real=realpath($candidate);
+      if($real===false || !is_file($real) || dirname($real)!==$dirReal){ continue; }
+      if($key==='imu_jsonl_path' && strtolower(pathinfo($real,PATHINFO_EXTENSION))!=='jsonl'){ continue; }
+      $out[$key]=$real; break;
+    }
+  }
+  return $out;
+}
+
+function sfm_source_video_snapshot(array $v): array { $sidecars=sfm_resolve_video_sidecar_files((string)($v['resolved_path'] ?? $v['storage_path'] ?? '')); return ['video_scan_id'=>(int)$v['id'],'filename'=>(string)($v['filename'] ?? ''),'storage_path'=>(string)($v['storage_path'] ?? ''),'video_path'=>(string)($v['resolved_path'] ?? ''),'app_scan_uuid'=>(string)($v['app_scan_uuid'] ?? ''),'created_at'=>(string)($v['created_at'] ?? ''),'duration_sec'=>(float)($v['duration_sec'] ?? 0),'size_bytes'=>(int)($v['size_bytes'] ?? 0)] + $sidecars; }
 
 function safe_rrmdir(string $path,string $allowedBase): bool {
   if($path==='' || $allowedBase===''){ error_log('safe_rrmdir refused empty path/base'); return false; }
@@ -262,6 +281,9 @@ function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId
   pipeline_log($pipelineRunId,'INFO','PIPELINE','Source filename='.(string)$sourceVideo['filename']);
   pipeline_log($pipelineRunId,'INFO','PIPELINE','Source path='.$videoPath);
   pipeline_log($pipelineRunId,'INFO','PIPELINE','Source duration='.(float)($sourceVideo['duration_sec'] ?? 0).' sec');
+  $sourceSidecars=sfm_resolve_video_sidecar_files($videoPath);
+  if(!empty($sourceSidecars['imu_jsonl_path'])){ pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','IMU | Source sidecar found: '.$sourceSidecars['imu_jsonl_path']); }
+  else { pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','IMU | No source IMU sidecar found for video '.(string)$sourceVideo['filename']); }
   $extract=$modeParams['extract'] ?? [];
   if (($extract['sampling_mode'] ?? '') !== 'manual') {
     pipeline_log($pipelineRunId,'INFO','PIPELINE',sprintf('Effective parameters: sampling_mode=%s target_frames=%d candidate_multiplier=%s min_sampling_fps=%s max_sampling_fps=%s quality_filter=%s allow_upscale=%s max_image_size=%d mesh_depth=%d target_faces=%d',$extract['sampling_mode'] ?? 'auto_quality',(int)($extract['target_frames'] ?? 400),$extract['candidate_multiplier'] ?? 1.5,$extract['minimum_sampling_fps'] ?? 0.25,$extract['maximum_sampling_fps'] ?? 10,!empty($extract['quality_filter'])?'true':'false',!empty($extract['allow_upscale'])?'true':'false',(int)($modeParams['dense']['max_image_size'] ?? 0),(int)($modeParams['mesh']['depth'] ?? 0),(int)($modeParams['mesh']['target_faces'] ?? 0)));
@@ -271,7 +293,7 @@ function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId
   $rid=sfm_job_id($dbcnx); $out=sfm_remote_output_dir($rid); $result=$out.'/result.json'; $log=$out.'/logs'; $jt='EXTRACT_FRAMES'; $childMsg='pipeline extract frames queued';
   $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path,parameters_json) VALUES (?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?)");
   if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
-  $childParams=json_encode(['pipeline_run_id'=>$pipelineRunId,'frame_profile'=>$preset['frame_profile'],'settings'=>$modeParams], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+  $childParams=json_encode(['pipeline_run_id'=>$pipelineRunId,'frame_profile'=>$preset['frame_profile'],'settings'=>$modeParams,'source_video'=>sfm_source_video_snapshot($sourceVideo)], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
   $st->bind_param('iiisissssss',$orderId,$captureSessionId,$pipelineRunId,$jt,$rid,$videoPath,$out,$childMsg,$result,$log,$childParams); $st->execute(); $st->close();
   $st=$dbcnx->prepare("UPDATE sfm_pipeline_runs SET root_remote_job_id=?, stage='EXTRACT_FRAMES', progress_percent=5, message='Frame extraction queued' WHERE id=?"); if($st){$st->bind_param('ii',$rid,$pipelineRunId);$st->execute();$st->close();}
   pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Started, remote_job_id='.$rid);

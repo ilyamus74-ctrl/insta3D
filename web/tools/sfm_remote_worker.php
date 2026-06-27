@@ -214,7 +214,7 @@ function auto_chain_after_done(mysqli $db, array $job): void
         $msg = 'Auto queued after extract frames';
         $st = $db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path,parameters_json) VALUES (?,?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?)");
         if ($st) {
-            $childParams=json_encode(['pipeline_run_id'=>$pipelineRunId,'settings'=>worker_run_parameters($db,$job)], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+            $childParams=json_encode(['pipeline_run_id'=>$pipelineRunId,'settings'=>worker_run_parameters($db,$job),'imu_jsonl_path'=>remote_output_dir($remote).'/scan_imu.jsonl'], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
             $st->bind_param('iiisiissssss', $orderId, $sessionId, $pipelineRunId, $jt, $rid, $remote, $input, $out, $msg, $result, $log, $childParams);
             $st->execute();
             $st->close();
@@ -660,10 +660,14 @@ function safe_session_imu_path(mysqli $db, array $job): ?string
     $orderId=(int)$job['order_id']; $sessionId=(int)$job['capture_session_id'];
     $params=json_decode((string)($job['parameters_json'] ?? '{}'), true);
     $candidates=[];
-    if (is_array($params) && !empty($params['imu_jsonl_path'])) { $candidates[]=(string)$params['imu_jsonl_path']; }
+    if (is_array($params)) {
+        if (!empty($params['imu_jsonl_path'])) { $candidates[]=(string)$params['imu_jsonl_path']; }
+        if (!empty($params['source_video']['imu_jsonl_path'])) { $candidates[]=(string)$params['source_video']['imu_jsonl_path']; }
+    }
+    $stem=pathinfo($video, PATHINFO_FILENAME); $base=preg_replace('/_video$/','',$stem);
+    foreach (array_unique([$stem.'_imu.jsonl',$base.'_imu.jsonl']) as $name) { $candidates[]=dirname($video).'/'.$name; }
     $st=$db->prepare('SELECT imu_storage_path, imu_path FROM video_scans WHERE session_id=? AND deleted_at IS NULL AND (storage_path=? OR filename=?) LIMIT 1');
     if($st){ $bn=basename($video); $storage=''; $st->bind_param('iss',$sessionId,$storage,$bn); $st->execute(); $row=$st->get_result()->fetch_assoc(); $st->close(); if($row){ foreach(['imu_storage_path','imu_path'] as $k){ if(!empty($row[$k])) $candidates[]=rtrim(APP_STORAGE_DIR,'/').'/'.ltrim((string)$row[$k],'/'); } } }
-    foreach (glob($base.'/*_imu.jsonl') ?: [] as $g) { $candidates[]=$g; }
     foreach ($candidates as $c) { $real=realpath($c); $allowed=realpath($base); if($real && $allowed && is_file($real) && strpos($real,$allowed.'/')===0) return $real; }
     return null;
 }
@@ -759,7 +763,7 @@ function launch_job(mysqli $db, array $job): void
         $pipelineRunId = pipeline_run_for_job($job);
         if ($pipelineRunId > 0) { sfm_pipeline_update($db,$pipelineRunId,'RUNNING','EXTRACT_FRAMES',1,'Extracting and selecting frames'); }
         $input = safe_session_video_path($db, $job);
-        $rs=worker_run_parameters($db,$job); $ex=$rs['extract'] ?? []; $imuCfg=$rs['imu_frame_selection'] ?? []; $localImu=safe_session_imu_path($db,$job); $extractPayload=['extract'=>$ex,'imu_frame_selection'=>$imuCfg]; if($localImu){$extractPayload['imu_jsonl_path']=$localImu;} $extractJson=json_encode($extractPayload, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)($ex['fps'] ?? ''), (string)($ex['max_frames'] ?? ''), (string)($ex['scale_width'] ?? ''), (string)($ex['jpeg_quality'] ?? ''), $extractJson, (string)($localImu ?? '')];
+        $rs=worker_run_parameters($db,$job); $ex=$rs['extract'] ?? []; $imuCfg=$rs['imu_frame_selection'] ?? []; $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: []; $localImu=safe_session_imu_path($db,$job); $sourceVideo=$params['source_video'] ?? []; $extractPayload=['extract'=>$ex,'imu_frame_selection'=>$imuCfg]; if(is_array($sourceVideo)&&$sourceVideo){$extractPayload['source_video']=$sourceVideo;} if($localImu){$extractPayload['imu_jsonl_path']=$localImu; worker_log('IMU | Source sidecar found: '.$localImu);} else { worker_log('IMU | No source IMU sidecar found for video '.basename($input)); } $extractJson=json_encode($extractPayload, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)($ex['fps'] ?? ''), (string)($ex['max_frames'] ?? ''), (string)($ex['scale_width'] ?? ''), (string)($ex['jpeg_quality'] ?? ''), $extractJson, (string)($localImu ?? '')];
     } elseif ($type === 'COLMAP_SPARSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         $rs=worker_run_parameters($db,$job); $sp=$rs['sparse'] ?? []; $args = [SFM_REMOTE_BASE . '/run_colmap_sparse_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, frames_path_for_parent($parent), (string)($sp['matcher'] ?? ''), (string)($sp['sequential_overlap'] ?? ''), !empty($sp['loop_detection'])?'1':'0'];

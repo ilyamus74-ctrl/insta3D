@@ -75,7 +75,12 @@ def timestamps(path):
             if nm: mp[nm]=float(r.get('timestamp_sec',i))
     return mp,total
 def load_imu(path):
-    return parse_imu_jsonl(path)
+    if not path:
+        return parse_imu_jsonl(path)
+    data=parse_imu_jsonl(path)
+    c=data.counts()
+    print(f"IMU | Parsed gyro={c.get('gyro',0)} gravity={c.get('gravity',0)} rotation_vector={c.get('rotation_vector',0)} accel={c.get('accel',0)} duration={data.duration():.3f}")
+    return data
 def imu_delta(data,t0,t1,max_gap=0.1):
     if not data or not data.records or t0 is None or t1 is None: return None,None
     rv=data.by_sensor('rotation_vector')
@@ -93,7 +98,7 @@ def imu_summary(data, rec, mism, comparisons, diffs):
     if rec and ts:
         span=max(1e-9, rec[-1]['timestamp_sec']-rec[0]['timestamp_sec'])
         coverage=max(0,min(100,(min(max(ts),rec[-1]['timestamp_sec'])-max(min(ts),rec[0]['timestamp_sec']))/span*100))
-    return {'available':bool(data and data.records),'sync_method':(data.sync_info.get('method') if data else 'unavailable'),'sync_quality':(data.sync_info.get('quality') if data else 'unavailable'),'gyro_samples':counts.get('gyro',0),'accel_samples':counts.get('accel',0),'gravity_samples':counts.get('gravity',0),'rotation_vector_samples':counts.get('rotation_vector',0),'duration_sec':dur,'coverage_percent':coverage,'median_sample_interval_ms':(data.median_interval_ms() if data else {}),'rotation_comparisons':comparisons,'rotation_mismatches':len(mism),'mean_rotation_difference_deg':(sum(diffs)/len(diffs) if diffs else 0.0),'p95_rotation_difference_deg':pct(diffs,95),'mismatches':mism}
+    return {'available':bool(data and data.records),'error':('no valid IMU records parsed' if data and not data.records and (data.bad_json_lines or data.bad_records) else None),'samples':{'gyro':counts.get('gyro',0),'gravity':counts.get('gravity',0),'rotation_vector':counts.get('rotation_vector',0),'accel':counts.get('accel',0)},'alignment_quality':('parsed' if data and data.records else 'unavailable'),'sync_method':(data.sync_info.get('method') if data else 'unavailable'),'sync_quality':(data.sync_info.get('quality') if data else 'unavailable'),'gyro_samples':counts.get('gyro',0),'accel_samples':counts.get('accel',0),'gravity_samples':counts.get('gravity',0),'rotation_vector_samples':counts.get('rotation_vector',0),'duration_sec':dur,'coverage_percent':coverage,'bad_lines':(data.bad_json_lines if data else 0),'median_sample_interval_ms':(data.median_interval_ms() if data else {}),'rotation_comparisons':comparisons,'rotation_mismatches':len(mism),'mean_rotation_difference_deg':(sum(diffs)/len(diffs) if diffs else 0.0),'p95_rotation_difference_deg':pct(diffs,95),'mismatches':mism}
 def clusters(records,radius):
     n=len(records); adj=[[] for _ in range(n)]
     if radius<=0: return [{'id':0,'indices':list(range(n))}] if n else []

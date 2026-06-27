@@ -28,6 +28,20 @@ DURATION_RAW=$(ffprobe -v error -show_entries format=duration -of default=noprin
 DURATION_SEC=$(awk -v d="$DURATION_RAW" 'BEGIN{if(d<=0)d=1; printf "%.4f", d}')
 SOURCE_FPS=$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of default=noprint_wrappers=1:nokey=1 "$INPUT_VIDEO" | awk -F/ 'NF==2&&$2>0{printf "%.4f",$1/$2; exit} {print 0}')
 IMU_JSONL="$(read_param imu_jsonl_path "")"; IMU_SETTINGS="$(read_param imu_frame_selection "{}")"
+if [[ -n "$IMU_JSONL" && -f "$IMU_JSONL" ]]; then
+  cp "$IMU_JSONL" "$JOB_ROOT/scan_imu.jsonl"
+  echo "INFO | IMU | Copied sidecar to: $JOB_ROOT/scan_imu.jsonl"
+else
+  echo "INFO | IMU | No source IMU sidecar found for video $(basename "$INPUT_VIDEO")"
+fi
+for sidecar_pair in "source_video.camera_info_path:$JOB_ROOT/camera_info.json:camera_info" "source_video.manifest_path:$JOB_ROOT/manifest.json:manifest"; do
+  key="${sidecar_pair%%:*}"; rest="${sidecar_pair#*:}"; dest="${rest%%:*}"; label="${rest##*:}"
+  src="$(read_param "$key" "")"
+  if [[ -n "$src" && -f "$src" ]]; then
+    cp "$src" "$dest"
+    echo "INFO | IMU | $label copied"
+  fi
+done
 SAMPLING_MODE="$(read_param extract.sampling_mode auto_quality)"; TARGET="$(read_param extract.target_frames 400)"; CAND_MULT="$(read_param extract.candidate_multiplier 1.5)"; MIN_FPS="$(read_param extract.minimum_sampling_fps 0.25)"; MAX_FPS="$(read_param extract.maximum_sampling_fps 10)"; SCALE="$(read_param extract.scale_width 1920)"; JPEG="$(read_param extract.jpeg_quality 2)"; KEEP="$(read_param extract.keep_candidate_frames false)"; ALLOW="$(read_param extract.allow_upscale false)"
 if [[ "$SAMPLING_MODE" == "manual" || ( "$SAMPLING_MODE" == "{}" && -n "$(read_param extract.fps '')" ) ]]; then
   FPS="$(read_param extract.fps ${EXTRACT_FPS:-2})"; MAX_FRAMES="$(read_param extract.max_frames ${EXTRACT_MAX_FRAMES:-360})"
