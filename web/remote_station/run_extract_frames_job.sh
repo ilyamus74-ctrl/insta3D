@@ -47,6 +47,7 @@ REMOTE_LOG="$STATION_BASE/logs/job_${JOB_ID}.nohup.log"
 REMOTE_IMU="$STATION_BASE/input/job_${JOB_ID}/scan_imu.jsonl"
 
 echo "==> Prepare station dirs"
+####"${SSH[@]}" "mkdir -p '$STATION_BASE/incoming' '$STATION_BASE/output/job_${JOB_ID}' '$STATION_BASE/logs' '$STATION_BASE/status'"
 "${SSH[@]}" "mkdir -p '$STATION_BASE/incoming' '$STATION_BASE/output/job_${JOB_ID}' '$STATION_BASE/logs' '$STATION_BASE/status'"
 
 echo "==> Upload input video to ${STATION_HOST}:${REMOTE_INPUT}"

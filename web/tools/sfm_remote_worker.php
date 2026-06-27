@@ -652,7 +652,7 @@ function safe_session_video_path(mysqli $db, array $job): string
     return $real;
 }
 
-
+/*
 function safe_session_imu_path(mysqli $db, array $job): ?string
 {
     $video = safe_session_video_path($db, $job);
@@ -669,6 +669,53 @@ function safe_session_imu_path(mysqli $db, array $job): ?string
     $st=$db->prepare('SELECT imu_storage_path, imu_path FROM video_scans WHERE session_id=? AND deleted_at IS NULL AND (storage_path=? OR filename=?) LIMIT 1');
     if($st){ $bn=basename($video); $storage=''; $st->bind_param('iss',$sessionId,$storage,$bn); $st->execute(); $row=$st->get_result()->fetch_assoc(); $st->close(); if($row){ foreach(['imu_storage_path','imu_path'] as $k){ if(!empty($row[$k])) $candidates[]=rtrim(APP_STORAGE_DIR,'/').'/'.ltrim((string)$row[$k],'/'); } } }
     foreach ($candidates as $c) { $real=realpath($c); $allowed=realpath($base); if($real && $allowed && is_file($real) && strpos($real,$allowed.'/')===0) return $real; }
+    return null;
+}*/
+
+function safe_session_imu_path(mysqli $db, array $job): ?string
+{
+    $video = safe_session_video_path($db, $job);
+    $videoDir = dirname($video);
+    $allowedDir = realpath($videoDir);
+
+    if ($allowedDir === false || !is_dir($allowedDir)) {
+        return null;
+    }
+
+    $params = json_decode((string)($job['parameters_json'] ?? '{}'), true);
+    $candidates = [];
+
+    if (is_array($params)) {
+        if (!empty($params['imu_jsonl_path'])) {
+            $candidates[] = (string)$params['imu_jsonl_path'];
+        }
+        if (!empty($params['source_video']['imu_jsonl_path'])) {
+            $candidates[] = (string)$params['source_video']['imu_jsonl_path'];
+        }
+    }
+
+    $stem = pathinfo($video, PATHINFO_FILENAME);
+    $baseStem = preg_replace('/_video$/', '', $stem);
+
+    foreach (array_unique([
+        $stem . '_imu.jsonl',
+        $baseStem . '_imu.jsonl',
+    ]) as $name) {
+        $candidates[] = $videoDir . '/' . $name;
+    }
+
+    foreach ($candidates as $candidate) {
+        $real = realpath($candidate);
+        if (
+            $real !== false &&
+            is_file($real) &&
+            str_ends_with(strtolower($real), '.jsonl') &&
+            ($real === $allowedDir || str_starts_with($real, $allowedDir . DIRECTORY_SEPARATOR))
+        ) {
+            return $real;
+        }
+    }
+
     return null;
 }
 

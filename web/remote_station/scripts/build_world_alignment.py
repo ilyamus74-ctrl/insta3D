@@ -25,7 +25,30 @@ def main():
     if imu and imu.records:
         c=imu.counts(); print(f"IMU | Parsed gyro={c.get('gyro',0)} gravity={c.get('gravity',0)} rotation_vector={c.get('rotation_vector',0)} accel={c.get('accel',0)} duration={imu.duration():.3f}")
     est=estimate_gravity(imu) if imu else None
-    if est and est['confidence']>=0.70 and est['source']=='imu_gravity':
+    if est and est['confidence'] >= 0.70 and est['source'] == 'imu_gravity':
+        reason = 'IMU gravity is available, but device-to-COLMAP transform is not implemented yet'
+        out = {
+            'status': 'UNALIGNED',
+            'source': 'imu_available_device_gravity_only',
+            'imu_available': True,
+            'imu': summary,
+            'coordinate_system_from': 'COLMAP',
+            'coordinate_system_to': 'Z_UP',
+            'rotation_matrix': [[1,0,0],[0,1,0],[0,0,1]],
+            'quaternion': [1,0,0,0],
+            'translation': [0,0,0],
+            'gravity_colmap': None,
+            'gravity_world': [0,0,-1],
+            'device_gravity': est.get('gravity'),
+            'samples_total': est['samples_total'],
+            'samples_used': est['samples_used'],
+            'samples_rejected': est['samples_rejected'],
+            'sync_quality': est['sync_quality'],
+            'gravity_stddev': est['gravity_stddev'],
+            'confidence': est['confidence'],
+            'fallback_used': True,
+            'reason': reason
+        }
         g=est['gravity']; R=rot_from_to(g,[0,0,-1])
         out={'status':'ALIGNED','source':'imu_gravity','imu_available':True,'imu':summary,'coordinate_system_from':'COLMAP','coordinate_system_to':'Z_UP','rotation_matrix':R,'quaternion':mat_quat(R),'translation':[0,0,0],'gravity_colmap':g,'gravity_world':[0,0,-1],'samples_total':est['samples_total'],'samples_used':est['samples_used'],'samples_rejected':est['samples_rejected'],'sync_quality':est['sync_quality'],'gravity_stddev':est['gravity_stddev'],'confidence':est['confidence'],'fallback_used':False}
     elif imu and imu.records:
