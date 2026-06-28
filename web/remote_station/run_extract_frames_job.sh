@@ -66,6 +66,13 @@ if [[ -n "$LOCAL_IMU" && -f "$LOCAL_IMU" ]]; then
   else
     scp -i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new "$LOCAL_IMU" "${STATION_USER}@${STATION_HOST}:$REMOTE_IMU"
   fi
+
+  "${SSH[@]}" "test -s '$REMOTE_IMU'" || {
+    echo "ERROR: IMU upload failed or remote IMU is empty: $REMOTE_IMU" >&2
+    exit 22
+  }
+else
+  echo "==> LOCAL_IMU is empty or file not found: ${LOCAL_IMU:-none}"
 fi
 
 echo "==> Start extract frames job $JOB_ID"
