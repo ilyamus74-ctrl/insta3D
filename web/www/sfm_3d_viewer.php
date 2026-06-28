@@ -78,7 +78,7 @@ body,html{height:100%}
       <button class="btn btn-outline-light btn-sm" id="rotZpBtn">Rotate Z +90°</button><button class="btn btn-outline-light btn-sm" id="rotZmBtn">Rotate Z -90°</button>
       <button class="btn btn-outline-light btn-sm" id="autoOrientBtn">Auto orientation</button>
       <button class="btn btn-outline-light btn-sm" id="imuGravityBtn">IMU gravity</button>
-      <button class="btn btn-outline-light btn-sm" id="floorPlaneBtn">Floor plane</button>
+      <button class="btn btn-outline-light btn-sm" id="floorPlaneBtn">Auto level<br><small class="text-muted">Fit floor plane</small></button>
       <button class="btn btn-outline-light btn-sm" id="manualOrientationBtn">Manual orientation</button>
       <button class="btn btn-outline-light btn-sm" id="resetOrientationBtn">Reset orientation</button>
       <button class="btn btn-outline-success btn-sm" id="saveDefaultBtn">Save manual orientation</button>
@@ -585,7 +585,136 @@ async function loadViewerSettings(){ try{ const rr=await fetch(`/api/sfm_viewer_
 async function saveViewerSettings(){ if(debugToken) return; const body={order_id:orderId,capture_session_id:sessionId,pipeline_run_id:pipelineRunId||null,settings:{rotation:{x:rootGroup.rotation.x,y:rootGroup.rotation.y,z:rootGroup.rotation.z},point_size:getPointSize(),exposure:renderer.toneMappingExposure,background:'#'+scene.background.getHexString(),use_outlier_filter:document.getElementById('outlierMode').value!=='off',outlier_mode:document.getElementById('outlierMode').value,preset:document.getElementById('displayPreset').value}}; await fetch('/api/sfm_viewer_settings.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
 function rebuildAfterTransform(doFit=true){ const box=computeCombinedBox(initialArtifact==='sparse',false,false,initialArtifact==='dense',initialArtifact==='mesh'); if(!box) return; latestCombinedBox=box.clone(); const size=box.getSize(new THREE.Vector3()); const radius=Math.max(size.length()*0.5,0.1); recreateGrid(box, new THREE.Vector3(), radius); if(doFit) fitCloud(); controls.update(); }
 function rotateRoot(axis, radians){ rootGroup.rotateOnAxis(axis,radians); rebuildAfterTransform(true); updateSummary(); }
-function autoOrient(){ const obj=denseObject||pointsMesh||meshObject; if(!obj) return; const box=new THREE.Box3().setFromObject(obj); const size=box.getSize(new THREE.Vector3()); const minAxis=size.x<size.y&&size.x<size.z?'x':(size.y<size.z?'y':'z'); if(minAxis==='x') rotateRoot(new THREE.Vector3(0,0,1), Math.PI/2); else if(minAxis==='z') rotateRoot(new THREE.Vector3(1,0,0), Math.PI/2); selectionEl.innerHTML='Auto orient preview applied. Use “Set current orientation as default” to save.'; }
+function autoOrient(){ const obj=denseObject||pointsMesh||meshObject; if(!obj) return; const box=new THREE.Box3().setFromObject(obj); const size=box.getSize(new THREE.Vector3()); const minAxis=size.x<size.y&&size.x<size.z?'x':(size.y<size.z?'y':'z'); if(minAxis==='x') rotateRoot(new THREE.Vector3(0,0,1), Math.PI/2); else if(minAxis==='z') rotateRoot(new THREE.Vector3(1,0,0), Math.PI/2); selectionEl.innerHTML='Auto orient preview applied. Use “Save manual orientation” to save.'; }
+
+function floorPlaneSourceObject(){
+  return denseObject || meshObject || pointsMesh || null;
+}
+
+function sampleGeometryPositions(object, maxSamples=60000){
+  const pos=object?.geometry?.getAttribute('position');
+  if(!pos || pos.count<3) return null;
+  const box=new THREE.Box3().setFromBufferAttribute(pos);
+  const size=box.getSize(new THREE.Vector3());
+  const diag=Math.max(size.length(), 0.001);
+  const target=Math.min(maxSamples, pos.count);
+  const step=Math.max(1, Math.floor(pos.count/target));
+  const points=[];
+  for(let i=0;i<pos.count && points.length<target;i+=step){
+    const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
+    if(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) points.push(new THREE.Vector3(x,y,z));
+  }
+  return {points, count:points.length, total:pos.count, diag};
+}
+
+function planeFromThreePoints(a,b,c){
+  const ab=b.clone().sub(a), ac=c.clone().sub(a);
+  const normal=ab.cross(ac);
+  const len=normal.length();
+  if(len<1e-8) return null;
+  normal.multiplyScalar(1/len);
+  return {normal, constant:-normal.dot(a)};
+}
+
+function smallestEigenVectorSymmetric3(m){
+  const a=m.map(row=>row.slice());
+  const v=[[1,0,0],[0,1,0],[0,0,1]];
+  for(let iter=0;iter<32;iter++){
+    let p=0,q=1,max=Math.abs(a[0][1]);
+    [[0,2],[1,2]].forEach(([i,j])=>{ const val=Math.abs(a[i][j]); if(val>max){max=val;p=i;q=j;} });
+    if(max<1e-10) break;
+    const theta=(a[q][q]-a[p][p])/(2*a[p][q]);
+    const t=Math.sign(theta||1)/(Math.abs(theta)+Math.sqrt(theta*theta+1));
+    const c=1/Math.sqrt(t*t+1), s=t*c;
+    const app=a[p][p], aqq=a[q][q], apq=a[p][q];
+    a[p][p]=c*c*app-2*s*c*apq+s*s*aqq;
+    a[q][q]=s*s*app+2*s*c*apq+c*c*aqq;
+    a[p][q]=0; a[q][p]=0;
+    for(let k=0;k<3;k++){
+      if(k===p || k===q) continue;
+      const akp=a[k][p], akq=a[k][q];
+      a[k][p]=c*akp-s*akq; a[p][k]=a[k][p];
+      a[k][q]=s*akp+c*akq; a[q][k]=a[k][q];
+    }
+    for(let k=0;k<3;k++){
+      const vkp=v[k][p], vkq=v[k][q];
+      v[k][p]=c*vkp-s*vkq;
+      v[k][q]=s*vkp+c*vkq;
+    }
+  }
+  let idx=0;
+  if(a[1][1]<a[idx][idx]) idx=1;
+  if(a[2][2]<a[idx][idx]) idx=2;
+  const n=new THREE.Vector3(v[0][idx],v[1][idx],v[2][idx]);
+  return n.length()>1e-8 ? n.normalize() : null;
+}
+
+function refinePlaneFromInliers(points, inliers){
+  const centroid=new THREE.Vector3();
+  inliers.forEach(i=>centroid.add(points[i]));
+  centroid.multiplyScalar(1/inliers.length);
+  let xx=0,xy=0,xz=0,yy=0,yz=0,zz=0;
+  inliers.forEach(i=>{
+    const p=points[i]; const x=p.x-centroid.x, y=p.y-centroid.y, z=p.z-centroid.z;
+    xx+=x*x; xy+=x*y; xz+=x*z; yy+=y*y; yz+=y*z; zz+=z*z;
+  });
+  const n=smallestEigenVectorSymmetric3([[xx,xy,xz],[xy,yy,yz],[xz,yz,zz]]);
+  if(!n) return null;
+  return {normal:n, constant:-n.dot(centroid)};
+}
+
+function fitDominantPlaneRansac(points, diag){
+  const threshold=THREE.MathUtils.clamp(diag*0.01, 0.005, 0.15);
+  const iterations=points.length>30000?700:450;
+  let best=null;
+  for(let iter=0;iter<iterations;iter++){
+    const ia=Math.floor(Math.random()*points.length), ib=Math.floor(Math.random()*points.length), ic=Math.floor(Math.random()*points.length);
+    if(ia===ib || ia===ic || ib===ic) continue;
+    const plane=planeFromThreePoints(points[ia],points[ib],points[ic]);
+    if(!plane) continue;
+    let count=0, sumSq=0;
+    for(let i=0;i<points.length;i++){
+      const d=Math.abs(plane.normal.dot(points[i])+plane.constant);
+      if(d<=threshold){ count++; sumSq+=d*d; }
+    }
+    if(!best || count>best.count || (count===best.count && sumSq<best.sumSq)) best={...plane,count,sumSq};
+  }
+  if(!best) return null;
+  const inliers=[];
+  for(let i=0;i<points.length;i++) if(Math.abs(best.normal.dot(points[i])+best.constant)<=threshold) inliers.push(i);
+  const refined=inliers.length>=3 ? refinePlaneFromInliers(points,inliers) : null;
+  const plane=refined || best;
+  let sumSq=0;
+  inliers.forEach(i=>{ const d=plane.normal.dot(points[i])+plane.constant; sumSq+=d*d; });
+  return {normal:plane.normal, constant:plane.constant, inliers:inliers.length, total:points.length, ratio:inliers.length/points.length, rmse:Math.sqrt(sumSq/Math.max(inliers.length,1)), threshold};
+}
+
+function autoLevelByFloorPlane(){
+  const obj=floorPlaneSourceObject();
+  const sampled=sampleGeometryPositions(obj, 60000);
+  if(!sampled || sampled.count<300){ selectionEl.innerHTML='<span class="text-warning">Auto level needs at least 300 geometry points.</span>'; return; }
+  selectionEl.innerHTML='Fitting dominant floor plane…';
+  setTimeout(()=>{
+    const fit=fitDominantPlaneRansac(sampled.points, sampled.diag);
+    const minInliers=Math.max(150, Math.floor(sampled.count*0.06));
+    if(!fit || fit.inliers<minInliers || fit.ratio<0.06 || fit.rmse>fit.threshold*0.85){
+      const msg=fit ? `Floor plane confidence is low: inliers ${fit.inliers} / ${fit.total}, ratio ${(fit.ratio*100).toFixed(1)}%, rmse ${fit.rmse.toFixed(3)}.` : 'No dominant floor plane found.';
+      selectionEl.innerHTML=`<span class="text-warning">${msg} Auto level was not applied.</span>`;
+      return;
+    }
+    let normal=fit.normal.clone().normalize();
+    const worldNormal=normal.clone().applyQuaternion(rootGroup.quaternion).normalize();
+    if(worldNormal.y<0) worldNormal.negate();
+    const up=new THREE.Vector3(0,1,0);
+    const q=new THREE.Quaternion().setFromUnitVectors(worldNormal, up);
+    const angle=THREE.MathUtils.radToDeg(2*Math.acos(THREE.MathUtils.clamp(Math.abs(q.w), -1, 1)));
+    rootGroup.quaternion.premultiply(q);
+    rebuildAfterTransform(true);
+    updateSummary();
+    selectionEl.innerHTML=`Auto level applied: plane inliers ${fit.inliers} / ${fit.total}, rmse ${fit.rmse.toFixed(3)}, rotation ${angle.toFixed(1)}°<br><span class="text-muted">Use “Save manual orientation” to save this orientation.</span>`;
+  }, 20);
+}
+
 
 bindClick('resetViewBtn',fitAll);
 bindClick('fitAllBtn',fitAll);
@@ -598,7 +727,7 @@ bindClick('flipVerticalBtn',()=>rotateRoot(new THREE.Vector3(1,0,0),Math.PI));
 bindClick('rotXpBtn',()=>rotateRoot(new THREE.Vector3(1,0,0),Math.PI/2)); bindClick('rotXmBtn',()=>rotateRoot(new THREE.Vector3(1,0,0),-Math.PI/2));
 bindClick('rotYpBtn',()=>rotateRoot(new THREE.Vector3(0,1,0),Math.PI/2)); bindClick('rotYmBtn',()=>rotateRoot(new THREE.Vector3(0,1,0),-Math.PI/2));
 bindClick('rotZpBtn',()=>rotateRoot(new THREE.Vector3(0,0,1),Math.PI/2)); bindClick('rotZmBtn',()=>rotateRoot(new THREE.Vector3(0,0,1),-Math.PI/2));
-bindClick('resetOrientationBtn',()=>{rootGroup.rotation.set(0,0,0); rebuildAfterTransform(true); updateSummary();}); bindClick('saveDefaultBtn',saveViewerSettings); bindClick('autoOrientBtn',autoOrient);
+bindClick('resetOrientationBtn',()=>{rootGroup.rotation.set(0,0,0); rebuildAfterTransform(true); updateSummary();}); bindClick('saveDefaultBtn',saveViewerSettings); bindClick('autoOrientBtn',autoOrient); bindClick('floorPlaneBtn',autoLevelByFloorPlane);
 bindClick('setFloorBtn',()=>{floorOffset=controls.target.y-pointPercentileY(0.02,0); rebuildAfterTransform(false);}); bindClick('raiseFloorBtn',()=>{floorOffset+=latestRadius*0.02; rebuildAfterTransform(false);}); bindClick('lowerFloorBtn',()=>{floorOffset-=latestRadius*0.02; rebuildAfterTransform(false);});
 document.getElementById('displayPreset').addEventListener('change',e=>{const p=presets[e.target.value]; applyDisplaySettings({preset:e.target.value,point_size:p.pointSize,exposure:p.exposure,background:p.background}); updateSummary();});
 document.getElementById('exposure').addEventListener('input',e=>{renderer.toneMappingExposure=parseFloat(e.target.value); document.getElementById('exposureValue').textContent=renderer.toneMappingExposure.toFixed(2);});
