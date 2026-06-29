@@ -547,6 +547,9 @@ private fun MaklerTourApp() {
                         },
                         onDeleteVideoScan = viewModel::deleteScanVideo,
                         onDownloadVideoScan = viewModel::downloadVideoScan,
+                        onClearSessionQueue = viewModel::clearUploadQueueForSelectedSession,
+                        onRequeueAllVideos = viewModel::requeueAllVideosForSelectedSession,
+                        onRequeueVideo = viewModel::requeueVideo,
                         debugMode = debugMode,
                         selectedOrder = selectedOrder,
                     )
@@ -579,6 +582,9 @@ private fun MaklerTourApp() {
                         scanVideos = state.selectedSessionScanVideos,
                         onDeleteVideoScan = viewModel::deleteScanVideo,
                         onDownloadVideoScan = viewModel::downloadVideoScan,
+                        onClearSessionQueue = viewModel::clearUploadQueueForSelectedSession,
+                        onRequeueAllVideos = viewModel::requeueAllVideosForSelectedSession,
+                        onRequeueVideo = viewModel::requeueVideo,
                         debugMode = debugMode,
                     )
                 }
@@ -591,6 +597,9 @@ private fun MaklerTourApp() {
                         onUpload = viewModel::processUpload,
                         onResetQueueItem = viewModel::resetUploadQueueItem,
                         onDeleteQueueItem = viewModel::deleteUploadQueueItem,
+                        onClearAllQueue = viewModel::clearAllUploadQueue,
+                        onClearCompletedQueue = viewModel::clearCompletedUploadQueue,
+                        onClearFailedQueue = viewModel::clearFailedUploadQueue,
                         uploadError = state.uploadError,
                         onExportDiagnostics = { viewModel.exportDiagnosticJson(debugMode) },
                     )
@@ -1198,6 +1207,9 @@ private fun CameraScreen(
     onCreateSessionRequested: () -> Unit,
     onDeleteVideoScan: (String) -> Unit,
     onDownloadVideoScan: (String) -> Unit,
+    onClearSessionQueue: () -> Unit,
+    onRequeueAllVideos: () -> String,
+    onRequeueVideo: (String) -> EnqueueUploadResult,
     debugMode: Boolean,
     selectedOrder: MobileOrder?,
 ) {
@@ -1636,6 +1648,9 @@ private fun DraftScreen(
     onDeleteConnection: (String) -> Unit,
     onDeleteVideoScan: (String) -> Unit,
     onDownloadVideoScan: (String) -> Unit,
+    onClearSessionQueue: () -> Unit,
+    onRequeueAllVideos: () -> String,
+    onRequeueVideo: (String) -> EnqueueUploadResult,
     debugMode: Boolean,
 ) {
     val unassignedPoints = points.filter { it.roomId == null }
@@ -1666,6 +1681,10 @@ private fun DraftScreen(
 
 
         item {
+            SessionQueueControlsBlock(
+                onClearSessionQueue = onClearSessionQueue,
+                onRequeueAllVideos = onRequeueAllVideos,
+            )
             ProjectControlsBlock(
                 onDownloadOriginals = onDownloadOriginals,
                 onSyncServer = onSyncServer,
@@ -1694,6 +1713,7 @@ private fun DraftScreen(
                 onDelete = onDeleteVideoScan,
                 onDownload = onDownloadVideoScan,
                 onSyncVideo = { onAddToUploadQueue() },
+                onRequeueVideo = onRequeueVideo,
                 debugMode = debugMode,
             )
         }
@@ -1740,15 +1760,56 @@ private fun DraftScreen(
     }
 }
 
+
+@Composable
+private fun SessionQueueControlsBlock(
+    onClearSessionQueue: () -> Unit,
+    onRequeueAllVideos: () -> String,
+) {
+    val context = LocalContext.current
+    var showClearSessionConfirm by remember { mutableStateOf(false) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Button(onClick = { showClearSessionConfirm = true }, modifier = Modifier.weight(1f)) {
+            Text("Очистить очередь этой сессии")
+        }
+        Button(
+            onClick = {
+                val summary = onRequeueAllVideos()
+                Toast.makeText(context, summary, Toast.LENGTH_LONG).show()
+            },
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Переотправить все видео сессии")
+        }
+    }
+    if (showClearSessionConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearSessionConfirm = false },
+            title = { Text("Очистить очередь сессии") },
+            text = { Text("Очистить очередь загрузки для этой сессии? Локальные файлы останутся на устройстве.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onClearSessionQueue()
+                    showClearSessionConfirm = false
+                    Toast.makeText(context, "Очередь очищена", Toast.LENGTH_SHORT).show()
+                }) { Text("Очистить") }
+            },
+            dismissButton = { TextButton(onClick = { showClearSessionConfirm = false }) { Text("Отмена") } },
+        )
+    }
+}
+
 @Composable
 private fun VideoScansBlock(
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     onDelete: (String) -> Unit,
     onDownload: (String) -> Unit,
     onSyncVideo: (String) -> EnqueueUploadResult = { EnqueueUploadResult.Rejected("Сессия не выбрана.") },
+    onRequeueVideo: (String) -> EnqueueUploadResult = onSyncVideo,
     debugMode: Boolean = false,
 ) {
     val context = LocalContext.current
+    var requeueConfirmId by remember { mutableStateOf<String?>(null) }
     Text(stringResource(R.string.video_scans), style = MaterialTheme.typography.titleMedium)
 
     if (scanVideos.isEmpty()) {
@@ -1803,6 +1864,8 @@ private fun VideoScansBlock(
                             Text("downloadState=${scan.downloadState}")
                             Text("uploadState=${scan.uploadState}")
                             Text("serverProcessingState=${scan.serverProcessingState}")
+                            Text("queueItemCount is shown in Queue tab")
+                            Text("sidecars: imu=${scan.localVideoPath?.let { java.io.File(it).resolveSibling(java.io.File(it).nameWithoutExtension + "_imu.jsonl").exists() } ?: false}, camera=${scan.localVideoPath?.let { java.io.File(it).resolveSibling("camera_info.json").exists() } ?: false}, manifest=${scan.localVideoPath?.let { java.io.File(it).resolveSibling("manifest.json").exists() } ?: false}")
                             Text("cameraFileUrl=${scan.cameraFileUrl}")
                             Text("cameraLocalFileUrl=${scan.cameraLocalFileUrl}")
                             Text("localVideoPath=${scan.localVideoPath}")
@@ -1852,6 +1915,14 @@ private fun VideoScansBlock(
                         }
 
                         Button(
+                            onClick = { requeueConfirmId = scan.id },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Переотправить видео")
+                        }
+                        TextButton(onClick = { onRequeueVideo(scan.id) }) { Text("Сбросить статус загрузки") }
+
+                        Button(
                             onClick = { onDelete(scan.id) },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -1861,6 +1932,23 @@ private fun VideoScansBlock(
                 }
             }
         }
+    }
+
+    val confirmId = requeueConfirmId
+    if (confirmId != null) {
+        AlertDialog(
+            onDismissRequest = { requeueConfirmId = null },
+            title = { Text("Переотправить видео") },
+            text = { Text("Переотправить это видео на сервер?") },
+            confirmButton = { TextButton(onClick = {
+                when (val result = onRequeueVideo(confirmId)) {
+                    EnqueueUploadResult.Enqueued, EnqueueUploadResult.RequeuedNewMedia -> Toast.makeText(context, "Видео добавлено в очередь повторно", Toast.LENGTH_SHORT).show()
+                    is EnqueueUploadResult.Rejected -> Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
+                }
+                requeueConfirmId = null
+            }) { Text("Переотправить") } },
+            dismissButton = { TextButton(onClick = { requeueConfirmId = null }) { Text("Отмена") } },
+        )
     }
 }
 
@@ -2079,6 +2167,9 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
         uploadError: String?,
         onResetQueueItem: (String) -> Unit,
         onDeleteQueueItem: (String) -> Unit,
+        onClearAllQueue: () -> Unit,
+        onClearCompletedQueue: () -> Unit,
+        onClearFailedQueue: () -> Unit,
         onExportDiagnostics: () -> String,
     ) {
         val clipboardManager = LocalClipboardManager.current
@@ -2088,6 +2179,7 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
         val errorCount = queue.count { it.status == com.maklertour.domain.UploadStatus.Error }
         val successCount = queue.count { it.status == com.maklertour.domain.UploadStatus.Success }
         var filter by remember { mutableStateOf("Новые") }
+        var showClearAllConfirm by remember { mutableStateOf(false) }
         val filteredQueue = when (filter) {
             "Новые" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Queued }
             "Загружаются" -> queue.filter { it.status == com.maklertour.domain.UploadStatus.Uploading }
@@ -2147,6 +2239,20 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                     }
                 }
             ) { Text(stringResource(R.string.add_to_queue)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { showClearAllConfirm = true }) { Text("Очистить очередь загрузки") }
+                Button(onClick = { onClearCompletedQueue(); Toast.makeText(context, "Очередь очищена", Toast.LENGTH_SHORT).show() }) { Text("Очистить завершённые") }
+                Button(onClick = { onClearFailedQueue(); Toast.makeText(context, "Очередь очищена", Toast.LENGTH_SHORT).show() }) { Text("Очистить ошибки") }
+            }
+            if (showClearAllConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showClearAllConfirm = false },
+                    title = { Text("Очистить очередь загрузки") },
+                    text = { Text("Очистить всю очередь загрузки? Локальные видео и фото не будут удалены.") },
+                    confirmButton = { TextButton(onClick = { onClearAllQueue(); showClearAllConfirm = false; Toast.makeText(context, "Очередь очищена", Toast.LENGTH_SHORT).show() }) { Text("Очистить") } },
+                    dismissButton = { TextButton(onClick = { showClearAllConfirm = false }) { Text("Отмена") } },
+                )
+            }
             Button(
                 onClick = {
                     val diagnostics = onExportDiagnostics()

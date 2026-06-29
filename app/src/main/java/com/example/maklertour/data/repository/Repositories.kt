@@ -102,6 +102,11 @@ interface UploadQueueRepository {
     fun resetInterruptedUploadsOnStartup()
     fun updateServerCaptureSessionId(uploadId: String, serverCaptureSessionId: Long)
     fun delete(uploadId: String)
+    fun clearAllUploadQueue()
+    fun clearCompletedUploadQueue()
+    fun clearFailedUploadQueue()
+    fun clearUploadQueueForSession(sessionId: String)
+    fun clearUploadQueueForVideo(scanVideoId: String)
 }
 
 class InMemorySessionRepository : SessionRepository {
@@ -559,6 +564,11 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
     override fun delete(uploadId: String) {
         _queue.update { items -> items.filterNot { it.id == uploadId } }
     }
+    override fun clearAllUploadQueue() { _queue.value = emptyList() }
+    override fun clearCompletedUploadQueue() { _queue.update { it.filterNot { item -> item.status == UploadStatus.Success } } }
+    override fun clearFailedUploadQueue() { _queue.update { it.filterNot { item -> item.status == UploadStatus.Error } } }
+    override fun clearUploadQueueForSession(sessionId: String) { _queue.update { it.filterNot { item -> item.sessionId == sessionId } } }
+    override fun clearUploadQueueForVideo(scanVideoId: String) = Unit
 }
 
 class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository {
@@ -729,6 +739,11 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
         _queue.update { items -> items.filterNot { it.id == uploadId } }
         persist()
     }
+    override fun clearAllUploadQueue() { _queue.value = emptyList(); persist() }
+    override fun clearCompletedUploadQueue() { _queue.update { it.filterNot { item -> item.status == UploadStatus.Success } }; persist() }
+    override fun clearFailedUploadQueue() { _queue.update { it.filterNot { item -> item.status == UploadStatus.Error } }; persist() }
+    override fun clearUploadQueueForSession(sessionId: String) { _queue.update { it.filterNot { item -> item.sessionId == sessionId } }; persist() }
+    override fun clearUploadQueueForVideo(scanVideoId: String) = Unit
 
     private fun persist() {
         val payload = JSONArray().apply {
@@ -1271,6 +1286,12 @@ class RoomUploadQueueRepository(
             uploadItemDao.deleteById(uploadId)
         }
     }
+
+    override fun clearAllUploadQueue() { scope.launch { uploadItemDao.clearAll() } }
+    override fun clearCompletedUploadQueue() { scope.launch { uploadItemDao.clearCompleted() } }
+    override fun clearFailedUploadQueue() { scope.launch { uploadItemDao.clearFailed() } }
+    override fun clearUploadQueueForSession(sessionId: String) { scope.launch { uploadItemDao.clearForSession(sessionId) } }
+    override fun clearUploadQueueForVideo(scanVideoId: String) = Unit
 }
 
 private fun CapturePointEntity.toDomain(): CapturePoint = CapturePoint(

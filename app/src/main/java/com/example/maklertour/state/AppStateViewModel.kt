@@ -541,7 +541,9 @@ class AppStateViewModel(
         return hasPendingPhoto || hasPendingVideo
     }
 
-    fun enqueueUpload(): EnqueueUploadResult {
+    fun enqueueUpload(): EnqueueUploadResult = enqueueUploadInternal(false)
+
+    private fun enqueueUploadInternal(forceVideoUpload: Boolean): EnqueueUploadResult {
         val session = uiState.value.sessions.firstOrNull { it.id == uiState.value.selectedSessionId }
             ?: return EnqueueUploadResult.Rejected("Сессия не выбрана.")
 
@@ -565,7 +567,7 @@ class AppStateViewModel(
         }
 
         val sessionScanVideos = sessionRepository.scanVideos.value.filter { it.sessionId == session.id }
-        if (!hasPendingUploadMedia(session, sessionScanVideos)) {
+        if (!forceVideoUpload && !hasPendingUploadMedia(session, sessionScanVideos)) {
             return EnqueueUploadResult.Rejected("Нет новых файлов для загрузки. Все фото/видео уже синхронизированы.")
         }
 
@@ -606,6 +608,74 @@ class AppStateViewModel(
 
     fun processUpload(uploadId: String) {
         viewModelScope.launch { processUploadInternal(uploadId) }
+    }
+
+
+    fun clearAllUploadQueue() = uploadQueueRepository.clearAllUploadQueue()
+    fun clearCompletedUploadQueue() = uploadQueueRepository.clearCompletedUploadQueue()
+    fun clearFailedUploadQueue() = uploadQueueRepository.clearFailedUploadQueue()
+
+    fun clearUploadQueueForSelectedSession() {
+        val sessionId = uiState.value.selectedSessionId ?: return
+        uploadQueueRepository.clearUploadQueueForSession(sessionId)
+    }
+
+    fun requeueVideo(scanVideoId: String): EnqueueUploadResult {
+        val scan = sessionRepository.scanVideos.value.firstOrNull { it.id == scanVideoId }
+            ?: return EnqueueUploadResult.Rejected("Видео не найдено.")
+        val file = scan.localVideoPath?.let { File(it) }
+        if (scan.localVideoPath.isNullOrBlank() || file?.exists() != true) {
+            return EnqueueUploadResult.Rejected("Локальный файл видео не найден. Сначала скачайте/снимите видео заново.")
+        }
+        uploadQueueRepository.clearUploadQueueForSession(scan.sessionId)
+        sessionRepository.updateScanVideoUploadState(scan.id, ScanVideoUploadState.LOCAL_ONLY)
+        val result = enqueueUploadForSession(scan.sessionId, forceVideoUpload = true)
+        if (result !is EnqueueUploadResult.Rejected) {
+            sessionRepository.updateScanVideoUploadState(scan.id, ScanVideoUploadState.QUEUED)
+        }
+        return result
+    }
+
+    fun requeueAllVideosForSelectedSession(): String {
+        val sessionId = uiState.value.selectedSessionId ?: return "Сессия не выбрана."
+        val videos = sessionRepository.scanVideos.value.filter {
+            it.sessionId == sessionId && it.captureStatus == ScanVideoCaptureStatus.CAPTURED
+        }
+        var added = 0
+        var skipped = 0
+        var errors = 0
+        uploadQueueRepository.clearUploadQueueForSession(sessionId)
+        videos.forEach { scan ->
+            val file = scan.localVideoPath?.let { File(it) }
+            if (scan.localVideoPath.isNullOrBlank() || file?.exists() != true) {
+                skipped++
+            } else {
+                try {
+                    sessionRepository.updateScanVideoUploadState(scan.id, ScanVideoUploadState.LOCAL_ONLY)
+                    added++
+                } catch (_: Exception) {
+                    errors++
+                }
+            }
+        }
+        if (added > 0) {
+            val result = enqueueUploadForSession(sessionId, forceVideoUpload = true)
+            if (result !is EnqueueUploadResult.Rejected) {
+                videos.filter { scan ->
+                    !scan.localVideoPath.isNullOrBlank() && File(scan.localVideoPath).exists()
+                }.forEach { sessionRepository.updateScanVideoUploadState(it.id, ScanVideoUploadState.QUEUED) }
+            } else {
+                errors++
+            }
+        }
+        return "Добавлено видео: $added, пропущено: $skipped" + if (errors > 0) ", ошибок: $errors" else ""
+    }
+
+    private fun enqueueUploadForSession(sessionId: String, forceVideoUpload: Boolean = false): EnqueueUploadResult {
+        val previousSelected = uiState.value.selectedSessionId
+        return if (previousSelected == sessionId) enqueueUploadInternal(forceVideoUpload) else {
+            EnqueueUploadResult.Rejected("Сессия не выбрана.")
+        }
     }
 
     fun deleteUploadQueueItem(uploadId: String) {

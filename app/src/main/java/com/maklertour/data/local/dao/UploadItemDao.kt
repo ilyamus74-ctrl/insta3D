@@ -31,4 +31,16 @@ interface UploadItemDao {
 
     @Query("DELETE FROM upload_items WHERE id = :id")
     suspend fun deleteById(id: String)
+
+    @Query("DELETE FROM upload_items")
+    suspend fun clearAll()
+
+    @Query("DELETE FROM upload_items WHERE status = 'Success'")
+    suspend fun clearCompleted()
+
+    @Query("DELETE FROM upload_items WHERE status = 'Error'")
+    suspend fun clearFailed()
+
+    @Query("DELETE FROM upload_items WHERE captureSessionId = :sessionId")
+    suspend fun clearForSession(sessionId: String)
 }
