@@ -26,8 +26,9 @@ else {
   if($artifact==='mesh' && $mesh){ $path=remote_dir_art((int)$mesh['remote_job_id']).'/mesh/mesh_final.ply'; $name='pipeline_'.$pipelineRunId.'_final_mesh.ply'; }
   $ctype='application/octet-stream';
 }
+if($path==='' && !empty($run['artifacts_deleted_at'])){fail_art(410,'Artifacts for this old run were cleaned to free disk space. Please rerun reconstruction if needed.');}
 if($path===''){fail_art(404,'Artifact not found');}
-$allowed=array_filter([realpath('/home/makler/web/remote_station/output'), realpath('/home/makler_storage/output')]); $real=realpath($path); if($real===false || !is_file($real)){fail_art(404,'Artifact not found');}
+$allowed=array_filter([realpath('/home/makler/web/remote_station/output'), realpath('/home/makler_storage/output')]); $real=realpath($path); if($real===false || !is_file($real)){ if(!empty($run['artifacts_deleted_at'])){fail_art(410,'Artifacts for this old run were cleaned to free disk space. Please rerun reconstruction if needed.');} fail_art(404,'Artifact not found');}
 $inside=false; foreach($allowed as $base){$base=rtrim($base,DIRECTORY_SEPARATOR); if($real===$base || strpos($real,$base.DIRECTORY_SEPARATOR)===0){$inside=true; break;}} if(!$inside){fail_art(403,'Forbidden path');}
 if(!in_array($artifact,['result','sparse_diagnostics','camera_trajectory','world_alignment','world_alignment_override'],true)){ $pi=ply_info_art($real); if(!$pi['valid']){fail_art(404,'PLY artifact is empty or invalid');} if($artifact==='mesh' && $pi['faces']<=0){fail_art(404,'Mesh artifact has no faces');} }
 if(filesize($real)<=0){fail_art(404,'Artifact is empty');}

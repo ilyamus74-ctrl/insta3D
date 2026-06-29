@@ -245,6 +245,20 @@
                   </div>
                 {/foreach}
               {else}<div class="small text-muted">No phone videos found in storage.</div>{/if}
+              {if $s.sfm_multi_video_available|default:false}
+                <div class="border rounded p-2 mb-3 bg-white">
+                  <div class="fw-semibold mb-1">Собрать 3D по всем видео</div>
+                  <div class="small text-muted mb-2">Reconstruct from all videos: extracts frames into one combined set, then runs one shared sparse COLMAP model before dense/mesh. Standard and FullHD modes are reserved for later.</div>
+                  <form method="post" action="/order.php?id={$order.id}" class="d-inline">
+                    <input type="hidden" name="action" value="start_sfm_multi_video_pipeline">
+                    <input type="hidden" name="capture_session_id" value="{$s.id}">
+                    <input type="hidden" name="pipeline_mode" value="preview">
+                    <button type="submit" class="btn btn-sm btn-primary" onclick="return confirm('Start Preview from all videos?');">Preview from all videos</button>
+                  </form>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Standard from all videos</button>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" disabled>FullHD from all videos</button>
+                </div>
+              {/if}
               <details class="mb-3 border rounded p-2 bg-light-subtle" open>
                 <summary class="fw-semibold">Processing settings</summary>
                 <div class="small text-muted mb-2">Effective settings source: System defaults{if $s.sfm_settings.user_defaults|@count > 0} → User defaults{/if}{if $s.sfm_settings.session_overrides|@count > 0} → Session override{/if}</div>
@@ -407,10 +421,11 @@
                           <div class="small text-muted">Source video: <strong>{$run.source_filename|default:$dv.filename|escape}</strong></div>
                           <div class="small text-muted">Video scan ID: {$run.video_scan_id|default:$dv.video_scan_id|escape} · Pipeline run ID: {$run.id|escape}</div>
                           <div class="small text-muted">Uploaded: {$dv.uploaded_at|escape} · Duration: {$dv.duration_sec|default:0|escape} sec</div>
-                          <div class="small text-muted mb-1">Stage: <span data-pipeline-stage>{$run.stage|escape}</span></div>
+                          <div class="small text-muted mb-1">Stage: <span data-pipeline-stage>{$run.stage|escape}</span>{if $run.artifacts_cleaned|default:false} <span class="badge bg-warning text-dark ms-1">artifacts cleaned</span>{/if}</div>
                           <div class="small mb-2" data-pipeline-message>{$run.display_message|default:$run.message|default:''|escape}</div>
                           <div class="progress mb-2" style="height:18px"><div class="progress-bar {if $run.status=='RUNNING' || $run.status=='QUEUED'}progress-bar-striped progress-bar-animated{/if}" data-pipeline-progress style="width: {$run.progress_percent|default:0}%">{$run.progress_percent|default:0}%</div></div>
                           {if $run.status=='ERROR'}<div class="alert alert-danger small py-2 mt-2 mb-2">{$run.display_message|default:$run.message|escape}</div>{/if}
+                          {if $run.artifacts_cleaned|default:false}<div class="alert alert-warning small py-2 mt-2 mb-2">Artifacts for this old run were cleaned to free disk space. Please rerun reconstruction if needed.</div>{/if}
                           {assign var=art value=$run.artifacts}
                           <div class="border rounded p-2 bg-light-subtle small mt-2">
                             <div class="fw-semibold mb-1">{if $run.status=='ERROR'}Available artifacts{else}Artifacts / Готовые файлы{/if}</div>
@@ -473,7 +488,7 @@
                           <details class="small mt-2"><summary>Run history</summary>
                             <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Run</th><th>Video</th><th>Mode</th><th>Status</th><th>Started</th><th>Finished</th><th>Images</th><th>Dense</th><th>Mesh</th></tr></thead><tbody>
                             {foreach from=$pc.history item=hr}
-                              <tr><td>{$hr.id|escape}</td><td>{$hr.video_scan_id|escape}<br>{$hr.source_filename|escape}</td><td>{$hr.pipeline_mode|escape}</td><td>{$hr.status|escape}</td><td>{$hr.started_at|escape}</td><td>{$hr.finished_at|escape}</td><td>{$hr.registered_images|default:0|escape}</td><td>{$hr.dense_points|default:0|escape}</td><td>{$hr.mesh_vertices|default:0|escape}/{$hr.mesh_faces|default:0|escape}</td></tr>
+                              <tr><td>{$hr.id|escape}</td><td>{$hr.video_scan_id|escape}<br>{$hr.source_filename|escape}</td><td>{$hr.pipeline_mode|escape}</td><td>{$hr.status|escape}{if $hr.artifacts_cleaned|default:false}<br><span class="badge bg-warning text-dark">artifacts cleaned</span>{/if}</td><td>{$hr.started_at|escape}</td><td>{$hr.finished_at|escape}</td><td>{$hr.registered_images|default:0|escape}</td><td>{$hr.dense_points|default:0|escape}</td><td>{$hr.mesh_vertices|default:0|escape}/{$hr.mesh_faces|default:0|escape}</td></tr>
                             {/foreach}
                             </tbody></table></div>
                           </details>

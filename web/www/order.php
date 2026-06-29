@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/bootstrap.php';
 require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
+require_once dirname(__DIR__) . '/remote_station/sfm_cleanup.php';
 require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
 require_once dirname(__DIR__) . '/libs/sfm_debug_public_lib.php';
 auth_require_login();
@@ -254,6 +255,46 @@ function sfm_prepare_pipeline_dir(int $pipelineRunId): string {
   @chmod($log,0664);
   return $dir;
 }
+
+
+function sfm_session_video_scan_ids(mysqli $dbcnx,int $orderId,int $captureSessionId): array {
+  $ids=[]; $roleExpr="''"; foreach(['role','video_role','scan_role'] as $c){ if(column_exists($dbcnx,'video_scans',$c)){ $roleExpr='`'.$c.'`'; break; } }
+  $sql='SELECT id, '.$roleExpr.' AS role FROM video_scans WHERE order_id=? AND session_id=? AND deleted_at IS NULL ORDER BY id ASC';
+  $st=$dbcnx->prepare($sql); if(!$st){ return $ids; }
+  $st->bind_param('ii',$orderId,$captureSessionId); $st->execute(); $rs=$st->get_result(); $hasRoles=false; $hasBackbone=false;
+  while($r=$rs->fetch_assoc()){ $role=strtoupper((string)($r['role'] ?? '')); if($role!==''){$hasRoles=true;} if(in_array($role,['BACKBONE','MAIN'],true)){$hasBackbone=true;} $ids[]=(int)$r['id']; }
+  $st->close(); if($hasRoles && !$hasBackbone){ throw new RuntimeException('Multi-video reconstruction requires at least one BACKBONE/main video.'); }
+  return array_values(array_filter($ids,fn($v)=>$v>0));
+}
+function start_sfm_multi_video_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId,string $mode,int $startedByUserId=0): int {
+  if($mode!=='preview'){ throw new RuntimeException('Multi-video reconstruction currently supports Preview only; Standard and FullHD controls are reserved for later.'); }
+  $ids=sfm_session_video_scan_ids($dbcnx,$orderId,$captureSessionId); if(count($ids)<2){ throw new RuntimeException('Multi-video reconstruction requires at least two videos.'); }
+  $pid=start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,$ids[0],$mode,$startedByUserId);
+  $params=['multi_video'=>true,'selected_video_scan_ids'=>$ids,'frame_namespace'=>'video_<video_scan_id>_frame_<n>','matching_strategy'=>['within_video'=>'sequential','cross_video'=>'sampled_keyframes','loop_or_vocab_tree'=>'future_optional_flag']];
+  $existing=[]; $st=$dbcnx->prepare('SELECT parameters_json FROM sfm_pipeline_runs WHERE id=?'); if($st){$st->bind_param('i',$pid);$st->execute();$row=$st->get_result()->fetch_assoc();$st->close(); $decoded=json_decode((string)($row['parameters_json'] ?? '{}'),true); if(is_array($decoded)){$existing=$decoded;}}
+  $json=json_encode($existing + $params,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+  $st=$dbcnx->prepare("UPDATE sfm_pipeline_runs SET video_scan_id=0, run_scope='MULTI_VIDEO', parameters_json=? WHERE id=?"); if($st){$st->bind_param('si',$json,$pid);$st->execute();$st->close();}
+  pipeline_log($pid,'INFO','PIPELINE','Multi-video preview selected video_scan_ids='.implode(',',$ids).'; frames must be combined before shared COLMAP sparse reconstruction.');
+  return $pid;
+}
+
+function sfm_cleanup_older_runs_for_tuple(mysqli $dbcnx,int $currentRunId,int $captureSessionId,int $videoScanId,string $mode): void {
+  $active=array_flip(SFM_CLEANUP_ACTIVE_STATUSES);
+  $st=$dbcnx->prepare('SELECT id,status FROM sfm_pipeline_runs WHERE capture_session_id=? AND video_scan_id=? AND pipeline_mode=? AND id<>? ORDER BY id ASC');
+  if(!$st){ pipeline_log($currentRunId,'WARNING','CLEANUP','Could not prepare old-run cleanup query: '.$dbcnx->error); return; }
+  $st->bind_param('iisi',$captureSessionId,$videoScanId,$mode,$currentRunId); $st->execute(); $rs=$st->get_result(); $runs=[];
+  while($r=$rs->fetch_assoc()){ if(!isset($active[strtoupper((string)$r['status'])])){ $runs[]=(int)$r['id']; } }
+  $st->close();
+  foreach($runs as $oldId){
+    $res=sfm_cleanup_pipeline_run_artifacts($dbcnx,$oldId,['delete'=>true,'include_logs'=>false,'force_recent'=>true]);
+    $msg='old pipeline_run_id='.$oldId.' cleanup freed_bytes='.(int)($res['freed_bytes'] ?? 0);
+    if(!empty($res['errors'])){ pipeline_log($currentRunId,'WARNING','CLEANUP',$msg.' errors='.json_encode($res['errors'],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)); }
+    else { pipeline_log($currentRunId,'INFO','CLEANUP',$msg); }
+  }
+  $free=@disk_free_space(sfm_pipeline_output_dir($currentRunId));
+  if($free!==false && $free < 1073741824){ throw new RuntimeException('Not enough disk space remains after cleanup to start reconstruction (less than 1 GiB free).'); }
+}
+
 function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId,?int $videoScanId,string $mode,int $startedByUserId=0,?int $previousPipelineRunId=null,?array $sameSettingsSnapshot=null): int {
   $preset=sfm_pipeline_preset($mode);
   $videoScanId=(int)($videoScanId ?: 0);
@@ -277,6 +318,7 @@ function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId
   $remoteDir=sfm_pipeline_remote_output_dir($pipelineRunId); if(!is_dir($remoteDir)){ @mkdir($remoteDir,0775,true); }
   $st=$dbcnx->prepare('UPDATE sfm_pipeline_runs SET unified_log_path=? WHERE id=?'); if($st){$st->bind_param('si',$logPath,$pipelineRunId);$st->execute();$st->close();}
   pipeline_log($pipelineRunId,'INFO','PIPELINE',$preset['label'].($previousPipelineRunId?' restarted from previous pipeline_run_id='.$previousPipelineRunId:' started'));
+  sfm_cleanup_older_runs_for_tuple($dbcnx,$pipelineRunId,$captureSessionId,$videoScanId,$mode);
   pipeline_log($pipelineRunId,'INFO','PIPELINE','Source video_scan_id='.(int)$sourceVideo['id']);
   pipeline_log($pipelineRunId,'INFO','PIPELINE','Source filename='.(string)$sourceVideo['filename']);
   pipeline_log($pipelineRunId,'INFO','PIPELINE','Source path='.$videoPath);
@@ -429,6 +471,15 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
    }catch(Throwable $e){ $error=$e->getMessage(); }
  }
 
+
+ if($action==='start_sfm_multi_video_pipeline' && $canDeleteMedia){
+   try{
+     $captureSessionId=(int)($_POST['capture_session_id']??0);
+     $mode=(string)($_POST['pipeline_mode']??'preview');
+     start_sfm_multi_video_pipeline_run($dbcnx,$orderId,$captureSessionId,$mode,$userId);
+     header('Location: /order.php?id='.$orderId.'&sfm_job_queued=1'); exit;
+   }catch(Throwable $e){ $error=$e->getMessage(); }
+ }
 
  if($action==='start_sfm_pipeline' && $canDeleteMedia){
    try{
@@ -718,7 +769,7 @@ if($stmt){
 
 $sfmPipelineRunsBySession=[];$sfmPipelineRunsBySessionVideoMode=[];$sfmLegacyRunsBySession=[];
 $stmt=$dbcnx->prepare("SELECT r.*, vs.filename AS source_filename, vs.created_at AS source_created_at, vs.duration_sec AS source_duration_sec, vs.size_bytes AS source_size_bytes, vs.deleted_at AS source_deleted_at FROM sfm_pipeline_runs r LEFT JOIN video_scans vs ON vs.id=r.video_scan_id WHERE r.order_id=? ORDER BY r.created_at DESC, r.id DESC");
-if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($r=$rs->fetch_assoc()){ $sid=(int)$r['capture_session_id']; $vid=(int)($r['video_scan_id'] ?? 0); $mode=(string)($r['pipeline_mode'] ?? ''); if(!isset($sfmPipelineRunsBySession[$sid])){$sfmPipelineRunsBySession[$sid]=[];} $r['log_url']='/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id']; $r['download_log_url']=$r['log_url'].'&download=1'; $r['point_cloud_url']=$r['output_point_cloud_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=point_cloud'):''; $r['mesh_url']=$r['output_mesh_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=mesh'):''; $r['display_message']=strtoupper((string)($r['status'] ?? ''))==='ERROR'?sfm_pipeline_error_message($r):(string)($r['message'] ?? ''); $r['source_filename']=$r['source_filename'] ?: (sfm_json_array((string)($r['parameters_json'] ?? '{}'))['source_video']['filename'] ?? 'Source video unknown'); $r['source_duration_sec']=(float)($r['source_duration_sec'] ?? (sfm_json_array((string)($r['parameters_json'] ?? '{}'))['source_video']['duration_sec'] ?? 0)); $r['source_size_human']=bytes_human((float)($r['source_size_bytes'] ?? 0)); $sfmPipelineRunsBySession[$sid][]=$r; if($vid>0 && $mode!==''){ $sfmPipelineRunsBySessionVideoMode[$sid][$vid][$mode][]=$r; } else { $sfmLegacyRunsBySession[$sid][]=$r; } } $stmt->close(); }
+if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($r=$rs->fetch_assoc()){ $sid=(int)$r['capture_session_id']; $vid=(int)($r['video_scan_id'] ?? 0); $mode=(string)($r['pipeline_mode'] ?? ''); if(!isset($sfmPipelineRunsBySession[$sid])){$sfmPipelineRunsBySession[$sid]=[];} $r['log_url']='/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id']; $r['download_log_url']=$r['log_url'].'&download=1'; $r['point_cloud_url']=$r['output_point_cloud_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=point_cloud'):''; $r['mesh_url']=$r['output_mesh_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=mesh'):''; $r['display_message']=strtoupper((string)($r['status'] ?? ''))==='ERROR'?sfm_pipeline_error_message($r):(string)($r['message'] ?? ''); $r['source_filename']=$r['source_filename'] ?: (sfm_json_array((string)($r['parameters_json'] ?? '{}'))['source_video']['filename'] ?? 'Source video unknown'); $r['source_duration_sec']=(float)($r['source_duration_sec'] ?? (sfm_json_array((string)($r['parameters_json'] ?? '{}'))['source_video']['duration_sec'] ?? 0)); $r['source_size_human']=bytes_human((float)($r['source_size_bytes'] ?? 0)); $r['artifacts_cleaned']=!empty($r['artifacts_deleted_at']); if($r['artifacts_cleaned'] && trim((string)($r['display_message'] ?? ''))===''){ $r['display_message']='Artifacts for this old run were cleaned to free disk space. Please rerun reconstruction if needed.'; } $sfmPipelineRunsBySession[$sid][]=$r; if($vid>0 && $mode!==''){ $sfmPipelineRunsBySessionVideoMode[$sid][$vid][$mode][]=$r; } else { $sfmLegacyRunsBySession[$sid][]=$r; } } $stmt->close(); }
 
 $sfmJobsBySession=[];
 $stmt=$dbcnx->prepare("SELECT * FROM sfm_remote_jobs WHERE order_id=? ORDER BY created_at DESC, id DESC");
@@ -775,6 +826,7 @@ foreach($captureSessions as $idx=>$session){
   foreach($diskVideos as $dvIdx=>$dv){ $vid=(int)($dv['video_scan_id'] ?? 0); $cards=[]; foreach(sfm_pipeline_modes() as $mode){ $preset=sfm_pipeline_preset($mode); $history=$vid>0?($sfmPipelineRunsBySessionVideoMode[(int)$session['id']][$vid][$mode] ?? []):[]; $latest=$history[0] ?? null; if($latest){ $latest['artifacts']=sfm_build_pipeline_artifacts($latest,$sessionSfmJobs); $rp=sfm_json_array((string)($latest['parameters_json'] ?? '{}')); $latest['ui_parameters']=isset($rp['mode_parameters'])?$rp['mode_parameters']:sfm_mode_parameters(sfm_merge_settings(sfm_system_defaults(),[],[],$rp),(string)$latest['pipeline_mode']); $ef=(int)($latest['extracted_frames'] ?? 0); $ri=(int)($latest['registered_images'] ?? 0); $latest['ui_registration_ratio']=$ef>0?round($ri*100/$ef,1):(float)($latest['registration_ratio'] ?? 0); } $cards[$mode]=['mode'=>$mode,'preset'=>$preset,'run'=>$latest,'history'=>$history]; } $diskVideos[$dvIdx]['sfm_pipeline_cards']=$cards; }
   $captureSessions[$idx]['sfm_disk_videos']=$diskVideos;
   $captureSessions[$idx]['sfm_legacy_pipeline_runs']=$sfmLegacyRunsBySession[(int)$session['id']] ?? [];
+  $captureSessions[$idx]['sfm_multi_video_available']=count(array_filter($diskVideos,fn($v)=>empty($v['is_orphan']) && (int)($v['video_scan_id'] ?? 0)>0))>1;
   $sys=sfm_system_defaults(); $usr=sfm_load_user_settings($dbcnx,$userId); $ses=sfm_load_session_settings($dbcnx,(int)$session['id'],$userId);
   $captureSessions[$idx]['sfm_video_metadata']=['duration_sec'=>0,'fps'=>0];
   $captureSessions[$idx]['sfm_settings']=['system_defaults'=>$sys,'user_defaults'=>$usr,'session_overrides'=>$ses,'quality_profiles'=>sfm_quality_profiles(),'effective_settings'=>sfm_merge_settings($sys,$usr,$ses,[]),'api_url'=>'/api/sfm_settings.php?capture_session_id='.(int)$session['id']];
