@@ -31,6 +31,7 @@ import com.maklertour.domain.VideoScanUiState
 import com.maklertour.domain.ServerUploadState
 import com.maklertour.domain.ScanVideoUploadState
 import com.maklertour.domain.ScanSource
+import com.maklertour.domain.ScanVideoRole
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
 import com.example.maklertour.auth.MobileOrder
 import com.example.maklertour.auth.MobileUploadApi
@@ -279,11 +280,16 @@ class AppStateViewModel(
             Log.d("AppStateViewModel", "startVideoScan(): sessionId=$sessionId, scanName=$scanName")
 
             val now = java.time.Instant.now()
+            val existingVideos = uiState.value.selectedSessionScanVideos.filter { it.sessionId == sessionId }
+            val nextSequence = existingVideos.size + 1
+            val role = if (existingVideos.none { it.captureStatus == ScanVideoCaptureStatus.CAPTURED }) ScanVideoRole.BACKBONE else ScanVideoRole.DETAIL
+            val effectiveName = if (scanName.isBlank()) defaultVideoScanName(role, nextSequence) else scanName
             val scan = ScanVideo(
                 sessionId = sessionId,
-                name = scanName,
-                sequenceNumber = uiState.value.selectedSessionScanVideos.count { it.sessionId == sessionId } + 1,
+                name = effectiveName,
+                sequenceNumber = nextSequence,
                 captureStatus = ScanVideoCaptureStatus.RECORDING,
+                role = role,
                 createdAt = now,
                 updatedAt = now,
             )
@@ -296,7 +302,7 @@ class AppStateViewModel(
             videoScanUiState.value = VideoScanUiState.SWITCHING_MODE
 
             try {
-                val result = cameraProvider.startVideoScan(scanName)
+                val result = cameraProvider.startVideoScan(scan.name)
                 if (result.captureStatus == ScanVideoCaptureStatus.RECORDING) {
                     Log.d("AppStateViewModel", "startVideoScan(): recording confirmed, scanId=${scan.id}")
 
@@ -345,14 +351,19 @@ class AppStateViewModel(
 
         viewModelScope.launch {
             val now = java.time.Instant.now()
+            val existingVideos = uiState.value.selectedSessionScanVideos.filter { it.sessionId == sessionId }
+            val nextSequence = existingVideos.size + 1
+            val role = if (existingVideos.none { it.captureStatus == ScanVideoCaptureStatus.CAPTURED }) ScanVideoRole.BACKBONE else ScanVideoRole.DETAIL
+            val effectiveName = if (scanName.isBlank() || scanName == "Scan" || scanName.startsWith("Scan ")) defaultVideoScanName(role, nextSequence) else scanName
             val scan = ScanVideo(
                 sessionId = sessionId,
-                name = scanName,
-                sequenceNumber = uiState.value.selectedSessionScanVideos.count { it.sessionId == sessionId } + 1,
+                name = effectiveName,
+                sequenceNumber = nextSequence,
                 captureStatus = ScanVideoCaptureStatus.RECORDING,
                 downloadState = ScanVideoDownloadState.DOWNLOADED,
                 uploadState = ScanVideoUploadState.LOCAL_ONLY,
                 source = ScanSource.PHONE_CAMERA,
+                role = role,
                 createdAt = now,
                 updatedAt = now,
             )
@@ -402,7 +413,7 @@ class AppStateViewModel(
                     cameraProvider.stopVideoScan()
                 }
             } catch (e: Throwable) {
-                ScanVideo(sessionId = current.sessionId, name = current.name, sequenceNumber = current.sequenceNumber, captureStatus = ScanVideoCaptureStatus.FAILED, notes = e.message ?: "stopVideoScan failed")
+                ScanVideo(sessionId = current.sessionId, name = current.name, sequenceNumber = current.sequenceNumber, role = current.role, captureStatus = ScanVideoCaptureStatus.FAILED, notes = e.message ?: "stopVideoScan failed")
             }
             Log.d("AppStateViewModel", "stopVideoScan(): stop result raw=${result.notes}")
             Log.d("AppStateViewModel", "stopVideoScan(): parsed video fileUrl=${result.cameraFileUrl}, localFileUrl=${result.cameraLocalFileUrl}")
@@ -915,4 +926,9 @@ class AppStateViewModel(
             put("debugMode", debugMode)
         }.toString(2)
     }
+}
+
+private fun defaultVideoScanName(role: ScanVideoRole, sequenceNumber: Int): String = when (role) {
+    ScanVideoRole.BACKBONE, ScanVideoRole.MAIN_PASS -> "Основной проход"
+    ScanVideoRole.DETAIL -> "Детали $sequenceNumber"
 }

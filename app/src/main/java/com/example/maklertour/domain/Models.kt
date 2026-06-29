@@ -127,12 +127,14 @@ data class ScanVideo(
     val uploadState: ScanVideoUploadState = ScanVideoUploadState.LOCAL_ONLY,
     val serverProcessingState: ScanVideoProcessingState = ScanVideoProcessingState.NOT_STARTED,
     val source: ScanSource = ScanSource.INSTA360,
+    val role: ScanVideoRole? = null,
     val createdAt: Instant = Instant.now(),
     val updatedAt: Instant = Instant.now(),
     val notes: String? = null,
 )
 
 enum class ScanVideoCaptureStatus { DRAFT, RECORDING, CAPTURED, FAILED }
+enum class ScanVideoRole { BACKBONE, MAIN_PASS, DETAIL }
 enum class VideoScanUiState { IDLE, SWITCHING_MODE, RECORDING, STOPPING, CAPTURED, FAILED }
 enum class ScanVideoDownloadState { CAMERA_ONLY, DOWNLOADING, DOWNLOADED, DOWNLOAD_ERROR }
 enum class ScanVideoUploadState { LOCAL_ONLY, QUEUED, UPLOADING, UPLOADED, CONFIRMED, UPLOAD_ERROR }

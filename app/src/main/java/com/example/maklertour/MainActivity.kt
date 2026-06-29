@@ -7,6 +7,10 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.provider.Settings
 import android.os.Bundle
 import android.widget.Toast
@@ -51,6 +55,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -67,6 +72,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -104,7 +110,6 @@ import com.maklertour.i18n.withAppLanguage
 import com.maklertour.ui.components.AppSectionCard
 import com.maklertour.ui.components.AppStorageStatusRow
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.DisposableEffect
 import com.example.maklertour.auth.AuthStorage
 import com.example.maklertour.auth.LoginResult
 import com.example.maklertour.auth.MobileAuthApi
@@ -1391,10 +1396,15 @@ private fun PhoneCameraScanScreen(
     var elapsedSec by remember { mutableStateOf(0L) }
     var showCalibrationDialog by remember { mutableStateOf(false) }
     var showCameraSettingsDialog by remember { mutableStateOf(false) }
+    var guideConfirmed by remember { mutableStateOf(false) }
     var startedInThisScreen by remember { mutableStateOf(false) }
     var lastShownCapturedScanId by remember { mutableStateOf<String?>(null) }
     val debugMode = remember(context) { DebugPreferences.get(context) }
+    val nextRole = remember(scanVideos) { nextVideoScanRole(scanVideos) }
+    val isBackbone = nextRole != com.maklertour.domain.ScanVideoRole.DETAIL
     val latestPhoneScan = scanVideos.filter { it.source == com.maklertour.domain.ScanSource.PHONE_CAMERA }.maxByOrNull { it.updatedAt }
+
+    val levelState = rememberDeviceLevelState(enabled = isBackbone)
     val capturedPhoneScan = latestPhoneScan?.takeIf {
         startedInThisScreen &&
             videoScanUiState == VideoScanUiState.CAPTURED &&
@@ -1484,10 +1494,18 @@ private fun PhoneCameraScanScreen(
                     }
                 }
                 bindError?.takeIf { hasCameraPermission }?.let { Text(it, color = Color(0xFFFFB4AB), modifier = Modifier.padding(16.dp)) }
+                    if (isBackbone) LevelOverlay(levelState)
             }
 
             Column(modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.85f)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (videoScanUiState == VideoScanUiState.RECORDING) Text("Таймер: ${elapsedSec}s", color = Color.White)
+                if (videoScanUiState == VideoScanUiState.RECORDING) {
+                    Text("Таймер: ${elapsedSec}s", color = Color.White)
+                    if (isBackbone) {
+                        Text(if (levelState.isLevel) "Горизонт ровный" else "Выровняйте телефон", color = if (levelState.isLevel) Color(0xFF7DFF9B) else Color(0xFFFFD166))
+                        Text("Идите по периметру одним кругом", color = Color.White)
+                    }
+                }
+                VideoRoleGuide(nextRole, guideConfirmed, onConfirm = { guideConfirmed = true })
                 Button(
                     onClick = {
                         if (isRecordingScanVideo) {
@@ -1495,10 +1513,10 @@ private fun PhoneCameraScanScreen(
                         } else {
                             startedInThisScreen = true
                             lastShownCapturedScanId = null
-                            onStartPhoneVideoScan(scanName.trim())
+                            onStartPhoneVideoScan(defaultVideoScanNameForRole(nextRole, scanVideos.size + 1, scanName.trim()))
                         }
                     },
-                    enabled = hasCameraPermission && previewBound && scanName.isNotBlank() && videoScanUiState !in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.STOPPING),
+                    enabled = hasCameraPermission && previewBound && (!isBackbone || guideConfirmed) && videoScanUiState !in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.STOPPING),
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = if (isRecordingScanVideo) Color.DarkGray else Color.Red),
                     modifier = Modifier.size(76.dp),
@@ -1658,6 +1676,10 @@ private fun DraftScreen(
         }
 
         item {
+            VideoBackboneStatusCard(scanVideos)
+        }
+
+        item {
             VideoScansBlock(
                 scanVideos = scanVideos,
                 onDelete = onDeleteVideoScan,
@@ -1731,6 +1753,12 @@ private fun VideoScansBlock(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(scan.name, style = MaterialTheme.typography.titleSmall)
+                        Text(videoRoleLabel(effectiveVideoScanRole(scanVideos, scan)))
+                        if (scan.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED && effectiveVideoScanRole(scanVideos, scan) != com.maklertour.domain.ScanVideoRole.DETAIL) {
+                            Text("Подсказка: ровный периметр помогает SfM-реконструкции")
+                        } else if (scan.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED) {
+                            Text("Подсказка: сохраняйте перекрытие с основным проходом")
+                        }
                         if (scan.source == com.maklertour.domain.ScanSource.PHONE_CAMERA) {
                             Text("Phone video")
                         }
@@ -2274,3 +2302,107 @@ private fun hasValidatedInternet(context: android.content.Context): Boolean {
                             caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
                     )
     }
+
+private data class DeviceLevelState(val pitchDeg: Float = 0f, val rollDeg: Float = 0f) {
+    val isLevel: Boolean get() = kotlin.math.abs(pitchDeg) <= 10f && kotlin.math.abs(rollDeg) <= 10f
+}
+
+@Composable
+private fun rememberDeviceLevelState(enabled: Boolean): DeviceLevelState {
+    val context = LocalContext.current
+    var state by remember { mutableStateOf(DeviceLevelState()) }
+    DisposableEffect(context, enabled) {
+        if (!enabled) return@DisposableEffect onDispose { }
+        val sensorManager = context.getSystemService(SensorManager::class.java)
+        val sensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val listener = object : SensorEventListener {
+            private val rotation = FloatArray(9)
+            private val orientation = FloatArray(3)
+            override fun onSensorChanged(event: SensorEvent) {
+                if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+                    SensorManager.getRotationMatrixFromVector(rotation, event.values)
+                    SensorManager.getOrientation(rotation, orientation)
+                    state = DeviceLevelState(
+                        pitchDeg = Math.toDegrees(orientation[1].toDouble()).toFloat(),
+                        rollDeg = Math.toDegrees(orientation[2].toDouble()).toFloat(),
+                    )
+                } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                    val x = event.values.getOrNull(0) ?: 0f
+                    val y = event.values.getOrNull(1) ?: 0f
+                    val z = event.values.getOrNull(2) ?: 9.81f
+                    state = DeviceLevelState(
+                        pitchDeg = Math.toDegrees(kotlin.math.atan2((-y).toDouble(), z.toDouble())).toFloat(),
+                        rollDeg = Math.toDegrees(kotlin.math.atan2(x.toDouble(), z.toDouble())).toFloat(),
+                    )
+                }
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+        sensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI) }
+        onDispose { sensorManager?.unregisterListener(listener) }
+    }
+    return state
+}
+
+@Composable
+private fun LevelOverlay(level: DeviceLevelState) {
+    val color = if (level.isLevel) Color(0xFF43D17A) else Color(0xFFFFC857)
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.35f)))
+        Box(modifier = Modifier.fillMaxWidth(0.75f).height(5.dp).graphicsLayer { rotationZ = -level.rollDeg }.background(color))
+        Text("Pitch ${"%.1f".format(level.pitchDeg)}° / Roll ${"%.1f".format(level.rollDeg)}°", color = Color.White)
+        if (!level.isLevel) Text("Выровняйте телефон", color = Color(0xFFFFD166), style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun VideoRoleGuide(role: com.maklertour.domain.ScanVideoRole, confirmed: Boolean, onConfirm: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (role == com.maklertour.domain.ScanVideoRole.DETAIL) {
+                Text("Дополнительное видео", style = MaterialTheme.typography.titleMedium)
+                Text("Можно снимать углы, пол, потолок, мебель и сложные зоны. Главное — сохраняйте перекрытие с основным проходом.")
+            } else {
+                Text("Первое видео: основной проход", style = MaterialTheme.typography.titleMedium)
+                Text("Держите телефон ровно. Пройдите периметр одним плавным кругом. Не делайте резких поворотов.")
+                listOf("Телефон ровно", "Идём медленно", "Один круг по периметру", "Держим перекрытие кадров", "Не снимаем слишком близко к стенам").forEach { Text("• $it") }
+                Button(onClick = onConfirm, enabled = !confirmed) { Text(if (confirmed) "Готово" else "Понятно, начать основной проход") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VideoBackboneStatusCard(scanVideos: List<com.maklertour.domain.ScanVideo>) {
+    val captured = scanVideos.filter { it.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED }
+    val hasBackbone = captured.any { effectiveVideoScanRole(scanVideos, it) != com.maklertour.domain.ScanVideoRole.DETAIL }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(if (hasBackbone) "Основной проход есть. Можно добавлять дополнительные видео с деталями." else "Нет основного прохода. Сначала снимите одно ровное видео по периметру.")
+        }
+    }
+}
+
+private fun nextVideoScanRole(scanVideos: List<com.maklertour.domain.ScanVideo>): com.maklertour.domain.ScanVideoRole =
+    if (scanVideos.any { it.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED && effectiveVideoScanRole(scanVideos, it) != com.maklertour.domain.ScanVideoRole.DETAIL }) com.maklertour.domain.ScanVideoRole.DETAIL
+    else if (scanVideos.any { it.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED }) com.maklertour.domain.ScanVideoRole.DETAIL
+    else com.maklertour.domain.ScanVideoRole.BACKBONE
+
+private fun effectiveVideoScanRole(all: List<com.maklertour.domain.ScanVideo>, scan: com.maklertour.domain.ScanVideo): com.maklertour.domain.ScanVideoRole {
+    scan.role?.let { return if (it == com.maklertour.domain.ScanVideoRole.MAIN_PASS) com.maklertour.domain.ScanVideoRole.BACKBONE else it }
+    val captured = all.filter { it.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED }.sortedWith(compareBy({ it.sequenceNumber }, { it.createdAt }))
+    return if (captured.firstOrNull()?.id == scan.id) com.maklertour.domain.ScanVideoRole.BACKBONE else com.maklertour.domain.ScanVideoRole.DETAIL
+}
+
+private fun defaultVideoScanNameForRole(role: com.maklertour.domain.ScanVideoRole, sequenceNumber: Int, manualName: String = ""): String {
+    if (manualName.isNotBlank() && manualName != "Scan" && !manualName.startsWith("Scan ")) return manualName
+    return if (role == com.maklertour.domain.ScanVideoRole.DETAIL) "Детали $sequenceNumber" else "Основной проход"
+}
+
+private fun videoRoleLabel(role: com.maklertour.domain.ScanVideoRole): String =
+    if (role == com.maklertour.domain.ScanVideoRole.DETAIL) "Детали" else "Основной проход"
