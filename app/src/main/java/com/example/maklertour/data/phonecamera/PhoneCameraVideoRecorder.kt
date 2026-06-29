@@ -32,18 +32,23 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var selectedVideoInfo: SelectedPhoneVideoInfo? = null
     private var selectedLensOption: PhoneCameraLensOption? = null
 
-    suspend fun bindPreview(previewView: PreviewView) {
-        Log.d(TAG, "bindPreview(): start")
+    suspend fun bindPreview(previewView: PreviewView, cameraId: String?) {
+        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId")
         val cameraProvider = getCameraProvider()
         val preview = Preview.Builder().build()
         val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
-        val (selector, lens) = lensRepository.selectedCameraSelector()
-        selectedLensOption = lens
+        val options = lensRepository.listBackCameras()
+        val requestedLens = cameraId?.let { id -> options.firstOrNull { it.cameraId == id } }
+        val fallbackLens = lensRepository.selectedOrDefault().first
+        val lens = requestedLens ?: fallbackLens
+        val selector = lensRepository.cameraSelectorFor(lens.cameraId)
+        Log.d(TAG, "Phone camera bind: selected_camera_id=${lens.cameraId} lens=${lens.lensLabel}")
         selectedVideoInfo = SelectedPhoneVideoInfo(width = 1280, height = 720, fps = null)
         val preparedVideoCapture = VideoCapture.withOutput(recorder)
         preview.setSurfaceProvider(previewView.surfaceProvider)
-        cameraProvider.unbindAll()
+        val previousLens = selectedLensOption
         try {
+            cameraProvider.unbindAll()
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 selector,
@@ -51,9 +56,43 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 preparedVideoCapture,
             )
             videoCapture = preparedVideoCapture
+            selectedLensOption = lens
         } catch (e: Throwable) {
-            videoCapture = null
-            Log.e(TAG, "bindPreview(): preview bind failed", e)
+            Log.e(TAG, "bindPreview(): selected camera bind failed selected_camera_id=${lens.cameraId}", e)
+            val recoveryLens = previousLens ?: fallbackLens.takeIf { it.cameraId != lens.cameraId }
+            if (previousLens != null && previousLens.cameraId != lens.cameraId) {
+                runCatching {
+                    val previousPreview = Preview.Builder().build()
+                    val previousRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
+                    val previousVideoCapture = VideoCapture.withOutput(previousRecorder)
+                    previousPreview.setSurfaceProvider(previewView.surfaceProvider)
+                    cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        lensRepository.cameraSelectorFor(previousLens.cameraId),
+                        previousPreview,
+                        previousVideoCapture,
+                    )
+                    videoCapture = previousVideoCapture
+                    selectedLensOption = previousLens
+                    Log.w(TAG, "bindPreview(): kept previous working camera_id=${previousLens.cameraId}")
+                }
+            } else if (recoveryLens != null) {
+                runCatching {
+                    val fallbackPreview = Preview.Builder().build()
+                    val fallbackRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
+                    val fallbackVideoCapture = VideoCapture.withOutput(fallbackRecorder)
+                    fallbackPreview.setSurfaceProvider(previewView.surfaceProvider)
+                    cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        lensRepository.cameraSelectorFor(recoveryLens.cameraId),
+                        fallbackPreview,
+                        fallbackVideoCapture,
+                    )
+                    videoCapture = fallbackVideoCapture
+                    selectedLensOption = recoveryLens
+                    Log.w(TAG, "bindPreview(): selected camera failed; fallback camera_id=${recoveryLens.cameraId} lens=${recoveryLens.lensLabel}")
+                }
+            }
             throw IllegalStateException("preview bind failed: ${e.message}", e)
         }
         Log.d(TAG, "bindPreview(): success")
@@ -65,9 +104,10 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     suspend fun startRecording(sessionId: String, scanId: String): File {
         val preparedVideoCapture = videoCapture ?: error("Camera preview is not bound")
+        val lens = selectedLensOption ?: lensRepository.selectedOrDefault().first
         val dir = File(context.filesDir, "sessions/$sessionId/phone_scans/$scanId").apply { mkdirs() }
         val file = File(dir, "video.mp4")
-        Log.d(TAG, "startRecording(): output path=${file.absolutePath}")
+        Log.d(TAG, "startRecording(): output path=${file.absolutePath} camera_id=${lens.cameraId} lens=${lens.lensLabel}")
         val deferred = CompletableDeferred<PhoneVideoRecordingResult>()
         finalizeDeferred = deferred
         startedAtMs = System.currentTimeMillis()
@@ -84,6 +124,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                         } else if (!file.exists() || size <= 0L) {
                             deferred.completeExceptionally(IllegalStateException("output file missing or size == 0"))
                         } else {
+                            Log.d(TAG, "Captured phone video with camera_id=${lens.cameraId} lens=${lens.lensLabel}")
                             deferred.complete(PhoneVideoRecordingResult(file.absolutePath, durationMs / 1000L, size))
                         }
                     }

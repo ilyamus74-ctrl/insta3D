@@ -325,7 +325,7 @@ class AppStateViewModel(
         }
     }
 
-    fun bindPhoneCameraPreview(previewView: PreviewView, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+    fun bindPhoneCameraPreview(previewView: PreviewView, cameraId: String?, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
         val provider = phoneCameraScanProvider
         if (provider == null) {
             onResult(false, "camera provider unavailable")
@@ -333,7 +333,7 @@ class AppStateViewModel(
         }
         viewModelScope.launch {
             try {
-                provider.bindPreview(previewView)
+                provider.bindPreview(previewView, cameraId)
                 onResult(true, null)
             } catch (e: Throwable) {
                 Log.e("AppStateViewModel", "bindPhoneCameraPreview() failed", e)

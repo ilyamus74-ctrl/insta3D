@@ -1207,7 +1207,7 @@ private fun CameraScreen(
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     onStartVideoScan: (String) -> Unit,
     onStartPhoneVideoScan: (String) -> Unit,
-    onBindPhoneCameraPreview: (PreviewView, (Boolean, String?) -> Unit) -> Unit,
+    onBindPhoneCameraPreview: (PreviewView, String?, (Boolean, String?) -> Unit) -> Unit,
     onStopVideoScan: () -> Unit,
     onCreateSessionRequested: () -> Unit,
     onDeleteVideoScan: (String) -> Unit,
@@ -1400,7 +1400,7 @@ private fun PhoneCameraScanScreen(
     isRecordingScanVideo: Boolean,
     videoScanUiState: VideoScanUiState,
     scanVideos: List<com.maklertour.domain.ScanVideo>,
-    onBindPreview: (PreviewView, (Boolean, String?) -> Unit) -> Unit,
+    onBindPreview: (PreviewView, String?, (Boolean, String?) -> Unit) -> Unit,
     onStartPhoneVideoScan: (String) -> Unit,
     onStopPhoneVideoScan: () -> Unit,
     onClose: () -> Unit,
@@ -1409,6 +1409,8 @@ private fun PhoneCameraScanScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     var hasCameraPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     var previewBound by remember { mutableStateOf(false) }
+    var isRebindingCamera by remember { mutableStateOf(false) }
+    var activeBoundCameraId by remember { mutableStateOf<String?>(null) }
     var bindError by remember { mutableStateOf<String?>(null) }
     var elapsedSec by remember { mutableStateOf(0L) }
     var showCalibrationDialog by remember { mutableStateOf(false) }
@@ -1494,8 +1496,11 @@ private fun PhoneCameraScanScreen(
                             PreviewView(ctx).apply {
                                 scaleType = PreviewView.ScaleType.FILL_CENTER
                                 implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                                onBindPreview(this) { ok, error ->
+                                isRebindingCamera = true
+                                onBindPreview(this, selectedCameraId) { ok, error ->
+                                    isRebindingCamera = false
                                     previewBound = ok
+                                    activeBoundCameraId = if (ok) selectedCameraId else activeBoundCameraId
                                     bindError = if (ok) null else (error ?: "preview bind failed")
                                 }
                             }
@@ -1551,7 +1556,7 @@ private fun PhoneCameraScanScreen(
                             onStartPhoneVideoScan(defaultVideoScanNameForRole(nextRole, scanVideos.size + 1, scanName.trim()))
                         }
                     },
-                    enabled = hasCameraPermission && previewBound && (!isBackbone || guideConfirmed) && videoScanUiState !in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.STOPPING),
+                    enabled = hasCameraPermission && previewBound && !isRebindingCamera && (!isBackbone || guideConfirmed) && videoScanUiState !in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.STOPPING),
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = if (isRecordingScanVideo) Color.DarkGray else Color.Red),
                     modifier = Modifier.size(76.dp),
@@ -1559,7 +1564,7 @@ private fun PhoneCameraScanScreen(
                 Text(if (isRecordingScanVideo) "Остановить" else "Начать запись", color = Color.White)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { showCalibrationDialog = true }) { Text("Калибровка") }
-                    Button(onClick = { showCameraSettingsDialog = true }) { Text("Настройки камеры") }
+                    Button(onClick = { showCameraSettingsDialog = true }, enabled = !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING) { Text("Настройки камеры") }
                 }
                 if (!isBackbone) {
                     Text("Снимайте детали плавно и сохраняйте перекрытие с основным проходом.", color = Color.White.copy(alpha = 0.85f))
@@ -1583,6 +1588,13 @@ private fun PhoneCameraScanScreen(
                     }) { Text("Готово") }
                 }
                 latestPhoneScan?.notes?.takeIf { videoScanUiState == VideoScanUiState.FAILED }?.let { Text("Ошибка: $it", color = Color(0xFFFFB4AB)) }
+                if (debugMode) {
+                    Text(
+                        "Debug: selectedCameraId=${selectedCameraId ?: "—"} · activeBoundCameraId=${activeBoundCameraId ?: "—"} · savedCameraId=${lensRepository.getSelectedCameraId() ?: "—"} · previewBound=$previewBound · rebinding=$isRebindingCamera · lastBindError=${bindError ?: "—"}",
+                        color = Color.White.copy(alpha = 0.65f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }
@@ -1591,12 +1603,15 @@ private fun PhoneCameraScanScreen(
         selectedCameraId = selectedCameraId,
         debugMode = debugMode,
         warning = selectedCameraWarning,
+        activeBoundCameraId = activeBoundCameraId,
         onRefresh = { cameraOptions = lensRepository.listBackCameras() },
         onSelect = { option ->
             lensRepository.saveSelectedCameraId(option.cameraId)
             selectedCameraId = option.cameraId
             previewBound = false
+            isRebindingCamera = true
             bindError = null
+            Toast.makeText(context, "Камера выбрана: ${option.lensLabel}", Toast.LENGTH_SHORT).show()
         },
         onDismiss = { showCameraSettingsDialog = false },
     )
@@ -1608,6 +1623,7 @@ private fun CameraSettingsDialog(
     selectedCameraId: String?,
     debugMode: Boolean,
     warning: String?,
+    activeBoundCameraId: String?,
     onRefresh: () -> Unit,
     onSelect: (PhoneCameraLensOption) -> Unit,
     onDismiss: () -> Unit,
@@ -1617,10 +1633,15 @@ private fun CameraSettingsDialog(
         title = { Text("Настройки камеры") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                val current = options.firstOrNull { it.cameraId == selectedCameraId } ?: options.firstOrNull()
+                Text("Найдено камер: ${options.size}", style = MaterialTheme.typography.titleMedium)
+                Text("Текущая камера: ${current?.lensLabel ?: "—"} / ID ${current?.cameraId ?: "—"}")
                 Text("Для маленьких помещений рекомендуется широкоугольная камера 0.5x.")
                 warning?.let { Text(it, color = Color(0xFF8A5A00)) }
                 if (options.isEmpty()) {
                     Text("Задние камеры не найдены.")
+                } else if (options.size == 1) {
+                    Text("На этом устройстве доступна только одна задняя камера. Широкоугольная камера не обнаружена.")
                 }
                 options.forEach { option ->
                     Card(
@@ -1629,15 +1650,19 @@ private fun CameraSettingsDialog(
                     ) {
                         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(option.lensLabel, style = MaterialTheme.typography.titleSmall)
-                            Text("Выбрана: ${if (option.cameraId == selectedCameraId) "да" else "нет"}")
+                            if (option.cameraId == selectedCameraId) Text("Используется сейчас")
+                            if (option.lensLabel.contains("Ultrawide", ignoreCase = true)) {
+                                Text("Рекомендуется для маленьких помещений")
+                            }
                             Text("Camera ID: ${option.cameraId}; facing: ${option.lensFacing}")
                             Text("Разрешение/FPS: ${option.supportedVideoSizes.firstOrNull()?.let { "${it.width}×${it.height}" } ?: "—"} · ${option.supportedFpsRanges.maxByOrNull { it.upper }?.let { "${it.lower}-${it.upper} fps" } ?: "—"}")
                             Text("Lens/FOV: ${option.primaryFocalLengthMm?.let { String.format(java.util.Locale.US, "%.1f mm", it) } ?: "—"} · ${option.approximateFovDeg?.let { String.format(java.util.Locale.US, "≈ %.0f°×%.0f°", it.horizontal, it.vertical) } ?: "FOV —"}")
                             Text("Сенсор: ${option.sensorPhysicalSizeMm?.let { String.format(java.util.Locale.US, "%.2f×%.2f mm", it.width, it.height) } ?: "—"}")
                             if (debugMode) {
-                                Text("Raw camera2: focal=${option.focalLengthsMm}, active=${option.activeArraySize}, sizes=${option.supportedVideoSizes.take(8)}, fps=${option.supportedFpsRanges}", style = MaterialTheme.typography.bodySmall)
+                                Text("Debug: selectedCameraId=${selectedCameraId ?: "—"} activeBoundCameraId=${activeBoundCameraId ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                                Text("Raw camera2: cameraId=${option.cameraId}, focal_lengths_mm=${option.focalLengthsMm}, sensor=${option.sensorPhysicalSizeMm}, FOV=${option.approximateFovDeg}, sizes=${option.supportedVideoSizes.take(8)}, fps=${option.supportedFpsRanges}", style = MaterialTheme.typography.bodySmall)
                             }
-                            Button(onClick = { onSelect(option) }, enabled = option.cameraId != selectedCameraId) { Text("Выбрать") }
+                            Button(onClick = { onSelect(option) }, enabled = option.cameraId != selectedCameraId) { Text(if (option.cameraId == selectedCameraId) "Используется сейчас" else "Выбрать") }
                         }
                     }
                 }
