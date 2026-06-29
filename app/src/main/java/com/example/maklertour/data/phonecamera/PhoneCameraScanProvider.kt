@@ -40,7 +40,7 @@ class PhoneCameraScanProvider(
     override suspend fun disconnect(): CameraStatus = CameraStatus(isConnected = false, model = "Phone Camera")
     override suspend fun getStatus(): CameraStatus = CameraStatus(isConnected = true, model = "Phone Camera")
 
-    suspend fun bindPreview(previewView: PreviewView, cameraId: String?) = videoRecorder.bindPreview(previewView, cameraId)
+    suspend fun bindPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float) = videoRecorder.bindPreview(previewView, cameraId, zoomRatio)
 
     override suspend fun capture(pointName: String): CapturePoint = CapturePoint(
         name = pointName,
@@ -62,7 +62,7 @@ class PhoneCameraScanProvider(
         val startedAt = Instant.now()
         val baseDir = videoRecorder.startRecording(sessionId, scanId)
         val imuFile = imuRecorder.start(sessionId, scanId, baseDir)
-        val cameraInfoFile = cameraInfoCollector.writeCameraInfo(baseDir, videoRecorder.getSelectedVideoInfo(), videoRecorder.getSelectedLensOption())
+        val cameraInfoFile = cameraInfoCollector.writeCameraInfo(baseDir, videoRecorder.getSelectedVideoInfo(), videoRecorder.getSelectedLensOption(), videoRecorder.getSelectedZoomRatio(), videoRecorder.getMinZoomRatio(), videoRecorder.getMaxZoomRatio())
         active = ActivePhoneScan(scanId, sessionId, scanName, sequenceNumber, baseDir, cameraInfoFile, imuFile, startedAt, sessionCalibration)
         return ScanVideo(
             id = scanId,
@@ -97,6 +97,9 @@ class PhoneCameraScanProvider(
             calibration = current.calibration,
             selectedVideoInfo = videoRecorder.getSelectedVideoInfo(),
             selectedLens = videoRecorder.getSelectedLensOption(),
+            selectedZoomRatio = videoRecorder.getSelectedZoomRatio(),
+            minZoomRatio = videoRecorder.getMinZoomRatio(),
+            maxZoomRatio = videoRecorder.getMaxZoomRatio(),
         )
         active = null
         return ScanVideo(

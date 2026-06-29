@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.graphics.Rect
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.os.Build
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.CameraFilter
 import androidx.camera.core.CameraSelector
@@ -17,6 +18,7 @@ import kotlin.math.atan
 
 private const val PREFS = "phone_camera_lens"
 private const val KEY_CAMERA_ID = "selected_camera_id"
+private const val KEY_ZOOM_RATIO = "selected_zoom_ratio"
 
 data class SelectedPhoneVideoInfo(
     val width: Int?,
@@ -34,6 +36,10 @@ data class PhoneCameraLensOption(
     val supportedVideoSizes: List<VideoSizeInfo>,
     val supportedFpsRanges: List<FpsRangeInfo>,
     val approximateFovDeg: FovInfo?,
+    val logicalMultiCameraCapable: Boolean = false,
+    val physicalCameraIds: List<String> = emptyList(),
+    val minZoomRatio: Float? = null,
+    val maxZoomRatio: Float? = null,
 ) {
     val primaryFocalLengthMm: Float? get() = focalLengthsMm.minOrNull()
     val summary: String get() = buildString {
@@ -48,6 +54,7 @@ data class ActiveArraySize(val left: Int, val top: Int, val right: Int, val bott
 data class VideoSizeInfo(val width: Int, val height: Int)
 data class FpsRangeInfo(val lower: Int, val upper: Int)
 data class FovInfo(val horizontal: Double, val vertical: Double)
+data class PhoneLensPreset(val label: String, val zoomRatio: Float)
 
 class PhoneCameraLensRepository(private val context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -59,9 +66,21 @@ class PhoneCameraLensRepository(private val context: Context) {
 
     fun getSelectedCameraId(): String? = prefs.getString(KEY_CAMERA_ID, null)
 
+    fun getSelectedZoomRatio(): Float = prefs.getFloat(KEY_ZOOM_RATIO, 1.0f)
+
     fun saveSelectedCameraId(cameraId: String) {
         prefs.edit().putString(KEY_CAMERA_ID, cameraId).apply()
     }
+
+    fun saveSelectedZoomRatio(zoomRatio: Float) {
+        prefs.edit().putFloat(KEY_ZOOM_RATIO, zoomRatio).apply()
+    }
+
+    fun saveSelection(cameraId: String, zoomRatio: Float) {
+        prefs.edit().putString(KEY_CAMERA_ID, cameraId).putFloat(KEY_ZOOM_RATIO, zoomRatio).apply()
+    }
+
+    fun lensPresets(): List<PhoneLensPreset> = listOf(PhoneLensPreset("0.5x", 0.5f), PhoneLensPreset("1x", 1.0f), PhoneLensPreset("2x", 2.0f), PhoneLensPreset("3x", 3.0f))
 
     fun selectedOrDefault(): Pair<PhoneCameraLensOption, String?> {
         val options = listBackCameras()
@@ -88,6 +107,8 @@ class PhoneCameraLensRepository(private val context: Context) {
         return JSONObject()
             .put("hardware_level", chars.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL) ?: JSONObject.NULL)
             .put("capabilities", JSONArray(chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.toList() ?: emptyList<Int>()))
+            .put("logical_multi_camera_capable", isLogicalMultiCamera(chars))
+            .put("physical_camera_ids", JSONArray(physicalCameraIds(chars)))
             .put("available_stabilization_modes", JSONArray(chars.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)?.toList() ?: emptyList<Int>()))
             .put("timestamp", Instant.now().toString())
     }
@@ -101,7 +122,9 @@ class PhoneCameraLensRepository(private val context: Context) {
         val sizes = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(android.media.MediaRecorder::class.java)?.map { VideoSizeInfo(it.width, it.height) }?.distinct() ?: emptyList()
         val fps = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.map { FpsRangeInfo(it.lower, it.upper) } ?: emptyList()
         val fov = if (sensor != null && focal.minOrNull() != null) FovInfo(fov(sensor.width, focal.minOrNull()!!), fov(sensor.height, focal.minOrNull()!!)) else null
-        return PhoneCameraLensOption(cameraId, facing, friendlyLabel(focal.minOrNull(), listBackFocals()), focal, sensor, active, sizes, fps, fov)
+        val logical = isLogicalMultiCamera(chars)
+        val physicalIds = physicalCameraIds(chars)
+        return PhoneCameraLensOption(cameraId, facing, friendlyLabel(focal.minOrNull(), listBackFocals(), logical), focal, sensor, active, sizes, fps, fov, logical, physicalIds)
     }
 
     private fun listBackFocals(): List<Float> = manager.cameraIdList.mapNotNull { id ->
@@ -109,7 +132,8 @@ class PhoneCameraLensRepository(private val context: Context) {
         if (c.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK) c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.minOrNull() else null
     }.sorted()
 
-    private fun friendlyLabel(focal: Float?, all: List<Float>): String = when {
+    private fun friendlyLabel(focal: Float?, all: List<Float>, logical: Boolean = false): String = when {
+        focal == null && logical -> "Logical camera 1x"
         focal == null -> "Back camera"
         all.size >= 2 && focal == all.first() -> "Ultrawide 0.5x"
         all.size >= 3 && focal == all.last() -> "Tele 2x"
@@ -117,12 +141,24 @@ class PhoneCameraLensRepository(private val context: Context) {
     }
 
     private fun fov(sensorMm: Float, focalMm: Float): Double = Math.toDegrees(2.0 * atan(sensorMm / (2.0 * focalMm)))
+
+    private fun isLogicalMultiCamera(chars: CameraCharacteristics): Boolean = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA) == true
+
+    private fun physicalCameraIds(chars: CameraCharacteristics): List<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) chars.physicalCameraIds.toList().sorted() else emptyList()
 }
 
-fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = null, stabilizationMode: String? = null): JSONObject = JSONObject()
+
+fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = null, stabilizationMode: String? = null, selectedZoomRatio: Float = 1.0f, minZoomRatioOverride: Float? = null, maxZoomRatioOverride: Float? = null): JSONObject = JSONObject()
     .put("selected_camera_id", cameraId)
     .put("camera_id", cameraId)
     .put("lens_label", lensLabel)
+    .put("selected_zoom_ratio", selectedZoomRatio.toDouble())
+    .put("lens_preset_label", zoomPresetLabel(selectedZoomRatio))
+    .put("logical_multi_camera_capable", logicalMultiCameraCapable)
+    .put("physical_camera_ids", JSONArray(physicalCameraIds))
+    .put("min_zoom_ratio", minZoomRatioOverride ?: minZoomRatio ?: JSONObject.NULL)
+    .put("max_zoom_ratio", maxZoomRatioOverride ?: maxZoomRatio ?: JSONObject.NULL)
+    .put("ultrawide_zoom_ratio_note", if (selectedZoomRatio < 1.0f) "Ultrawide selected via CameraX zoom ratio, not a separate cameraId." else JSONObject.NULL)
     .put("lens_facing", lensFacing)
     .put("focal_length_mm", primaryFocalLengthMm ?: JSONObject.NULL)
     .put("focal_lengths_mm", JSONArray(focalLengthsMm))
@@ -142,3 +178,4 @@ private fun Int?.toLensFacingName(): String = when (this) {
 }
 
 private fun Rect.toActiveArraySize() = ActiveArraySize(left, top, right, bottom, width(), height())
+fun zoomPresetLabel(zoomRatio: Float): String = String.format(java.util.Locale.US, "%.1fx", zoomRatio).replace(".0x", "x")

@@ -2,6 +2,7 @@ package com.maklertour.data.phonecamera
 
 import android.content.Context
 import android.util.Log
+import androidx.camera.core.Camera
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FileOutputOptions
@@ -31,9 +32,14 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private val lensRepository = PhoneCameraLensRepository(context)
     private var selectedVideoInfo: SelectedPhoneVideoInfo? = null
     private var selectedLensOption: PhoneCameraLensOption? = null
+    private var selectedZoomRatio: Float = lensRepository.getSelectedZoomRatio()
+    private var boundCamera: Camera? = null
+    private var minZoomRatio: Float? = null
+    private var maxZoomRatio: Float? = null
 
-    suspend fun bindPreview(previewView: PreviewView, cameraId: String?) {
-        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId")
+    suspend fun bindPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float = lensRepository.getSelectedZoomRatio()) {
+        selectedZoomRatio = zoomRatio
+        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio")
         val cameraProvider = getCameraProvider()
         val preview = Preview.Builder().build()
         val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
@@ -49,14 +55,16 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         val previousLens = selectedLensOption
         try {
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
+            val camera = cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 selector,
                 preview,
                 preparedVideoCapture,
             )
+            boundCamera = camera
             videoCapture = preparedVideoCapture
             selectedLensOption = lens
+            applySelectedZoom(camera)
         } catch (e: Throwable) {
             Log.e(TAG, "bindPreview(): selected camera bind failed selected_camera_id=${lens.cameraId}", e)
             val recoveryLens = previousLens ?: fallbackLens.takeIf { it.cameraId != lens.cameraId }
@@ -66,14 +74,16 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     val previousRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
                     val previousVideoCapture = VideoCapture.withOutput(previousRecorder)
                     previousPreview.setSurfaceProvider(previewView.surfaceProvider)
-                    cameraProvider.bindToLifecycle(
+                    val camera = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         lensRepository.cameraSelectorFor(previousLens.cameraId),
                         previousPreview,
                         previousVideoCapture,
                     )
+                    boundCamera = camera
                     videoCapture = previousVideoCapture
                     selectedLensOption = previousLens
+                    applySelectedZoom(camera)
                     Log.w(TAG, "bindPreview(): kept previous working camera_id=${previousLens.cameraId}")
                 }
             } else if (recoveryLens != null) {
@@ -82,14 +92,16 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     val fallbackRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
                     val fallbackVideoCapture = VideoCapture.withOutput(fallbackRecorder)
                     fallbackPreview.setSurfaceProvider(previewView.surfaceProvider)
-                    cameraProvider.bindToLifecycle(
+                    val camera = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         lensRepository.cameraSelectorFor(recoveryLens.cameraId),
                         fallbackPreview,
                         fallbackVideoCapture,
                     )
+                    boundCamera = camera
                     videoCapture = fallbackVideoCapture
                     selectedLensOption = recoveryLens
+                    applySelectedZoom(camera)
                     Log.w(TAG, "bindPreview(): selected camera failed; fallback camera_id=${recoveryLens.cameraId} lens=${recoveryLens.lensLabel}")
                 }
             }
@@ -102,12 +114,19 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     fun getSelectedLensOption(): PhoneCameraLensOption? = selectedLensOption
 
+    fun getSelectedZoomRatio(): Float = selectedZoomRatio
+
+    fun getMinZoomRatio(): Float? = minZoomRatio
+
+    fun getMaxZoomRatio(): Float? = maxZoomRatio
+
     suspend fun startRecording(sessionId: String, scanId: String): File {
         val preparedVideoCapture = videoCapture ?: error("Camera preview is not bound")
         val lens = selectedLensOption ?: lensRepository.selectedOrDefault().first
         val dir = File(context.filesDir, "sessions/$sessionId/phone_scans/$scanId").apply { mkdirs() }
         val file = File(dir, "video.mp4")
-        Log.d(TAG, "startRecording(): output path=${file.absolutePath} camera_id=${lens.cameraId} lens=${lens.lensLabel}")
+        boundCamera?.let { applySelectedZoom(it) }
+        Log.d(TAG, "startRecording(): output path=${file.absolutePath} camera_id=${lens.cameraId} lens=${lens.lensLabel} zoom=$selectedZoomRatio")
         val deferred = CompletableDeferred<PhoneVideoRecordingResult>()
         finalizeDeferred = deferred
         startedAtMs = System.currentTimeMillis()
@@ -150,6 +169,21 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         outputFile = null
         Log.d(TAG, "stopRecording(): finalized path=${result.path}, size=${result.fileSizeBytes}")
         return result
+    }
+
+    private fun applySelectedZoom(camera: Camera) {
+        val zoomState = camera.cameraInfo.zoomState.value
+        val min = zoomState?.minZoomRatio ?: 1.0f
+        val max = zoomState?.maxZoomRatio ?: 1.0f
+        minZoomRatio = min
+        maxZoomRatio = max
+        val clamped = selectedZoomRatio.coerceIn(min, max)
+        selectedZoomRatio = clamped
+        selectedLensOption = selectedLensOption?.copy(minZoomRatio = min, maxZoomRatio = max)
+        lensRepository.saveSelectedZoomRatio(clamped)
+        camera.cameraControl.setZoomRatio(clamped)
+        val id = selectedLensOption?.cameraId ?: "—"
+        Log.d(TAG, "Phone camera bind: cameraId=$id zoom=$clamped minZoom=$min maxZoom=$max")
     }
 
     private suspend fun getCameraProvider(): ProcessCameraProvider = suspendCancellableCoroutine { cont ->
