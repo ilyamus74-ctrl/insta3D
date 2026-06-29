@@ -286,7 +286,7 @@ function sfm_cleanup_older_runs_for_tuple(mysqli $dbcnx,int $currentRunId,int $c
   while($r=$rs->fetch_assoc()){ if(!isset($active[strtoupper((string)$r['status'])])){ $runs[]=(int)$r['id']; } }
   $st->close();
   foreach($runs as $oldId){
-    $res=sfm_cleanup_pipeline_run_artifacts($dbcnx,$oldId,['delete'=>true,'include_logs'=>false,'force_recent'=>true]);
+    $res=sfm_cleanup_pipeline_run_artifacts($dbcnx,$oldId,['delete'=>true,'include_logs'=>false,'force_recent'=>true,'force_latest'=>true,'rerender_replacement'=>true]);
     $msg='old pipeline_run_id='.$oldId.' cleanup freed_bytes='.(int)($res['freed_bytes'] ?? 0);
     if(!empty($res['errors'])){ pipeline_log($currentRunId,'WARNING','CLEANUP',$msg.' errors='.json_encode($res['errors'],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)); }
     else { pipeline_log($currentRunId,'INFO','CLEANUP',$msg); }
@@ -670,9 +670,12 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
        $affected['video_scans']=db_delete_or_soft_session_rows($dbcnx,'video_scans',['session_id = ?','deleted_at IS NULL'],'i',[$captureSessionId],$userId,'session_deleted_from_order_web');
        $affected['processing_jobs']=table_exists($dbcnx,'processing_jobs') ? db_delete_or_soft_session_rows($dbcnx,'processing_jobs',['order_id = ?','session_id = ?'],'ii',[$orderId,$captureSessionId],$userId,'session_deleted_from_order_web') : 0;
        if(table_exists($dbcnx,'sfm_remote_jobs')){ $st=$dbcnx->prepare("UPDATE sfm_remote_jobs SET status='CANCELLED', message='Cancelled because capture session was deleted', updated_at=NOW(6) WHERE order_id=? AND capture_session_id=?"); if($st){$st->bind_param('ii',$orderId,$captureSessionId);$st->execute();$affected['sfm_remote_jobs']=$st->affected_rows;$st->close();} }
+       $cleanupRes=sfm_cleanup_delete_project_session_artifacts_and_media($dbcnx,$orderId,$captureSessionId,null,true,true);
+       $affected['sfm_cleanup_freed_bytes']=(int)($cleanupRes['freed_bytes'] ?? 0);
+       $affected['sfm_cleanup_errors']=count($cleanupRes['errors'] ?? []);
        $dbcnx->commit();
        $storageOk=safe_rrmdir($storagePath,$allowedBase);
-       audit_log($userId,'CAPTURE_SESSION_DELETED','TOUR_ORDER',$orderId,'Сессия удалена из web',['order_id'=>$orderId,'capture_session_id'=>$captureSessionId,'app_session_uuid'=>$appSessionUuid,'storage_path'=>$storagePath,'deleted_files_ok'=>$storageOk,'affected'=>$affected,'user_id'=>$userId,'remote_job_ids'=>array_values(array_unique($remoteJobIds)),'remote_outputs_removed'=>false]);
+       audit_log($userId,'CAPTURE_SESSION_DELETED','TOUR_ORDER',$orderId,'Сессия удалена из web',['order_id'=>$orderId,'capture_session_id'=>$captureSessionId,'app_session_uuid'=>$appSessionUuid,'storage_path'=>$storagePath,'deleted_files_ok'=>$storageOk,'affected'=>$affected,'user_id'=>$userId,'remote_job_ids'=>array_values(array_unique($remoteJobIds)),'remote_outputs_removed'=>true,'sfm_cleanup'=>$cleanupRes ?? null]);
        header('Location: /order.php?id='.$orderId.'&session_deleted=1'); exit;
      }catch(Throwable $e){ $dbcnx->rollback(); $error=$e->getMessage(); }
    }

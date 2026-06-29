@@ -7,7 +7,7 @@ require_once __DIR__ . '/../../libs/tour_media_derivatives_lib.php';
 header('Content-Type: application/json; charset=utf-8');
 $maklerConfig = require __DIR__ . '/../../configs/maklertour_config.php';
 
-const AUTO_SFM_ON_PHONE_VIDEO_UPLOAD = true;
+const AUTO_SFM_ON_PHONE_VIDEO_UPLOAD = false;
 const AUTO_SFM_EXPORT_MODELS = [0, 1];
 const AUTO_SFM_ENABLED_FOR_SOURCE = 'PHONE_CAMERA';
 
@@ -1028,6 +1028,7 @@ if ($stmt) {
         'metadata' => $metadataPaths,
         'metadata_warnings' => $metadataWarnings,
         'auto_sfm_extract_remote_job_id' => $autoSfmJobId,
+        'sfm_status_message' => 'Video uploaded. Ready to start Preview.',
     ]);
 }
 

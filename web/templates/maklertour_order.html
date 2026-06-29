@@ -218,6 +218,7 @@
                 {foreach from=$s.sfm_disk_videos item=dv}
                   <div class="border rounded p-2 mb-2 bg-white">
                     <div><strong>{$dv.filename|escape}</strong> — {$dv.size_human|escape} — uploaded at {$dv.modified_at|escape}</div>
+                    <div class="alert alert-success small py-2 my-2">Video uploaded. Ready to start Preview.</div>
                     <div class="small mt-1">
                       camera_info: {if $dv.metadata.camera_info.exists}<span class="text-success">yes</span>{else}<span class="text-muted">no</span>{/if}
                       · manifest: {if $dv.metadata.manifest.exists}<span class="text-success">yes</span>{else}<span class="text-muted">no</span>{/if}
@@ -481,7 +482,7 @@
                             <input type="hidden" name="capture_session_id" value="{$s.id}">
                             <input type="hidden" name="pipeline_mode" value="{$pmode|escape}">
                             <input type="hidden" name="video_scan_id" value="{$dv.video_scan_id|escape}">
-                            <button class="btn btn-sm btn-primary" {if $dv.is_orphan|default:false}disabled{/if} onclick="return confirm('Start {$pc.preset.label|escape} for {$dv.filename|escape}?');">Start {$pc.preset.label|escape}</button>
+                            <button class="btn btn-sm btn-primary" {if $dv.is_orphan|default:false}disabled{/if} onclick="return confirm('Start {$pc.preset.label|escape} for {$dv.filename|escape}?');">{if $pmode == 'preview'}Start preview 640{elseif $pmode == 'standard'}Start standard{elseif $pmode == 'fullhd'}Start fullhd{else}Start {$pc.preset.label|escape}{/if}</button>
                           </form>
                         {/if}
                         {if $pc.history|default:[]|@count > 1}

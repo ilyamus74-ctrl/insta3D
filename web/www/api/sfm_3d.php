@@ -52,7 +52,10 @@ if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     }
     $selected=$resolved[$artifactTypes[$artifact]] ?? null;
     $selectedInfo=$selected ? api3d_ply_info($selected['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
-    if(!$selectedInfo['valid'] || ($artifact==='mesh' && $selectedInfo['faces']<=0)) api3d_json(['ok'=>false,'error'=>$artifact==='mesh'?'Pipeline has no mesh artifact':'Artifact not found'],404);
+    if(!$selectedInfo['valid'] || ($artifact==='mesh' && $selectedInfo['faces']<=0)) {
+        if(!empty($run['artifacts_deleted_at'])) api3d_json(['ok'=>false,'error'=>'Artifacts for this old run were cleaned to free disk space. Please rerun reconstruction if needed.'],410);
+        api3d_json(['ok'=>false,'error'=>$artifact==='mesh'?'Pipeline has no mesh artifact':'Artifact not found'],404);
+    }
     $sparseInfo=($resolved['sparse_ply'] ?? null) ? api3d_ply_info($resolved['sparse_ply']['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
     $denseInfo=($resolved['dense_ply'] ?? null) ? api3d_ply_info($resolved['dense_ply']['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
     $meshInfo=($resolved['mesh_ply'] ?? null) ? api3d_ply_info($resolved['mesh_ply']['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
