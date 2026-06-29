@@ -397,7 +397,6 @@ private fun MaklerTourApp() {
                         isLoading = ordersLoading,
                         error = ordersError,
                         debugMode = debugMode,
-        warning = selectedCameraWarning,
                         onRefresh = {
                             coroutineScope.launch {
                                 ordersLoading = true
@@ -519,7 +518,6 @@ private fun MaklerTourApp() {
                         },
                         onBack = { navController.popBackStack() },
                         debugMode = debugMode,
-        warning = selectedCameraWarning,
                     )
                 }
                 composable(AppTab.Camera.route) {
@@ -558,7 +556,6 @@ private fun MaklerTourApp() {
                         onRequeueAllVideos = viewModel::requeueAllVideosForSelectedSession,
                         onRequeueVideo = viewModel::requeueVideo,
                         debugMode = debugMode,
-        warning = selectedCameraWarning,
                         selectedOrder = selectedOrder,
                     )
                 }
@@ -594,7 +591,6 @@ private fun MaklerTourApp() {
                         onRequeueAllVideos = viewModel::requeueAllVideosForSelectedSession,
                         onRequeueVideo = viewModel::requeueVideo,
                         debugMode = debugMode,
-        warning = selectedCameraWarning,
                     )
                 }
                 composable(AppTab.Queue.route) {
@@ -623,7 +619,6 @@ private fun MaklerTourApp() {
                             LanguagePreferences.set(baseContext, language)
                         },
                         debugMode = debugMode,
-        warning = selectedCameraWarning,
                         onDebugModeChanged = { enabled ->
                             debugMode = enabled
                             DebugPreferences.set(baseContext, enabled)
@@ -653,7 +648,6 @@ private fun OrdersScreen(
     isLoading: Boolean,
     error: String?,
     debugMode: Boolean,
-    warning: String?,
     onRefresh: () -> Unit,
     onOpen: (MobileOrder) -> Unit,
     onTakeOrder: (MobileOrder) -> Unit,
@@ -792,7 +786,6 @@ private fun OrderWorkScreen(
     onTakeOrder: () -> Unit,
     onBack: () -> Unit,
     debugMode: Boolean,
-    warning: String?,
 ) {
     val canWork = order != null && currentUserId != null && order.operatorId == currentUserId
     val isAvailable = order?.isPublished == true && order.status == "NEW" && order.operatorId == null
@@ -1012,7 +1005,6 @@ private fun SettingsScreen(
     currentLanguage: AppLanguage,
     onLanguageSelected: (AppLanguage) -> Unit,
     debugMode: Boolean,
-    warning: String?,
     onDebugModeChanged: (Boolean) -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -1224,7 +1216,6 @@ private fun CameraScreen(
     onRequeueAllVideos: () -> String,
     onRequeueVideo: (String) -> EnqueueUploadResult,
     debugMode: Boolean,
-    warning: String?,
     selectedOrder: MobileOrder?,
 ) {
     var captureMode by remember { mutableStateOf(CaptureMode.PHOTO_POINT) }
@@ -1351,7 +1342,6 @@ private fun CameraScreen(
                         onDelete = onDeleteVideoScan,
                         onDownload = onDownloadVideoScan,
                         debugMode = debugMode,
-        warning = selectedCameraWarning,
                     )
                 }
             }
@@ -1737,7 +1727,6 @@ private fun DraftScreen(
     onRequeueAllVideos: () -> String,
     onRequeueVideo: (String) -> EnqueueUploadResult,
     debugMode: Boolean,
-    warning: String?,
 ) {
     val unassignedPoints = points.filter { it.roomId == null }
     val roomsSorted = rooms.sortedBy { it.orderIndex }
@@ -1801,7 +1790,6 @@ private fun DraftScreen(
                 onSyncVideo = { onAddToUploadQueue() },
                 onRequeueVideo = onRequeueVideo,
                 debugMode = debugMode,
-        warning = selectedCameraWarning,
             )
         }
 
@@ -2045,7 +2033,6 @@ private fun ProjectDraftPreviewBlock(
     points: List<com.maklertour.domain.CapturePoint>,
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     debugMode: Boolean,
-    warning: String?,
 ) {
     val previewReady = points.count { !it.localPreviewPath.isNullOrBlank() || !it.previewUri.isNullOrBlank() }
     val hasCapturedVideo = scanVideos.any { it.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED }
