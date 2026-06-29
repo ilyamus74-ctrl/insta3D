@@ -1207,7 +1207,7 @@ private fun CameraScreen(
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     onStartVideoScan: (String) -> Unit,
     onStartPhoneVideoScan: (String) -> Unit,
-    onBindPhoneCameraPreview: (PreviewView, String?, (Boolean, String?) -> Unit) -> Unit,
+    onBindPhoneCameraPreview: (PreviewView, String?, Float, (Boolean, String?) -> Unit) -> Unit,
     onStopVideoScan: () -> Unit,
     onCreateSessionRequested: () -> Unit,
     onDeleteVideoScan: (String) -> Unit,
