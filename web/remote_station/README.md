@@ -43,7 +43,7 @@ COLMAP_MODE="podman"
 COLMAP_BIN="colmap"
 COLMAP_IMAGE="docker.io/colmap/colmap:latest"
 COLMAP_MATCHER="sequential"
-COLMAP_SEQUENTIAL_OVERLAP="10"
+COLMAP_SEQUENTIAL_OVERLAP="60"
 REQUIRE_COLMAP="1"
 ```
 
@@ -90,7 +90,7 @@ REQUIRE_COLMAP="1"
 
 `COLMAP_MATCHER` controls the feature matching strategy for sparse reconstruction:
 
-- `COLMAP_MATCHER="sequential"` (default for MaklerTour video scans) uses COLMAP `sequential_matcher`, which only compares nearby frames instead of every possible pair. Tune the neighborhood with `COLMAP_SEQUENTIAL_OVERLAP="10"`.
+- `COLMAP_MATCHER="sequential"` (default for MaklerTour video scans) uses COLMAP `sequential_matcher`, which only compares nearby frames instead of every possible pair. Tune the neighborhood with `COLMAP_SEQUENTIAL_OVERLAP="60"`.
 - `COLMAP_MATCHER="exhaustive"` uses COLMAP `exhaustive_matcher`. Keep it as a manual mode for small, unordered photo sets only; it is usually too slow for video scans because it compares all image pairs.
 
 `REQUIRE_COLMAP` controls whether COLMAP is mandatory:
@@ -135,7 +135,7 @@ COLMAP_MODE="podman"
 COLMAP_BIN="colmap"
 COLMAP_IMAGE="docker.io/colmap/colmap:latest"
 COLMAP_MATCHER="sequential"
-COLMAP_SEQUENTIAL_OVERLAP="10"
+COLMAP_SEQUENTIAL_OVERLAP="60"
 REQUIRE_COLMAP="1"
 ```
 
@@ -212,7 +212,7 @@ The runner verifies the remote frames directory exists, then starts `$STATION_BA
 └── result.json
 ```
 
-By default, video scan frames are matched with `sequential_matcher` and `COLMAP_SEQUENTIAL_OVERLAP="10"`. Use `COLMAP_MATCHER="exhaustive"` only for small, unordered photo sets where comparing every image pair is acceptable.
+By default, video scan frames are matched with `sequential_matcher` and `COLMAP_SEQUENTIAL_OVERLAP="60"`. Use `COLMAP_MATCHER="exhaustive"` only for small, unordered photo sets where comparing every image pair is acceptable.
 
 During COLMAP feature extraction and matching, check GPU activity on the station with:
 

@@ -20,7 +20,7 @@ COLMAP_MODE="podman"
 COLMAP_BIN="colmap"
 COLMAP_IMAGE="docker.io/colmap/colmap:latest"
 COLMAP_MATCHER="sequential"
-COLMAP_SEQUENTIAL_OVERLAP="10"
+COLMAP_SEQUENTIAL_OVERLAP="60"
 REQUIRE_COLMAP="1"
 # Chunked COLMAP dense reconstruction defaults.
 COLMAP_PREVIEW_MAX_IMAGE_SIZE="640"

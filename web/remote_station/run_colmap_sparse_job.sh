@@ -30,8 +30,102 @@ COLMAP_MODE="${COLMAP_MODE:-native}"
 COLMAP_BIN="${COLMAP_BIN:-colmap}"
 COLMAP_IMAGE="${COLMAP_IMAGE:-}"
 COLMAP_MATCHER="${REQ_MATCHER:-${COLMAP_MATCHER:-sequential}}"
-COLMAP_SEQUENTIAL_OVERLAP="${REQ_OVERLAP:-${COLMAP_SEQUENTIAL_OVERLAP:-60}}"
+COLMAP_SEQUENTIAL_OVERLAP="${REQ_OVERLAP:-${COLMAP_SEQUENTIAL_OVERLAP:-}}"
 COLMAP_LOOP_DETECTION="${REQ_LOOP:-${COLMAP_LOOP_DETECTION:-0}}"
+
+resolve_runner_sparse_settings() {
+  python3 - "$REQ_PARAMETERS_JSON" "$COLMAP_SEQUENTIAL_OVERLAP" "$COLMAP_LOOP_DETECTION" <<'PYRUNNER'
+import json
+import sys
+
+payload, env_overlap, env_loop = sys.argv[1], sys.argv[2], sys.argv[3]
+SAFE_OVERLAP = 60
+SAFE_LOOP = 0
+warnings = []
+try:
+    data = json.loads(payload) if payload else {}
+except Exception as exc:
+    warnings.append(f"invalid runner parameters JSON: {exc}; using argument/environment/default sparse settings")
+    data = {}
+
+def dig(obj, parts):
+    cur = obj
+    for part in parts:
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+def valid_overlap(raw, source):
+    try:
+        if isinstance(raw, bool):
+            raise ValueError('boolean is not an integer overlap')
+        value = int(str(raw).strip())
+    except Exception:
+        warnings.append(f"invalid runner sequential_overlap from {source}: {raw!r}; expected integer 1-200")
+        return None
+    if not 1 <= value <= 200:
+        warnings.append(f"invalid runner sequential_overlap from {source}: {value}; expected range 1-200")
+        return None
+    return value
+
+def valid_loop(raw):
+    if isinstance(raw, bool):
+        return 1 if raw else 0
+    text = str(raw).strip().lower()
+    if text in ('1', 'true', 'yes', 'on'):
+        return 1
+    if text in ('0', 'false', 'no', 'off', ''):
+        return 0
+    return None
+
+candidates = [
+    ('ui_snapshot', dig(data, ['settings', 'sparse', 'sequential_overlap'])),
+    ('legacy', dig(data, ['sparse', 'sequential_overlap'])),
+    ('env', env_overlap),
+]
+overlap = None
+source = 'default'
+for candidate_source, raw in candidates:
+    if raw is None or raw == '':
+        continue
+    parsed = valid_overlap(raw, candidate_source)
+    if parsed is not None:
+        overlap = parsed
+        source = candidate_source
+        break
+if overlap is None:
+    overlap = SAFE_OVERLAP
+
+loop = None
+for raw in (dig(data, ['settings', 'sparse', 'loop_detection']), dig(data, ['sparse', 'loop_detection']), env_loop):
+    if raw is None or raw == '':
+        continue
+    parsed = valid_loop(raw)
+    if parsed is not None:
+        loop = parsed
+        break
+if loop is None:
+    loop = SAFE_LOOP
+
+print(overlap)
+print(loop)
+print(source)
+for warning in warnings:
+    print(warning)
+PYRUNNER
+}
+
+RUNNER_RESOLVED=()
+mapfile -t RUNNER_RESOLVED < <(resolve_runner_sparse_settings)
+COLMAP_SEQUENTIAL_OVERLAP="${RUNNER_RESOLVED[0]:-60}"
+COLMAP_LOOP_DETECTION="${RUNNER_RESOLVED[1]:-0}"
+COLMAP_SPARSE_SETTINGS_SOURCE="${RUNNER_RESOLVED[2]:-default}"
+for warning in "${RUNNER_RESOLVED[@]:3}"; do
+  [[ -n "$warning" ]] && echo "WARNING: $warning" >&2
+done
+
+echo "Runner sparse settings: matcher=$COLMAP_MATCHER overlap=$COLMAP_SEQUENTIAL_OVERLAP loop_detection=$COLMAP_LOOP_DETECTION source=$COLMAP_SPARSE_SETTINGS_SOURCE"
 
 SSH_OPTS=(-i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new)
 SSH=(ssh "${SSH_OPTS[@]}" "${STATION_USER}@${STATION_HOST}")

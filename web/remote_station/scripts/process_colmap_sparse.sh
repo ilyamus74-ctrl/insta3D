@@ -20,8 +20,9 @@ COLMAP_MODE="${COLMAP_MODE:-native}"
 COLMAP_BIN="${COLMAP_BIN:-colmap}"
 COLMAP_IMAGE="${COLMAP_IMAGE:-}"
 COLMAP_MATCHER="${COLMAP_MATCHER:-sequential}"
-COLMAP_SEQUENTIAL_OVERLAP="${COLMAP_SEQUENTIAL_OVERLAP:-10}"
+COLMAP_SEQUENTIAL_OVERLAP="${COLMAP_SEQUENTIAL_OVERLAP:-60}"
 COLMAP_LOOP_DETECTION="${COLMAP_LOOP_DETECTION:-0}"
+PARAMETERS_JSON_PATH="$BASE/input/job_${JOB_ID}/parameters.json"
 
 mkdir -p "$BASE/status" "$BASE/logs"
 
@@ -75,6 +76,111 @@ run_colmap() {
       return 1
       ;;
   esac
+}
+
+resolve_sparse_settings() {
+  python3 - "$PARAMETERS_JSON_PATH" "${COLMAP_SEQUENTIAL_OVERLAP:-}" "${COLMAP_LOOP_DETECTION:-}" <<'PYPARAM'
+import json
+import sys
+
+path, env_overlap, env_loop = sys.argv[1], sys.argv[2], sys.argv[3]
+SAFE_OVERLAP = 60
+SAFE_LOOP = 0
+warnings = []
+
+try:
+    with open(path, 'r', encoding='utf-8') as fh:
+        data = json.load(fh)
+except FileNotFoundError:
+    data = {}
+except Exception as exc:
+    warnings.append(f"invalid parameters JSON {path}: {exc}; using environment/default sparse settings")
+    data = {}
+
+def dig(obj, parts):
+    cur = obj
+    for part in parts:
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+def valid_overlap(raw, source):
+    try:
+        if isinstance(raw, bool):
+            raise ValueError('boolean is not an integer overlap')
+        value = int(str(raw).strip())
+    except Exception:
+        warnings.append(f"invalid sequential_overlap from {source}: {raw!r}; expected integer 1-200")
+        return None
+    if not 1 <= value <= 200:
+        warnings.append(f"invalid sequential_overlap from {source}: {value}; expected range 1-200")
+        return None
+    return value
+
+def valid_loop(raw, source):
+    if isinstance(raw, bool):
+        return 1 if raw else 0
+    text = str(raw).strip().lower()
+    if text in ('1', 'true', 'yes', 'on'):
+        return 1
+    if text in ('0', 'false', 'no', 'off', ''):
+        return 0
+    warnings.append(f"invalid loop_detection from {source}: {raw!r}; expected boolean/0/1")
+    return None
+
+candidates = [
+    ('ui_snapshot', dig(data, ['settings', 'sparse', 'sequential_overlap'])),
+    ('legacy', dig(data, ['sparse', 'sequential_overlap'])),
+    ('env', env_overlap),
+]
+overlap = None
+overlap_source = 'default'
+for source, raw in candidates:
+    if raw is None or raw == '':
+        continue
+    parsed = valid_overlap(raw, source)
+    if parsed is not None:
+        overlap = parsed
+        overlap_source = source
+        break
+if overlap is None:
+    overlap = SAFE_OVERLAP
+
+loop_candidates = [
+    ('ui_snapshot', dig(data, ['settings', 'sparse', 'loop_detection'])),
+    ('legacy', dig(data, ['sparse', 'loop_detection'])),
+    ('env', env_loop),
+]
+loop = None
+for source, raw in loop_candidates:
+    if raw is None or raw == '':
+        continue
+    parsed = valid_loop(raw, source)
+    if parsed is not None:
+        loop = parsed
+        break
+if loop is None:
+    loop = SAFE_LOOP
+
+print(overlap)
+print(loop)
+print(overlap_source)
+for warning in warnings:
+    print(warning)
+PYPARAM
+}
+
+apply_sparse_parameters() {
+  local resolved=()
+  mapfile -t resolved < <(resolve_sparse_settings)
+  COLMAP_SEQUENTIAL_OVERLAP="${resolved[0]:-60}"
+  COLMAP_LOOP_DETECTION="${resolved[1]:-0}"
+  COLMAP_SPARSE_SETTINGS_SOURCE="${resolved[2]:-default}"
+  local warning
+  for warning in "${resolved[@]:3}"; do
+    [[ -n "$warning" ]] && echo "WARNING | SPARSE | $warning" >> "$LOG_FILE"
+  done
 }
 
 validate_colmap_matcher() {
@@ -139,6 +245,9 @@ validate_colmap() {
 exec 2>>"$LOG_FILE"
 
 write_status "RUNNING" 0 -1 "Starting COLMAP sparse reconstruction"
+apply_sparse_parameters
+echo "INFO | SPARSE | Parameters JSON path=$PARAMETERS_JSON_PATH exists=$([[ -f "$PARAMETERS_JSON_PATH" ]] && echo 1 || echo 0)" >> "$LOG_FILE"
+echo "INFO | SPARSE | Sparse settings effective: matcher=$COLMAP_MATCHER overlap=$COLMAP_SEQUENTIAL_OVERLAP loop_detection=$COLMAP_LOOP_DETECTION source=${COLMAP_SPARSE_SETTINGS_SOURCE:-default}" >> "$LOG_FILE"
 validate_colmap_matcher
 validate_colmap
 
@@ -170,12 +279,18 @@ run_colmap feature_extractor \
 case "$COLMAP_MATCHER" in
   sequential)
     write_status "RUNNING" 45 -1 "COLMAP sequential feature matching"
+    echo "INFO | SPARSE | Running COLMAP sequential matcher with --SequentialMatching.overlap $COLMAP_SEQUENTIAL_OVERLAP --SequentialMatching.loop_detection $COLMAP_LOOP_DETECTION" >> "$LOG_FILE"
     run_colmap sequential_matcher \
       --database_path "$DATABASE_PATH" \
       --FeatureMatching.use_gpu 1 \
       --SequentialMatching.overlap "$COLMAP_SEQUENTIAL_OVERLAP" \
       --SequentialMatching.loop_detection "$COLMAP_LOOP_DETECTION" \
       > "$COLMAP_LOG_DIR/sequential_matcher.log" 2>&1
+    grep -E -- '--SequentialMatching\.(overlap|loop_detection) arg' "$COLMAP_LOG_DIR/sequential_matcher.log" >> "$LOG_FILE" || true
+    parsed_overlap="$(sed -n 's/.*--SequentialMatching\.overlap arg (=\([^)]*\)).*/\1/p' "$COLMAP_LOG_DIR/sequential_matcher.log" | tail -n 1 || true)"
+    if [[ -n "$parsed_overlap" && "$parsed_overlap" != "$COLMAP_SEQUENTIAL_OVERLAP" ]]; then
+      echo "ERROR: COLMAP parsed overlap does not match effective settings: parsed=$parsed_overlap effective=$COLMAP_SEQUENTIAL_OVERLAP" >> "$LOG_FILE"
+    fi
     ;;
   exhaustive)
     write_status "RUNNING" 45 -1 "COLMAP exhaustive feature matching"
