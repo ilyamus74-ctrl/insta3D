@@ -22,6 +22,8 @@ COLMAP_IMAGE="${COLMAP_IMAGE:-}"
 COLMAP_MATCHER="${COLMAP_MATCHER:-sequential}"
 COLMAP_SEQUENTIAL_OVERLAP="${COLMAP_SEQUENTIAL_OVERLAP:-60}"
 COLMAP_LOOP_DETECTION="${COLMAP_LOOP_DETECTION:-0}"
+COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA="${COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA:-0}"
+COLMAP_CAMERA_MODEL_FROM_METADATA=""
 PARAMETERS_JSON_PATH="$BASE/input/job_${JOB_ID}/parameters.json"
 
 mkdir -p "$BASE/status" "$BASE/logs"
@@ -194,6 +196,65 @@ validate_colmap_matcher() {
   esac
 }
 
+
+find_camera_metadata_json() {
+  local extract_job_id=""
+  extract_job_id="$(basename "$(dirname "$FRAMES_DIR")" | sed 's/^job_//')"
+  for candidate in \
+    "$(dirname "$FRAMES_DIR")/camera_metadata.json" \
+    "$OUTPUT_DIR/../camera_metadata.json" \
+    "$BASE/output/job_${extract_job_id}/camera_metadata.json"; do
+    [[ -f "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
+log_camera_metadata() {
+  local meta_json=""
+  meta_json="$(find_camera_metadata_json || true)"
+  if [[ -n "$meta_json" ]]; then
+    python3 - "$meta_json" <<'PYMETA' >> "$LOG_FILE" 2>/dev/null || true
+import json,sys
+m=json.load(open(sys.argv[1]))
+print(f"INFO | CAMERA_METADATA | Camera lens: {m.get('lens_label','unknown')}")
+print(f"INFO | CAMERA_METADATA | FOV: {m.get('approximate_fov_deg','unknown')}")
+print(f"INFO | CAMERA_METADATA | focal_length_mm: {m.get('focal_length_mm','unknown')}")
+r=m.get('resolution') or []
+res=(str(r[0])+'x'+str(r[1])) if len(r)>=2 else 'unknown'
+print(f"INFO | CAMERA_METADATA | resolution/fps: {res}/{m.get('fps','unknown')}")
+if m.get('stabilization_mode'): print(f"INFO | CAMERA_METADATA | stabilization: {m.get('stabilization_mode')}")
+for w in m.get('warnings',[]): print('WARNING | CAMERA_METADATA | '+str(w))
+PYMETA
+  else
+    echo "INFO | CAMERA_METADATA | No camera metadata sidecar found" >> "$LOG_FILE"
+  fi
+}
+
+select_camera_model_from_metadata() {
+  COLMAP_CAMERA_MODEL_FROM_METADATA=""
+  [[ "$COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA" == "1" ]] || return 0
+  local meta_json=""
+  meta_json="$(find_camera_metadata_json || true)"
+  [[ -n "$meta_json" ]] || { echo "WARNING | CAMERA_METADATA | COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA=1 but no metadata was found; using COLMAP default camera model" >> "$LOG_FILE"; return 0; }
+  local is_wide
+  is_wide="$(python3 - "$meta_json" <<'PYMETA'
+import json,sys
+m=json.load(open(sys.argv[1])); print('1' if m.get('is_ultrawide_or_fisheye') else '0')
+PYMETA
+)"
+  [[ "$is_wide" == "1" ]] || return 0
+  local help_text
+  help_text="$(run_colmap feature_extractor -h 2>&1 || true)"
+  for model in OPENCV_FISHEYE FOV SIMPLE_RADIAL_FISHEYE RADIAL_FISHEYE; do
+    if grep -q "$model" <<< "$help_text"; then COLMAP_CAMERA_MODEL_FROM_METADATA="$model"; break; fi
+  done
+  if [[ -n "$COLMAP_CAMERA_MODEL_FROM_METADATA" ]]; then
+    echo "INFO | CAMERA_METADATA | COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA selected ImageReader.camera_model=$COLMAP_CAMERA_MODEL_FROM_METADATA" >> "$LOG_FILE"
+  else
+    echo "WARNING | CAMERA_METADATA | Ultrawide/fisheye metadata found but installed COLMAP did not advertise a supported fisheye/FOV camera model; using COLMAP default camera model" >> "$LOG_FILE"
+  fi
+}
+
 validate_colmap() {
   case "$COLMAP_MODE" in
     native)
@@ -250,6 +311,8 @@ echo "INFO | SPARSE | Parameters JSON path=$PARAMETERS_JSON_PATH exists=$([[ -f 
 echo "INFO | SPARSE | Sparse settings effective: matcher=$COLMAP_MATCHER overlap=$COLMAP_SEQUENTIAL_OVERLAP loop_detection=$COLMAP_LOOP_DETECTION source=${COLMAP_SPARSE_SETTINGS_SOURCE:-default}" >> "$LOG_FILE"
 validate_colmap_matcher
 validate_colmap
+log_camera_metadata
+select_camera_model_from_metadata
 
 if [[ ! -d "$FRAMES_DIR" ]]; then
   write_status "ERROR" 0 -1 "Frames directory not found: $FRAMES_DIR"
@@ -270,11 +333,9 @@ write_status "RUNNING" 5 -1 "Preparing workspace"
 mkdir -p "$OUTPUT_DIR" "$SPARSE_DIR" "$COLMAP_LOG_DIR"
 
 write_status "RUNNING" 15 -1 "COLMAP feature extraction"
-run_colmap feature_extractor \
-  --database_path "$DATABASE_PATH" \
-  --image_path "$FRAMES_DIR" \
-  --FeatureExtraction.use_gpu 1 \
-  > "$COLMAP_LOG_DIR/feature_extractor.log" 2>&1
+FEATURE_ARGS=(feature_extractor --database_path "$DATABASE_PATH" --image_path "$FRAMES_DIR" --FeatureExtraction.use_gpu 1)
+[[ -n "$COLMAP_CAMERA_MODEL_FROM_METADATA" ]] && FEATURE_ARGS+=(--ImageReader.camera_model "$COLMAP_CAMERA_MODEL_FROM_METADATA")
+run_colmap "${FEATURE_ARGS[@]}" > "$COLMAP_LOG_DIR/feature_extractor.log" 2>&1
 
 case "$COLMAP_MATCHER" in
   sequential)
@@ -356,6 +417,8 @@ run_sparse_diagnostics() {
   [[ -n "$selected_json" ]] && cmd+=(--selected-frames-json "$selected_json")
   [[ -n "$imu_jsonl" ]] && cmd+=(--imu-jsonl "$imu_jsonl")
   if "${cmd[@]}" >> "$LOG_FILE" 2>&1; then
+    meta_json="$(find_camera_metadata_json || true)"
+    [[ -n "$meta_json" ]] && python3 "$BASE/scripts/camera_metadata.py" --camera-info "$(dirname "$FRAMES_DIR")/camera_info.json" --manifest "$(dirname "$FRAMES_DIR")/manifest.json" --update-diagnostics "$out_json" >> "$LOG_FILE" 2>&1 || true
     python3 - "$out_json" <<'PYDIAG' >> "$LOG_FILE" 2>/dev/null || true
 import json,sys
 d=json.load(open(sys.argv[1])); r=d.get('registration_ratio'); rp=d.get('reprojection',{}); tr=d.get('trajectory',{}); imu=d.get('imu',{})
@@ -388,6 +451,8 @@ for model_dir in "$SPARSE_DIR"/*; do
   fi
 done
 
+CAMERA_METADATA_RESULT="{}"
+if META_PATH="$(find_camera_metadata_json || true)"; then CAMERA_METADATA_RESULT="$(cat "$META_PATH")"; fi
 cat > "$OUTPUT_DIR/result.json" <<JSON
 {
   "job_id": "$JOB_ID",
@@ -401,6 +466,9 @@ cat > "$OUTPUT_DIR/result.json" <<JSON
   "colmap_image": "$COLMAP_IMAGE",
   "colmap_matcher": "$COLMAP_MATCHER",
   "colmap_sequential_overlap": "$COLMAP_SEQUENTIAL_OVERLAP",
+  "colmap_camera_model_auto_from_metadata": "$COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA",
+  "colmap_camera_model_from_metadata": "$COLMAP_CAMERA_MODEL_FROM_METADATA",
+  "camera_metadata": $CAMERA_METADATA_RESULT,
   "models": $MODEL_COUNT,
   "finished_at": "$(date -Iseconds)"
 }

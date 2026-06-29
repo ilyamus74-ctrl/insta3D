@@ -39,9 +39,12 @@ for sidecar_pair in "source_video.camera_info_path:$JOB_ROOT/camera_info.json:ca
   src="$(read_param "$key" "")"
   if [[ -n "$src" && -f "$src" ]]; then
     cp "$src" "$dest"
-    echo "INFO | IMU | $label copied"
+    echo "INFO | CAMERA_METADATA | $label copied"
   fi
 done
+
+CAMERA_METADATA_JSON="$JOB_ROOT/camera_metadata.json"
+python3 "$STATION_BASE/scripts/camera_metadata.py" --camera-info "$JOB_ROOT/camera_info.json" --manifest "$JOB_ROOT/manifest.json" --output-json "$CAMERA_METADATA_JSON" --print-log >> "$LOG_FILE" 2>&1 || echo "WARNING | CAMERA_METADATA | Failed to parse camera metadata" >> "$LOG_FILE"
 SAMPLING_MODE="$(read_param extract.sampling_mode auto_quality)"; TARGET="$(read_param extract.target_frames 400)"; CAND_MULT="$(read_param extract.candidate_multiplier 1.5)"; MIN_FPS="$(read_param extract.minimum_sampling_fps 0.25)"; MAX_FPS="$(read_param extract.maximum_sampling_fps 10)"; SCALE="$(read_param extract.scale_width 1920)"; JPEG="$(read_param extract.jpeg_quality 2)"; KEEP="$(read_param extract.keep_candidate_frames false)"; ALLOW="$(read_param extract.allow_upscale false)"
 if [[ "$SAMPLING_MODE" == "manual" || ( "$SAMPLING_MODE" == "{}" && -n "$(read_param extract.fps '')" ) ]]; then
   FPS="$(read_param extract.fps ${EXTRACT_FPS:-2})"; MAX_FRAMES="$(read_param extract.max_frames ${EXTRACT_MAX_FRAMES:-360})"
@@ -53,6 +56,7 @@ if [[ "$SAMPLING_MODE" == "manual" || ( "$SAMPLING_MODE" == "{}" && -n "$(read_p
   cat > "$JOB_ROOT/result.json" <<JSON
 {"job_id":"$JOB_ID","status":"DONE","frames":$FRAME_COUNT,"sampling_mode":"manual","fps":$FPS,"max_frames":$MAX_FRAMES,"scale_width":$SCALE,"output_dir":"$JOB_ROOT/frames","finished_at":"$(date -Iseconds)"}
 JSON
+python3 "$STATION_BASE/scripts/camera_metadata.py" --camera-info "$JOB_ROOT/camera_info.json" --manifest "$JOB_ROOT/manifest.json" --merge-json "$JOB_ROOT/result.json" >> "$LOG_FILE" 2>&1 || true
 else
   CANDIDATES=$(python3 - <<PY
 print(max(1, round(float('$TARGET')*float('$CAND_MULT'))))
@@ -71,6 +75,7 @@ PY
 import json,sys,datetime,os
 root,job,summary=sys.argv[1:4]; s=json.loads(summary)
 s.update({'job_id':job,'frames':s.get('selected_frames',0),'output_dir':os.path.join(root,'frames'),'quality_dir':os.path.join(root,'quality'),'finished_at':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+s['camera_metadata']=json.load(open(os.path.join(root,'camera_metadata.json'))) if os.path.isfile(os.path.join(root,'camera_metadata.json')) else {}
 open(os.path.join(root,'result.json'),'w').write(json.dumps(s,indent=2))
 PY
   echo "INFO | EXTRACT_FRAMES | Candidate extraction completed frames=$CANDIDATES"

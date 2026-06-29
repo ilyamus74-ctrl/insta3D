@@ -181,6 +181,38 @@ function pipeline_log_extract_quality_summary(mysqli $db, int $pipelineRunId, st
     if ($st) { $st->bind_param('sii', $json, $extracted, $pipelineRunId); $st->execute(); $st->close(); }
 }
 
+
+function pipeline_log_camera_metadata(mysqli $db, int $pipelineRunId, string $jobOutputDir): void
+{
+    $path = rtrim($jobOutputDir, '/') . '/camera_metadata.json';
+    if (!is_file($path)) {
+        pipeline_log($pipelineRunId, 'INFO', 'CAMERA_METADATA', 'No camera metadata sidecar found');
+        return;
+    }
+    $meta = sfm_json_array((string)file_get_contents($path));
+    if (!$meta) {
+        pipeline_log($pipelineRunId, 'WARNING', 'CAMERA_METADATA', 'Invalid camera_metadata.json');
+        return;
+    }
+    $lens = (string)($meta['lens_label'] ?? 'unknown');
+    $fov = (string)($meta['approximate_fov_deg'] ?? 'unknown');
+    $focal = (string)($meta['focal_length_mm'] ?? 'unknown');
+    $res = is_array($meta['resolution'] ?? null) && count($meta['resolution']) >= 2 ? ((string)$meta['resolution'][0] . 'x' . (string)$meta['resolution'][1]) : 'unknown';
+    pipeline_log($pipelineRunId, 'INFO', 'CAMERA_METADATA', 'Camera lens: ' . $lens);
+    pipeline_log($pipelineRunId, 'INFO', 'CAMERA_METADATA', 'FOV: ' . $fov);
+    pipeline_log($pipelineRunId, 'INFO', 'CAMERA_METADATA', 'focal_length_mm: ' . $focal);
+    pipeline_log($pipelineRunId, 'INFO', 'CAMERA_METADATA', 'resolution/fps: ' . $res . '/' . (string)($meta['fps'] ?? 'unknown'));
+    if (!empty($meta['stabilization_mode'])) { pipeline_log($pipelineRunId, 'INFO', 'CAMERA_METADATA', 'stabilization: ' . (string)$meta['stabilization_mode']); }
+    foreach (($meta['warnings'] ?? []) as $warning) { pipeline_log($pipelineRunId, 'WARNING', 'CAMERA_METADATA', (string)$warning); }
+    $resq = $db->query('SELECT parameters_json FROM sfm_pipeline_runs WHERE id=' . (int)$pipelineRunId . ' LIMIT 1');
+    $params = $resq ? sfm_json_array((string)($resq->fetch_assoc()['parameters_json'] ?? '{}')) : [];
+    if ($resq) { $resq->close(); }
+    $params['camera_metadata'] = $meta;
+    $json = json_encode($params, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $st = $db->prepare('UPDATE sfm_pipeline_runs SET parameters_json=? WHERE id=?');
+    if ($st) { $st->bind_param('si', $json, $pipelineRunId); $st->execute(); $st->close(); }
+}
+
 function auto_chain_after_done(mysqli $db, array $job): void
 {
     $type = (string)$job['job_type'];
@@ -208,7 +240,7 @@ function auto_chain_after_done(mysqli $db, array $job): void
             worker_log("EXTRACT_FRAMES parent={$remote} completed as upload preparation/diagnostics; not auto-queueing COLMAP_SPARSE");
             return;
         }
-        pipeline_log_extract_quality_summary($db, $pipelineRunId, remote_output_dir($remote)); $er=sfm_json_array((string)@file_get_contents(remote_output_dir($remote).'/result.json')); $frames=(int)($er['frames'] ?? 0); $extra=$frames>0?['extracted_frames'=>$frames]:[]; sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued',$extra); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done'); pipeline_log($pipelineRunId,'INFO','SPARSE','Started');
+        pipeline_log_extract_quality_summary($db, $pipelineRunId, remote_output_dir($remote)); pipeline_log_camera_metadata($db, $pipelineRunId, remote_output_dir($remote)); $er=sfm_json_array((string)@file_get_contents(remote_output_dir($remote).'/result.json')); $frames=(int)($er['frames'] ?? 0); $extra=$frames>0?['extracted_frames'=>$frames]:[]; sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued',$extra); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done'); pipeline_log($pipelineRunId,'INFO','SPARSE','Started');
         $rid = sfm_job_id($db);
         $input = frames_path_for_parent($remote);
         $out = remote_output_dir($rid);
@@ -724,6 +756,27 @@ function safe_session_imu_path(mysqli $db, array $job): ?string
     return null;
 }
 
+
+function safe_session_metadata_path(mysqli $db, array $job, string $suffix): ?string
+{
+    $video = safe_session_video_path($db, $job);
+    $videoDir = dirname($video);
+    $allowedDir = realpath($videoDir);
+    if ($allowedDir === false || !is_dir($allowedDir)) { return null; }
+    $params = json_decode((string)($job['parameters_json'] ?? '{}'), true);
+    $key = $suffix === '_camera_info.json' ? 'camera_info_path' : 'manifest_path';
+    $candidates = [];
+    if (is_array($params) && !empty($params['source_video'][$key])) { $candidates[] = (string)$params['source_video'][$key]; }
+    $stem = pathinfo($video, PATHINFO_FILENAME);
+    $baseStem = preg_replace('/_video$/', '', $stem);
+    foreach (array_unique([$stem . $suffix, $baseStem . $suffix]) as $name) { $candidates[] = $videoDir . '/' . $name; }
+    foreach ($candidates as $candidate) {
+        $real = realpath($candidate);
+        if ($real !== false && is_file($real) && str_starts_with($real, $allowedDir . DIRECTORY_SEPARATOR)) { return $real; }
+    }
+    return null;
+}
+
 function frames_path_for_parent(int $parentRemoteJobId): string
 {
     if ($parentRemoteJobId <= 0) {
@@ -815,7 +868,7 @@ function launch_job(mysqli $db, array $job): void
         $pipelineRunId = pipeline_run_for_job($job);
         if ($pipelineRunId > 0) { sfm_pipeline_update($db,$pipelineRunId,'RUNNING','EXTRACT_FRAMES',1,'Extracting and selecting frames'); }
         $input = safe_session_video_path($db, $job);
-        $rs=worker_run_parameters($db,$job); $ex=$rs['extract'] ?? []; $imuCfg=$rs['imu_frame_selection'] ?? []; $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: []; $localImu=safe_session_imu_path($db,$job); $sourceVideo=$params['source_video'] ?? []; $extractPayload=['extract'=>$ex,'imu_frame_selection'=>$imuCfg]; if(is_array($sourceVideo)&&$sourceVideo){$extractPayload['source_video']=$sourceVideo;} if($localImu){$extractPayload['imu_jsonl_path']=$localImu; worker_log('IMU | Source sidecar found: '.$localImu);} else { worker_log('IMU | No source IMU sidecar found for video '.basename($input)); } $extractJson=json_encode($extractPayload, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)($ex['fps'] ?? ''), (string)($ex['max_frames'] ?? ''), (string)($ex['scale_width'] ?? ''), (string)($ex['jpeg_quality'] ?? ''), $extractJson, (string)($localImu ?? '')];
+        $rs=worker_run_parameters($db,$job); $ex=$rs['extract'] ?? []; $imuCfg=$rs['imu_frame_selection'] ?? []; $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: []; $localImu=safe_session_imu_path($db,$job); $localCameraInfo=safe_session_metadata_path($db,$job,'_camera_info.json'); $localManifest=safe_session_metadata_path($db,$job,'_manifest.json'); $sourceVideo=$params['source_video'] ?? []; $extractPayload=['extract'=>$ex,'imu_frame_selection'=>$imuCfg]; if(!is_array($sourceVideo)){$sourceVideo=[];} if($localCameraInfo){$sourceVideo['camera_info_path']=$localCameraInfo; worker_log('CAMERA_METADATA | camera_info sidecar found: '.$localCameraInfo);} if($localManifest){$sourceVideo['manifest_path']=$localManifest; worker_log('CAMERA_METADATA | manifest sidecar found: '.$localManifest);} if($sourceVideo){$extractPayload['source_video']=$sourceVideo;} if($localImu){$extractPayload['imu_jsonl_path']=$localImu; worker_log('IMU | Source sidecar found: '.$localImu);} else { worker_log('IMU | No source IMU sidecar found for video '.basename($input)); } $extractJson=json_encode($extractPayload, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)($ex['fps'] ?? ''), (string)($ex['max_frames'] ?? ''), (string)($ex['scale_width'] ?? ''), (string)($ex['jpeg_quality'] ?? ''), $extractJson, (string)($localImu ?? '')];
     } elseif ($type === 'COLMAP_SPARSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         $rs=worker_run_parameters($db,$job); $sp=$rs['sparse'] ?? []; $pipelineRunId=pipeline_run_for_job($job); $run=[]; $settingsHash=substr(hash('sha256', json_encode($rs, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)),0,16); $mode=(string)($job['reconstruction_mode'] ?? 'preview');
