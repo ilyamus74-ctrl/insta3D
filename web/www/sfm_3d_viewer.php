@@ -85,6 +85,7 @@ body{overflow:hidden}
     </div>
     </div>
     <div class="control-section"><div class="mt-2"><b>Orientation</b></div>
+    <div class="form-check mt-1"><input class="form-check-input" type="checkbox" id="autoLevelOnLoad" checked><label class="form-check-label" for="autoLevelOnLoad">Auto level on load</label></div>
     <div class="d-grid gap-1 mt-1">
       <button class="btn btn-outline-light btn-sm" id="floorPlaneBtn">Auto level<br><small class="text-muted">Fit floor plane</small></button>
       <button class="btn btn-outline-light btn-sm" id="invertLevelBtn">Invert level</button>
@@ -127,6 +128,8 @@ import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 
 const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,videoScanId=<?php echo json_encode($videoScanId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
+const urlParams=new URLSearchParams(window.location.search);
+const autoLevelUrlOverride=urlParams.get('auto_level');
 const statusEl=document.getElementById('viewerStatus');
 function showError(msg){ statusEl.className='text-danger p-3'; statusEl.textContent=msg; if(!statusEl.isConnected) document.getElementById('viewer').prepend(statusEl); }
 const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&video_scan_id=${videoScanId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${videoScanId>0?'&video_scan_id='+videoScanId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
@@ -187,6 +190,8 @@ let latestCombinedBox = null;
 let latestRadius = 5;
 let currentViewMode = 'Fit all';
 let lastAutoLevelPlaneResult = null;
+let hasSavedOrientation = false;
+let autoLevelOnLoadApplied = false;
 
 const formatNum=(v)=>typeof v==='number'?v.toLocaleString():v;
 function updateSummary(){
@@ -610,9 +615,11 @@ const bindClick=(id,handler)=>{
 
 
 const presets={natural:{exposure:1.2,pointSize:1.5,background:'#252b3f'},bright:{exposure:1.7,pointSize:2.25,background:'#252b3f'},contrast:{exposure:2.0,pointSize:2.75,background:'#202437'},meshlab:{exposure:1.5,pointSize:2.0,background:'#29305f'}};
-function applyDisplaySettings(sv){ if(!sv) return; if(sv.background){scene.background=new THREE.Color(sv.background); document.getElementById('backgroundColor').value=sv.background;} if(sv.exposure){renderer.toneMappingExposure=Number(sv.exposure); document.getElementById('exposure').value=String(sv.exposure); document.getElementById('exposureValue').textContent=Number(sv.exposure).toFixed(2);} if(sv.point_size){setPointSize(Number(sv.point_size));} if(sv.quaternion){rootGroup.quaternion.set(Number(sv.quaternion.x||0),Number(sv.quaternion.y||0),Number(sv.quaternion.z||0),Number(sv.quaternion.w||1)).normalize();} else if(sv.rotation){rootGroup.rotation.set(Number(sv.rotation.x||0),Number(sv.rotation.y||0),Number(sv.rotation.z||0));} if(sv.preset){document.getElementById('displayPreset').value=sv.preset;} }
+function isSavedQuaternion(q){ return q && ['x','y','z','w'].every(k=>Number.isFinite(Number(q[k]))); }
+function isSavedRotation(r){ return r && ['x','y','z'].some(k=>Math.abs(Number(r[k]||0))>1e-8); }
+function applyDisplaySettings(sv){ if(!sv) return; if(sv.background){scene.background=new THREE.Color(sv.background); document.getElementById('backgroundColor').value=sv.background;} if(sv.exposure){renderer.toneMappingExposure=Number(sv.exposure); document.getElementById('exposure').value=String(sv.exposure); document.getElementById('exposureValue').textContent=Number(sv.exposure).toFixed(2);} if(sv.point_size){setPointSize(Number(sv.point_size));} hasSavedOrientation=false; if(isSavedQuaternion(sv.quaternion)){rootGroup.quaternion.set(Number(sv.quaternion.x),Number(sv.quaternion.y),Number(sv.quaternion.z),Number(sv.quaternion.w)).normalize(); hasSavedOrientation=true;} else if(isSavedRotation(sv.rotation)){rootGroup.rotation.set(Number(sv.rotation.x||0),Number(sv.rotation.y||0),Number(sv.rotation.z||0)); hasSavedOrientation=true;} if(typeof sv.auto_level_on_load==='boolean'){document.getElementById('autoLevelOnLoad').checked=sv.auto_level_on_load;} if(sv.preset){document.getElementById('displayPreset').value=sv.preset;} }
 async function loadViewerSettings(){ try{ const rr=await fetch(`/api/sfm_viewer_settings.php?order_id=${orderId}&capture_session_id=${sessionId}&pipeline_run_id=${pipelineRunId||''}`); const js=await rr.json(); if(js.ok) applyDisplaySettings(js.settings); }catch(e){ console.warn('settings load failed',e);} }
-async function saveViewerSettings(){ if(debugToken) return; const body={order_id:orderId,capture_session_id:sessionId,pipeline_run_id:pipelineRunId||null,settings:{quaternion:{x:rootGroup.quaternion.x,y:rootGroup.quaternion.y,z:rootGroup.quaternion.z,w:rootGroup.quaternion.w},rotation:{x:rootGroup.rotation.x,y:rootGroup.rotation.y,z:rootGroup.rotation.z},point_size:getPointSize(),exposure:renderer.toneMappingExposure,background:'#'+scene.background.getHexString(),use_outlier_filter:document.getElementById('outlierMode').value!=='off',outlier_mode:document.getElementById('outlierMode').value,preset:document.getElementById('displayPreset').value}}; await fetch('/api/sfm_viewer_settings.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+async function saveViewerSettings(){ if(debugToken) return; const body={order_id:orderId,capture_session_id:sessionId,pipeline_run_id:pipelineRunId||null,settings:{quaternion:{x:rootGroup.quaternion.x,y:rootGroup.quaternion.y,z:rootGroup.quaternion.z,w:rootGroup.quaternion.w},rotation:{x:rootGroup.rotation.x,y:rootGroup.rotation.y,z:rootGroup.rotation.z},point_size:getPointSize(),exposure:renderer.toneMappingExposure,background:'#'+scene.background.getHexString(),use_outlier_filter:document.getElementById('outlierMode').value!=='off',outlier_mode:document.getElementById('outlierMode').value,preset:document.getElementById('displayPreset').value,auto_level_on_load:document.getElementById('autoLevelOnLoad').checked}}; await fetch('/api/sfm_viewer_settings.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
 function rebuildAfterTransform(doFit=true){ const box=computeCombinedBox(initialArtifact==='sparse',false,false,initialArtifact==='dense',initialArtifact==='mesh'); if(!box) return; latestCombinedBox=box.clone(); const size=box.getSize(new THREE.Vector3()); const radius=Math.max(size.length()*0.5,0.1); recreateGrid(box, new THREE.Vector3(), radius); if(doFit) fitCloud(); controls.update(); }
 function rotateRootLocal(axis, radians){ rootGroup.rotateOnAxis(axis,radians); rootGroup.quaternion.normalize(); rebuildAfterTransform(true); updateSummary(); }
 function applyWorldRotation(axis, radians){ const q=new THREE.Quaternion().setFromAxisAngle(axis.clone().normalize(), radians); rootGroup.quaternion.premultiply(q).normalize(); rebuildAfterTransform(true); updateSummary(); }
@@ -759,17 +766,19 @@ function chooseFloorSide(points, fit){
   return {...best, ambiguous};
 }
 
-function autoLevelByFloorPlane(){
+function autoLevelByFloorPlane(options={}){
+  const onLoad=!!options.onLoad;
   const obj=floorPlaneSourceObject();
   const sampled=sampleGeometryPositions(obj, 60000);
-  if(!sampled || sampled.count<300){ selectionEl.innerHTML='<span class="text-warning">Auto level needs at least 300 geometry points.</span>'; return; }
+  if(!sampled || sampled.count<300){ selectionEl.innerHTML='<span class="text-warning">Auto level needs at least 300 geometry points.</span>'; return Promise.resolve(false); }
   selectionEl.innerHTML='Fitting dominant floor plane…';
-  setTimeout(()=>{
+  return new Promise(resolve=>setTimeout(()=>{
     const fit=fitDominantPlaneRansac(sampled.points, sampled.diag);
     const minInliers=Math.max(150, Math.floor(sampled.count*0.06));
     if(!fit || fit.inliers<minInliers || fit.ratio<0.06 || fit.rmse>fit.threshold*0.85){
       const msg=fit ? `Floor plane confidence is low: inliers ${fit.inliers} / ${fit.total}, ratio ${(fit.ratio*100).toFixed(1)}%, rmse ${fit.rmse.toFixed(3)}.` : 'No dominant floor plane found.';
       selectionEl.innerHTML=`<span class="text-warning">${msg} Auto level was not applied.</span>`;
+      resolve(false);
       return;
     }
     const choice=chooseFloorSide(sampled.points, fit);
@@ -788,8 +797,20 @@ function autoLevelByFloorPlane(){
     rebuildAfterTransform(true);
     updateSummary();
     const warning=choice.ambiguous ? '<br><span class="text-warning">Auto level applied, but floor side is ambiguous. Use Invert level if upside down.</span>' : '';
-    selectionEl.innerHTML=`Auto level applied: inliers ${fit.inliers} / ${fit.total}, ratio ${(fit.ratio*100).toFixed(1)}%, rmse ${fit.rmse.toFixed(3)}, rotation ${angle.toFixed(1)}°, floor side: ${choice.ambiguous?'ambiguous auto':'auto'}${warning}<br><span class="text-muted">Use “Save orientation” to save this orientation.</span>`;
-  }, 20);
+    const prefix=onLoad ? 'Auto level applied on load' : 'Auto level applied';
+    selectionEl.innerHTML=`${prefix}: inliers ${fit.inliers} / ${fit.total}, ratio ${(fit.ratio*100).toFixed(1)}%, rmse ${fit.rmse.toFixed(3)}, rotation ${angle.toFixed(1)}°, floor side ${choice.ambiguous?'ambiguous auto':'auto'}${warning}<br><span class="text-muted">Use “Save orientation” to save this orientation.</span>`;
+    resolve(true);
+  }, 20));
+}
+
+async function maybeAutoLevelOnLoad(){
+  if(autoLevelOnLoadApplied) return;
+  autoLevelOnLoadApplied=true;
+  if(hasSavedOrientation){ selectionEl.innerHTML='Auto level skipped: saved orientation loaded.'; return; }
+  const enabledBySetting=document.getElementById('autoLevelOnLoad').checked;
+  const enabled=autoLevelUrlOverride==='0' ? false : (autoLevelUrlOverride==='1' ? true : enabledBySetting);
+  if(!enabled){ selectionEl.innerHTML='Auto level on load disabled.'; return; }
+  await autoLevelByFloorPlane({onLoad:true});
 }
 
 function invertLevel(){
@@ -825,6 +846,7 @@ document.getElementById('backgroundColor').addEventListener('input',e=>{scene.ba
 await loadViewerSettings();
 rebuildAfterTransform(false);
 updateSummary();
+await maybeAutoLevelOnLoad();
 addEventListener('resize',()=>{camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();renderer.setSize(el.clientWidth,el.clientHeight);});
 (function anim(){requestAnimationFrame(anim);controls.update();renderer.render(scene,camera);})();
 </script>
