@@ -23,6 +23,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,6 +37,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
@@ -93,6 +95,7 @@ import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
+import com.maklertour.data.phonecamera.PhoneScanCalibrationMetadata
 import com.maklertour.data.local.RoomDatabaseProvider
 import com.maklertour.data.network.ConnectivityState
 import com.maklertour.data.repository.RoomSessionRepository
@@ -1404,7 +1407,7 @@ private fun PhoneCameraScanScreen(
     val isBackbone = nextRole != com.maklertour.domain.ScanVideoRole.DETAIL
     val latestPhoneScan = scanVideos.filter { it.source == com.maklertour.domain.ScanSource.PHONE_CAMERA }.maxByOrNull { it.updatedAt }
 
-    val levelState = rememberDeviceLevelState(enabled = isBackbone)
+    val levelState = rememberDeviceLevelState(enabled = true)
     val capturedPhoneScan = latestPhoneScan?.takeIf {
         startedInThisScreen &&
             videoScanUiState == VideoScanUiState.CAPTURED &&
@@ -1494,7 +1497,8 @@ private fun PhoneCameraScanScreen(
                     }
                 }
                 bindError?.takeIf { hasCameraPermission }?.let { Text(it, color = Color(0xFFFFB4AB), modifier = Modifier.padding(16.dp)) }
-                    if (isBackbone) LevelOverlay(levelState)
+                    if (isBackbone || videoScanUiState == VideoScanUiState.RECORDING) LevelOverlay(levelState, compact = !isBackbone)
+                    if (showCalibrationDialog) CalibrationPanel(levelState, onDismiss = { showCalibrationDialog = false })
             }
 
             Column(modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.85f)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1504,19 +1508,14 @@ private fun PhoneCameraScanScreen(
                         Text(levelState.statusText, color = levelState.statusColor)
                     }
                     Text("Идите медленно по периметру", color = Color.White)
+                    Text("Один плавный круг", color = Color.White)
                     Text("Не делайте резких поворотов", color = Color.White)
                     Text("Держите перекрытие кадров", color = Color.White)
                 }
                 VideoRoleGuide(
                     nextRole,
                     guideConfirmed,
-                    onConfirm = {
-                        if (isBackbone && !levelState.hasCalibration) {
-                            levelState.calibrate()
-                            Toast.makeText(context, "Уровень откалиброван", Toast.LENGTH_SHORT).show()
-                        }
-                        guideConfirmed = true
-                    },
+                    onConfirm = { guideConfirmed = true },
                 )
                 Button(
                     onClick = {
@@ -1525,6 +1524,7 @@ private fun PhoneCameraScanScreen(
                         } else {
                             startedInThisScreen = true
                             lastShownCapturedScanId = null
+                            PhoneCameraScanProvider.setSessionCalibration(levelState.toMetadata())
                             onStartPhoneVideoScan(defaultVideoScanNameForRole(nextRole, scanVideos.size + 1, scanName.trim()))
                         }
                     },
@@ -1535,12 +1535,6 @@ private fun PhoneCameraScanScreen(
                 ) { Text(if (isRecordingScanVideo) "■" else "●", color = Color.White) }
                 Text(if (isRecordingScanVideo) "Остановить" else "Начать запись", color = Color.White)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (isBackbone) {
-                        Button(onClick = {
-                            levelState.calibrate()
-                            Toast.makeText(context, "Уровень откалиброван", Toast.LENGTH_SHORT).show()
-                        }) { Text("Калибровать уровень") }
-                    }
                     Button(onClick = { showCalibrationDialog = true }) { Text("Калибровка") }
                     Button(onClick = { showCameraSettingsDialog = true }) { Text("Настройки камеры") }
                 }
@@ -1572,7 +1566,6 @@ private fun PhoneCameraScanScreen(
             }
         }
     }
-    if (showCalibrationDialog) AlertDialog(onDismissRequest = { showCalibrationDialog = false }, title = { Text("Калибровка") }, text = { Text("Калибровка камеры будет добавлена следующим этапом. План: шахматка/AprilTag board, сохранение camera_matrix и distortion_coefficients.") }, confirmButton = { TextButton(onClick = { showCalibrationDialog = false }) { Text("ОК") } })
     if (showCameraSettingsDialog) AlertDialog(onDismissRequest = { showCameraSettingsDialog = false }, title = { Text("Настройки камеры") }, text = { Text("Выбор объектива, разрешения и FPS будет добавлен следующим этапом.") }, confirmButton = { TextButton(onClick = { showCameraSettingsDialog = false }) { Text("ОК") } })
 }
 
@@ -2333,10 +2326,16 @@ private enum class LevelWarningState(val color: Color, val text: String) {
     Danger(Color(0xFFFF6B6B), "Сильный наклон"),
 }
 
+private data class LevelSample(val timeMs: Long, val pitchDeg: Float, val rollDeg: Float)
+
 private class DeviceLevelState {
     var rawPitchDeg by mutableStateOf(0f)
         private set
     var rawRollDeg by mutableStateOf(0f)
+        private set
+    var displayPitchDeg by mutableStateOf(0f)
+        private set
+    var displayRollDeg by mutableStateOf(0f)
         private set
     var displayPitchDeltaDeg by mutableStateOf(0f)
         private set
@@ -2346,47 +2345,102 @@ private class DeviceLevelState {
         private set
     var baselineRollDeg by mutableStateOf<Float?>(null)
         private set
+    var calibrationTimestamp by mutableStateOf<String?>(null)
+        private set
     var warningState by mutableStateOf(LevelWarningState.Ok)
+        private set
+    var isStableForCalibration by mutableStateOf(false)
+        private set
+    var sensorStatusText by mutableStateOf("Проверка датчиков...")
+        private set
+    var activeSensorName by mutableStateOf("—")
+        private set
+    var lastSampleRateHz by mutableStateOf<Float?>(null)
         private set
 
     private var lastUiUpdateMs = 0L
+    private var lastSensorEventMs = 0L
     private var candidateState: LevelWarningState? = null
     private var candidateSinceMs = 0L
+    private val stabilitySamples = ArrayDeque<LevelSample>()
 
     val hasCalibration: Boolean get() = baselinePitchDeg != null && baselineRollDeg != null
     val isLevel: Boolean get() = warningState == LevelWarningState.Ok
     val statusText: String get() = warningState.text
     val statusColor: Color get() = warningState.color
 
-    fun calibrate() {
-        baselinePitchDeg = rawPitchDeg
-        baselineRollDeg = rawRollDeg
+    fun updateSensorStatus(manager: SensorManager?, activeSensor: Sensor?) {
+        val accelerometer = manager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null
+        val gyroscope = manager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null
+        val rotation = manager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR) != null
+        val gameRotation = manager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR) != null
+        activeSensorName = activeSensor?.name ?: "нет активного датчика"
+        sensorStatusText = "Акселерометр: ${if (accelerometer) "есть" else "нет"}; гироскоп: ${if (gyroscope) "есть" else "нет"}; rotation/game vector: ${if (rotation || gameRotation) "есть" else "нет"}"
+    }
+
+    fun calibrate(): Boolean {
+        baselinePitchDeg = displayPitchDeg
+        baselineRollDeg = displayRollDeg
+        calibrationTimestamp = java.time.Instant.now().toString()
         displayPitchDeltaDeg = 0f
         displayRollDeltaDeg = 0f
         warningState = LevelWarningState.Ok
         candidateState = null
+        return isStableForCalibration
     }
+
+    fun toMetadata(): PhoneScanCalibrationMetadata = PhoneScanCalibrationMetadata(
+        baselinePitchDeg = baselinePitchDeg,
+        baselineRollDeg = baselineRollDeg,
+        baselineQuaternion = null,
+        calibrationTimestamp = calibrationTimestamp,
+        rollGreenThresholdDeg = 8f,
+        pitchGreenThresholdDeg = 12f,
+        rollYellowThresholdDeg = 15f,
+        pitchYellowThresholdDeg = 20f,
+        markerMode = "none",
+        markersUsed = false,
+    )
 
     fun update(pitchDeg: Float, rollDeg: Float, nowMs: Long = System.currentTimeMillis()) {
         rawPitchDeg = pitchDeg
         rawRollDeg = rollDeg
+        if (lastSensorEventMs > 0L && nowMs > lastSensorEventMs) {
+            lastSampleRateHz = 1000f / (nowMs - lastSensorEventMs).coerceAtLeast(1L)
+        }
+        lastSensorEventMs = nowMs
         if (nowMs - lastUiUpdateMs < 80L) return
         lastUiUpdateMs = nowMs
 
-        val pitchDelta = angleDelta(pitchDeg, baselinePitchDeg ?: 0f)
-        val rollDelta = angleDelta(rollDeg, baselineRollDeg ?: 0f)
-        displayPitchDeltaDeg = smoothIfVisible(displayPitchDeltaDeg, pitchDelta)
-        displayRollDeltaDeg = smoothIfVisible(displayRollDeltaDeg, rollDelta)
+        displayPitchDeg = smoothIfVisible(displayPitchDeg, pitchDeg)
+        displayRollDeg = smoothIfVisible(displayRollDeg, rollDeg)
+        updateStability(nowMs)
+        val pitchDelta = angleDelta(displayPitchDeg, baselinePitchDeg ?: displayPitchDeg)
+        val rollDelta = angleDelta(displayRollDeg, baselineRollDeg ?: displayRollDeg)
+        displayPitchDeltaDeg = if (hasCalibration) pitchDelta else 0f
+        displayRollDeltaDeg = if (hasCalibration) rollDelta else 0f
         updateWarningState(displayPitchDeltaDeg, displayRollDeltaDeg, nowMs)
     }
 
+    private fun updateStability(nowMs: Long) {
+        stabilitySamples.addLast(LevelSample(nowMs, displayPitchDeg, displayRollDeg))
+        while (stabilitySamples.isNotEmpty() && nowMs - stabilitySamples.first().timeMs > 1_500L) stabilitySamples.removeFirst()
+        val windowMs = stabilitySamples.lastOrNull()?.timeMs?.minus(stabilitySamples.firstOrNull()?.timeMs ?: nowMs) ?: 0L
+        val minRoll = stabilitySamples.minOfOrNull { it.rollDeg } ?: displayRollDeg
+        val maxRoll = stabilitySamples.maxOfOrNull { it.rollDeg } ?: displayRollDeg
+        val minPitch = stabilitySamples.minOfOrNull { it.pitchDeg } ?: displayPitchDeg
+        val maxPitch = stabilitySamples.maxOfOrNull { it.pitchDeg } ?: displayPitchDeg
+        isStableForCalibration = windowMs >= 1_500L && (maxRoll - minRoll) < 1.5f && (maxPitch - minPitch) < 3f
+    }
+
     private fun smoothIfVisible(current: Float, target: Float): Float {
-        if (kotlin.math.abs(target - current) < 1.2f) return current
+        if (kotlin.math.abs(target - current) < 1f) return current
         return current + (target - current) * 0.12f
     }
 
     private fun updateWarningState(pitchDelta: Float, rollDelta: Float, nowMs: Long) {
         val target = when {
+            !hasCalibration -> LevelWarningState.Ok
             kotlin.math.abs(rollDelta) <= 8f && kotlin.math.abs(pitchDelta) <= 12f -> LevelWarningState.Ok
             kotlin.math.abs(rollDelta) <= 15f && kotlin.math.abs(pitchDelta) <= 20f -> LevelWarningState.Warning
             else -> LevelWarningState.Danger
@@ -2406,7 +2460,6 @@ private class DeviceLevelState {
         }
     }
 }
-
 private fun angleDelta(value: Float, baseline: Float): Float {
     var delta = value - baseline
     while (delta > 180f) delta -= 360f
@@ -2422,12 +2475,14 @@ private fun rememberDeviceLevelState(enabled: Boolean): DeviceLevelState {
         if (!enabled) return@DisposableEffect onDispose { }
         val sensorManager = context.getSystemService(SensorManager::class.java)
         val sensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
             ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        state.updateSensorStatus(sensorManager, sensor)
         val listener = object : SensorEventListener {
             private val rotation = FloatArray(9)
             private val orientation = FloatArray(3)
             override fun onSensorChanged(event: SensorEvent) {
-                if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+                if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR || event.sensor.type == Sensor.TYPE_GAME_ROTATION_VECTOR) {
                     SensorManager.getRotationMatrixFromVector(rotation, event.values)
                     SensorManager.getOrientation(rotation, orientation)
                     state.update(
@@ -2453,25 +2508,100 @@ private fun rememberDeviceLevelState(enabled: Boolean): DeviceLevelState {
 }
 
 @Composable
-private fun LevelOverlay(level: DeviceLevelState) {
+private fun LevelOverlay(level: DeviceLevelState, compact: Boolean = false) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(24.dp),
+        modifier = Modifier.fillMaxWidth().padding(if (compact) 12.dp else 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.35f)))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.75f)
-                .height(5.dp)
-                .graphicsLayer { rotationZ = -level.displayRollDeltaDeg.coerceIn(-25f, 25f) }
-                .background(level.statusColor)
-        )
-        Text("ΔPitch ${"%.1f".format(level.displayPitchDeltaDeg)}° / ΔRoll ${"%.1f".format(level.displayRollDeltaDeg)}°", color = Color.White)
-        Text(level.statusText, color = level.statusColor, style = MaterialTheme.typography.titleMedium)
+        Box(modifier = Modifier.fillMaxWidth().height(if (compact) 18.dp else 34.dp), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.fillMaxWidth().height(18.dp).background(Color(0xFF43D17A).copy(alpha = 0.18f)))
+            Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(Color.LightGray.copy(alpha = 0.75f)))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.75f)
+                    .height(5.dp)
+                    .graphicsLayer { rotationZ = -if (level.hasCalibration) level.displayRollDeltaDeg.coerceIn(-25f, 25f) else level.displayRollDeg.coerceIn(-25f, 25f) }
+                    .background(level.statusColor)
+            )
+        }
+        if (!compact) {
+            Text("Roll ${"%.1f".format(level.displayRollDeg)}° / Pitch ${"%.1f".format(level.displayPitchDeg)}°", color = Color.White)
+            if (level.hasCalibration) Text("ΔRoll ${"%.1f".format(level.displayRollDeltaDeg)}° / ΔPitch ${"%.1f".format(level.displayPitchDeltaDeg)}°", color = Color.White)
+            Text(level.statusText, color = level.statusColor, style = MaterialTheme.typography.titleMedium)
+        } else {
+            Text(level.statusText, color = level.statusColor, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
+@Composable
+private fun CalibrationPanel(level: DeviceLevelState, onDismiss: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)).padding(16.dp),
+        color = Color.Black.copy(alpha = 0.86f),
+    ) {
+        LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Калибровка съёмки", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                    TextButton(onClick = onDismiss) { Text("Закрыть") }
+                }
+            }
+            item {
+                CalibrationSection("Уровень телефона") {
+                    LevelOverlay(level)
+                    Text("Держите телефон так, как будете снимать основной проход. Когда линия стабильна — нажмите “Запомнить уровень”.", color = Color.White)
+                    Text("Roll: ${"%.1f".format(level.displayRollDeg)}°", color = Color.White)
+                    Text("Pitch: ${"%.1f".format(level.displayPitchDeg)}°", color = Color.White)
+                    if (level.hasCalibration) {
+                        Text("ΔRoll: ${"%.1f".format(level.displayRollDeltaDeg)}°", color = Color.White)
+                        Text("ΔPitch: ${"%.1f".format(level.displayPitchDeltaDeg)}°", color = Color.White)
+                    }
+                    val stableText = if (level.isStableForCalibration) "Стабильно — рекомендуется сохранить" else "Телефон ещё двигается: можно сохранить вручную, но будет предупреждение"
+                    Text(stableText, color = if (level.isStableForCalibration) Color(0xFF43D17A) else Color(0xFFFFC857))
+                    Button(
+                        onClick = { level.calibrate() },
+                        colors = ButtonDefaults.buttonColors(containerColor = if (level.isStableForCalibration) Color(0xFF1E8E3E) else Color(0xFF6D5F00)),
+                    ) { Text("Запомнить уровень") }
+                }
+            }
+            item {
+                CalibrationSection("Камера") {
+                    Text("Фокус: авто / блокировка фокуса — скоро", color = Color.White)
+                    Text("Экспозиция: авто / блокировка экспозиции — скоро", color = Color.White)
+                    Text("Баланс белого: авто / блокировка — скоро", color = Color.White)
+                    Text("Разрешение/FPS: см. camera_info.json после записи", color = Color.White)
+                }
+            }
+            item {
+                CalibrationSection("Маркеры") {
+                    Text("Можно использовать ArUco / AprilTag маркеры для масштаба и ориентации.", color = Color.White)
+                    Text("metadata: marker_mode=none, markers_used=false", color = Color.White.copy(alpha = 0.75f))
+                    Button(onClick = {}, enabled = false) { Text("Показать/распечатать маркеры — скоро") }
+                }
+            }
+            item {
+                CalibrationSection("Проверка датчиков") {
+                    Text(level.sensorStatusText, color = Color.White)
+                    Text("Активный датчик: ${level.activeSensorName}", color = Color.White)
+                    Text("Частота: ${level.lastSampleRateHz?.let { "%.1f Hz".format(it) } ?: "ожидание данных"}", color = Color.White)
+                    if ("нет" in level.sensorStatusText) Text("Если датчик отсутствует, запись всё равно доступна, но подсказки уровня могут быть менее точными.", color = Color(0xFFFFC857))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CalibrationSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF202124))) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
+            content()
+        }
+    }
+}
 @Composable
 private fun VideoRoleGuide(role: com.maklertour.domain.ScanVideoRole, confirmed: Boolean, onConfirm: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {

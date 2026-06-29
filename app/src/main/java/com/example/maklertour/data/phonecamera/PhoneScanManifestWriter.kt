@@ -16,6 +16,7 @@ class PhoneScanManifestWriter {
         finishedAt: String,
         durationSec: Long,
         fileSizeBytes: Long,
+        calibration: PhoneScanCalibrationMetadata? = null,
     ): File {
         val file = File(baseDir, "manifest.json")
         val files = JSONArray()
@@ -35,8 +36,26 @@ class PhoneScanManifestWriter {
             .put("video", videoFile.name)
             .put("camera_info", cameraInfoFile.name)
             .put("imu", if (imuFile != null && imuFile.exists() && imuFile.length() > 0L) imuFile.name else JSONObject.NULL)
+            .put("calibration", calibration?.toJson() ?: JSONObject.NULL)
             .put("files", files)
         file.writeText(json.toString(2))
         return file
     }
+}
+
+
+private fun PhoneScanCalibrationMetadata.toJson(): JSONObject {
+    val thresholds = JSONObject()
+        .put("green", JSONObject().put("roll_deg", rollGreenThresholdDeg).put("pitch_deg", pitchGreenThresholdDeg))
+        .put("yellow", JSONObject().put("roll_deg", rollYellowThresholdDeg).put("pitch_deg", pitchYellowThresholdDeg))
+    val baseline = JSONObject()
+        .put("pitch_deg", baselinePitchDeg ?: JSONObject.NULL)
+        .put("roll_deg", baselineRollDeg ?: JSONObject.NULL)
+        .put("quaternion", baselineQuaternion?.let { values -> JSONArray(values) } ?: JSONObject.NULL)
+    return JSONObject()
+        .put("baseline", baseline)
+        .put("calibration_timestamp", calibrationTimestamp ?: JSONObject.NULL)
+        .put("level_thresholds", thresholds)
+        .put("marker_mode", markerMode)
+        .put("markers_used", markersUsed)
 }

@@ -28,6 +28,14 @@ class PhoneCameraScanProvider(
     private val manifestWriter = PhoneScanManifestWriter()
     private var active: ActivePhoneScan? = null
 
+    companion object {
+        @Volatile private var sessionCalibration: PhoneScanCalibrationMetadata? = null
+
+        fun setSessionCalibration(metadata: PhoneScanCalibrationMetadata) {
+            sessionCalibration = metadata
+        }
+    }
+
     override suspend fun connect(): CameraStatus = CameraStatus(isConnected = true, model = "Phone Camera")
     override suspend fun disconnect(): CameraStatus = CameraStatus(isConnected = false, model = "Phone Camera")
     override suspend fun getStatus(): CameraStatus = CameraStatus(isConnected = true, model = "Phone Camera")
@@ -55,7 +63,7 @@ class PhoneCameraScanProvider(
         val baseDir = videoRecorder.startRecording(sessionId, scanId)
         val imuFile = imuRecorder.start(sessionId, scanId, baseDir)
         val cameraInfoFile = cameraInfoCollector.writeCameraInfo(baseDir, videoRecorder.getSelectedVideoInfo())
-        active = ActivePhoneScan(scanId, sessionId, scanName, sequenceNumber, baseDir, cameraInfoFile, imuFile, startedAt)
+        active = ActivePhoneScan(scanId, sessionId, scanName, sequenceNumber, baseDir, cameraInfoFile, imuFile, startedAt, sessionCalibration)
         return ScanVideo(
             id = scanId,
             sessionId = sessionId,
@@ -86,6 +94,7 @@ class PhoneCameraScanProvider(
             finishedAt = finishedAt.toString(),
             durationSec = video.durationSec,
             fileSizeBytes = video.fileSizeBytes,
+            calibration = current.calibration,
         )
         active = null
         return ScanVideo(
@@ -118,5 +127,6 @@ class PhoneCameraScanProvider(
         val cameraInfoFile: File,
         val imuFile: File,
         val startedAt: Instant,
+        val calibration: PhoneScanCalibrationMetadata?,
     )
 }
