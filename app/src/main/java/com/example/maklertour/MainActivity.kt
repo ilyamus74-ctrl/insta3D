@@ -1501,11 +1501,23 @@ private fun PhoneCameraScanScreen(
                 if (videoScanUiState == VideoScanUiState.RECORDING) {
                     Text("Таймер: ${elapsedSec}s", color = Color.White)
                     if (isBackbone) {
-                        Text(if (levelState.isLevel) "Горизонт ровный" else "Выровняйте телефон", color = if (levelState.isLevel) Color(0xFF7DFF9B) else Color(0xFFFFD166))
-                        Text("Идите по периметру одним кругом", color = Color.White)
+                        Text(levelState.statusText, color = levelState.statusColor)
                     }
+                    Text("Идите медленно по периметру", color = Color.White)
+                    Text("Не делайте резких поворотов", color = Color.White)
+                    Text("Держите перекрытие кадров", color = Color.White)
                 }
-                VideoRoleGuide(nextRole, guideConfirmed, onConfirm = { guideConfirmed = true })
+                VideoRoleGuide(
+                    nextRole,
+                    guideConfirmed,
+                    onConfirm = {
+                        if (isBackbone && !levelState.hasCalibration) {
+                            levelState.calibrate()
+                            Toast.makeText(context, "Уровень откалиброван", Toast.LENGTH_SHORT).show()
+                        }
+                        guideConfirmed = true
+                    },
+                )
                 Button(
                     onClick = {
                         if (isRecordingScanVideo) {
@@ -1523,8 +1535,20 @@ private fun PhoneCameraScanScreen(
                 ) { Text(if (isRecordingScanVideo) "■" else "●", color = Color.White) }
                 Text(if (isRecordingScanVideo) "Остановить" else "Начать запись", color = Color.White)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (isBackbone) {
+                        Button(onClick = {
+                            levelState.calibrate()
+                            Toast.makeText(context, "Уровень откалиброван", Toast.LENGTH_SHORT).show()
+                        }) { Text("Калибровать уровень") }
+                    }
                     Button(onClick = { showCalibrationDialog = true }) { Text("Калибровка") }
                     Button(onClick = { showCameraSettingsDialog = true }) { Text("Настройки камеры") }
+                }
+                if (isBackbone && videoScanUiState != VideoScanUiState.RECORDING) {
+                    Text("Держите телефон так, как будете снимать основной проход, и нажмите калибровку.", color = Color.White.copy(alpha = 0.85f))
+                }
+                if (!isBackbone) {
+                    Text("Снимайте детали плавно и сохраняйте перекрытие с основным проходом.", color = Color.White.copy(alpha = 0.85f))
                 }
                 if (capturedPhoneScan != null) {
                     Text("Видео сохранено", color = Color.White, style = MaterialTheme.typography.titleMedium)
@@ -2303,14 +2327,97 @@ private fun hasValidatedInternet(context: android.content.Context): Boolean {
                     )
     }
 
-private data class DeviceLevelState(val pitchDeg: Float = 0f, val rollDeg: Float = 0f) {
-    val isLevel: Boolean get() = kotlin.math.abs(pitchDeg) <= 10f && kotlin.math.abs(rollDeg) <= 10f
+private enum class LevelWarningState(val color: Color, val text: String) {
+    Ok(Color(0xFF43D17A), "Положение стабильно"),
+    Warning(Color(0xFFFFC857), "Держите телефон ровнее"),
+    Danger(Color(0xFFFF6B6B), "Сильный наклон"),
+}
+
+private class DeviceLevelState {
+    var rawPitchDeg by mutableStateOf(0f)
+        private set
+    var rawRollDeg by mutableStateOf(0f)
+        private set
+    var displayPitchDeltaDeg by mutableStateOf(0f)
+        private set
+    var displayRollDeltaDeg by mutableStateOf(0f)
+        private set
+    var baselinePitchDeg by mutableStateOf<Float?>(null)
+        private set
+    var baselineRollDeg by mutableStateOf<Float?>(null)
+        private set
+    var warningState by mutableStateOf(LevelWarningState.Ok)
+        private set
+
+    private var lastUiUpdateMs = 0L
+    private var candidateState: LevelWarningState? = null
+    private var candidateSinceMs = 0L
+
+    val hasCalibration: Boolean get() = baselinePitchDeg != null && baselineRollDeg != null
+    val isLevel: Boolean get() = warningState == LevelWarningState.Ok
+    val statusText: String get() = warningState.text
+    val statusColor: Color get() = warningState.color
+
+    fun calibrate() {
+        baselinePitchDeg = rawPitchDeg
+        baselineRollDeg = rawRollDeg
+        displayPitchDeltaDeg = 0f
+        displayRollDeltaDeg = 0f
+        warningState = LevelWarningState.Ok
+        candidateState = null
+    }
+
+    fun update(pitchDeg: Float, rollDeg: Float, nowMs: Long = System.currentTimeMillis()) {
+        rawPitchDeg = pitchDeg
+        rawRollDeg = rollDeg
+        if (nowMs - lastUiUpdateMs < 80L) return
+        lastUiUpdateMs = nowMs
+
+        val pitchDelta = angleDelta(pitchDeg, baselinePitchDeg ?: 0f)
+        val rollDelta = angleDelta(rollDeg, baselineRollDeg ?: 0f)
+        displayPitchDeltaDeg = smoothIfVisible(displayPitchDeltaDeg, pitchDelta)
+        displayRollDeltaDeg = smoothIfVisible(displayRollDeltaDeg, rollDelta)
+        updateWarningState(displayPitchDeltaDeg, displayRollDeltaDeg, nowMs)
+    }
+
+    private fun smoothIfVisible(current: Float, target: Float): Float {
+        if (kotlin.math.abs(target - current) < 1.2f) return current
+        return current + (target - current) * 0.12f
+    }
+
+    private fun updateWarningState(pitchDelta: Float, rollDelta: Float, nowMs: Long) {
+        val target = when {
+            kotlin.math.abs(rollDelta) <= 8f && kotlin.math.abs(pitchDelta) <= 12f -> LevelWarningState.Ok
+            kotlin.math.abs(rollDelta) <= 15f && kotlin.math.abs(pitchDelta) <= 20f -> LevelWarningState.Warning
+            else -> LevelWarningState.Danger
+        }
+        if (target == warningState) {
+            candidateState = null
+            return
+        }
+        if (candidateState != target) {
+            candidateState = target
+            candidateSinceMs = nowMs
+            return
+        }
+        if (nowMs - candidateSinceMs >= 650L) {
+            warningState = target
+            candidateState = null
+        }
+    }
+}
+
+private fun angleDelta(value: Float, baseline: Float): Float {
+    var delta = value - baseline
+    while (delta > 180f) delta -= 360f
+    while (delta < -180f) delta += 360f
+    return delta
 }
 
 @Composable
 private fun rememberDeviceLevelState(enabled: Boolean): DeviceLevelState {
     val context = LocalContext.current
-    var state by remember { mutableStateOf(DeviceLevelState()) }
+    val state = remember { DeviceLevelState() }
     DisposableEffect(context, enabled) {
         if (!enabled) return@DisposableEffect onDispose { }
         val sensorManager = context.getSystemService(SensorManager::class.java)
@@ -2323,7 +2430,7 @@ private fun rememberDeviceLevelState(enabled: Boolean): DeviceLevelState {
                 if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
                     SensorManager.getRotationMatrixFromVector(rotation, event.values)
                     SensorManager.getOrientation(rotation, orientation)
-                    state = DeviceLevelState(
+                    state.update(
                         pitchDeg = Math.toDegrees(orientation[1].toDouble()).toFloat(),
                         rollDeg = Math.toDegrees(orientation[2].toDouble()).toFloat(),
                     )
@@ -2331,7 +2438,7 @@ private fun rememberDeviceLevelState(enabled: Boolean): DeviceLevelState {
                     val x = event.values.getOrNull(0) ?: 0f
                     val y = event.values.getOrNull(1) ?: 0f
                     val z = event.values.getOrNull(2) ?: 9.81f
-                    state = DeviceLevelState(
+                    state.update(
                         pitchDeg = Math.toDegrees(kotlin.math.atan2((-y).toDouble(), z.toDouble())).toFloat(),
                         rollDeg = Math.toDegrees(kotlin.math.atan2(x.toDouble(), z.toDouble())).toFloat(),
                     )
@@ -2347,16 +2454,21 @@ private fun rememberDeviceLevelState(enabled: Boolean): DeviceLevelState {
 
 @Composable
 private fun LevelOverlay(level: DeviceLevelState) {
-    val color = if (level.isLevel) Color(0xFF43D17A) else Color(0xFFFFC857)
     Column(
         modifier = Modifier.fillMaxWidth().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.35f)))
-        Box(modifier = Modifier.fillMaxWidth(0.75f).height(5.dp).graphicsLayer { rotationZ = -level.rollDeg }.background(color))
-        Text("Pitch ${"%.1f".format(level.pitchDeg)}° / Roll ${"%.1f".format(level.rollDeg)}°", color = Color.White)
-        if (!level.isLevel) Text("Выровняйте телефон", color = Color(0xFFFFD166), style = MaterialTheme.typography.titleMedium)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.75f)
+                .height(5.dp)
+                .graphicsLayer { rotationZ = -level.displayRollDeltaDeg.coerceIn(-25f, 25f) }
+                .background(level.statusColor)
+        )
+        Text("ΔPitch ${"%.1f".format(level.displayPitchDeltaDeg)}° / ΔRoll ${"%.1f".format(level.displayRollDeltaDeg)}°", color = Color.White)
+        Text(level.statusText, color = level.statusColor, style = MaterialTheme.typography.titleMedium)
     }
 }
 
