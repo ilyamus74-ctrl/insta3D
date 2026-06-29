@@ -1,69 +1,25 @@
 <?php
 declare(strict_types=1);
-
 if (PHP_SAPI !== 'cli') { fwrite(STDERR, "CLI only\n"); exit(1); }
 function usage(): void {
     echo "Usage:\n";
-    echo "  php cleanup_sfm_artifacts.php --pipeline-run-id <id> [--dry-run|--delete] [--include-logs] [--force-recent]\n";
-    echo "  php cleanup_sfm_artifacts.php --older-than YYYY-MM-DD [--dry-run|--delete] [--video-scan-id <id>] [--mode preview|standard|fullhd] [--include-logs] [--force-recent]\n";
+    echo "  php cleanup_sfm_artifacts.php --pipeline-run-id <id> [--dry-run|--delete] [--include-logs] [--force-recent] [--force-latest]\n";
+    echo "  php cleanup_sfm_artifacts.php --remote-job-id <id[,id2]> [--dry-run|--delete] [--include-logs] [--force-recent] [--force-latest]\n";
+    echo "  php cleanup_sfm_artifacts.php --scan-orphans --older-than YYYY-MM-DD [--dry-run|--delete] [--include-logs] [--force-recent] [--force-latest]\n";
+    echo "  php cleanup_sfm_artifacts.php --older-than YYYY-MM-DD [--dry-run|--delete] [--video-scan-id <id>] [--mode preview|standard|fullhd] [--include-logs] [--force-recent] [--force-latest]\n";
 }
-
-$opts = getopt('', ['pipeline-run-id:', 'older-than:', 'dry-run', 'delete', 'video-scan-id:', 'mode:', 'include-logs', 'force-recent', 'help']);
-if (isset($opts['help'])) { usage(); exit(0); }
-if (isset($opts['pipeline-run-id']) && !preg_match('/^[1-9][0-9]*$/', (string)$opts['pipeline-run-id'])) { fwrite(STDERR, "ERROR: bad --pipeline-run-id\n"); exit(2); }
-if (!isset($opts['pipeline-run-id']) && !isset($opts['older-than'])) { usage(); exit(2); }
-if (isset($opts['older-than']) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$opts['older-than'])) { fwrite(STDERR, "ERROR: bad --older-than, expected YYYY-MM-DD\n"); exit(2); }
-if (isset($opts['mode']) && !in_array((string)$opts['mode'], ['preview','standard','fullhd'], true)) { fwrite(STDERR, "ERROR: bad --mode\n"); exit(2); }
-$connectCandidates = ['/home/makler/web/configs/connectDB.php', dirname(__DIR__) . '/configs/connectDB.php'];
-foreach ($connectCandidates as $connectFile) { if (is_file($connectFile)) { require_once $connectFile; break; } }
-if (!isset($dbcnx) || !($dbcnx instanceof mysqli)) { fwrite(STDERR, "ERROR: failed to initialize mysqli via connectDB.php\n"); exit(1); }
-require_once __DIR__ . '/sfm_pipeline.php';
-require_once __DIR__ . '/sfm_cleanup.php';
-ensure_sfm_pipeline_tables($dbcnx);
-
-$delete = isset($opts['delete']);
-if (isset($opts['dry-run'])) { $delete = false; }
-$options = [
-    'pipeline_run_id' => isset($opts['pipeline-run-id']) ? (int)$opts['pipeline-run-id'] : null,
-    'older_than' => isset($opts['older-than']) ? (string)$opts['older-than'] : null,
-    'video_scan_id' => isset($opts['video-scan-id']) ? (string)$opts['video-scan-id'] : null,
-    'mode' => isset($opts['mode']) ? (string)$opts['mode'] : null,
-    'delete' => $delete,
-    'include_logs' => isset($opts['include-logs']),
-    'force_recent' => isset($opts['force-recent']),
-];
-
-echo ($delete ? "DELETE" : "DRY-RUN") . " SfM artifact cleanup; logs " . ($options['include_logs'] ? "included" : "preserved") . "\n";
-$runs = sfm_cleanup_select_runs($dbcnx, $options);
-$logPath = null;
-if ($delete) {
-    $logDir = SFM_CLEANUP_WEB_OUTPUT_BASE . '/cleanup_logs';
-    if (!is_dir($logDir)) { @mkdir($logDir, 0775, true); }
-    $logPath = $logDir . '/sfm_cleanup_' . date('Ymd_His') . '_' . getmypid() . '.log';
-    file_put_contents($logPath, "SfM cleanup started " . date('c') . "\n", FILE_APPEND);
-    echo "cleanup_log: $logPath\n";
-}
-$totalBytes = 0; $hadErrors = false;
-foreach ($runs as $run) {
-    $pid = (int)$run['id'];
-    echo "\npipeline_run_id: {$pid} capture_session_id: {$run['capture_session_id']} video_scan_id: {$run['video_scan_id']} mode: {$run['pipeline_mode']} status: {$run['status']} created_at: {$run['created_at']}\n";
-    if (!empty($run['protected'])) {
-        echo "  SKIP protected (active, latest for video/mode, or recent <24h without --force-recent)\n";
-        continue;
-    }
-    $res = sfm_cleanup_pipeline_run_artifacts($dbcnx, $pid, $options);
-    foreach ($res['jobs'] as $job) {
-        echo "  remote_job_id: {$job['remote_job_id']} job_type: {$job['job_type']} status: {$job['status']}\n";
-        foreach ($job['web'] as $p) {
-            $state = !empty($p['missing']) ? 'missing' : ($delete ? 'deleted' : 'would delete');
-            echo "    [$state] {$p['path']} size_bytes=" . (int)($p['size_bytes'] ?? 0) . "\n";
-        }
-    }
-    foreach ($res['deleted_paths'] as $path) { echo "    " . ($delete ? '[deleted]' : '[would delete]') . " $path\n"; }
-    foreach ($res['missing_paths'] as $path) { echo "    [missing] $path\n"; }
-    foreach ($res['errors'] as $err) { $hadErrors = true; echo "    [error] " . ($err['path'] ?? '') . ' ' . ($err['message'] ?? json_encode($err)) . "\n"; }
-    $totalBytes += (int)$res['freed_bytes'];
-    if ($delete && $logPath) { file_put_contents($logPath, json_encode($res, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) . "\n", FILE_APPEND); }
-}
-echo "\nEstimated " . ($delete ? "freed" : "reclaimable") . " bytes: $totalBytes\n";
-exit($hadErrors ? 1 : 0);
+$opts=getopt('', ['pipeline-run-id:','remote-job-id:','scan-orphans','older-than:','dry-run','delete','video-scan-id:','mode:','include-logs','force-recent','force-latest','help']);
+if(isset($opts['help'])){usage();exit(0);} if(isset($opts['pipeline-run-id'])&&!preg_match('/^[1-9][0-9]*$/',(string)$opts['pipeline-run-id'])){fwrite(STDERR,"ERROR: bad --pipeline-run-id\n");exit(2);} if(isset($opts['older-than'])&&!preg_match('/^\d{4}-\d{2}-\d{2}$/',(string)$opts['older-than'])){fwrite(STDERR,"ERROR: bad --older-than, expected YYYY-MM-DD\n");exit(2);} if(isset($opts['mode'])&&!in_array((string)$opts['mode'],['preview','standard','fullhd'],true)){fwrite(STDERR,"ERROR: bad --mode\n");exit(2);} if(isset($opts['scan-orphans'])&&!isset($opts['older-than'])){fwrite(STDERR,"ERROR: --scan-orphans requires --older-than\n");exit(2);} if(!isset($opts['pipeline-run-id'])&&!isset($opts['older-than'])&&!isset($opts['remote-job-id'])&&!isset($opts['scan-orphans'])){usage();exit(2);} 
+$remoteIds=[]; if(isset($opts['remote-job-id'])){ foreach(explode(',',(string)$opts['remote-job-id']) as $id){$id=trim($id); if(!preg_match('/^[1-9][0-9]*$/',$id)){fwrite(STDERR,"ERROR: bad --remote-job-id\n");exit(2);} $remoteIds[]=(int)$id;} }
+$connectCandidates=['/home/makler/web/configs/connectDB.php', dirname(__DIR__).'/configs/connectDB.php']; foreach($connectCandidates as $connectFile){ if(is_file($connectFile)){ require_once $connectFile; break; } }
+if(!isset($dbcnx)||!($dbcnx instanceof mysqli)){fwrite(STDERR,"ERROR: failed to initialize mysqli via connectDB.php\n");exit(1);} require_once __DIR__.'/sfm_pipeline.php'; require_once __DIR__.'/sfm_cleanup.php'; ensure_sfm_pipeline_tables($dbcnx);
+$delete=isset($opts['delete']); if(isset($opts['dry-run']))$delete=false; $options=['pipeline_run_id'=>isset($opts['pipeline-run-id'])?(int)$opts['pipeline-run-id']:null,'older_than'=>isset($opts['older-than'])?(string)$opts['older-than']:null,'video_scan_id'=>isset($opts['video-scan-id'])?(string)$opts['video-scan-id']:null,'mode'=>isset($opts['mode'])?(string)$opts['mode']:null,'delete'=>$delete,'include_logs'=>isset($opts['include-logs']),'force_recent'=>isset($opts['force-recent']),'force_latest'=>isset($opts['force-latest'])];
+echo ($delete?'DELETE':'DRY-RUN')." SfM artifact cleanup; logs ".($options['include_logs']?'included':'preserved')."\n";
+$total=0; $hadErrors=false; $activeIds=[];
+$printJob=function(array $info): void { echo "  pipeline_run_id: ".($info['pipeline_run_id']??'orphan')." remote_job_id: ".($info['remote_job_id']??'')." job_type: ".($info['job_type']??'orphan')." status: ".($info['status']??'orphan')." parent_remote_job_id: ".($info['parent_remote_job_id']??'')." capture_session_id: ".($info['capture_session_id']??'')." video_scan_id: ".($info['video_scan_id']??'')." pipeline_mode: ".($info['pipeline_mode']??'')."\n"; };
+$printRes=function(array $res) use($delete,&$total,&$hadErrors): void { foreach($res['paths']??[] as $p){$state=!empty($p['missing'])?'missing':($delete?'deleted':'would delete'); echo "    [$state] {$p['path']} size_bytes=".(int)($p['size_bytes']??0)."\n";} foreach($res['jobs']??[] as $j){ foreach($j['paths']??[] as $p){$state=!empty($p['missing'])?'missing':($delete?'deleted':'would delete'); echo "    [$state] {$p['path']} size_bytes=".(int)($p['size_bytes']??0)."\n";}} foreach($res['errors']??[] as $e){$hadErrors=true; echo "    [error] ".($e['path']??'').' '.($e['message']??json_encode($e))."\n";} $total+=(int)($delete?($res['freed_bytes']??0):($res['reclaimable_bytes']??0)); };
+if(isset($opts['scan-orphans'])){ $remoteIds=sfm_cleanup_discover_orphan_job_ids((string)$opts['older-than']); echo "orphan scan discovered ".count($remoteIds)." job ids\n"; }
+if($remoteIds){ $infos=sfm_cleanup_remote_job_lookup($dbcnx,$remoteIds); foreach($infos as $rid=>$info){ echo "\nremote_job_id: $rid".(!empty($info['orphan'])?' orphan':' mapped')."\n"; $printJob($info); if(empty($info['orphan'])){ $run=['id'=>(int)($info['pipeline_run_id']??0),'capture_session_id'=>(int)($info['capture_session_id']??0),'video_scan_id'=>(int)($info['video_scan_id']??0),'pipeline_mode'=>(string)($info['pipeline_mode']??''),'status'=>(string)($info['status']??''),'created_at'=>'']; $reasons=sfm_cleanup_run_protection_reasons($dbcnx,$run,$options); if(in_array('active',$reasons,true))$activeIds[]=$rid; $reasons=array_values(array_filter($reasons,fn($r)=>$r!=='recent')); if($reasons){ foreach($reasons as $r)echo "  protected: $r\n"; continue; } } elseif(!isset($opts['scan-orphans'])) { echo "  protected: not_mapped_or_orphan\n"; continue; } $res=sfm_cleanup_delete_job_artifacts((int)$rid,$options); $printRes($res); } }
+else { $runs=sfm_cleanup_select_runs($dbcnx,$options); foreach($runs as $run){ $pid=(int)$run['id']; echo "\npipeline_run_id: {$pid} capture_session_id: {$run['capture_session_id']} video_scan_id: {$run['video_scan_id']} mode: {$run['pipeline_mode']} status: {$run['status']} created_at: {$run['created_at']}\n"; if(!empty($run['protection_reasons'])){ foreach($run['protection_reasons'] as $r){ echo "  protected: $r\n"; if($r==='active')$activeIds[]=$pid; } continue; } $res=sfm_cleanup_pipeline_run_artifacts($dbcnx,$pid,$options); foreach($res['jobs'] as $job){$printJob($job);} $printRes($res); } }
+if($activeIds){ echo "\nRefused active jobs/runs: ".implode(',',array_unique($activeIds))."\n"; $hadErrors=true; }
+echo "\n".($delete?'Freed':'Estimated reclaimable').": ".sfm_cleanup_human_bytes($total)."\n"; echo ($delete?'Freed':'Estimated reclaimable')." bytes: $total\n"; exit($hadErrors?1:0);

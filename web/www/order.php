@@ -507,10 +507,10 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      $cancel=sfm_cancel_pipeline_jobs($jobs);
      pipeline_log($pipelineRunId,'INFO','CANCELLING','Cancellation queued for worker: '.json_encode($cancel,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
      error_log('pipeline_run_id='.$pipelineRunId.' restarted from scratch by user_id='.$userId);
-     $remoteIds=array_map(fn($j)=>(int)$j['remote_job_id'],$jobs); sfm_delete_remote_pipeline_outputs($pipelineRunId,$remoteIds);
-     $base='/home/makler/web/remote_station/output'; foreach($remoteIds as $rid){ if($rid>0){ safe_rrmdir(sfm_remote_output_dir($rid),$base); } } safe_rrmdir(sfm_pipeline_output_dir($pipelineRunId),$base);
-     $st=$dbcnx->prepare('DELETE FROM sfm_remote_jobs WHERE pipeline_run_id=?'); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
-     $st=$dbcnx->prepare('DELETE FROM sfm_pipeline_runs WHERE id=?'); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
+     $cleanupRes=sfm_cleanup_pipeline_run_artifacts($dbcnx,$pipelineRunId,['delete'=>true,'include_logs'=>false,'force_recent'=>true,'force_latest'=>true]);
+     if(!empty($cleanupRes['errors'])){ pipeline_log($pipelineRunId,'WARNING','CLEANUP','Restart cleanup partially failed: '.json_encode($cleanupRes['errors'],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)); }
+     $st=$dbcnx->prepare("UPDATE sfm_remote_jobs SET message='Job artifacts cleaned for restart', updated_at=NOW(6) WHERE pipeline_run_id=?"); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
+     $st=$dbcnx->prepare("UPDATE sfm_pipeline_runs SET status='CANCELLED', stage='CANCELLED', message='Superseded by rerender; artifacts cleaned', finished_at=COALESCE(finished_at,NOW(6)), updated_at=NOW(6) WHERE id=?"); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
      $sameSnapshot=null; if($action==='restart_sfm_pipeline_same_settings'){ $sameSnapshot=sfm_json_array((string)($run['parameters_json'] ?? '{}')); unset($sameSnapshot['pipeline_mode'],$sameSnapshot['mode_parameters']); }
      $newPipelineRunId=start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,((int)($run['video_scan_id']??0))?:null,$mode,$userId,$pipelineRunId,$sameSnapshot);
      pipeline_log($newPipelineRunId,'INFO','RESTART','action='.$action);
