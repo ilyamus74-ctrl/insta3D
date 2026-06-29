@@ -32,13 +32,15 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private val lensRepository = PhoneCameraLensRepository(context)
     private var selectedVideoInfo: SelectedPhoneVideoInfo? = null
     private var selectedLensOption: PhoneCameraLensOption? = null
-    private var selectedZoomRatio: Float = lensRepository.getSelectedZoomRatio()
+    private var requestedZoomRatio: Float = lensRepository.getSelectedZoomRatio()
+    private var effectiveZoomRatio: Float = requestedZoomRatio
+    private var lastZoomApplyResult: String? = null
     private var boundCamera: Camera? = null
     private var minZoomRatio: Float? = null
     private var maxZoomRatio: Float? = null
 
-    suspend fun bindPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float = lensRepository.getSelectedZoomRatio()) {
-        selectedZoomRatio = zoomRatio
+    suspend fun bindPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float = lensRepository.getSelectedZoomRatio()): PhoneCameraBindResult {
+        requestedZoomRatio = zoomRatio
         Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio")
         val cameraProvider = getCameraProvider()
         val preview = Preview.Builder().build()
@@ -108,17 +110,35 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             throw IllegalStateException("preview bind failed: ${e.message}", e)
         }
         Log.d(TAG, "bindPreview(): success")
+        return getBindResult(success = true)
     }
 
     fun getSelectedVideoInfo(): SelectedPhoneVideoInfo? = selectedVideoInfo
 
     fun getSelectedLensOption(): PhoneCameraLensOption? = selectedLensOption
 
-    fun getSelectedZoomRatio(): Float = selectedZoomRatio
+    fun getSelectedZoomRatio(): Float = effectiveZoomRatio
+
+    fun getRequestedZoomRatio(): Float = requestedZoomRatio
+
+    fun getEffectiveZoomRatio(): Float = effectiveZoomRatio
+
+    fun getZoomState(): PhoneCameraZoomState = PhoneCameraZoomState(
+        requestedZoomRatio = requestedZoomRatio,
+        effectiveZoomRatio = effectiveZoomRatio,
+        minZoomRatio = minZoomRatio,
+        maxZoomRatio = maxZoomRatio,
+        cameraId = selectedLensOption?.cameraId,
+        bindStatus = if (boundCamera != null) "bound" else "not_bound",
+        error = lastZoomApplyResult?.takeIf { it.startsWith("error") },
+        cameraXZoomStateCurrent = boundCamera?.cameraInfo?.zoomState?.value?.zoomRatio,
+    )
 
     fun getMinZoomRatio(): Float? = minZoomRatio
 
     fun getMaxZoomRatio(): Float? = maxZoomRatio
+
+    fun getZoomWarning(): String? = if (kotlin.math.abs(requestedZoomRatio - effectiveZoomRatio) > 0.01f) "requested ${zoomPresetLabel(requestedZoomRatio)} but CameraX applied ${zoomPresetLabel(effectiveZoomRatio)}" else null
 
     suspend fun startRecording(sessionId: String, scanId: String): File {
         val preparedVideoCapture = videoCapture ?: error("Camera preview is not bound")
@@ -126,7 +146,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         val dir = File(context.filesDir, "sessions/$sessionId/phone_scans/$scanId").apply { mkdirs() }
         val file = File(dir, "video.mp4")
         boundCamera?.let { applySelectedZoom(it) }
-        Log.d(TAG, "startRecording(): output path=${file.absolutePath} camera_id=${lens.cameraId} lens=${lens.lensLabel} zoom=$selectedZoomRatio")
+        Log.d(TAG, "startRecording(): output path=${file.absolutePath} camera_id=${lens.cameraId} lens=${lens.lensLabel} requestedZoom=$requestedZoomRatio effectiveZoom=$effectiveZoomRatio")
         val deferred = CompletableDeferred<PhoneVideoRecordingResult>()
         finalizeDeferred = deferred
         startedAtMs = System.currentTimeMillis()
@@ -171,20 +191,49 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         return result
     }
 
-    private fun applySelectedZoom(camera: Camera) {
-        val zoomState = camera.cameraInfo.zoomState.value
-        val min = zoomState?.minZoomRatio ?: 1.0f
-        val max = zoomState?.maxZoomRatio ?: 1.0f
+    private suspend fun applySelectedZoom(camera: Camera) {
+        val before = camera.cameraInfo.zoomState.value
+        val min = before?.minZoomRatio ?: 1.0f
+        val max = before?.maxZoomRatio ?: 1.0f
         minZoomRatio = min
         maxZoomRatio = max
-        val clamped = selectedZoomRatio.coerceIn(min, max)
-        selectedZoomRatio = clamped
+        val clamped = requestedZoomRatio.coerceIn(min, max)
         selectedLensOption = selectedLensOption?.copy(minZoomRatio = min, maxZoomRatio = max)
-        lensRepository.saveSelectedZoomRatio(clamped)
-        camera.cameraControl.setZoomRatio(clamped)
-        val id = selectedLensOption?.cameraId ?: "—"
-        Log.d(TAG, "Phone camera bind: cameraId=$id zoom=$clamped minZoom=$min maxZoom=$max")
+        runCatching { awaitZoomSet(camera, clamped) }
+            .onFailure { lastZoomApplyResult = "error: ${it.message}" }
+        val after = camera.cameraInfo.zoomState.value
+        val effective = after?.zoomRatio ?: clamped
+        effectiveZoomRatio = effective
+        lensRepository.saveSelectedZoomRatio(requestedZoomRatio)
+        val logMessage = "Requested zoom=$requestedZoomRatio, clamped=$clamped, effective=$effective, min=$min, max=$max"
+        if (lastZoomApplyResult?.startsWith("error") != true) lastZoomApplyResult = logMessage
+        Log.d(TAG, logMessage)
     }
+
+    private suspend fun awaitZoomSet(camera: Camera, ratio: Float) = suspendCancellableCoroutine<Unit> { cont ->
+        val future = camera.cameraControl.setZoomRatio(ratio)
+        future.addListener({
+            runCatching { future.get() }
+                .onSuccess { if (cont.isActive) cont.resume(Unit) }
+                .onFailure {
+                    lastZoomApplyResult = "error: ${it.message}"
+                    if (cont.isActive) cont.resume(Unit)
+                }
+        }, ContextCompat.getMainExecutor(context))
+    }
+
+    private fun getBindResult(success: Boolean, error: String? = null): PhoneCameraBindResult = PhoneCameraBindResult(
+        success = success,
+        error = error,
+        requestedZoomRatio = requestedZoomRatio,
+        effectiveZoomRatio = effectiveZoomRatio,
+        minZoomRatio = minZoomRatio,
+        maxZoomRatio = maxZoomRatio,
+        cameraId = selectedLensOption?.cameraId,
+        activeBoundCameraId = selectedLensOption?.cameraId,
+        cameraXZoomStateCurrent = boundCamera?.cameraInfo?.zoomState?.value?.zoomRatio,
+        bindStatus = if (success) "bound" else "failed",
+    )
 
     private suspend fun getCameraProvider(): ProcessCameraProvider = suspendCancellableCoroutine { cont ->
         val future = ProcessCameraProvider.getInstance(context)

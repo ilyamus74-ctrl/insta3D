@@ -32,6 +32,7 @@ import com.maklertour.domain.ServerUploadState
 import com.maklertour.domain.ScanVideoUploadState
 import com.maklertour.domain.ScanSource
 import com.maklertour.domain.ScanVideoRole
+import com.maklertour.data.phonecamera.PhoneCameraBindResult
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
 import com.example.maklertour.auth.MobileOrder
 import com.example.maklertour.auth.MobileUploadApi
@@ -325,19 +326,19 @@ class AppStateViewModel(
         }
     }
 
-    fun bindPhoneCameraPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+    fun bindPhoneCameraPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float, onResult: (PhoneCameraBindResult) -> Unit = { _ -> }) {
         val provider = phoneCameraScanProvider
         if (provider == null) {
-            onResult(false, "camera provider unavailable")
+            onResult(PhoneCameraBindResult(success = false, error = "camera provider unavailable", requestedZoomRatio = zoomRatio))
             return
         }
         viewModelScope.launch {
             try {
-                provider.bindPreview(previewView, cameraId, zoomRatio)
-                onResult(true, null)
+                val result = provider.bindPreview(previewView, cameraId, zoomRatio)
+                onResult(result)
             } catch (e: Throwable) {
                 Log.e("AppStateViewModel", "bindPhoneCameraPreview() failed", e)
-                onResult(false, e.message ?: "preview bind failed")
+                onResult(PhoneCameraBindResult(success = false, error = e.message ?: "preview bind failed", requestedZoomRatio = zoomRatio, cameraId = cameraId, activeBoundCameraId = cameraId))
             }
         }
     }

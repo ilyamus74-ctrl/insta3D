@@ -82,6 +82,7 @@ import androidx.core.content.ContextCompat
 import androidx.camera.view.PreviewView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
+import com.maklertour.data.phonecamera.PhoneCameraBindResult
 import com.maklertour.data.phonecamera.PhoneCameraLensOption
 import com.maklertour.data.phonecamera.PhoneCameraLensRepository
 import androidx.compose.ui.window.DialogProperties
@@ -1207,7 +1208,7 @@ private fun CameraScreen(
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     onStartVideoScan: (String) -> Unit,
     onStartPhoneVideoScan: (String) -> Unit,
-    onBindPhoneCameraPreview: (PreviewView, String?, Float, (Boolean, String?) -> Unit) -> Unit,
+    onBindPhoneCameraPreview: (PreviewView, String?, Float, (PhoneCameraBindResult) -> Unit) -> Unit,
     onStopVideoScan: () -> Unit,
     onCreateSessionRequested: () -> Unit,
     onDeleteVideoScan: (String) -> Unit,
@@ -1400,7 +1401,7 @@ private fun PhoneCameraScanScreen(
     isRecordingScanVideo: Boolean,
     videoScanUiState: VideoScanUiState,
     scanVideos: List<com.maklertour.domain.ScanVideo>,
-    onBindPreview: (PreviewView, String?, Float, (Boolean, String?) -> Unit) -> Unit,
+    onBindPreview: (PreviewView, String?, Float, (PhoneCameraBindResult) -> Unit) -> Unit,
     onStartPhoneVideoScan: (String) -> Unit,
     onStopPhoneVideoScan: () -> Unit,
     onClose: () -> Unit,
@@ -1422,7 +1423,12 @@ private fun PhoneCameraScanScreen(
     val lensRepository = remember(context) { PhoneCameraLensRepository(context) }
     var cameraOptions by remember { mutableStateOf(lensRepository.listBackCameras()) }
     var selectedCameraId by remember { mutableStateOf(lensRepository.getSelectedCameraId() ?: cameraOptions.firstOrNull()?.cameraId) }
-    var selectedZoomRatio by remember { mutableStateOf(lensRepository.getSelectedZoomRatio()) }
+    var requestedZoomRatio by remember { mutableStateOf(lensRepository.getSelectedZoomRatio()) }
+    var effectiveZoomRatio by remember { mutableStateOf<Float?>(null) }
+    var minZoomRatio by remember { mutableStateOf<Float?>(null) }
+    var maxZoomRatio by remember { mutableStateOf<Float?>(null) }
+    var cameraXZoomStateCurrent by remember { mutableStateOf<Float?>(null) }
+    var lastZoomApplyResult by remember { mutableStateOf<String?>(null) }
     val selectedLens = cameraOptions.firstOrNull { it.cameraId == selectedCameraId } ?: cameraOptions.firstOrNull()
     val selectedCameraWarning = if (selectedCameraId != null && cameraOptions.none { it.cameraId == selectedCameraId }) "Выбранная камера недоступна. Будет использована камера по умолчанию: ${selectedLens?.lensLabel ?: "—"}." else null
     val nextRole = remember(scanVideos) { nextVideoScanRole(scanVideos) }
@@ -1490,7 +1496,7 @@ private fun PhoneCameraScanScreen(
 
             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 if (hasCameraPermission) {
-                    key(selectedCameraId, selectedZoomRatio) {
+                    key(selectedCameraId, requestedZoomRatio) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
@@ -1498,11 +1504,16 @@ private fun PhoneCameraScanScreen(
                                 scaleType = PreviewView.ScaleType.FILL_CENTER
                                 implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                                 isRebindingCamera = true
-                                onBindPreview(this, selectedCameraId, selectedZoomRatio) { ok, error ->
+                                onBindPreview(this, selectedCameraId, requestedZoomRatio) { result ->
                                     isRebindingCamera = false
-                                    previewBound = ok
-                                    activeBoundCameraId = if (ok) selectedCameraId else activeBoundCameraId
-                                    bindError = if (ok) null else (error ?: "preview bind failed")
+                                    previewBound = result.success
+                                    activeBoundCameraId = if (result.success) result.activeBoundCameraId else activeBoundCameraId
+                                    effectiveZoomRatio = result.effectiveZoomRatio
+                                    minZoomRatio = result.minZoomRatio
+                                    maxZoomRatio = result.maxZoomRatio
+                                    cameraXZoomStateCurrent = result.cameraXZoomStateCurrent
+                                    lastZoomApplyResult = result.error ?: "Requested zoom=${result.requestedZoomRatio}, effective=${result.effectiveZoomRatio ?: "—"}, min=${result.minZoomRatio ?: "—"}, max=${result.maxZoomRatio ?: "—"}"
+                                    bindError = if (result.success) null else (result.error ?: "preview bind failed")
                                 }
                             }
                         },
@@ -1563,6 +1574,11 @@ private fun PhoneCameraScanScreen(
                     modifier = Modifier.size(76.dp),
                 ) { Text(if (isRecordingScanVideo) "■" else "●", color = Color.White) }
                 Text(if (isRecordingScanVideo) "Остановить" else "Начать запись", color = Color.White)
+                Text("Requested: ${com.maklertour.data.phonecamera.zoomPresetLabel(requestedZoomRatio)}, effective: ${effectiveZoomRatio?.let { com.maklertour.data.phonecamera.zoomPresetLabel(it) } ?: "—"}", color = Color.White.copy(alpha = 0.9f))
+                if (requestedZoomRatio <= 0.51f && effectiveZoomRatio != null && kotlin.math.abs((effectiveZoomRatio ?: 1f) - requestedZoomRatio) > 0.01f) {
+                    Text("Запрошено 0.5x, но CameraX применил ${com.maklertour.data.phonecamera.zoomPresetLabel(effectiveZoomRatio ?: 1f)}.", color = Color(0xFFFFD166))
+                    Text("Для широкого угла снимите видео в родной камере на 0.5x и импортируйте его в проект.", color = Color(0xFFFFD166))
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { showCalibrationDialog = true }) { Text("Калибровка") }
                     Button(onClick = { showCameraSettingsDialog = true }, enabled = !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING) { Text("Настройки камеры") }
@@ -1591,7 +1607,7 @@ private fun PhoneCameraScanScreen(
                 latestPhoneScan?.notes?.takeIf { videoScanUiState == VideoScanUiState.FAILED }?.let { Text("Ошибка: $it", color = Color(0xFFFFB4AB)) }
                 if (debugMode) {
                     Text(
-                        "Debug: selectedCameraId=${selectedCameraId ?: "—"} · selectedZoomRatio=$selectedZoomRatio · activeBoundCameraId=${activeBoundCameraId ?: "—"} · savedCameraId=${lensRepository.getSelectedCameraId() ?: "—"} · previewBound=$previewBound · rebinding=$isRebindingCamera · lastBindError=${bindError ?: "—"}",
+                        "Debug: selectedCameraId=${selectedCameraId ?: "—"} · requestedZoomRatio=$requestedZoomRatio · effectiveZoomRatio=${effectiveZoomRatio ?: "—"} · minZoomRatio=${minZoomRatio ?: "—"} · maxZoomRatio=${maxZoomRatio ?: "—"} · cameraXZoomStateCurrent=${cameraXZoomStateCurrent ?: "—"} · lastZoomApplyResult=${lastZoomApplyResult ?: "—"} · activeBoundCameraId=${activeBoundCameraId ?: "—"} · savedCameraId=${lensRepository.getSelectedCameraId() ?: "—"} · previewBound=$previewBound · rebinding=$isRebindingCamera · lastBindError=${bindError ?: "—"}",
                         color = Color.White.copy(alpha = 0.65f),
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -1602,15 +1618,19 @@ private fun PhoneCameraScanScreen(
     if (showCameraSettingsDialog) CameraSettingsDialog(
         options = cameraOptions,
         selectedCameraId = selectedCameraId,
-        selectedZoomRatio = selectedZoomRatio,
+        requestedZoomRatio = requestedZoomRatio,
+        effectiveZoomRatio = effectiveZoomRatio,
+        minZoomRatio = minZoomRatio,
+        maxZoomRatio = maxZoomRatio,
+        cameraXZoomStateCurrent = cameraXZoomStateCurrent,
+        lastZoomApplyResult = lastZoomApplyResult,
         debugMode = debugMode,
         warning = selectedCameraWarning,
         activeBoundCameraId = activeBoundCameraId,
         onRefresh = { cameraOptions = lensRepository.listBackCameras() },
         onSelect = { option ->
-            lensRepository.saveSelection(option.cameraId, option.minZoomRatio ?: selectedZoomRatio)
+            lensRepository.saveSelection(option.cameraId, requestedZoomRatio)
             selectedCameraId = option.cameraId
-            selectedZoomRatio = option.minZoomRatio ?: selectedZoomRatio
             previewBound = false
             isRebindingCamera = true
             bindError = null
@@ -1619,7 +1639,7 @@ private fun PhoneCameraScanScreen(
         onSelectPreset = { preset ->
             val cameraId = selectedCameraId ?: cameraOptions.firstOrNull()?.cameraId
             if (cameraId != null) lensRepository.saveSelection(cameraId, preset.zoomRatio)
-            selectedZoomRatio = preset.zoomRatio
+            requestedZoomRatio = preset.zoomRatio
             previewBound = false
             isRebindingCamera = true
             bindError = null
@@ -1633,7 +1653,12 @@ private fun PhoneCameraScanScreen(
 private fun CameraSettingsDialog(
     options: List<PhoneCameraLensOption>,
     selectedCameraId: String?,
-    selectedZoomRatio: Float,
+    requestedZoomRatio: Float,
+    effectiveZoomRatio: Float?,
+    minZoomRatio: Float?,
+    maxZoomRatio: Float?,
+    cameraXZoomStateCurrent: Float?,
+    lastZoomApplyResult: String?,
     debugMode: Boolean,
     warning: String?,
     activeBoundCameraId: String?,
@@ -1649,25 +1674,29 @@ private fun CameraSettingsDialog(
             Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 val current = options.firstOrNull { it.cameraId == selectedCameraId } ?: options.firstOrNull()
                 Text("Найдено cameraId: ${options.size}", style = MaterialTheme.typography.titleMedium)
-                Text("Текущая камера: ${current?.cameraId ?: "—"}, zoom ${com.maklertour.data.phonecamera.zoomPresetLabel(selectedZoomRatio)}")
+                Text("Текущая камера: ${current?.cameraId ?: "—"}, requested ${com.maklertour.data.phonecamera.zoomPresetLabel(requestedZoomRatio)}, effective ${effectiveZoomRatio?.let { com.maklertour.data.phonecamera.zoomPresetLabel(it) } ?: "—"}")
                 Text("Для маленьких помещений используйте 0.5x, если доступно.")
                 warning?.let { Text(it, color = Color(0xFF8A5A00)) }
                 if (options.isEmpty()) {
                     Text("Задние камеры не найдены.")
                 } else if (options.size == 1) {
                     Text("Производительская камера может переключать физические модули внутри logical camera. В приложении используется CameraX zoom ratio.")
-                    if ((current?.minZoomRatio ?: 0.5f) < 1.0f) Text("Доступен широкий угол через zoom ratio")
+                    if (minZoomRatio != null && minZoomRatio <= 0.5f && effectiveZoomRatio != null && kotlin.math.abs(effectiveZoomRatio - 0.5f) <= 0.05f) Text("Доступен широкий угол через zoom ratio")
                 }
                 val presets = listOf(com.maklertour.data.phonecamera.PhoneLensPreset("0.5x", 0.5f), com.maklertour.data.phonecamera.PhoneLensPreset("1x", 1f), com.maklertour.data.phonecamera.PhoneLensPreset("2x", 2f), com.maklertour.data.phonecamera.PhoneLensPreset("3x", 3f))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     presets.forEach { preset ->
-                        val min = current?.minZoomRatio
-                        val max = current?.maxZoomRatio
-                        val enabled = (min == null || preset.zoomRatio >= min) && (max == null || preset.zoomRatio <= max)
-                        Button(onClick = { onSelectPreset(preset) }, enabled = enabled && kotlin.math.abs(selectedZoomRatio - preset.zoomRatio) > 0.01f) { Text(if (kotlin.math.abs(selectedZoomRatio - preset.zoomRatio) <= 0.01f) "${preset.label}\nИспользуется сейчас" else preset.label) }
+                        val min = minZoomRatio
+                        val max = maxZoomRatio
+                        val rangeKnown = min != null && max != null
+                        val enabled = rangeKnown && preset.zoomRatio >= min!! && preset.zoomRatio <= max!!
+                        val isEffective = effectiveZoomRatio != null && kotlin.math.abs(effectiveZoomRatio - preset.zoomRatio) <= 0.01f
+                        Button(onClick = { onSelectPreset(preset) }, enabled = enabled && !isEffective) { Text(if (isEffective) "${preset.label}\nИспользуется сейчас" else preset.label) }
                     }
                 }
-                if (current?.minZoomRatio != null && current.minZoomRatio >= 1.0f) Text("0.5x недоступен через CameraX на этом устройстве. Можно попробовать родную камеру или импорт видео.") else Text("0.5x рекомендуется для маленьких помещений.")
+                if (minZoomRatio == null || maxZoomRatio == null) Text("Zoom range is not confirmed yet. Open preview first.")
+                if (minZoomRatio != null && minZoomRatio >= 1.0f) Text("0.5x недоступен через CameraX на этом устройстве. Родная камера может иметь приватный доступ к широкоугольному модулю. Используйте импорт видео из родной камеры.", color = Color(0xFF8A5A00)) else Text("0.5x рекомендуется для маленьких помещений, только если CameraX подтверждает диапазон.")
+                if (requestedZoomRatio <= 0.51f && effectiveZoomRatio != null && kotlin.math.abs(effectiveZoomRatio - requestedZoomRatio) > 0.01f) Text("Запрошено 0.5x, но CameraX применил ${com.maklertour.data.phonecamera.zoomPresetLabel(effectiveZoomRatio)}.", color = Color(0xFF8A5A00))
                 options.forEach { option ->
                     Card(
                         colors = CardDefaults.cardColors(containerColor = if (option.cameraId == selectedCameraId) Color(0xFFE0F2F1) else MaterialTheme.colorScheme.surfaceVariant),
@@ -1684,8 +1713,8 @@ private fun CameraSettingsDialog(
                             Text("Lens/FOV: ${option.primaryFocalLengthMm?.let { String.format(java.util.Locale.US, "%.1f mm", it) } ?: "—"} · ${option.approximateFovDeg?.let { String.format(java.util.Locale.US, "≈ %.0f°×%.0f°", it.horizontal, it.vertical) } ?: "FOV —"}")
                             Text("Сенсор: ${option.sensorPhysicalSizeMm?.let { String.format(java.util.Locale.US, "%.2f×%.2f mm", it.width, it.height) } ?: "—"}")
                             if (debugMode) {
-                                Text("Debug: cameraIdList=${options.map { it.cameraId }} selectedCameraId=${selectedCameraId ?: "—"} selectedZoomRatio=$selectedZoomRatio activeBoundCameraId=${activeBoundCameraId ?: "—"}", style = MaterialTheme.typography.bodySmall)
-                                Text("Raw camera2: cameraId=${option.cameraId}, facing=${option.lensFacing}, capabilities logical=${option.logicalMultiCameraCapable}, physicalCameraIds=${option.physicalCameraIds}, focal_lengths_mm=${option.focalLengthsMm}, sensor=${option.sensorPhysicalSizeMm}, FOV=${option.approximateFovDeg}, minZoom=${option.minZoomRatio}, maxZoom=${option.maxZoomRatio}, sizes=${option.supportedVideoSizes.take(8)}, fps=${option.supportedFpsRanges}", style = MaterialTheme.typography.bodySmall)
+                                Text("Debug: cameraIdList=${options.map { it.cameraId }} selectedCameraId=${selectedCameraId ?: "—"} requestedZoomRatio=$requestedZoomRatio · effectiveZoomRatio=${effectiveZoomRatio ?: "—"} · minZoomRatio=${minZoomRatio ?: "—"} · maxZoomRatio=${maxZoomRatio ?: "—"} · cameraXZoomStateCurrent=${cameraXZoomStateCurrent ?: "—"} · lastZoomApplyResult=${lastZoomApplyResult ?: "—"} activeBoundCameraId=${activeBoundCameraId ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                                Text("Raw camera2: cameraId=${option.cameraId}, facing=${option.lensFacing}, capabilities logical=${option.logicalMultiCameraCapable}, physicalCameraIds=${option.physicalCameraIds}, focal_lengths_mm=${option.focalLengthsMm}, sensor=${option.sensorPhysicalSizeMm}, FOV=${option.approximateFovDeg}, minZoom=${if (option.cameraId == selectedCameraId) minZoomRatio else option.minZoomRatio}, maxZoom=${if (option.cameraId == selectedCameraId) maxZoomRatio else option.maxZoomRatio}, sizes=${option.supportedVideoSizes.take(8)}, fps=${option.supportedFpsRanges}", style = MaterialTheme.typography.bodySmall)
                             }
                             Button(onClick = { onSelect(option) }, enabled = option.cameraId != selectedCameraId) { Text(if (option.cameraId == selectedCameraId) "Используется сейчас" else "Выбрать") }
                         }

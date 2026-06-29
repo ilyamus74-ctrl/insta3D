@@ -56,6 +56,37 @@ data class FpsRangeInfo(val lower: Int, val upper: Int)
 data class FovInfo(val horizontal: Double, val vertical: Double)
 data class PhoneLensPreset(val label: String, val zoomRatio: Float)
 
+data class PhoneCameraBindResult(
+    val success: Boolean,
+    val error: String? = null,
+    val requestedZoomRatio: Float,
+    val effectiveZoomRatio: Float? = null,
+    val minZoomRatio: Float? = null,
+    val maxZoomRatio: Float? = null,
+    val cameraId: String? = null,
+    val activeBoundCameraId: String? = cameraId,
+    val cameraXZoomStateCurrent: Float? = null,
+    val bindStatus: String = if (success) "bound" else "failed",
+)
+
+data class PhoneCameraZoomState(
+    val requestedZoomRatio: Float,
+    val effectiveZoomRatio: Float? = null,
+    val minZoomRatio: Float? = null,
+    val maxZoomRatio: Float? = null,
+    val cameraId: String? = null,
+    val bindStatus: String = "not_bound",
+    val error: String? = null,
+    val cameraXZoomStateCurrent: Float? = null,
+) {
+    val warning: String? get() {
+        val effective = effectiveZoomRatio ?: return null
+        return if (kotlin.math.abs(requestedZoomRatio - effective) > 0.01f) {
+            "Requested ${zoomPresetLabel(requestedZoomRatio)}, but CameraX applied ${zoomPresetLabel(effective)}."
+        } else null
+    }
+}
+
 class PhoneCameraLensRepository(private val context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val manager: CameraManager = context.getSystemService(CameraManager::class.java)
@@ -148,17 +179,19 @@ class PhoneCameraLensRepository(private val context: Context) {
 }
 
 
-fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = null, stabilizationMode: String? = null, selectedZoomRatio: Float = 1.0f, minZoomRatioOverride: Float? = null, maxZoomRatioOverride: Float? = null): JSONObject = JSONObject()
+fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = null, stabilizationMode: String? = null, requestedZoomRatio: Float = 1.0f, effectiveZoomRatio: Float = requestedZoomRatio, minZoomRatioOverride: Float? = null, maxZoomRatioOverride: Float? = null): JSONObject = JSONObject()
     .put("selected_camera_id", cameraId)
     .put("camera_id", cameraId)
     .put("lens_label", lensLabel)
-    .put("selected_zoom_ratio", selectedZoomRatio.toDouble())
-    .put("lens_preset_label", zoomPresetLabel(selectedZoomRatio))
+    .put("requested_zoom_ratio", requestedZoomRatio.toDouble())
+    .put("effective_zoom_ratio", effectiveZoomRatio.toDouble())
+    .put("selected_zoom_ratio", effectiveZoomRatio.toDouble())
+    .put("lens_preset_label", zoomPresetLabel(effectiveZoomRatio))
     .put("logical_multi_camera_capable", logicalMultiCameraCapable)
     .put("physical_camera_ids", JSONArray(physicalCameraIds))
     .put("min_zoom_ratio", minZoomRatioOverride ?: minZoomRatio ?: JSONObject.NULL)
     .put("max_zoom_ratio", maxZoomRatioOverride ?: maxZoomRatio ?: JSONObject.NULL)
-    .put("ultrawide_zoom_ratio_note", if (selectedZoomRatio < 1.0f) "Ultrawide selected via CameraX zoom ratio, not a separate cameraId." else JSONObject.NULL)
+    .put("ultrawide_zoom_ratio_note", if (minZoomRatioOverride != null && minZoomRatioOverride <= 0.5f && kotlin.math.abs(effectiveZoomRatio - 0.5f) <= 0.05f) "CameraX confirmed ultrawide-like 0.5x zoom ratio." else JSONObject.NULL)
     .put("lens_facing", lensFacing)
     .put("focal_length_mm", primaryFocalLengthMm ?: JSONObject.NULL)
     .put("focal_lengths_mm", JSONArray(focalLengthsMm))

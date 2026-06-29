@@ -19,7 +19,8 @@ class PhoneScanManifestWriter {
         calibration: PhoneScanCalibrationMetadata? = null,
         selectedVideoInfo: SelectedPhoneVideoInfo? = null,
         selectedLens: PhoneCameraLensOption? = null,
-        selectedZoomRatio: Float = 1.0f,
+        requestedZoomRatio: Float = 1.0f,
+        effectiveZoomRatio: Float = requestedZoomRatio,
         minZoomRatio: Float? = null,
         maxZoomRatio: Float? = null,
     ): File {
@@ -45,13 +46,15 @@ class PhoneScanManifestWriter {
             .put("selected_camera_id", selectedLens?.cameraId ?: JSONObject.NULL)
             .put("camera_id", selectedLens?.cameraId ?: JSONObject.NULL)
             .put("lens_label", selectedLens?.lensLabel ?: JSONObject.NULL)
-            .put("selected_zoom_ratio", selectedZoomRatio.toDouble())
-            .put("lens_preset_label", zoomPresetLabel(selectedZoomRatio))
+            .put("requested_zoom_ratio", requestedZoomRatio.toDouble())
+            .put("effective_zoom_ratio", effectiveZoomRatio.toDouble())
+            .put("selected_zoom_ratio", effectiveZoomRatio.toDouble())
+            .put("lens_preset_label", zoomPresetLabel(effectiveZoomRatio))
             .put("logical_multi_camera_capable", selectedLens?.logicalMultiCameraCapable ?: JSONObject.NULL)
             .put("physical_camera_ids", JSONArray(selectedLens?.physicalCameraIds ?: emptyList<String>()))
             .put("min_zoom_ratio", minZoomRatio ?: selectedLens?.minZoomRatio ?: JSONObject.NULL)
             .put("max_zoom_ratio", maxZoomRatio ?: selectedLens?.maxZoomRatio ?: JSONObject.NULL)
-            .put("ultrawide_zoom_ratio_note", if (selectedZoomRatio < 1.0f) "Ultrawide selected via CameraX zoom ratio, not a separate cameraId." else JSONObject.NULL)
+            .put("ultrawide_zoom_ratio_note", if (minZoomRatio != null && minZoomRatio <= 0.5f && kotlin.math.abs(effectiveZoomRatio - 0.5f) <= 0.05f) "CameraX confirmed ultrawide-like 0.5x zoom ratio." else JSONObject.NULL)
             .put("focal_length_mm", selectedLens?.primaryFocalLengthMm ?: JSONObject.NULL)
             .put("focal_lengths_mm", JSONArray(selectedLens?.focalLengthsMm ?: emptyList<Float>()))
             .put("sensor_physical_size_mm", selectedLens?.sensorPhysicalSizeMm?.let { JSONObject().put("width", it.width).put("height", it.height) } ?: JSONObject.NULL)
@@ -59,7 +62,8 @@ class PhoneScanManifestWriter {
             .put("resolution", JSONObject().put("width", selectedVideoInfo?.width ?: JSONObject.NULL).put("height", selectedVideoInfo?.height ?: JSONObject.NULL))
             .put("fps", selectedVideoInfo?.fps ?: JSONObject.NULL)
             .put("stabilization_mode", JSONObject.NULL)
-            .put("camera", selectedLens?.toJson(selectedVideoInfo, selectedZoomRatio = selectedZoomRatio, minZoomRatioOverride = minZoomRatio, maxZoomRatioOverride = maxZoomRatio) ?: JSONObject.NULL)
+            .put("zoom_warning", if (kotlin.math.abs(requestedZoomRatio - effectiveZoomRatio) > 0.01f) "requested ${zoomPresetLabel(requestedZoomRatio)} but CameraX applied ${zoomPresetLabel(effectiveZoomRatio)}" else JSONObject.NULL)
+            .put("camera", selectedLens?.toJson(selectedVideoInfo, requestedZoomRatio = requestedZoomRatio, effectiveZoomRatio = effectiveZoomRatio, minZoomRatioOverride = minZoomRatio, maxZoomRatioOverride = maxZoomRatio) ?: JSONObject.NULL)
             .put("files", files)
         file.writeText(json.toString(2))
         return file
