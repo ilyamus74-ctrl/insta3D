@@ -66,22 +66,27 @@ body,html{height:100%}
       <button class="btn btn-outline-light btn-sm" id="fitAllBtn">Fit all</button>
       <button class="btn btn-outline-light btn-sm" id="fitRouteBtn">Fit route</button>
       <button class="btn btn-outline-light btn-sm" id="fitCloudBtn">Fit cloud</button>
+      <button class="btn btn-outline-light btn-sm" id="frontViewBtn">Front view</button>
+      <button class="btn btn-outline-light btn-sm" id="backViewBtn">Back view</button>
+      <button class="btn btn-outline-light btn-sm" id="leftViewBtn">Left view</button>
+      <button class="btn btn-outline-light btn-sm" id="rightViewBtn">Right view</button>
       <button class="btn btn-outline-light btn-sm" id="topViewBtn">Top view</button>
       <button class="btn btn-outline-light btn-sm" id="sideViewBtn">Side view</button>
       <button class="btn btn-outline-info btn-sm" id="cloudBeautyBtn">Cloud beauty</button>
     </div>
     <div class="mt-2"><b>Orientation</b></div>
     <div class="d-grid gap-1 mt-1">
+      <button class="btn btn-outline-light btn-sm" id="floorPlaneBtn">Auto level<br><small class="text-muted">Fit floor plane</small></button>
+      <button class="btn btn-outline-light btn-sm" id="rotYpBtn">Yaw left +90°</button><button class="btn btn-outline-light btn-sm" id="rotYmBtn">Yaw right -90°</button>
       <button class="btn btn-outline-warning btn-sm" id="flipVerticalBtn">Flip vertical</button>
+      <button class="btn btn-outline-light btn-sm" id="resetOrientationBtn">Reset orientation</button>
+      <button class="btn btn-outline-success btn-sm" id="saveDefaultBtn">Save orientation</button>
+      <div class="mt-2 text-muted">Advanced local rotation</div>
       <button class="btn btn-outline-light btn-sm" id="rotXpBtn">Rotate X +90°</button><button class="btn btn-outline-light btn-sm" id="rotXmBtn">Rotate X -90°</button>
-      <button class="btn btn-outline-light btn-sm" id="rotYpBtn">Rotate Y +90°</button><button class="btn btn-outline-light btn-sm" id="rotYmBtn">Rotate Y -90°</button>
       <button class="btn btn-outline-light btn-sm" id="rotZpBtn">Rotate Z +90°</button><button class="btn btn-outline-light btn-sm" id="rotZmBtn">Rotate Z -90°</button>
       <button class="btn btn-outline-light btn-sm" id="autoOrientBtn">Auto orientation</button>
       <button class="btn btn-outline-light btn-sm" id="imuGravityBtn">IMU gravity</button>
-      <button class="btn btn-outline-light btn-sm" id="floorPlaneBtn">Auto level<br><small class="text-muted">Fit floor plane</small></button>
       <button class="btn btn-outline-light btn-sm" id="manualOrientationBtn">Manual orientation</button>
-      <button class="btn btn-outline-light btn-sm" id="resetOrientationBtn">Reset orientation</button>
-      <button class="btn btn-outline-success btn-sm" id="saveDefaultBtn">Save manual orientation</button>
     </div>
     <div class="d-flex gap-2 mt-2"><button class="btn btn-outline-light btn-sm" id="setFloorBtn">Set floor here</button><button class="btn btn-outline-light btn-sm" id="raiseFloorBtn">Raise floor</button><button class="btn btn-outline-light btn-sm" id="lowerFloorBtn">Lower floor</button></div>
     <div class="d-flex gap-2 mt-2">
@@ -169,7 +174,7 @@ let currentViewMode = 'Fit all';
 const formatNum=(v)=>typeof v==='number'?v.toLocaleString():v;
 function updateSummary(){
   const selectedText=selected ? selected.userData.keyframe_index : 'none';
-  summaryEl.innerHTML=`<b>Summary</b><br>view mode: ${currentViewMode}<br>artifact: ${artifactLabel()}<br>${artifactStatsHtml()}<br>camera_poses_count: ${formatNum(data.summary.camera_poses_count)}<br>keyframe_points_count: ${formatNum(data.summary.keyframe_points_count)}<br>point_size: ${getPointSize().toFixed(2)} px<br>orientation: X=${deg(rootGroup.rotation.x)}°, Y=${deg(rootGroup.rotation.y)}°, Z=${deg(rootGroup.rotation.z)}°<br>selected keyframe: ${selectedText}<br><span class="text-warning">Raw cloud may include outliers.</span>`;
+  summaryEl.innerHTML=`<b>Summary</b><br>view mode: ${currentViewMode}<br>artifact: ${artifactLabel()}<br>${artifactStatsHtml()}<br>camera_poses_count: ${formatNum(data.summary.camera_poses_count)}<br>keyframe_points_count: ${formatNum(data.summary.keyframe_points_count)}<br>point_size: ${getPointSize().toFixed(2)} px<br>orientation: custom quaternion<br><span class="text-muted">approx Euler: X=${deg(rootGroup.rotation.x)}°, Y=${deg(rootGroup.rotation.y)}°, Z=${deg(rootGroup.rotation.z)}°</span><br>selected keyframe: ${selectedText}<br><span class="text-warning">Raw cloud may include outliers.</span>`;
 }
 
 function artifactLabel(){return initialArtifact==='dense'?'Dense point cloud':(initialArtifact==='mesh'?'Mesh':'Sparse point cloud');}
@@ -258,6 +263,7 @@ function recreateGrid(box, center, radius){
 
 function fitBox(box){
   if(!box) return;
+  resetCameraUp();
   const center=new THREE.Vector3();
   box.getCenter(center);
   const size=box.getSize(new THREE.Vector3());
@@ -275,6 +281,24 @@ function fitBox(box){
   resetCameraPos.copy(camera.position);
   resetTarget.copy(center);
   controls.update();
+}
+
+function resetCameraUp(){
+  camera.up.set(0,1,0);
+}
+
+function setCameraView(directionVector, upVector = new THREE.Vector3(0,1,0), label='Camera view'){
+  if(!latestCombinedBox) return;
+  const center=controls.target.clone();
+  const radius=Math.max(camera.position.distanceTo(center), latestRadius*2, 0.1);
+  const direction=directionVector.clone().normalize();
+  if(direction.lengthSq()===0) return;
+  camera.up.copy(upVector).normalize();
+  controls.target.copy(center);
+  camera.position.copy(center).add(direction.multiplyScalar(radius));
+  camera.lookAt(center);
+  controls.update();
+  setViewMode(label);
 }
 
 function updateSceneBoundsAndCenter(){
@@ -301,31 +325,20 @@ function fitAll(){ const box=computeCombinedBox(true,true,true); if(!box) return
 function fitRoute(){ const box=computeCombinedBox(false,true,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit route'); }
 function fitCloud(){ const box=initialArtifact==='dense'?computeCombinedBox(false,false,false,true,false):(initialArtifact==='mesh'?computeCombinedBox(false,false,false,false,true):computeCombinedBox(true,false,false,false,false)); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit cloud'); }
 function fitMesh(){ const box=computeCombinedBox(false,false,false,false,true); if(!box) return; const centered=box.clone().translate(rootGroup.position); fitBox(centered); setViewMode('Fit mesh'); }
+function resetView(){ resetCameraUp(); fitAll(); }
 
 function topView(){
-  if(!latestCombinedBox) return;
-  const center=latestCombinedBox.getCenter(new THREE.Vector3());
-  const radius=latestRadius;
-  controls.target.copy(center);
-  camera.position.set(center.x, center.y + radius*2, center.z + 0.001);
-  camera.up.set(0,0,-1);
-  camera.lookAt(center);
-  controls.update();
-
-  setViewMode('Top view');
+  setCameraView(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,-1), 'Top view');
 }
 
 function sideView(){
-  if(!latestCombinedBox) return;
-  const center=latestCombinedBox.getCenter(new THREE.Vector3());
-  const radius=latestRadius;
-  controls.target.copy(center);
-  camera.position.set(center.x + radius*2, center.y + radius*0.5, center.z + radius*2);
-  camera.up.set(0,1,0);
-  camera.lookAt(center);
-  controls.update();
-  setViewMode('Side view');
+  setCameraView(new THREE.Vector3(1,0.25,1), new THREE.Vector3(0,1,0), 'Side view');
 }
+
+function frontView(){ setCameraView(new THREE.Vector3(0,0,1), new THREE.Vector3(0,1,0), 'Front view'); }
+function backView(){ setCameraView(new THREE.Vector3(0,0,-1), new THREE.Vector3(0,1,0), 'Back view'); }
+function leftView(){ setCameraView(new THREE.Vector3(-1,0,0), new THREE.Vector3(0,1,0), 'Left view'); }
+function rightView(){ setCameraView(new THREE.Vector3(1,0,0), new THREE.Vector3(0,1,0), 'Right view'); }
 
 async function fetchArtifactArrayBuffer(url, label) {
   if (!url) throw new Error(`${label} URL is missing`);
@@ -580,12 +593,13 @@ const bindClick=(id,handler)=>{
 
 
 const presets={natural:{exposure:1.2,pointSize:1.5,background:'#252b3f'},bright:{exposure:1.7,pointSize:2.25,background:'#252b3f'},contrast:{exposure:2.0,pointSize:2.75,background:'#202437'},meshlab:{exposure:1.5,pointSize:2.0,background:'#29305f'}};
-function applyDisplaySettings(sv){ if(!sv) return; if(sv.background){scene.background=new THREE.Color(sv.background); document.getElementById('backgroundColor').value=sv.background;} if(sv.exposure){renderer.toneMappingExposure=Number(sv.exposure); document.getElementById('exposure').value=String(sv.exposure); document.getElementById('exposureValue').textContent=Number(sv.exposure).toFixed(2);} if(sv.point_size){setPointSize(Number(sv.point_size));} if(sv.rotation){rootGroup.rotation.set(Number(sv.rotation.x||0),Number(sv.rotation.y||0),Number(sv.rotation.z||0));} if(sv.preset){document.getElementById('displayPreset').value=sv.preset;} }
+function applyDisplaySettings(sv){ if(!sv) return; if(sv.background){scene.background=new THREE.Color(sv.background); document.getElementById('backgroundColor').value=sv.background;} if(sv.exposure){renderer.toneMappingExposure=Number(sv.exposure); document.getElementById('exposure').value=String(sv.exposure); document.getElementById('exposureValue').textContent=Number(sv.exposure).toFixed(2);} if(sv.point_size){setPointSize(Number(sv.point_size));} if(sv.quaternion){rootGroup.quaternion.set(Number(sv.quaternion.x||0),Number(sv.quaternion.y||0),Number(sv.quaternion.z||0),Number(sv.quaternion.w||1)).normalize();} else if(sv.rotation){rootGroup.rotation.set(Number(sv.rotation.x||0),Number(sv.rotation.y||0),Number(sv.rotation.z||0));} if(sv.preset){document.getElementById('displayPreset').value=sv.preset;} }
 async function loadViewerSettings(){ try{ const rr=await fetch(`/api/sfm_viewer_settings.php?order_id=${orderId}&capture_session_id=${sessionId}&pipeline_run_id=${pipelineRunId||''}`); const js=await rr.json(); if(js.ok) applyDisplaySettings(js.settings); }catch(e){ console.warn('settings load failed',e);} }
-async function saveViewerSettings(){ if(debugToken) return; const body={order_id:orderId,capture_session_id:sessionId,pipeline_run_id:pipelineRunId||null,settings:{rotation:{x:rootGroup.rotation.x,y:rootGroup.rotation.y,z:rootGroup.rotation.z},point_size:getPointSize(),exposure:renderer.toneMappingExposure,background:'#'+scene.background.getHexString(),use_outlier_filter:document.getElementById('outlierMode').value!=='off',outlier_mode:document.getElementById('outlierMode').value,preset:document.getElementById('displayPreset').value}}; await fetch('/api/sfm_viewer_settings.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+async function saveViewerSettings(){ if(debugToken) return; const body={order_id:orderId,capture_session_id:sessionId,pipeline_run_id:pipelineRunId||null,settings:{quaternion:{x:rootGroup.quaternion.x,y:rootGroup.quaternion.y,z:rootGroup.quaternion.z,w:rootGroup.quaternion.w},rotation:{x:rootGroup.rotation.x,y:rootGroup.rotation.y,z:rootGroup.rotation.z},point_size:getPointSize(),exposure:renderer.toneMappingExposure,background:'#'+scene.background.getHexString(),use_outlier_filter:document.getElementById('outlierMode').value!=='off',outlier_mode:document.getElementById('outlierMode').value,preset:document.getElementById('displayPreset').value}}; await fetch('/api/sfm_viewer_settings.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
 function rebuildAfterTransform(doFit=true){ const box=computeCombinedBox(initialArtifact==='sparse',false,false,initialArtifact==='dense',initialArtifact==='mesh'); if(!box) return; latestCombinedBox=box.clone(); const size=box.getSize(new THREE.Vector3()); const radius=Math.max(size.length()*0.5,0.1); recreateGrid(box, new THREE.Vector3(), radius); if(doFit) fitCloud(); controls.update(); }
-function rotateRoot(axis, radians){ rootGroup.rotateOnAxis(axis,radians); rebuildAfterTransform(true); updateSummary(); }
-function autoOrient(){ const obj=denseObject||pointsMesh||meshObject; if(!obj) return; const box=new THREE.Box3().setFromObject(obj); const size=box.getSize(new THREE.Vector3()); const minAxis=size.x<size.y&&size.x<size.z?'x':(size.y<size.z?'y':'z'); if(minAxis==='x') rotateRoot(new THREE.Vector3(0,0,1), Math.PI/2); else if(minAxis==='z') rotateRoot(new THREE.Vector3(1,0,0), Math.PI/2); selectionEl.innerHTML='Auto orient preview applied. Use “Save manual orientation” to save.'; }
+function rotateRootLocal(axis, radians){ rootGroup.rotateOnAxis(axis,radians); rootGroup.quaternion.normalize(); rebuildAfterTransform(true); updateSummary(); }
+function applyWorldRotation(axis, radians){ const q=new THREE.Quaternion().setFromAxisAngle(axis.clone().normalize(), radians); rootGroup.quaternion.premultiply(q).normalize(); rebuildAfterTransform(true); updateSummary(); }
+function autoOrient(){ const obj=denseObject||pointsMesh||meshObject; if(!obj) return; const box=new THREE.Box3().setFromObject(obj); const size=box.getSize(new THREE.Vector3()); const minAxis=size.x<size.y&&size.x<size.z?'x':(size.y<size.z?'y':'z'); if(minAxis==='x') rotateRootLocal(new THREE.Vector3(0,0,1), Math.PI/2); else if(minAxis==='z') rotateRootLocal(new THREE.Vector3(1,0,0), Math.PI/2); selectionEl.innerHTML='Auto orient preview applied. Use “Save orientation” to save.'; }
 
 function floorPlaneSourceObject(){
   return denseObject || meshObject || pointsMesh || null;
@@ -708,26 +722,30 @@ function autoLevelByFloorPlane(){
     const up=new THREE.Vector3(0,1,0);
     const q=new THREE.Quaternion().setFromUnitVectors(worldNormal, up);
     const angle=THREE.MathUtils.radToDeg(2*Math.acos(THREE.MathUtils.clamp(Math.abs(q.w), -1, 1)));
-    rootGroup.quaternion.premultiply(q);
+    rootGroup.quaternion.premultiply(q).normalize();
     rebuildAfterTransform(true);
     updateSummary();
-    selectionEl.innerHTML=`Auto level applied: plane inliers ${fit.inliers} / ${fit.total}, rmse ${fit.rmse.toFixed(3)}, rotation ${angle.toFixed(1)}°<br><span class="text-muted">Use “Save manual orientation” to save this orientation.</span>`;
+    selectionEl.innerHTML=`Auto level applied: plane inliers ${fit.inliers} / ${fit.total}, rmse ${fit.rmse.toFixed(3)}, rotation ${angle.toFixed(1)}°<br><span class="text-muted">Use “Save orientation” to save this orientation.</span>`;
   }, 20);
 }
 
 
-bindClick('resetViewBtn',fitAll);
+bindClick('resetViewBtn',resetView);
 bindClick('fitAllBtn',fitAll);
 bindClick('fitRouteBtn',fitRoute);
 bindClick('fitCloudBtn',fitCloud);
+bindClick('frontViewBtn',frontView);
+bindClick('backViewBtn',backView);
+bindClick('leftViewBtn',leftView);
+bindClick('rightViewBtn',rightView);
 bindClick('topViewBtn',topView);
 bindClick('sideViewBtn',sideView);
 bindClick('cloudBeautyBtn',cloudBeauty);
-bindClick('flipVerticalBtn',()=>rotateRoot(new THREE.Vector3(1,0,0),Math.PI));
-bindClick('rotXpBtn',()=>rotateRoot(new THREE.Vector3(1,0,0),Math.PI/2)); bindClick('rotXmBtn',()=>rotateRoot(new THREE.Vector3(1,0,0),-Math.PI/2));
-bindClick('rotYpBtn',()=>rotateRoot(new THREE.Vector3(0,1,0),Math.PI/2)); bindClick('rotYmBtn',()=>rotateRoot(new THREE.Vector3(0,1,0),-Math.PI/2));
-bindClick('rotZpBtn',()=>rotateRoot(new THREE.Vector3(0,0,1),Math.PI/2)); bindClick('rotZmBtn',()=>rotateRoot(new THREE.Vector3(0,0,1),-Math.PI/2));
-bindClick('resetOrientationBtn',()=>{rootGroup.rotation.set(0,0,0); rebuildAfterTransform(true); updateSummary();}); bindClick('saveDefaultBtn',saveViewerSettings); bindClick('autoOrientBtn',autoOrient); bindClick('floorPlaneBtn',autoLevelByFloorPlane);
+bindClick('flipVerticalBtn',()=>applyWorldRotation(new THREE.Vector3(0,0,1),Math.PI));
+bindClick('rotXpBtn',()=>rotateRootLocal(new THREE.Vector3(1,0,0),Math.PI/2)); bindClick('rotXmBtn',()=>rotateRootLocal(new THREE.Vector3(1,0,0),-Math.PI/2));
+bindClick('rotYpBtn',()=>applyWorldRotation(new THREE.Vector3(0,1,0),Math.PI/2)); bindClick('rotYmBtn',()=>applyWorldRotation(new THREE.Vector3(0,1,0),-Math.PI/2));
+bindClick('rotZpBtn',()=>rotateRootLocal(new THREE.Vector3(0,0,1),Math.PI/2)); bindClick('rotZmBtn',()=>rotateRootLocal(new THREE.Vector3(0,0,1),-Math.PI/2));
+bindClick('resetOrientationBtn',()=>{rootGroup.quaternion.identity(); rebuildAfterTransform(true); updateSummary();}); bindClick('saveDefaultBtn',saveViewerSettings); bindClick('autoOrientBtn',autoOrient); bindClick('floorPlaneBtn',autoLevelByFloorPlane);
 bindClick('setFloorBtn',()=>{floorOffset=controls.target.y-pointPercentileY(0.02,0); rebuildAfterTransform(false);}); bindClick('raiseFloorBtn',()=>{floorOffset+=latestRadius*0.02; rebuildAfterTransform(false);}); bindClick('lowerFloorBtn',()=>{floorOffset-=latestRadius*0.02; rebuildAfterTransform(false);});
 document.getElementById('displayPreset').addEventListener('change',e=>{const p=presets[e.target.value]; applyDisplaySettings({preset:e.target.value,point_size:p.pointSize,exposure:p.exposure,background:p.background}); updateSummary();});
 document.getElementById('exposure').addEventListener('input',e=>{renderer.toneMappingExposure=parseFloat(e.target.value); document.getElementById('exposureValue').textContent=renderer.toneMappingExposure.toFixed(2);});
