@@ -23,10 +23,16 @@ $artifact = in_array((string)($_GET['artifact'] ?? 'sparse'), ['sparse','dense',
 <title>SfM 3D Viewer</title>
 <link href="/assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
 <style>
-body,html{height:100%}
-#viewer{height:80vh;background:#252b3f;border-radius:8px}
-.overlay{position:absolute;right:20px;top:110px;z-index:10;max-width:320px}
-.controls-panel{position:absolute;left:20px;top:110px;z-index:10;max-width:320px}
+body,html{height:100%;margin:0}
+body{overflow:hidden}
+.viewer-shell{height:calc(100vh - 92px);min-height:520px;position:relative}
+#viewer{height:100%;background:#252b3f;border-radius:8px;overflow:hidden}
+.overlay,.controls-panel{position:absolute;top:12px;z-index:10;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto}
+.controls-panel{left:12px}
+.overlay{right:12px}
+.control-section{border-top:1px solid rgba(255,255,255,.12);padding-top:.65rem;margin-top:.65rem}
+.control-section:first-child{border-top:0;padding-top:0;margin-top:0}
+@media (max-width: 900px){body{overflow:auto}.viewer-shell{height:auto;min-height:70vh}.controls-panel,.overlay{position:relative;left:auto;right:auto;top:auto;max-width:none;max-height:none;margin:.5rem 0}#viewer{height:70vh}}
 </style>
 </head>
 <body class="p-3">
@@ -37,11 +43,12 @@ body,html{height:100%}
 <a class="btn btn-outline-success btn-sm" href="/sfm_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open diagnostics</a><?php else: ?><span class="badge bg-warning text-dark">Read-only debug public access</span><?php endif; ?>
 </div>
 <div class="alert alert-light border small" id="sourceHeader">Source video: loading…</div>
+<div class="viewer-shell">
 <div id="viewer"><div id="viewerStatus" class="text-light p-3">Loading...</div></div>
 
-<div class="controls-panel card">
+<div class="controls-panel card bg-dark text-light">
   <div class="card-body small">
-    <div class="mb-2"><b>Display</b></div>
+    <div class="control-section"><div class="mb-2"><b>Display</b></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="togglePoints" checked><label class="form-check-label" for="togglePoints">Show sparse cloud</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleDenseCloud"><label class="form-check-label" for="toggleDenseCloud">Show dense cloud</label></div>
     <div class="form-check"><input class="form-check-input" type="checkbox" id="toggleMesh"><label class="form-check-label" for="toggleMesh">Show mesh</label></div>
@@ -62,6 +69,8 @@ body,html{height:100%}
     <label for="exposure" class="form-label mb-1">Exposure: <span id="exposureValue">1.60</span></label>
     <input type="range" class="form-range" id="exposure" min="0.5" max="3" step="0.05" value="1.6">
     <label for="backgroundColor" class="form-label mb-1">Background</label><input type="color" class="form-control form-control-color mb-2" id="backgroundColor" value="#252b3f">
+    </div>
+    <div class="control-section"><div class="mb-2"><b>Camera views</b></div>
     <div class="d-grid gap-1 mt-2">
       <button class="btn btn-outline-light btn-sm" id="fitAllBtn">Fit all</button>
       <button class="btn btn-outline-light btn-sm" id="fitRouteBtn">Fit route</button>
@@ -74,19 +83,25 @@ body,html{height:100%}
       <button class="btn btn-outline-light btn-sm" id="sideViewBtn">Side view</button>
       <button class="btn btn-outline-info btn-sm" id="cloudBeautyBtn">Cloud beauty</button>
     </div>
-    <div class="mt-2"><b>Orientation</b></div>
+    </div>
+    <div class="control-section"><div class="mt-2"><b>Orientation</b></div>
     <div class="d-grid gap-1 mt-1">
       <button class="btn btn-outline-light btn-sm" id="floorPlaneBtn">Auto level<br><small class="text-muted">Fit floor plane</small></button>
+      <button class="btn btn-outline-light btn-sm" id="invertLevelBtn">Invert level</button>
       <button class="btn btn-outline-light btn-sm" id="rotYpBtn">Yaw left +90°</button><button class="btn btn-outline-light btn-sm" id="rotYmBtn">Yaw right -90°</button>
       <button class="btn btn-outline-warning btn-sm" id="flipVerticalBtn">Flip vertical</button>
       <button class="btn btn-outline-light btn-sm" id="resetOrientationBtn">Reset orientation</button>
       <button class="btn btn-outline-success btn-sm" id="saveDefaultBtn">Save orientation</button>
-      <div class="mt-2 text-muted">Advanced local rotation</div>
+    </div>
+    <details class="control-section"><summary class="text-muted">Advanced local rotation</summary>
+      <div class="d-grid gap-1 mt-2">
       <button class="btn btn-outline-light btn-sm" id="rotXpBtn">Rotate X +90°</button><button class="btn btn-outline-light btn-sm" id="rotXmBtn">Rotate X -90°</button>
       <button class="btn btn-outline-light btn-sm" id="rotZpBtn">Rotate Z +90°</button><button class="btn btn-outline-light btn-sm" id="rotZmBtn">Rotate Z -90°</button>
       <button class="btn btn-outline-light btn-sm" id="autoOrientBtn">Auto orientation</button>
       <button class="btn btn-outline-light btn-sm" id="imuGravityBtn">IMU gravity</button>
       <button class="btn btn-outline-light btn-sm" id="manualOrientationBtn">Manual orientation</button>
+      </div>
+    </details>
     </div>
     <div class="d-flex gap-2 mt-2"><button class="btn btn-outline-light btn-sm" id="setFloorBtn">Set floor here</button><button class="btn btn-outline-light btn-sm" id="raiseFloorBtn">Raise floor</button><button class="btn btn-outline-light btn-sm" id="lowerFloorBtn">Lower floor</button></div>
     <div class="d-flex gap-2 mt-2">
@@ -95,7 +110,8 @@ body,html{height:100%}
     </div>
   </div>
 </div>
-<div class="overlay card"><div class="card-body small"><div id="summary">Loading...</div><hr><div id="selection">Click keyframe sphere.</div></div></div>
+<div class="overlay card bg-dark text-light"><div class="card-body small"><div id="summary">Loading...</div><hr><div id="selection">Click keyframe sphere.</div></div></div>
+</div>
 </div>
 <script type="importmap">
 {
@@ -170,6 +186,7 @@ let selected=null;
 let latestCombinedBox = null;
 let latestRadius = 5;
 let currentViewMode = 'Fit all';
+let lastAutoLevelPlaneResult = null;
 
 const formatNum=(v)=>typeof v==='number'?v.toLocaleString():v;
 function updateSummary(){
@@ -703,6 +720,45 @@ function fitDominantPlaneRansac(points, diag){
   return {normal:plane.normal, constant:plane.constant, inliers:inliers.length, total:points.length, ratio:inliers.length/points.length, rmse:Math.sqrt(sumSq/Math.max(inliers.length,1)), threshold};
 }
 
+function evaluateFloorSideCandidate(points, fit, candidateNormal){
+  const normal=candidateNormal.clone().normalize();
+  const constant=normal.dot(fit.normal) >= 0 ? fit.constant : -fit.constant;
+  const currentQ=rootGroup.quaternion.clone();
+  const worldNormal=normal.clone().applyQuaternion(currentQ).normalize();
+  const alignQ=new THREE.Quaternion().setFromUnitVectors(worldNormal, new THREE.Vector3(0,1,0));
+  const finalQ=currentQ.premultiply(alignQ);
+  const planePoint=normal.clone().multiplyScalar(-constant).applyQuaternion(finalQ);
+  const heights=[];
+  const ys=[];
+  let positive=0;
+  points.forEach(p=>{
+    const h=normal.dot(p)+constant;
+    heights.push(h);
+    if(h>=0) positive++;
+    ys.push(p.clone().applyQuaternion(finalQ).y);
+  });
+  heights.sort((a,b)=>a-b);
+  ys.sort((a,b)=>a-b);
+  const minY=ys[0], p02Y=percentile(ys,0.02), medianY=percentile(ys,0.5), p98Y=percentile(ys,0.98);
+  const ySpan=Math.max(p98Y-p02Y, 1e-6);
+  const planeLowCloseness=Math.abs(planePoint.y-p02Y)/ySpan;
+  const planeHighCloseness=Math.abs(planePoint.y-p98Y)/ySpan;
+  const positiveRatio=positive/Math.max(points.length,1);
+  const medianHeight=percentile(heights,0.5);
+  const score=(positiveRatio*3) + (medianHeight>0 ? 2 : -2) + (planeHighCloseness-planeLowCloseness)*2;
+  return {normal, constant, alignQ, finalQ, worldNormal, positiveRatio, medianHeight, minY, p02Y, medianY, p98Y, planeY:planePoint.y, planeLowCloseness, planeHighCloseness, score};
+}
+
+function chooseFloorSide(points, fit){
+  const a=evaluateFloorSideCandidate(points, fit, fit.normal.clone());
+  const b=evaluateFloorSideCandidate(points, fit, fit.normal.clone().negate());
+  const best=a.score>=b.score ? a : b;
+  const other=best===a ? b : a;
+  const strong=best.positiveRatio>=0.55 && best.medianHeight>0 && best.planeLowCloseness<best.planeHighCloseness;
+  const ambiguous=!strong || Math.abs(best.score-other.score)<0.35;
+  return {...best, ambiguous};
+}
+
 function autoLevelByFloorPlane(){
   const obj=floorPlaneSourceObject();
   const sampled=sampleGeometryPositions(obj, 60000);
@@ -716,19 +772,33 @@ function autoLevelByFloorPlane(){
       selectionEl.innerHTML=`<span class="text-warning">${msg} Auto level was not applied.</span>`;
       return;
     }
-    let normal=fit.normal.clone().normalize();
-    const worldNormal=normal.clone().applyQuaternion(rootGroup.quaternion).normalize();
-    if(worldNormal.y<0) worldNormal.negate();
-    const up=new THREE.Vector3(0,1,0);
-    const q=new THREE.Quaternion().setFromUnitVectors(worldNormal, up);
-    const angle=THREE.MathUtils.radToDeg(2*Math.acos(THREE.MathUtils.clamp(Math.abs(q.w), -1, 1)));
-    rootGroup.quaternion.premultiply(q).normalize();
+    const choice=chooseFloorSide(sampled.points, fit);
+    const angle=THREE.MathUtils.radToDeg(2*Math.acos(THREE.MathUtils.clamp(Math.abs(choice.alignQ.w), -1, 1)));
+    rootGroup.quaternion.premultiply(choice.alignQ).normalize();
+    lastAutoLevelPlaneResult={
+      normal:{x:choice.normal.x,y:choice.normal.y,z:choice.normal.z},
+      inliers:fit.inliers,
+      total:fit.total,
+      ratio:fit.ratio,
+      rmse:fit.rmse,
+      rotationAngleDeg:angle,
+      floorSide: choice.ambiguous ? 'ambiguous-auto' : 'auto',
+      manuallyInverted:false
+    };
     rebuildAfterTransform(true);
     updateSummary();
-    selectionEl.innerHTML=`Auto level applied: plane inliers ${fit.inliers} / ${fit.total}, rmse ${fit.rmse.toFixed(3)}, rotation ${angle.toFixed(1)}°<br><span class="text-muted">Use “Save orientation” to save this orientation.</span>`;
+    const warning=choice.ambiguous ? '<br><span class="text-warning">Auto level applied, but floor side is ambiguous. Use Invert level if upside down.</span>' : '';
+    selectionEl.innerHTML=`Auto level applied: inliers ${fit.inliers} / ${fit.total}, ratio ${(fit.ratio*100).toFixed(1)}%, rmse ${fit.rmse.toFixed(3)}, rotation ${angle.toFixed(1)}°, floor side: ${choice.ambiguous?'ambiguous auto':'auto'}${warning}<br><span class="text-muted">Use “Save orientation” to save this orientation.</span>`;
   }, 20);
 }
 
+function invertLevel(){
+  applyWorldRotation(new THREE.Vector3(1,0,0), Math.PI);
+  if(lastAutoLevelPlaneResult){
+    lastAutoLevelPlaneResult={...lastAutoLevelPlaneResult, manuallyInverted:true, floorSide:'manual inverted'};
+  }
+  selectionEl.innerHTML='Invert level applied: floor/ceiling swapped after auto-level.<br><span class="text-muted">Use “Save orientation” to save this orientation.</span>';
+}
 
 bindClick('resetViewBtn',resetView);
 bindClick('fitAllBtn',fitAll);
@@ -742,6 +812,7 @@ bindClick('topViewBtn',topView);
 bindClick('sideViewBtn',sideView);
 bindClick('cloudBeautyBtn',cloudBeauty);
 bindClick('flipVerticalBtn',()=>applyWorldRotation(new THREE.Vector3(0,0,1),Math.PI));
+bindClick('invertLevelBtn',invertLevel);
 bindClick('rotXpBtn',()=>rotateRootLocal(new THREE.Vector3(1,0,0),Math.PI/2)); bindClick('rotXmBtn',()=>rotateRootLocal(new THREE.Vector3(1,0,0),-Math.PI/2));
 bindClick('rotYpBtn',()=>applyWorldRotation(new THREE.Vector3(0,1,0),Math.PI/2)); bindClick('rotYmBtn',()=>applyWorldRotation(new THREE.Vector3(0,1,0),-Math.PI/2));
 bindClick('rotZpBtn',()=>rotateRootLocal(new THREE.Vector3(0,0,1),Math.PI/2)); bindClick('rotZmBtn',()=>rotateRootLocal(new THREE.Vector3(0,0,1),-Math.PI/2));
