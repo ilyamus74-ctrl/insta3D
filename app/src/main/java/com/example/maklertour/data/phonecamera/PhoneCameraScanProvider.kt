@@ -62,7 +62,7 @@ class PhoneCameraScanProvider(
         val startedAt = Instant.now()
         val baseDir = videoRecorder.startRecording(sessionId, scanId)
         val imuFile = imuRecorder.start(sessionId, scanId, baseDir)
-        val cameraInfoFile = cameraInfoCollector.writeCameraInfo(baseDir, videoRecorder.getSelectedVideoInfo())
+        val cameraInfoFile = cameraInfoCollector.writeCameraInfo(baseDir, videoRecorder.getSelectedVideoInfo(), videoRecorder.getSelectedLensOption())
         active = ActivePhoneScan(scanId, sessionId, scanName, sequenceNumber, baseDir, cameraInfoFile, imuFile, startedAt, sessionCalibration)
         return ScanVideo(
             id = scanId,
@@ -95,6 +95,8 @@ class PhoneCameraScanProvider(
             durationSec = video.durationSec,
             fileSizeBytes = video.fileSizeBytes,
             calibration = current.calibration,
+            selectedVideoInfo = videoRecorder.getSelectedVideoInfo(),
+            selectedLens = videoRecorder.getSelectedLensOption(),
         )
         active = null
         return ScanVideo(

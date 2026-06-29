@@ -31,6 +31,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -62,6 +64,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -78,6 +82,8 @@ import androidx.core.content.ContextCompat
 import androidx.camera.view.PreviewView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
+import com.maklertour.data.phonecamera.PhoneCameraLensOption
+import com.maklertour.data.phonecamera.PhoneCameraLensRepository
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -109,7 +115,6 @@ import com.maklertour.i18n.DebugPreferences
 import com.maklertour.i18n.withAppLanguage
 import com.maklertour.ui.components.AppSectionCard
 import com.maklertour.ui.components.AppStorageStatusRow
-import androidx.compose.runtime.LaunchedEffect
 import com.example.maklertour.auth.AuthStorage
 import com.example.maklertour.auth.LoginResult
 import com.example.maklertour.auth.MobileAuthApi
@@ -392,6 +397,7 @@ private fun MaklerTourApp() {
                         isLoading = ordersLoading,
                         error = ordersError,
                         debugMode = debugMode,
+        warning = selectedCameraWarning,
                         onRefresh = {
                             coroutineScope.launch {
                                 ordersLoading = true
@@ -513,6 +519,7 @@ private fun MaklerTourApp() {
                         },
                         onBack = { navController.popBackStack() },
                         debugMode = debugMode,
+        warning = selectedCameraWarning,
                     )
                 }
                 composable(AppTab.Camera.route) {
@@ -551,6 +558,7 @@ private fun MaklerTourApp() {
                         onRequeueAllVideos = viewModel::requeueAllVideosForSelectedSession,
                         onRequeueVideo = viewModel::requeueVideo,
                         debugMode = debugMode,
+        warning = selectedCameraWarning,
                         selectedOrder = selectedOrder,
                     )
                 }
@@ -586,6 +594,7 @@ private fun MaklerTourApp() {
                         onRequeueAllVideos = viewModel::requeueAllVideosForSelectedSession,
                         onRequeueVideo = viewModel::requeueVideo,
                         debugMode = debugMode,
+        warning = selectedCameraWarning,
                     )
                 }
                 composable(AppTab.Queue.route) {
@@ -614,6 +623,7 @@ private fun MaklerTourApp() {
                             LanguagePreferences.set(baseContext, language)
                         },
                         debugMode = debugMode,
+        warning = selectedCameraWarning,
                         onDebugModeChanged = { enabled ->
                             debugMode = enabled
                             DebugPreferences.set(baseContext, enabled)
@@ -643,6 +653,7 @@ private fun OrdersScreen(
     isLoading: Boolean,
     error: String?,
     debugMode: Boolean,
+    warning: String?,
     onRefresh: () -> Unit,
     onOpen: (MobileOrder) -> Unit,
     onTakeOrder: (MobileOrder) -> Unit,
@@ -781,6 +792,7 @@ private fun OrderWorkScreen(
     onTakeOrder: () -> Unit,
     onBack: () -> Unit,
     debugMode: Boolean,
+    warning: String?,
 ) {
     val canWork = order != null && currentUserId != null && order.operatorId == currentUserId
     val isAvailable = order?.isPublished == true && order.status == "NEW" && order.operatorId == null
@@ -1000,6 +1012,7 @@ private fun SettingsScreen(
     currentLanguage: AppLanguage,
     onLanguageSelected: (AppLanguage) -> Unit,
     debugMode: Boolean,
+    warning: String?,
     onDebugModeChanged: (Boolean) -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -1211,6 +1224,7 @@ private fun CameraScreen(
     onRequeueAllVideos: () -> String,
     onRequeueVideo: (String) -> EnqueueUploadResult,
     debugMode: Boolean,
+    warning: String?,
     selectedOrder: MobileOrder?,
 ) {
     var captureMode by remember { mutableStateOf(CaptureMode.PHOTO_POINT) }
@@ -1337,6 +1351,7 @@ private fun CameraScreen(
                         onDelete = onDeleteVideoScan,
                         onDownload = onDownloadVideoScan,
                         debugMode = debugMode,
+        warning = selectedCameraWarning,
                     )
                 }
             }
@@ -1412,6 +1427,11 @@ private fun PhoneCameraScanScreen(
     var startedInThisScreen by remember { mutableStateOf(false) }
     var lastShownCapturedScanId by remember { mutableStateOf<String?>(null) }
     val debugMode = remember(context) { DebugPreferences.get(context) }
+    val lensRepository = remember(context) { PhoneCameraLensRepository(context) }
+    var cameraOptions by remember { mutableStateOf(lensRepository.listBackCameras()) }
+    var selectedCameraId by remember { mutableStateOf(lensRepository.getSelectedCameraId() ?: cameraOptions.firstOrNull()?.cameraId) }
+    val selectedLens = cameraOptions.firstOrNull { it.cameraId == selectedCameraId } ?: cameraOptions.firstOrNull()
+    val selectedCameraWarning = if (selectedCameraId != null && cameraOptions.none { it.cameraId == selectedCameraId }) "Выбранная камера недоступна. Будет использована камера по умолчанию: ${selectedLens?.lensLabel ?: "—"}." else null
     val nextRole = remember(scanVideos) { nextVideoScanRole(scanVideos) }
     val isBackbone = nextRole != com.maklertour.domain.ScanVideoRole.DETAIL
     val latestPhoneScan = scanVideos.filter { it.source == com.maklertour.domain.ScanSource.PHONE_CAMERA }.maxByOrNull { it.updatedAt }
@@ -1477,6 +1497,7 @@ private fun PhoneCameraScanScreen(
 
             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 if (hasCameraPermission) {
+                    key(selectedCameraId) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
@@ -1490,6 +1511,7 @@ private fun PhoneCameraScanScreen(
                             }
                         },
                     )
+                    }
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(24.dp)) {
                         Text("Нет доступа к камере. Разрешите доступ к камере в настройках приложения.", color = Color.White)
@@ -1512,10 +1534,14 @@ private fun PhoneCameraScanScreen(
             Column(modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.85f)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (videoScanUiState == VideoScanUiState.RECORDING) {
                     Text("Таймер: ${elapsedSec}s", color = Color.White)
-                    Text("Идите медленно по периметру", color = Color.White)
+                    Text("Идите ногами по периметру. Не стойте на месте и не вращайтесь только корпусом.", color = Color.White)
                     Text("Один плавный круг", color = Color.White)
                     Text("Не делайте резких поворотов", color = Color.White)
                     Text("Держите перекрытие кадров", color = Color.White)
+                }
+                selectedCameraWarning?.let { Text(it, color = Color(0xFFFFD166)) }
+                if (selectedLens?.lensLabel?.contains("Ultrawide") == true) {
+                    Text("Широкий угол помогает видеть больше стен, но всё равно нужен проход с физическим смещением.", color = Color.White.copy(alpha = 0.9f))
                 }
                 if (videoScanUiState != VideoScanUiState.RECORDING) {
                     VideoRoleGuide(
@@ -1570,7 +1596,66 @@ private fun PhoneCameraScanScreen(
             }
         }
     }
-    if (showCameraSettingsDialog) AlertDialog(onDismissRequest = { showCameraSettingsDialog = false }, title = { Text("Настройки камеры") }, text = { Text("Выбор объектива, разрешения и FPS будет добавлен следующим этапом.") }, confirmButton = { TextButton(onClick = { showCameraSettingsDialog = false }) { Text("ОК") } })
+    if (showCameraSettingsDialog) CameraSettingsDialog(
+        options = cameraOptions,
+        selectedCameraId = selectedCameraId,
+        debugMode = debugMode,
+        warning = selectedCameraWarning,
+        onRefresh = { cameraOptions = lensRepository.listBackCameras() },
+        onSelect = { option ->
+            lensRepository.saveSelectedCameraId(option.cameraId)
+            selectedCameraId = option.cameraId
+            previewBound = false
+            bindError = null
+        },
+        onDismiss = { showCameraSettingsDialog = false },
+    )
+}
+
+@Composable
+private fun CameraSettingsDialog(
+    options: List<PhoneCameraLensOption>,
+    selectedCameraId: String?,
+    debugMode: Boolean,
+    warning: String?,
+    onRefresh: () -> Unit,
+    onSelect: (PhoneCameraLensOption) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Настройки камеры") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Для маленьких помещений рекомендуется широкоугольная камера 0.5x.")
+                warning?.let { Text(it, color = Color(0xFF8A5A00)) }
+                if (options.isEmpty()) {
+                    Text("Задние камеры не найдены.")
+                }
+                options.forEach { option ->
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = if (option.cameraId == selectedCameraId) Color(0xFFE0F2F1) else MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(option.lensLabel, style = MaterialTheme.typography.titleSmall)
+                            Text("Выбрана: ${if (option.cameraId == selectedCameraId) "да" else "нет"}")
+                            Text("Camera ID: ${option.cameraId}; facing: ${option.lensFacing}")
+                            Text("Разрешение/FPS: ${option.supportedVideoSizes.firstOrNull()?.let { "${it.width}×${it.height}" } ?: "—"} · ${option.supportedFpsRanges.maxByOrNull { it.upper }?.let { "${it.lower}-${it.upper} fps" } ?: "—"}")
+                            Text("Lens/FOV: ${option.primaryFocalLengthMm?.let { String.format(java.util.Locale.US, "%.1f mm", it) } ?: "—"} · ${option.approximateFovDeg?.let { String.format(java.util.Locale.US, "≈ %.0f°×%.0f°", it.horizontal, it.vertical) } ?: "FOV —"}")
+                            Text("Сенсор: ${option.sensorPhysicalSizeMm?.let { String.format(java.util.Locale.US, "%.2f×%.2f mm", it.width, it.height) } ?: "—"}")
+                            if (debugMode) {
+                                Text("Raw camera2: focal=${option.focalLengthsMm}, active=${option.activeArraySize}, sizes=${option.supportedVideoSizes.take(8)}, fps=${option.supportedFpsRanges}", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Button(onClick = { onSelect(option) }, enabled = option.cameraId != selectedCameraId) { Text("Выбрать") }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("ОК") } },
+        dismissButton = { TextButton(onClick = onRefresh) { Text("Обновить") } },
+    )
 }
 
 private fun formatBytes(bytes: Long): String {
@@ -1652,6 +1737,7 @@ private fun DraftScreen(
     onRequeueAllVideos: () -> String,
     onRequeueVideo: (String) -> EnqueueUploadResult,
     debugMode: Boolean,
+    warning: String?,
 ) {
     val unassignedPoints = points.filter { it.roomId == null }
     val roomsSorted = rooms.sortedBy { it.orderIndex }
@@ -1715,6 +1801,7 @@ private fun DraftScreen(
                 onSyncVideo = { onAddToUploadQueue() },
                 onRequeueVideo = onRequeueVideo,
                 debugMode = debugMode,
+        warning = selectedCameraWarning,
             )
         }
 
@@ -1958,6 +2045,7 @@ private fun ProjectDraftPreviewBlock(
     points: List<com.maklertour.domain.CapturePoint>,
     scanVideos: List<com.maklertour.domain.ScanVideo>,
     debugMode: Boolean,
+    warning: String?,
 ) {
     val previewReady = points.count { !it.localPreviewPath.isNullOrBlank() || !it.previewUri.isNullOrBlank() }
     val hasCapturedVideo = scanVideos.any { it.captureStatus == com.maklertour.domain.ScanVideoCaptureStatus.CAPTURED }

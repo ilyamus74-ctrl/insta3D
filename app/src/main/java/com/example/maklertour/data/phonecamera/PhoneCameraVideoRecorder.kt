@@ -2,7 +2,6 @@ package com.maklertour.data.phonecamera
 
 import android.content.Context
 import android.util.Log
-import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FileOutputOptions
@@ -29,13 +28,17 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var outputFile: File? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var finalizeDeferred: CompletableDeferred<PhoneVideoRecordingResult>? = null
+    private val lensRepository = PhoneCameraLensRepository(context)
     private var selectedVideoInfo: SelectedPhoneVideoInfo? = null
+    private var selectedLensOption: PhoneCameraLensOption? = null
 
     suspend fun bindPreview(previewView: PreviewView) {
         Log.d(TAG, "bindPreview(): start")
         val cameraProvider = getCameraProvider()
         val preview = Preview.Builder().build()
         val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
+        val (selector, lens) = lensRepository.selectedCameraSelector()
+        selectedLensOption = lens
         selectedVideoInfo = SelectedPhoneVideoInfo(width = 1280, height = 720, fps = null)
         val preparedVideoCapture = VideoCapture.withOutput(recorder)
         preview.setSurfaceProvider(previewView.surfaceProvider)
@@ -43,7 +46,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         try {
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
+                selector,
                 preview,
                 preparedVideoCapture,
             )
@@ -57,6 +60,8 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     }
 
     fun getSelectedVideoInfo(): SelectedPhoneVideoInfo? = selectedVideoInfo
+
+    fun getSelectedLensOption(): PhoneCameraLensOption? = selectedLensOption
 
     suspend fun startRecording(sessionId: String, scanId: String): File {
         val preparedVideoCapture = videoCapture ?: error("Camera preview is not bound")

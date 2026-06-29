@@ -9,52 +9,41 @@ import org.json.JSONObject
 import java.io.File
 import java.time.Instant
 
-data class SelectedPhoneVideoInfo(
-    val width: Int?,
-    val height: Int?,
-    val fps: Int?,
-)
-
 class PhoneCameraInfoCollector(private val context: Context) {
-    fun writeCameraInfo(baseDir: File, selectedVideoInfo: SelectedPhoneVideoInfo? = null): File {
+    private val lensRepository = PhoneCameraLensRepository(context)
+
+    fun writeCameraInfo(baseDir: File, selectedVideoInfo: SelectedPhoneVideoInfo? = null, selectedLens: PhoneCameraLensOption? = null): File {
+        val lens = selectedLens ?: lensRepository.selectedOrDefault().first
         val manager = context.getSystemService(CameraManager::class.java)
-        val cameraId = manager.cameraIdList.firstOrNull { id ->
-            manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
-        } ?: manager.cameraIdList.first()
-        val chars = manager.getCameraCharacteristics(cameraId)
+        val chars = manager.getCameraCharacteristics(lens.cameraId)
         val file = File(baseDir, "camera_info.json")
         val json = JSONObject()
             .put("device_manufacturer", Build.MANUFACTURER)
             .put("device_model", Build.MODEL)
-            .put("camera_id", cameraId)
-            .put("lens_facing", chars.get(CameraCharacteristics.LENS_FACING).toLensFacingName())
-            .put("focal_lengths_mm", JSONArray(chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.toList() ?: emptyList<Float>()))
-            .put("sensor_physical_size_mm", chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)?.let { JSONObject().put("width", it.width).put("height", it.height) } ?: JSONObject.NULL)
-            .put("active_array_size", chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)?.let { rect ->
-                JSONObject()
-                    .put("left", rect.left)
-                    .put("top", rect.top)
-                    .put("right", rect.right)
-                    .put("bottom", rect.bottom)
-                    .put("width", rect.width())
-                    .put("height", rect.height())
-            } ?: JSONObject.NULL)
+            .put("selected_camera_id", lens.cameraId)
+            .put("lens_label", lens.lensLabel)
+            .put("focal_length_mm", lens.primaryFocalLengthMm ?: JSONObject.NULL)
+            .put("sensor_physical_size_mm", lens.sensorPhysicalSizeMm?.let { JSONObject().put("width", it.width).put("height", it.height) } ?: JSONObject.NULL)
+            .put("approximate_fov_deg", lens.approximateFovDeg?.let { JSONObject().put("horizontal", it.horizontal).put("vertical", it.vertical) } ?: JSONObject.NULL)
+            .put("resolution", JSONObject().put("width", selectedVideoInfo?.width ?: JSONObject.NULL).put("height", selectedVideoInfo?.height ?: JSONObject.NULL))
+            .put("fps", selectedVideoInfo?.fps ?: JSONObject.NULL)
+            .put("stabilization_mode", JSONObject.NULL)
+            .put("camera", lens.toJson(selectedVideoInfo))
+            .put("camera_id", lens.cameraId)
+            .put("lens_facing", lens.lensFacing)
+            .put("focal_lengths_mm", JSONArray(lens.focalLengthsMm))
+            .put("active_array_size", lens.activeArraySize?.let { JSONObject().put("left", it.left).put("top", it.top).put("right", it.right).put("bottom", it.bottom).put("width", it.width).put("height", it.height) } ?: JSONObject.NULL)
             .put("pixel_array_size", chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)?.let { JSONObject().put("width", it.width).put("height", it.height) } ?: JSONObject.NULL)
             .put("selected_video_width", selectedVideoInfo?.width ?: JSONObject.NULL)
             .put("selected_video_height", selectedVideoInfo?.height ?: JSONObject.NULL)
             .put("selected_fps", selectedVideoInfo?.fps ?: JSONObject.NULL)
-            .put("available_target_fps_ranges", JSONArray(chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.map { range -> JSONObject().put("lower", range.lower).put("upper", range.upper) } ?: emptyList<JSONObject>()))
+            .put("supported_resolutions", JSONArray(lens.supportedVideoSizes.map { JSONObject().put("width", it.width).put("height", it.height) }))
+            .put("supported_fps", JSONArray(lens.supportedFpsRanges.map { JSONObject().put("lower", it.lower).put("upper", it.upper) }))
+            .put("available_target_fps_ranges", JSONArray(lens.supportedFpsRanges.map { JSONObject().put("lower", it.lower).put("upper", it.upper) }))
             .put("available_capabilities", JSONArray(chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.toList() ?: emptyList<Int>()))
+            .put("raw_camera2_metadata", lensRepository.rawMetadataJson(lens.cameraId))
             .put("timestamp", Instant.now().toString())
         file.writeText(json.toString(2))
         return file
-    }
-
-
-    private fun Int?.toLensFacingName(): String = when (this) {
-        CameraCharacteristics.LENS_FACING_BACK -> "BACK"
-        CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
-        CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL"
-        else -> "UNKNOWN"
     }
 }
