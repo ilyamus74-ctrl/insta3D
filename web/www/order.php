@@ -209,7 +209,7 @@ function create_web_upload_capture_session(mysqli $dbcnx,int $orderId,int $userI
   $colsInfo=table_columns_info($dbcnx,'capture_sessions');
   if(!$colsInfo){ throw new RuntimeException('Cannot inspect capture_sessions columns for web upload session creation.'); }
   $uuid='web_'.bin2hex(random_bytes(16)); $now=date('Y-m-d H:i:s');
-  $values=['order_id'=>$orderId,'app_session_uuid'=>$uuid,'created_at'=>$now,'updated_at'=>$now,'started_at'=>$now,'completed_at'=>null,'upload_state'=>'UPLOADED','source_type'=>'WEB_UPLOAD','source_origin'=>'web_upload','created_by'=>$userId,'created_by_user_id'=>$userId,'label'=>'Web Upload Session','session_label'=>'Web Upload Session','name'=>'Web Upload Session','title'=>'Web Upload Session','comment'=>'Web Upload Session','notes'=>'Web Upload Session','description'=>'Web Upload Session','camera_model'=>'web_upload','is_web_created'=>1,'web_created'=>1,'created_from_web'=>1,'is_web_upload'=>1];
+  $values=['order_id'=>$orderId,'app_session_uuid'=>$uuid,'created_at'=>$now,'updated_at'=>$now,'started_at'=>$now,'completed_at'=>null,'source_type'=>'WEB_UPLOAD','source_origin'=>'web_upload','created_by'=>$userId,'created_by_user_id'=>$userId,'label'=>'Web Upload Session','session_label'=>'Web Upload Session','name'=>'Web Upload Session','title'=>'Web Upload Session','comment'=>'Web Upload Session','notes'=>'Web Upload Session','description'=>'Web Upload Session','camera_model'=>'web_upload','is_web_created'=>1,'web_created'=>1,'created_from_web'=>1,'is_web_upload'=>1];
   if(isset($colsInfo['status'])){
     foreach(['UPLOADED','READY','CAPTURED','LOCAL_ONLY'] as $candidate){ if(enum_column_accepts($dbcnx,'capture_sessions','status',$candidate)){ $values['status']=$candidate; break; } }
   }
@@ -936,7 +936,8 @@ if($stmt){
   $stmt->close();
 }
 
-$stmt=$dbcnx->prepare("SELECT vs.*, cs.app_session_uuid FROM video_scans vs JOIN capture_sessions cs ON cs.id = vs.session_id WHERE cs.order_id = ? AND vs.deleted_at IS NULL AND cs.deleted_at IS NULL AND COALESCE(vs.upload_state,'') <> 'DELETED' ORDER BY cs.created_at DESC, vs.created_at DESC, vs.id DESC");
+$videoDeletedFilter=column_exists($dbcnx,'video_scans','upload_state')?" AND COALESCE(vs.upload_state,'') <> 'DELETED'":'';
+$stmt=$dbcnx->prepare("SELECT vs.*, cs.app_session_uuid FROM video_scans vs JOIN capture_sessions cs ON cs.id = vs.session_id WHERE cs.order_id = ? AND vs.deleted_at IS NULL AND cs.deleted_at IS NULL".$videoDeletedFilter." ORDER BY cs.created_at DESC, vs.created_at DESC, vs.id DESC");
 if($stmt){
   $stmt->bind_param('i',$orderId);
   $stmt->execute();
