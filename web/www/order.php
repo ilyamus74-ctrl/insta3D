@@ -176,17 +176,48 @@ function table_columns_info(mysqli $dbcnx,string $table): array {
   if($rs){ while($r=$rs->fetch_assoc()){ $out[(string)$r['Field']]=$r; } $rs->close(); }
   return $out;
 }
+function enum_allowed_values_from_type(string $type): array {
+  if(!preg_match('/^enum\((.*)\)$/i',$type,$m)){ return []; }
+  $values=[]; $raw=$m[1]; $len=strlen($raw); $buf=''; $in=false;
+  for($i=0;$i<$len;$i++){
+    $ch=$raw[$i];
+    if(!$in){ if($ch==="'"){ $in=true; $buf=''; } continue; }
+    if($ch==='\\' && $i+1<$len){ $buf.=$raw[++$i]; continue; }
+    if($ch==="'"){ $values[]=$buf; $in=false; continue; }
+    $buf.=$ch;
+  }
+  return $values;
+}
+function column_enum_allowed_values(mysqli $dbcnx,string $table,string $column): array {
+  $t=$dbcnx->real_escape_string($table); $c=$dbcnx->real_escape_string($column);
+  $rs=$dbcnx->query("SHOW COLUMNS FROM `".$t."` LIKE '".$c."'");
+  $row=$rs?$rs->fetch_assoc():null; if($rs){$rs->close();}
+  return $row?enum_allowed_values_from_type((string)$row['Type']):[];
+}
+function enum_column_accepts(mysqli $dbcnx,string $table,string $column,string $value): bool {
+  $allowed=column_enum_allowed_values($dbcnx,$table,$column);
+  return !$allowed || in_array($value,$allowed,true);
+}
+function add_optional_insert_value(mysqli $dbcnx,string $table,array $colsInfo,array &$cols,array &$params,string &$types,string $column,$value): void {
+  if(!isset($colsInfo[$column])){ return; }
+  $type=strtolower((string)$colsInfo[$column]['Type']);
+  if(str_starts_with($type,'enum(') && !enum_column_accepts($dbcnx,$table,$column,(string)$value)){ return; }
+  $cols[]=$column; $params[]=$value; $types.=is_int($value)?'i':(is_float($value)?'d':'s');
+}
 function bind_dynamic_params(mysqli_stmt $st,string $types,array $params): void { $st->bind_param($types,...$params); }
 function create_web_upload_capture_session(mysqli $dbcnx,int $orderId,int $userId): array {
   $colsInfo=table_columns_info($dbcnx,'capture_sessions');
   if(!$colsInfo){ throw new RuntimeException('Cannot inspect capture_sessions columns for web upload session creation.'); }
   $uuid='web_'.bin2hex(random_bytes(16)); $now=date('Y-m-d H:i:s');
-  $values=['order_id'=>$orderId,'app_session_uuid'=>$uuid,'created_at'=>$now,'updated_at'=>$now,'started_at'=>$now,'completed_at'=>null,'status'=>'WEB_UPLOAD','upload_state'=>'UPLOADED','source_type'=>'WEB_UPLOAD','source_origin'=>'web_upload','created_by'=>$userId,'created_by_user_id'=>$userId,'label'=>'Web Upload Session','session_label'=>'Web Upload Session','name'=>'Web Upload Session','title'=>'Web Upload Session','comment'=>'Web Upload Session','notes'=>'Web Upload Session','description'=>'Web Upload Session','camera_model'=>'web_upload','is_web_created'=>1,'web_created'=>1,'created_from_web'=>1,'is_web_upload'=>1];
+  $values=['order_id'=>$orderId,'app_session_uuid'=>$uuid,'created_at'=>$now,'updated_at'=>$now,'started_at'=>$now,'completed_at'=>null,'upload_state'=>'UPLOADED','source_type'=>'WEB_UPLOAD','source_origin'=>'web_upload','created_by'=>$userId,'created_by_user_id'=>$userId,'label'=>'Web Upload Session','session_label'=>'Web Upload Session','name'=>'Web Upload Session','title'=>'Web Upload Session','comment'=>'Web Upload Session','notes'=>'Web Upload Session','description'=>'Web Upload Session','camera_model'=>'web_upload','is_web_created'=>1,'web_created'=>1,'created_from_web'=>1,'is_web_upload'=>1];
+  if(isset($colsInfo['status'])){
+    foreach(['UPLOADED','READY','CAPTURED','LOCAL_ONLY'] as $candidate){ if(enum_column_accepts($dbcnx,'capture_sessions','status',$candidate)){ $values['status']=$candidate; break; } }
+  }
   $cols=[]; $params=[]; $types='';
   foreach($values as $c=>$v){
     if(!isset($colsInfo[$c])){ continue; }
     if($v===null && strtoupper((string)$colsInfo[$c]['Null'])==='NO'){ continue; }
-    $cols[]=$c; $params[]=$v; $types.=is_int($v)?'i':(is_float($v)?'d':'s');
+    add_optional_insert_value($dbcnx,'capture_sessions',$colsInfo,$cols,$params,$types,$c,$v);
   }
   foreach($colsInfo as $c=>$info){
     if($c==='id' || in_array($c,$cols,true)){ continue; }
@@ -279,14 +310,17 @@ function ffprobe_video_metadata(string $path): array {
   return $meta;
 }
 function insert_web_uploaded_video_scan(mysqli $dbcnx,array $values): int {
+  $colsInfo=table_columns_info($dbcnx,'video_scans');
+  if(!$colsInfo){ throw new RuntimeException('Cannot inspect video_scans columns for web upload.'); }
   $required=['order_id','session_id','filename','storage_path','app_scan_uuid','duration_sec','size_bytes','created_at'];
   $cols=$required; $params=[]; $types='';
+  foreach($required as $c){ if(!isset($colsInfo[$c])){ throw new RuntimeException('Cannot insert uploaded video: missing required '.$c.' column.'); } }
   foreach($required as $c){ $params[]=$values[$c]; $types.=in_array($c,['order_id','session_id','size_bytes'],true)?'i':($c==='duration_sec'?'d':'s'); }
-  foreach(['updated_at','upload_state','source_type','source_origin','camera_profile','label','comment'] as $c){ if(column_exists($dbcnx,'video_scans',$c) && array_key_exists($c,$values)){ $cols[]=$c; $params[]=$values[$c]; $types.=($c==='updated_at' || is_string($values[$c]))?'s':'i'; } }
+  foreach(['updated_at','status','upload_state','source_type','source_origin','camera_profile','label','comment'] as $c){ if(array_key_exists($c,$values)){ add_optional_insert_value($dbcnx,'video_scans',$colsInfo,$cols,$params,$types,$c,$values[$c]); } }
   $placeholders=implode(',',array_fill(0,count($cols),'?'));
   $sql='INSERT INTO video_scans (`'.implode('`,`',$cols).'`) VALUES ('.$placeholders.')';
   $st=$dbcnx->prepare($sql); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
-  $st->bind_param($types,...$params); $st->execute(); $id=(int)$dbcnx->insert_id; $st->close(); return $id;
+  $st->bind_param($types,...$params); if(!$st->execute()){ $msg=$st->error; $st->close(); throw new RuntimeException('DB execute error while inserting video scan: '.$msg); } $id=(int)$dbcnx->insert_id; $st->close(); return $id;
 }
 
 function upload_ini_diagnostics(): string {
@@ -329,22 +363,33 @@ function handle_external_video_upload(mysqli $dbcnx,int $orderId,int $userId): v
   $profiles=web_upload_video_profiles(); $profile=(string)($_POST['camera_profile'] ?? 'other'); if(!isset($profiles[$profile])){ $profile='other'; }
   $target=(string)($_POST['capture_session_id'] ?? '');
   $createNew=($target==='new' || $target==='create_new' || $target==='');
-  $sessionId=$createNew?0:(int)$target;
-  $sess=$sessionId>0?sfm_session_for_order($dbcnx,$orderId,$sessionId):null;
-  if(!$sess){ $sess=create_web_upload_capture_session($dbcnx,$orderId,$userId); $sessionId=(int)$sess['id']; }
-  $safeSession=sfm_safe_uuid((string)$sess['app_session_uuid']).'_'.$orderId; $videoDir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safeSession.'/videos'; if(!is_dir($videoDir) && !mkdir($videoDir,0775,true)){ throw new RuntimeException('Failed to create session video directory.'); } if(!is_writable($videoDir)){ throw new RuntimeException('Session video directory is not writable by the web server.'); }
-  $uuid='web_'.bin2hex(random_bytes(16)); $filename=$uuid.'_video.'.$ext; $dest=$videoDir.'/'.$filename;
-  if(!move_uploaded_file($tmp,$dest)){ throw new RuntimeException('Failed to move uploaded video into storage.'); }
-  @chmod($dest,0664); $meta=ffprobe_video_metadata($dest); $now=date('Y-m-d H:i:s'); $rel='orders/'.$orderId.'/sessions/'.$safeSession.'/videos/'.$filename;
-  $manifest=['source'=>'web_upload','camera_profile'=>$profile,'imu_available'=>false,'original_filename'=>$orig,'uploaded_at'=>$now,'size_bytes'=>$size,'duration_sec'=>$meta['duration_sec']];
-  if($meta['width']>0){$manifest['width']=$meta['width'];} if($meta['height']>0){$manifest['height']=$meta['height'];} if($meta['fps']>0){$manifest['fps']=$meta['fps'];} if($meta['warning']!==''){$manifest['warning']=$meta['warning'];}
-  $camera=['source'=>'web_upload','camera_profile'=>$profile,'camera_model_hint'=>$profiles[$profile],'imu_available'=>false,'notes'=>'external web upload; camera intrinsics unknown'];
-  file_put_contents($videoDir.'/'.$uuid.'_manifest.json',json_encode($manifest,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-  file_put_contents($videoDir.'/'.$uuid.'_camera_info.json',json_encode($camera,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
-  $label=trim((string)($_POST['video_label'] ?? ''));
-  $values=['order_id'=>$orderId,'session_id'=>$sessionId,'filename'=>$filename,'storage_path'=>$rel,'app_scan_uuid'=>$uuid,'duration_sec'=>(float)$meta['duration_sec'],'size_bytes'=>$size,'created_at'=>$now,'updated_at'=>$now,'upload_state'=>'UPLOADED','source_type'=>'WEB_UPLOAD','source_origin'=>'web_upload','camera_profile'=>$profile,'label'=>$label,'comment'=>$label];
-  $scanId=insert_web_uploaded_video_scan($dbcnx,$values);
-  audit_log($userId,'VIDEO_SCAN_WEB_UPLOAD','TOUR_ORDER',$orderId,'External video uploaded from web',['capture_session_id'=>$sessionId,'video_scan_id'=>$scanId,'camera_profile'=>$profile,'storage_path'=>$rel,'ffprobe_warning'=>$meta['warning']]);
+  $sessionId=$createNew?0:(int)$target; $sess=$sessionId>0?sfm_session_for_order($dbcnx,$orderId,$sessionId):null;
+  $createdSession=false; $dest=''; $sidecars=[]; $rel=''; $uuid='web_'.bin2hex(random_bytes(16));
+  $dbcnx->begin_transaction();
+  try{
+    if(!$sess){ $sess=create_web_upload_capture_session($dbcnx,$orderId,$userId); $sessionId=(int)$sess['id']; $createdSession=true; }
+    $safeSession=sfm_safe_uuid((string)$sess['app_session_uuid']).'_'.$orderId; $videoDir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safeSession.'/videos'; if(!is_dir($videoDir) && !mkdir($videoDir,0775,true)){ throw new RuntimeException('Failed to create session video directory.'); } if(!is_writable($videoDir)){ throw new RuntimeException('Session video directory is not writable by the web server.'); }
+    $filename=$uuid.'_video.'.$ext; $dest=$videoDir.'/'.$filename;
+    if(!move_uploaded_file($tmp,$dest)){ throw new RuntimeException('Failed to move uploaded video into storage.'); }
+    @chmod($dest,0664); $meta=ffprobe_video_metadata($dest); $now=date('Y-m-d H:i:s'); $rel='orders/'.$orderId.'/sessions/'.$safeSession.'/videos/'.$filename;
+    $manifest=['source'=>'web_upload','camera_profile'=>$profile,'imu_available'=>false,'original_filename'=>$orig,'uploaded_at'=>$now,'size_bytes'=>$size,'duration_sec'=>$meta['duration_sec']];
+    if($meta['width']>0){$manifest['width']=$meta['width'];} if($meta['height']>0){$manifest['height']=$meta['height'];} if($meta['fps']>0){$manifest['fps']=$meta['fps'];} if($meta['warning']!==''){$manifest['warning']=$meta['warning'];}
+    $camera=['source'=>'web_upload','camera_profile'=>$profile,'camera_model_hint'=>$profiles[$profile],'imu_available'=>false,'notes'=>'external web upload; camera intrinsics unknown'];
+    $sidecars=[$videoDir.'/'.$uuid.'_manifest.json',$videoDir.'/'.$uuid.'_camera_info.json'];
+    if(file_put_contents($sidecars[0],json_encode($manifest,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE))===false){ throw new RuntimeException('Failed to write upload manifest sidecar.'); }
+    if(file_put_contents($sidecars[1],json_encode($camera,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE))===false){ throw new RuntimeException('Failed to write camera info sidecar.'); }
+    $label=trim((string)($_POST['video_label'] ?? ''));
+    $values=['order_id'=>$orderId,'session_id'=>$sessionId,'filename'=>$filename,'storage_path'=>$rel,'app_scan_uuid'=>$uuid,'duration_sec'=>(float)$meta['duration_sec'],'size_bytes'=>$size,'created_at'=>$now,'updated_at'=>$now,'upload_state'=>'UPLOADED','source_type'=>'WEB_UPLOAD','source_origin'=>'web_upload','camera_profile'=>$profile,'label'=>$label,'comment'=>$label];
+    $scanId=insert_web_uploaded_video_scan($dbcnx,$values);
+    audit_log($userId,'VIDEO_SCAN_WEB_UPLOAD','TOUR_ORDER',$orderId,'External video uploaded from web',['capture_session_id'=>$sessionId,'video_scan_id'=>$scanId,'camera_profile'=>$profile,'storage_path'=>$rel,'ffprobe_warning'=>$meta['warning']]);
+    $dbcnx->commit();
+  }catch(Throwable $e){
+    $dbcnx->rollback();
+    foreach(array_merge([$dest],$sidecars) as $path){ if($path!=='' && is_file($path)){ @unlink($path); } }
+    if($createdSession && $sessionId>0){ if($st=$dbcnx->prepare('DELETE FROM capture_sessions WHERE id=? AND order_id=? AND NOT EXISTS (SELECT 1 FROM video_scans WHERE session_id=?)')){ $st->bind_param('iii',$sessionId,$orderId,$sessionId); @$st->execute(); $st->close(); } }
+    error_log('External video upload failed operation=web_upload order_id='.$orderId.' capture_session_id='.$sessionId.' original_filename='.$orig.' camera_profile='.$profile.' target_path='.$rel.' db_error='.$e->getMessage());
+    throw new RuntimeException('Upload failed: '.$e->getMessage());
+  }
 }
 
 function safe_rrmdir(string $path,string $allowedBase): bool {
@@ -547,7 +592,15 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
    try{
      handle_external_video_upload($dbcnx,$orderId,$userId);
      header('Location: /order.php?id='.$orderId.'&video_uploaded=1'); exit;
-   }catch(Throwable $e){ $error=$e->getMessage(); }
+   }catch(Throwable $e){
+     $error=$e->getMessage();
+     if(strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? ''))==='xmlhttprequest'){
+       http_response_code(422);
+       header('Content-Type: text/plain; charset=utf-8');
+       echo $error;
+       exit;
+     }
+   }
  }
 
  if($action==='create_processing_job_web' && ($canDeleteMedia || ($role==='OPERATOR' && (int)$order['operator_id']===$userId) || $role==='ADMIN')){
