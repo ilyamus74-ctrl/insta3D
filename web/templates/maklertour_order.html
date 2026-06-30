@@ -217,7 +217,8 @@
               {if $s.sfm_disk_videos|@count > 0}
                 {foreach from=$s.sfm_disk_videos item=dv}
                   <div class="border rounded p-2 mb-2 bg-white">
-                    <div><strong>{$dv.filename|escape}</strong> — {$dv.size_human|escape} — uploaded at {$dv.modified_at|escape}</div>
+                    <div><strong>{if $dv.label|default:'' != ''}{$dv.label|escape}{else}{$dv.filename|escape}{/if}</strong> — {$dv.filename|escape} — {$dv.size_human|escape} — uploaded at {$dv.uploaded_at|default:$dv.modified_at|escape}</div>
+                    {if $dv.source_origin|default:'' == 'web_upload' || $dv.source_type|default:'' == 'WEB_UPLOAD'}<div class="small"><span class="badge bg-info text-dark">Web upload · no IMU</span> {if $dv.camera_profile|default:'' != ''}<span class="text-muted">Profile: {$dv.camera_profile|escape}</span>{/if}</div>{/if}
                     <div class="alert alert-success small py-2 my-2">Video uploaded. Ready to start Preview.</div>
                     <div class="small mt-1">
                       camera_info: {if $dv.metadata.camera_info.exists}<span class="text-success">yes</span>{else}<span class="text-muted">no</span>{/if}
@@ -246,6 +247,20 @@
                   </div>
                 {/foreach}
               {else}<div class="small text-muted">No phone videos found in storage.</div>{/if}
+              {if $canDeleteMedia}
+                <div class="border rounded p-2 mb-3 bg-white">
+                  <div class="fw-semibold mb-2">Upload external video</div>
+                  <form method="post" action="/order.php?id={$order.id}" enctype="multipart/form-data" class="row g-2 align-items-end">
+                    <input type="hidden" name="action" value="upload_external_video">
+                    <input type="hidden" name="capture_session_id" value="{$s.id}">
+                    <div class="col-md-4"><label class="form-label small w-100">Video file<input type="file" name="video_file" accept=".mp4,.mov,.m4v,video/*" class="form-control form-control-sm" required></label></div>
+                    <div class="col-md-3"><label class="form-label small w-100">Camera/source profile<select name="camera_profile" class="form-select form-select-sm"><option value="phone_web_upload">phone_web_upload</option><option value="gopro_fisheye">gopro_fisheye</option><option value="insta360_rectilinear">insta360_rectilinear</option><option value="other">other</option></select></label></div>
+                    <div class="col-md-3"><label class="form-label small w-100">Label/comment<input type="text" name="video_label" class="form-control form-control-sm" maxlength="255" placeholder="optional"></label></div>
+                    <div class="col-md-2"><div class="form-check small mb-2"><input type="checkbox" name="no_imu" value="1" class="form-check-input" id="no-imu-{$s.id}" checked><label class="form-check-label" for="no-imu-{$s.id}">This video has no IMU</label></div><button type="submit" class="btn btn-sm btn-primary">Upload</button></div>
+                    <div class="col-12 small text-muted">Large uploads require server limits high enough for the file size: PHP upload_max_filesize, post_max_size, max_input_time, max_execution_time; Apache/Nginx request body limit; and enough free disk in the PHP temp dir and final storage.</div>
+                  </form>
+                </div>
+              {/if}
               {if $s.sfm_multi_video_available|default:false}
                 <div class="border rounded p-2 mb-3 bg-white">
                   <div class="fw-semibold mb-1">Собрать 3D по всем видео</div>
@@ -407,7 +422,7 @@
                 {if !$dv.is_orphan|default:false}
                   <div class="border rounded p-2 mb-3 bg-white" data-video-scan-id="{$dv.video_scan_id|escape}">
                     <div class="fw-semibold">Reconstruction for {$dv.filename|escape}</div>
-                    <div class="small text-muted">Video scan ID: {$dv.video_scan_id|escape} · Uploaded: {$dv.uploaded_at|escape} · Duration: {$dv.duration_sec|default:0|escape} sec · Size: {$dv.size_human|escape}</div>
+                    <div class="small text-muted">Video scan ID: {$dv.video_scan_id|escape} · Uploaded: {$dv.uploaded_at|escape} · Duration: {$dv.duration_sec|default:0|escape} sec · Size: {$dv.size_human|escape} · IMU: {if $dv.metadata.imu.exists}yes{else}no{/if}{if $dv.camera_profile|default:'' != ''} · Profile: {$dv.camera_profile|escape}{/if}</div>{if $dv.source_origin|default:'' == 'web_upload' || $dv.source_type|default:'' == 'WEB_UPLOAD'}<div class="small mb-1"><span class="badge bg-info text-dark">Web upload · no IMU</span>{if $dv.label|default:'' != ''} <span class="text-muted">{$dv.label|escape}</span>{/if}</div>{/if}
               <div class="row g-3 mb-3 sfm-pipeline-cards">
                 {foreach from=$dv.sfm_pipeline_cards item=pc key=pmode}
                   {assign var=run value=$pc.run}

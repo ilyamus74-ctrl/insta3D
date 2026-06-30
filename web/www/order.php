@@ -165,7 +165,7 @@ $canOperatorClose = $role==='ADMIN' || ($role==='OPERATOR' && (int)$order['opera
 $canBrokerClose = $role==='ADMIN' || ((int)$order['broker_id']===$userId && empty($order['broker_closed_at']));
 $canReopen = $role==='ADMIN' || ((int)$order['broker_id']===$userId && (string)$order['status']!=='COMPLETED');
 $canCreatePublicLink = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
-$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['sfm_pipeline_restarted'])?'SfM pipeline restarted':(isset($_GET['sfm_job_queued'])?'SfM job queued':(isset($_GET['photo_deleted'])?'Снимок удалён':(isset($_GET['session_deleted'])?'Сессия удалена':null)))))));
+$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['sfm_pipeline_restarted'])?'SfM pipeline restarted':(isset($_GET['sfm_job_queued'])?'SfM job queued':(isset($_GET['photo_deleted'])?'Снимок удалён':(isset($_GET['session_deleted'])?'Сессия удалена':(isset($_GET['video_uploaded'])?'External video uploaded':null))))))));
 
 function table_exists(mysqli $dbcnx,string $table): bool { $t=$dbcnx->real_escape_string($table); $r=$dbcnx->query("SHOW TABLES LIKE '".$t."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
 function column_exists(mysqli $dbcnx,string $table,string $column): bool { $t=$dbcnx->real_escape_string($table); $c=$dbcnx->real_escape_string($column); $r=$dbcnx->query("SHOW COLUMNS FROM `".$t."` LIKE '".$c."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
@@ -181,7 +181,7 @@ function ensure_sfm_settings_pipeline_columns(mysqli $dbcnx): void { if(!table_e
 function sfm_remote_output_dir(int $remoteJobId): string { return '/home/makler/web/remote_station/output/job_'.$remoteJobId; }
 function sfm_job_id(mysqli $dbcnx): int { do { $id=random_int(10000,999999999); $st=$dbcnx->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1'); if(!$st){return $id;} $st->bind_param('i',$id); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); } while($exists); return $id; }
 function sfm_session_for_order(mysqli $dbcnx,int $orderId,int $sessionId): ?array { $st=$dbcnx->prepare('SELECT id, app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1'); if(!$st){return null;} $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $row=$st->get_result()->fetch_assoc()?:null; $st->close(); return $row; }
-function sfm_resolve_video_path(mysqli $dbcnx,int $orderId,int $sessionId,string $videoInput): ?string { $sess=sfm_session_for_order($dbcnx,$orderId,$sessionId); if(!$sess){return null;} $safe=sfm_safe_uuid((string)$sess['app_session_uuid']); $dir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safe.'/videos'; $realDir=realpath($dir); if($realDir===false || !is_dir($realDir)){return null;} $candidate=(str_contains($videoInput,'/')?$videoInput:($realDir.'/'.$videoInput)); $real=realpath($candidate); if($real===false || !is_file($real) || strtolower(pathinfo($real,PATHINFO_EXTENSION))!=='mp4'){return null;} return (strpos($real,$realDir.'/')===0)?$real:null; }
+function sfm_resolve_video_path(mysqli $dbcnx,int $orderId,int $sessionId,string $videoInput): ?string { $sess=sfm_session_for_order($dbcnx,$orderId,$sessionId); if(!$sess){return null;} $safe=sfm_safe_uuid((string)$sess['app_session_uuid']); $dir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safe.'/videos'; $realDir=realpath($dir); if($realDir===false || !is_dir($realDir)){return null;} $candidate=(str_contains($videoInput,'/')?$videoInput:($realDir.'/'.$videoInput)); $real=realpath($candidate); if($real===false || !is_file($real) || !in_array(strtolower(pathinfo($real,PATHINFO_EXTENSION)),['mp4','mov','m4v'],true)){return null;} return (strpos($real,$realDir.'/')===0)?$real:null; }
 function sfm_load_source_video(mysqli $dbcnx,int $orderId,int $sessionId,int $videoScanId): array {
   if($videoScanId<=0){ throw new RuntimeException('Source video is required'); }
   if(!sfm_session_for_order($dbcnx,$orderId,$sessionId)){ throw new RuntimeException('Capture session not found'); }
@@ -215,6 +215,88 @@ function sfm_resolve_video_sidecar_files(string $videoPath): array {
 }
 
 function sfm_source_video_snapshot(array $v): array { $sidecars=sfm_resolve_video_sidecar_files((string)($v['resolved_path'] ?? $v['storage_path'] ?? '')); return ['video_scan_id'=>(int)$v['id'],'filename'=>(string)($v['filename'] ?? ''),'storage_path'=>(string)($v['storage_path'] ?? ''),'video_path'=>(string)($v['resolved_path'] ?? ''),'app_scan_uuid'=>(string)($v['app_scan_uuid'] ?? ''),'created_at'=>(string)($v['created_at'] ?? ''),'duration_sec'=>(float)($v['duration_sec'] ?? 0),'size_bytes'=>(int)($v['size_bytes'] ?? 0)] + $sidecars; }
+
+
+function web_upload_video_profiles(): array { return ['phone_web_upload'=>'pinhole_or_opencv','gopro_fisheye'=>'fisheye','insta360_rectilinear'=>'wide_rectilinear','other'=>'unknown']; }
+function sanitize_upload_filename(string $name): string { $base=basename($name); $base=preg_replace('/[^a-zA-Z0-9._-]+/','_', $base); $base=trim((string)$base,'._-'); return $base!==''?$base:'external_video'; }
+function ffprobe_video_metadata(string $path): array {
+  $meta=['duration_sec'=>0.0,'width'=>0,'height'=>0,'fps'=>0.0,'warning'=>''];
+  $ffprobe=trim((string)@shell_exec('command -v ffprobe 2>/dev/null'));
+  if($ffprobe===''){ $meta['warning']='ffprobe is not installed; duration was set to 0.'; return $meta; }
+  $cmd=escapeshellarg($ffprobe).' -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate -show_entries format=duration -of json '.escapeshellarg($path).' 2>&1';
+  @exec($cmd,$out,$code); $json=implode("\n",$out); $data=json_decode($json,true);
+  if($code!==0 || !is_array($data)){ $meta['warning']='ffprobe failed; duration was set to 0.'; return $meta; }
+  $meta['duration_sec']=max(0.0,(float)($data['format']['duration'] ?? 0));
+  $stream=$data['streams'][0] ?? [];
+  $meta['width']=(int)($stream['width'] ?? 0); $meta['height']=(int)($stream['height'] ?? 0);
+  $rate=(string)($stream['r_frame_rate'] ?? '');
+  if(preg_match('/^(\d+)\/(\d+)$/',$rate,$m) && (int)$m[2]>0){ $meta['fps']=round(((int)$m[1])/((int)$m[2]),3); }
+  return $meta;
+}
+function insert_web_uploaded_video_scan(mysqli $dbcnx,array $values): int {
+  $required=['order_id','session_id','filename','storage_path','app_scan_uuid','duration_sec','size_bytes','created_at'];
+  $cols=$required; $params=[]; $types='';
+  foreach($required as $c){ $params[]=$values[$c]; $types.=in_array($c,['order_id','session_id','size_bytes'],true)?'i':($c==='duration_sec'?'d':'s'); }
+  foreach(['updated_at','upload_state','source_type','source_origin','camera_profile','label','comment'] as $c){ if(column_exists($dbcnx,'video_scans',$c) && array_key_exists($c,$values)){ $cols[]=$c; $params[]=$values[$c]; $types.=($c==='updated_at' || is_string($values[$c]))?'s':'i'; } }
+  $placeholders=implode(',',array_fill(0,count($cols),'?'));
+  $sql='INSERT INTO video_scans (`'.implode('`,`',$cols).'`) VALUES ('.$placeholders.')';
+  $st=$dbcnx->prepare($sql); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+  $st->bind_param($types,...$params); $st->execute(); $id=(int)$dbcnx->insert_id; $st->close(); return $id;
+}
+
+function upload_ini_diagnostics(): string {
+  $keys=['upload_max_filesize','post_max_size','max_file_uploads','max_execution_time','max_input_time','memory_limit','upload_tmp_dir'];
+  $parts=[];
+  foreach($keys as $key){ $value=(string)ini_get($key); if($key==='upload_tmp_dir' && $value===''){ $value='system default'; } $parts[]=$key.'='.$value; }
+  return implode(', ',$parts);
+}
+function upload_error_message(int $error): string {
+  $serverHint=' Large uploads require PHP upload_max_filesize/post_max_size/max_input_time/max_execution_time, the web server request body limit, and enough free disk in the PHP temp dir and final storage.';
+  switch($error){
+    case UPLOAD_ERR_INI_SIZE:
+      return 'Uploaded video exceeds the PHP upload_max_filesize limit. Current effective PHP values: '.upload_ini_diagnostics().'.'.$serverHint;
+    case UPLOAD_ERR_FORM_SIZE:
+      return 'Uploaded video exceeds the HTML form MAX_FILE_SIZE limit. This form should not set that limit; please refresh the page and try again.'.$serverHint;
+    case UPLOAD_ERR_PARTIAL:
+      return 'Uploaded video was only partially uploaded. Please retry the upload and check network/proxy timeouts.'.$serverHint;
+    case UPLOAD_ERR_NO_FILE:
+      return 'No video file was uploaded. Choose a .mp4, .mov, or .m4v file and try again.';
+    case UPLOAD_ERR_NO_TMP_DIR:
+      return 'Server upload failed because PHP has no temporary upload directory configured.'.$serverHint;
+    case UPLOAD_ERR_CANT_WRITE:
+      return 'Server upload failed because PHP could not write the uploaded file to disk. Check free space and permissions for the PHP temp directory.'.$serverHint;
+    case UPLOAD_ERR_EXTENSION:
+      return 'Server upload failed because a PHP extension stopped the upload.'.$serverHint;
+    default:
+      return 'Upload failed with PHP error '.$error.'.'.$serverHint;
+  }
+}
+function sfm_web_upload_max_bytes(): int { return defined('SFM_WEB_UPLOAD_MAX_BYTES') ? max(0,(int)constant('SFM_WEB_UPLOAD_MAX_BYTES')) : 20*1024*1024*1024; }
+
+function handle_external_video_upload(mysqli $dbcnx,int $orderId,int $userId): void {
+  if(empty($_FILES['video_file']) || !is_array($_FILES['video_file'])){ throw new RuntimeException(upload_error_message(UPLOAD_ERR_NO_FILE)); }
+  $file=$_FILES['video_file']; $err=(int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+  if($err!==UPLOAD_ERR_OK){ throw new RuntimeException(upload_error_message($err)); }
+  $tmp=(string)($file['tmp_name'] ?? ''); if($tmp==='' || !is_uploaded_file($tmp)){ throw new RuntimeException('Invalid upload source.'); }
+  $size=(int)($file['size'] ?? 0); $max=sfm_web_upload_max_bytes(); if($size<=0){ throw new RuntimeException('Uploaded video is empty.'); } if($max>0 && $size>$max){ throw new RuntimeException('Video file is larger than configured SFM_WEB_UPLOAD_MAX_BYTES.'); }
+  $orig=sanitize_upload_filename((string)($file['name'] ?? 'video.mp4')); $ext=strtolower(pathinfo($orig,PATHINFO_EXTENSION)); if(!in_array($ext,['mp4','mov','m4v'],true)){ throw new RuntimeException('Only .mp4, .mov, and .m4v video files are accepted.'); }
+  $mime=(string)($file['type'] ?? ''); if($mime!=='' && stripos($mime,'video/')!==0){ throw new RuntimeException('Only video MIME types are accepted.'); }
+  $profiles=web_upload_video_profiles(); $profile=(string)($_POST['camera_profile'] ?? 'other'); if(!isset($profiles[$profile])){ $profile='other'; }
+  $sessionId=(int)($_POST['capture_session_id'] ?? 0); $sess=sfm_session_for_order($dbcnx,$orderId,$sessionId); if(!$sess){ throw new RuntimeException('Capture session not found for this order.'); }
+  $safeSession=sfm_safe_uuid((string)$sess['app_session_uuid']); $videoDir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safeSession.'/videos'; if(!is_dir($videoDir) && !mkdir($videoDir,0775,true)){ throw new RuntimeException('Failed to create session video directory.'); } if(!is_writable($videoDir)){ throw new RuntimeException('Session video directory is not writable by the web server.'); }
+  $uuid='web_'.bin2hex(random_bytes(16)); $filename=$uuid.'_video.'.$ext; $dest=$videoDir.'/'.$filename;
+  if(!move_uploaded_file($tmp,$dest)){ throw new RuntimeException('Failed to move uploaded video into storage.'); }
+  @chmod($dest,0664); $meta=ffprobe_video_metadata($dest); $now=date('Y-m-d H:i:s'); $rel='orders/'.$orderId.'/sessions/'.$safeSession.'/videos/'.$filename;
+  $manifest=['source'=>'web_upload','camera_profile'=>$profile,'imu_available'=>false,'original_filename'=>$orig,'uploaded_at'=>$now,'size_bytes'=>$size,'duration_sec'=>$meta['duration_sec']];
+  if($meta['width']>0){$manifest['width']=$meta['width'];} if($meta['height']>0){$manifest['height']=$meta['height'];} if($meta['fps']>0){$manifest['fps']=$meta['fps'];} if($meta['warning']!==''){$manifest['warning']=$meta['warning'];}
+  $camera=['source'=>'web_upload','camera_profile'=>$profile,'camera_model_hint'=>$profiles[$profile],'imu_available'=>false,'notes'=>'external web upload; camera intrinsics unknown'];
+  file_put_contents($videoDir.'/'.$uuid.'_manifest.json',json_encode($manifest,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
+  file_put_contents($videoDir.'/'.$uuid.'_camera_info.json',json_encode($camera,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
+  $label=trim((string)($_POST['video_label'] ?? ''));
+  $values=['order_id'=>$orderId,'session_id'=>$sessionId,'filename'=>$filename,'storage_path'=>$rel,'app_scan_uuid'=>$uuid,'duration_sec'=>(float)$meta['duration_sec'],'size_bytes'=>$size,'created_at'=>$now,'updated_at'=>$now,'upload_state'=>'UPLOADED','source_type'=>'WEB_UPLOAD','source_origin'=>'web_upload','camera_profile'=>$profile,'label'=>$label,'comment'=>$label];
+  $scanId=insert_web_uploaded_video_scan($dbcnx,$values);
+  audit_log($userId,'VIDEO_SCAN_WEB_UPLOAD','TOUR_ORDER',$orderId,'External video uploaded from web',['capture_session_id'=>$sessionId,'video_scan_id'=>$scanId,'camera_profile'=>$profile,'storage_path'=>$rel,'ffprobe_warning'=>$meta['warning']]);
+}
 
 function safe_rrmdir(string $path,string $allowedBase): bool {
   if($path==='' || $allowedBase===''){ error_log('safe_rrmdir refused empty path/base'); return false; }
@@ -410,6 +492,14 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
    }
  }
 
+
+
+ if($action==='upload_external_video' && $canDeleteMedia){
+   try{
+     handle_external_video_upload($dbcnx,$orderId,$userId);
+     header('Location: /order.php?id='.$orderId.'&video_uploaded=1'); exit;
+   }catch(Throwable $e){ $error=$e->getMessage(); }
+ }
 
  if($action==='create_processing_job_web' && ($canDeleteMedia || ($role==='OPERATOR' && (int)$order['operator_id']===$userId) || $role==='ADMIN')){
    $captureSessionId=(int)($_POST['capture_session_id']??0);
@@ -805,14 +895,14 @@ foreach($captureSessions as $idx=>$session){
   foreach(($session['videos'] ?? []) as $scanRow){ $videosByFilename[(string)($scanRow['filename'] ?? '')]=$scanRow; }
   $realVideoDir=realpath($videoDir);
   if($realVideoDir!==false && is_dir($realVideoDir)){
-    foreach(glob($realVideoDir.'/*.mp4') ?: [] as $vf){
+    foreach(array_merge(glob($realVideoDir.'/*.mp4') ?: [], glob($realVideoDir.'/*.mov') ?: [], glob($realVideoDir.'/*.m4v') ?: []) as $vf){
       $rv=realpath($vf);
       if($rv!==false && strpos($rv,$realVideoDir.'/')===0){
         $filename=basename($rv);
         $scanRow=$videosByFilename[$filename] ?? null;
         $metadata=['camera_info'=>['exists'=>false,'url'=>'','label'=>'View camera_info'],'manifest'=>['exists'=>false,'url'=>'','label'=>'View manifest'],'imu'=>['exists'=>false,'url'=>'','label'=>'Download imu']];
         if($scanRow){ $metadata=video_scan_metadata_info((int)$scanRow['id'],(string)($scanRow['app_scan_uuid'] ?? ''),$realVideoDir); }
-        $diskVideos[]=['filename'=>$filename,'path'=>$rv,'scan'=>$scanRow,'video_scan_id'=>$scanRow?(int)$scanRow['id']:0,'is_orphan'=>!$scanRow,'size_human'=>bytes_human((float)filesize($rv)),'modified_at'=>date('Y-m-d H:i:s',(int)filemtime($rv)),'uploaded_at'=>$scanRow?((string)($scanRow['created_at'] ?? '')):date('Y-m-d H:i:s',(int)filemtime($rv)),'duration_sec'=>$scanRow?(float)($scanRow['duration_sec'] ?? 0):0,'fps'=>0,'metadata'=>$metadata];
+        $diskVideos[]=['filename'=>$filename,'path'=>$rv,'scan'=>$scanRow,'video_scan_id'=>$scanRow?(int)$scanRow['id']:0,'is_orphan'=>!$scanRow,'size_human'=>bytes_human((float)filesize($rv)),'modified_at'=>date('Y-m-d H:i:s',(int)filemtime($rv)),'uploaded_at'=>$scanRow?((string)($scanRow['created_at'] ?? '')):date('Y-m-d H:i:s',(int)filemtime($rv)),'duration_sec'=>$scanRow?(float)($scanRow['duration_sec'] ?? 0):0,'fps'=>0,'metadata'=>$metadata,'source_origin'=>$scanRow?(string)($scanRow['source_origin'] ?? ''):'','source_type'=>$scanRow?(string)($scanRow['source_type'] ?? ''):'','camera_profile'=>$scanRow?(string)($scanRow['camera_profile'] ?? ''):'','label'=>$scanRow?(string)($scanRow['label'] ?? ($scanRow['comment'] ?? '')):'','imu_available'=>$metadata['imu']['exists']];
       }
     }
   }
