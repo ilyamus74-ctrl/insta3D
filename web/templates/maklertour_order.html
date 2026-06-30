@@ -426,6 +426,7 @@
                           <div class="small mb-2" data-pipeline-message>{$run.display_message|default:$run.message|default:''|escape}</div>
                           <div class="progress mb-2" style="height:18px"><div class="progress-bar {if $run.status=='RUNNING' || $run.status=='QUEUED'}progress-bar-striped progress-bar-animated{/if}" data-pipeline-progress style="width: {$run.progress_percent|default:0}%">{$run.progress_percent|default:0}%</div></div>
                           {if $run.status=='ERROR'}<div class="alert alert-danger small py-2 mt-2 mb-2">{$run.display_message|default:$run.message|escape}</div>{/if}
+                          {if $run.restart_stale_no_active|default:false}<div class="alert alert-warning small py-2 mt-2 mb-2">Restart failed before new run was created. No active remote jobs are shown for this stale restart/cancel state.</div>{/if}
                           {if $run.artifacts_cleaned|default:false}<div class="alert alert-warning small py-2 mt-2 mb-2">Artifacts for this old run were cleaned to free disk space. Please rerun reconstruction if needed.</div>{/if}
                           {assign var=art value=$run.artifacts}
                           <div class="border rounded p-2 bg-light-subtle small mt-2">
