@@ -170,10 +170,55 @@ $error=null; $success=isset($_GET['updated'])?'Заявка обновлена':
 function table_exists(mysqli $dbcnx,string $table): bool { $t=$dbcnx->real_escape_string($table); $r=$dbcnx->query("SHOW TABLES LIKE '".$t."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
 function column_exists(mysqli $dbcnx,string $table,string $column): bool { $t=$dbcnx->real_escape_string($table); $c=$dbcnx->real_escape_string($column); $r=$dbcnx->query("SHOW COLUMNS FROM `".$t."` LIKE '".$c."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
 
+
+function table_columns_info(mysqli $dbcnx,string $table): array {
+  $t=$dbcnx->real_escape_string($table); $rs=$dbcnx->query('SHOW COLUMNS FROM `'.$t.'`'); $out=[];
+  if($rs){ while($r=$rs->fetch_assoc()){ $out[(string)$r['Field']]=$r; } $rs->close(); }
+  return $out;
+}
+function bind_dynamic_params(mysqli_stmt $st,string $types,array $params): void { $st->bind_param($types,...$params); }
+function create_web_upload_capture_session(mysqli $dbcnx,int $orderId,int $userId): array {
+  $colsInfo=table_columns_info($dbcnx,'capture_sessions');
+  if(!$colsInfo){ throw new RuntimeException('Cannot inspect capture_sessions columns for web upload session creation.'); }
+  $uuid='web_'.bin2hex(random_bytes(16)); $now=date('Y-m-d H:i:s');
+  $values=['order_id'=>$orderId,'app_session_uuid'=>$uuid,'created_at'=>$now,'updated_at'=>$now,'started_at'=>$now,'completed_at'=>null,'status'=>'WEB_UPLOAD','upload_state'=>'UPLOADED','source_type'=>'WEB_UPLOAD','source_origin'=>'web_upload','created_by'=>$userId,'created_by_user_id'=>$userId,'label'=>'Web Upload Session','session_label'=>'Web Upload Session','name'=>'Web Upload Session','title'=>'Web Upload Session','comment'=>'Web Upload Session','notes'=>'Web Upload Session','description'=>'Web Upload Session','camera_model'=>'web_upload','is_web_created'=>1,'web_created'=>1,'created_from_web'=>1,'is_web_upload'=>1];
+  $cols=[]; $params=[]; $types='';
+  foreach($values as $c=>$v){
+    if(!isset($colsInfo[$c])){ continue; }
+    if($v===null && strtoupper((string)$colsInfo[$c]['Null'])==='NO'){ continue; }
+    $cols[]=$c; $params[]=$v; $types.=is_int($v)?'i':(is_float($v)?'d':'s');
+  }
+  foreach($colsInfo as $c=>$info){
+    if($c==='id' || in_array($c,$cols,true)){ continue; }
+    $required=strtoupper((string)$info['Null'])==='NO' && $info['Default']===null && stripos((string)$info['Extra'],'auto_increment')===false;
+    if(!$required){ continue; }
+    $type=strtolower((string)$info['Type']);
+    $fallback=str_contains($type,'int')?0:(str_contains($type,'decimal')||str_contains($type,'float')||str_contains($type,'double')?0.0:'');
+    $cols[]=$c; $params[]=$fallback; $types.=is_int($fallback)?'i':(is_float($fallback)?'d':'s');
+  }
+  foreach(['order_id','app_session_uuid'] as $needed){ if(!in_array($needed,$cols,true)){ throw new RuntimeException('Cannot create web upload capture session: missing required '.$needed.' column.'); } }
+  $sql='INSERT INTO capture_sessions (`'.implode('`,`',$cols).'`) VALUES ('.implode(',',array_fill(0,count($cols),'?')).')';
+  $st=$dbcnx->prepare($sql); if(!$st){ throw new RuntimeException('Failed to create web upload capture session: '.$dbcnx->error); }
+  bind_dynamic_params($st,$types,$params); if(!$st->execute()){ $msg=$st->error; $st->close(); throw new RuntimeException('Failed to create web upload capture session: '.$msg); }
+  $id=(int)$dbcnx->insert_id; $st->close();
+  audit_log($userId,'CAPTURE_SESSION_WEB_UPLOAD_CREATED','TOUR_ORDER',$orderId,'Web upload capture session created',['capture_session_id'=>$id,'app_session_uuid'=>$uuid]);
+  return ['id'=>$id,'app_session_uuid'=>$uuid];
+}
+
 function ensure_sfm_remote_jobs_table(mysqli $dbcnx): void {
   $dbcnx->query("CREATE TABLE IF NOT EXISTS sfm_remote_jobs (id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, capture_session_id BIGINT NOT NULL, job_type VARCHAR(64) NOT NULL, remote_job_id INT NOT NULL, parent_remote_job_id INT NULL, input_path TEXT NULL, output_path TEXT NULL, status VARCHAR(32) NOT NULL DEFAULT 'QUEUED', progress_percent INT DEFAULT 0, message TEXT NULL, result_json_path TEXT NULL, log_path TEXT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), KEY idx_sfm_remote_jobs_order_session (order_id, capture_session_id), KEY idx_sfm_remote_jobs_remote (remote_job_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 }
 function sfm_safe_uuid(string $uuid): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:'session'; }
+
+function sfm_session_videos_dir(int $orderId,string $appSessionUuid): string {
+  $safe=sfm_safe_uuid($appSessionUuid);
+  $base=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions';
+  $withOrder=$base.'/'.$safe.'_'.$orderId.'/videos';
+  if(is_dir($withOrder)){ return $withOrder; }
+  return $base.'/'.$safe.'/videos';
+}
+function sfm_web_session_videos_dir(int $orderId,string $appSessionUuid): string { return APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.sfm_safe_uuid($appSessionUuid).'_'.$orderId.'/videos'; }
+
 function video_scan_safe_uuid(string $uuid,int $scanId): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:('scan_'.$scanId); }
 function video_scan_metadata_info(int $scanId,string $appScanUuid,string $videoDir): array { $safe=video_scan_safe_uuid($appScanUuid,$scanId); $defs=['camera_info'=>['_camera_info.json','View camera_info'],'manifest'=>['_manifest.json','View manifest'],'imu'=>['_imu.jsonl','Download imu']]; $out=[]; foreach($defs as $type=>$def){ $path=$videoDir.'/'.$safe.$def[0]; $exists=is_file($path); $out[$type]=['exists'=>$exists,'label'=>$def[1],'url'=>$exists?('/api/video_scan_metadata.php?scan_id='.$scanId.'&type='.$type):'']; } return $out; }
 function ensure_sfm_remote_jobs_chunk_columns(mysqli $dbcnx): void { foreach(['reconstruction_mode'=>'VARCHAR(20) NULL','chunk_index'=>'INT NULL','chunk_count'=>'INT NULL','retry_count'=>'INT NOT NULL DEFAULT 0','parameters_json'=>'LONGTEXT NULL'] as $c=>$def){ if(!column_exists($dbcnx,'sfm_remote_jobs',$c)){ @$dbcnx->query('ALTER TABLE sfm_remote_jobs ADD COLUMN '.$c.' '.$def); } } }
@@ -181,7 +226,7 @@ function ensure_sfm_settings_pipeline_columns(mysqli $dbcnx): void { if(!table_e
 function sfm_remote_output_dir(int $remoteJobId): string { return '/home/makler/web/remote_station/output/job_'.$remoteJobId; }
 function sfm_job_id(mysqli $dbcnx): int { do { $id=random_int(10000,999999999); $st=$dbcnx->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1'); if(!$st){return $id;} $st->bind_param('i',$id); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); } while($exists); return $id; }
 function sfm_session_for_order(mysqli $dbcnx,int $orderId,int $sessionId): ?array { $st=$dbcnx->prepare('SELECT id, app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1'); if(!$st){return null;} $st->bind_param('ii',$sessionId,$orderId); $st->execute(); $row=$st->get_result()->fetch_assoc()?:null; $st->close(); return $row; }
-function sfm_resolve_video_path(mysqli $dbcnx,int $orderId,int $sessionId,string $videoInput): ?string { $sess=sfm_session_for_order($dbcnx,$orderId,$sessionId); if(!$sess){return null;} $safe=sfm_safe_uuid((string)$sess['app_session_uuid']); $dir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safe.'/videos'; $realDir=realpath($dir); if($realDir===false || !is_dir($realDir)){return null;} $candidate=(str_contains($videoInput,'/')?$videoInput:($realDir.'/'.$videoInput)); $real=realpath($candidate); if($real===false || !is_file($real) || !in_array(strtolower(pathinfo($real,PATHINFO_EXTENSION)),['mp4','mov','m4v'],true)){return null;} return (strpos($real,$realDir.'/')===0)?$real:null; }
+function sfm_resolve_video_path(mysqli $dbcnx,int $orderId,int $sessionId,string $videoInput): ?string { $sess=sfm_session_for_order($dbcnx,$orderId,$sessionId); if(!$sess){return null;} $safe=sfm_safe_uuid((string)$sess['app_session_uuid']); $dir=sfm_session_videos_dir($orderId,(string)$sess['app_session_uuid']); $realDir=realpath($dir); if($realDir===false || !is_dir($realDir)){return null;} $candidate=(str_contains($videoInput,'/')?$videoInput:($realDir.'/'.$videoInput)); $real=realpath($candidate); if($real===false || !is_file($real) || !in_array(strtolower(pathinfo($real,PATHINFO_EXTENSION)),['mp4','mov','m4v'],true)){return null;} return (strpos($real,$realDir.'/')===0)?$real:null; }
 function sfm_load_source_video(mysqli $dbcnx,int $orderId,int $sessionId,int $videoScanId): array {
   if($videoScanId<=0){ throw new RuntimeException('Source video is required'); }
   if(!sfm_session_for_order($dbcnx,$orderId,$sessionId)){ throw new RuntimeException('Capture session not found'); }
@@ -282,8 +327,12 @@ function handle_external_video_upload(mysqli $dbcnx,int $orderId,int $userId): v
   $orig=sanitize_upload_filename((string)($file['name'] ?? 'video.mp4')); $ext=strtolower(pathinfo($orig,PATHINFO_EXTENSION)); if(!in_array($ext,['mp4','mov','m4v'],true)){ throw new RuntimeException('Only .mp4, .mov, and .m4v video files are accepted.'); }
   $mime=(string)($file['type'] ?? ''); if($mime!=='' && stripos($mime,'video/')!==0){ throw new RuntimeException('Only video MIME types are accepted.'); }
   $profiles=web_upload_video_profiles(); $profile=(string)($_POST['camera_profile'] ?? 'other'); if(!isset($profiles[$profile])){ $profile='other'; }
-  $sessionId=(int)($_POST['capture_session_id'] ?? 0); $sess=sfm_session_for_order($dbcnx,$orderId,$sessionId); if(!$sess){ throw new RuntimeException('Capture session not found for this order.'); }
-  $safeSession=sfm_safe_uuid((string)$sess['app_session_uuid']); $videoDir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safeSession.'/videos'; if(!is_dir($videoDir) && !mkdir($videoDir,0775,true)){ throw new RuntimeException('Failed to create session video directory.'); } if(!is_writable($videoDir)){ throw new RuntimeException('Session video directory is not writable by the web server.'); }
+  $target=(string)($_POST['capture_session_id'] ?? '');
+  $createNew=($target==='new' || $target==='create_new' || $target==='');
+  $sessionId=$createNew?0:(int)$target;
+  $sess=$sessionId>0?sfm_session_for_order($dbcnx,$orderId,$sessionId):null;
+  if(!$sess){ $sess=create_web_upload_capture_session($dbcnx,$orderId,$userId); $sessionId=(int)$sess['id']; }
+  $safeSession=sfm_safe_uuid((string)$sess['app_session_uuid']).'_'.$orderId; $videoDir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safeSession.'/videos'; if(!is_dir($videoDir) && !mkdir($videoDir,0775,true)){ throw new RuntimeException('Failed to create session video directory.'); } if(!is_writable($videoDir)){ throw new RuntimeException('Session video directory is not writable by the web server.'); }
   $uuid='web_'.bin2hex(random_bytes(16)); $filename=$uuid.'_video.'.$ext; $dest=$videoDir.'/'.$filename;
   if(!move_uploaded_file($tmp,$dest)){ throw new RuntimeException('Failed to move uploaded video into storage.'); }
   @chmod($dest,0664); $meta=ffprobe_video_metadata($dest); $now=date('Y-m-d H:i:s'); $rel='orders/'.$orderId.'/sessions/'.$safeSession.'/videos/'.$filename;
@@ -889,7 +938,7 @@ if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_res
 
 foreach($captureSessions as $idx=>$session){
   $safeUuid=sfm_safe_uuid((string)($session['app_session_uuid'] ?? ''));
-  $videoDir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safeUuid.'/videos';
+  $videoDir=sfm_session_videos_dir($orderId,(string)($session['app_session_uuid'] ?? ''));
   $diskVideos=[];
   $videosByFilename=[];
   foreach(($session['videos'] ?? []) as $scanRow){ $videosByFilename[(string)($scanRow['filename'] ?? '')]=$scanRow; }

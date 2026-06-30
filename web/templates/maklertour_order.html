@@ -155,6 +155,35 @@
       </div>
     </div>
 
+
+
+    {if $canDeleteMedia}
+      <div class="card border-light bg-light-subtle mb-3">
+        <div class="card-body">
+          <div class="fw-semibold mb-2">Upload external video</div>
+          {if $captureSessions|@count == 0}
+            <div class="small text-muted mb-2">No capture sessions yet. Uploading here will create a Web Upload Session automatically.</div>
+          {else}
+            <div class="small text-muted mb-2">Upload into an existing session, or explicitly create a new Web Upload Session.</div>
+          {/if}
+          <form method="post" action="/order.php?id={$order.id}" enctype="multipart/form-data" class="row g-2 align-items-end">
+            <input type="hidden" name="action" value="upload_external_video">
+            {if $captureSessions|@count > 0}
+              <div class="col-md-3"><label class="form-label small w-100">Target capture session<select name="capture_session_id" class="form-select form-select-sm">
+                {foreach from=$captureSessions item=targetSession name=targetSessions}<option value="{$targetSession.id}" {if $smarty.foreach.targetSessions.first}selected{/if}>#{$targetSession.id} — {$targetSession.app_session_uuid|default:'session'|escape}</option>{/foreach}
+                <option value="create_new">Create new web upload session</option>
+              </select></label></div>
+            {/if}
+            <div class="col-md-3"><label class="form-label small w-100">Video file<input type="file" name="video_file" accept=".mp4,.mov,.m4v,video/*" class="form-control form-control-sm" required></label></div>
+            <div class="col-md-2"><label class="form-label small w-100">Camera/source profile<select name="camera_profile" class="form-select form-select-sm"><option value="phone_web_upload">phone_web_upload</option><option value="gopro_fisheye">gopro_fisheye</option><option value="insta360_rectilinear">insta360_rectilinear</option><option value="other">other</option></select></label></div>
+            <div class="col-md-2"><label class="form-label small w-100">Label/comment<input type="text" name="video_label" class="form-control form-control-sm" maxlength="255" placeholder="optional"></label></div>
+            <div class="col-md-2"><div class="form-check small mb-2"><input type="checkbox" name="no_imu" value="1" class="form-check-input" id="order-no-imu" checked><label class="form-check-label" for="order-no-imu">This video has no IMU</label></div><button type="submit" class="btn btn-sm btn-primary">Upload</button></div>
+            <div class="col-12 small text-muted">Large uploads require server limits high enough for the file size: PHP upload_max_filesize, post_max_size, max_input_time, max_execution_time; Apache/Nginx request body limit; and enough free disk in the PHP temp dir and final storage.</div>
+          </form>
+        </div>
+      </div>
+    {/if}
+
     {foreach from=$captureSessions item=s}
       <div class="card">
         <div class="card-body">
