@@ -518,7 +518,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      $newPipelineRunId=start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,((int)($run['video_scan_id']??0))?:null,$mode,$userId,$pipelineRunId,$sameSnapshot);
      pipeline_log($pipelineRunId,'INFO','RESTART','New pipeline_run_id='.$newPipelineRunId);
      pipeline_log($newPipelineRunId,'INFO','RESTART','action='.$action.' previous_pipeline_run_id='.$pipelineRunId);
-     $st=$dbcnx->prepare("UPDATE sfm_pipeline_runs SET status='CANCELLED', stage='SUPERSEDED', message='Superseded by rerender', finished_at=COALESCE(finished_at,NOW(6)), updated_at=NOW(6) WHERE id=?"); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
+     $st=$dbcnx->prepare("UPDATE sfm_pipeline_runs SET status='CANCELLED', stage='CANCELLED', message='Superseded by rerender', finished_at=COALESCE(finished_at,NOW(6)), updated_at=NOW(6) WHERE id=?"); if($st){$st->bind_param('i',$pipelineRunId);$st->execute();$st->close();}
      try{
        $cleanupRes=sfm_cleanup_pipeline_run_artifacts($dbcnx,$pipelineRunId,['delete'=>true,'include_logs'=>false,'force_recent'=>true,'force_latest'=>true]);
        if(!empty($cleanupRes['errors'])){ pipeline_log($pipelineRunId,'WARNING','CLEANUP','Old artifact cleanup failed after rerender was queued: '.json_encode($cleanupRes['errors'],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)); }
