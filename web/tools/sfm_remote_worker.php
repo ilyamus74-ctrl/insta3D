@@ -29,6 +29,7 @@ if (!defined('APP_STORAGE_DIR')) {
 }
 require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
 require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
+require_once dirname(__DIR__) . '/libs/source_storage_lib.php';
 require_once __DIR__ . '/sfm_dense_merge_contract.php';
 
 const SFM_REMOTE_BASE = '/home/makler/web/remote_station';
@@ -664,12 +665,40 @@ function write_job_text_log(int $remoteJobId, string $name, string $contents): ?
     return @file_put_contents($path, $contents) === false ? null : $path;
 }
 
+function path_is_inside_dir(string $realPath, string $realDir): bool
+{
+    return $realPath === $realDir || str_starts_with($realPath, rtrim($realDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR);
+}
+
+function sfm_job_video_scan_id(mysqli $db, array $job): int
+{
+    $params = json_decode((string)($job['parameters_json'] ?? '{}'), true);
+    if (is_array($params) && isset($params['video_scan_id'])) {
+        return (int)$params['video_scan_id'];
+    }
+    $pipelineRunId = pipeline_run_for_job($job);
+    if ($pipelineRunId > 0) {
+        $st = $db->prepare('SELECT video_scan_id FROM sfm_pipeline_runs WHERE id=? LIMIT 1');
+        if ($st) {
+            $st->bind_param('i', $pipelineRunId);
+            $st->execute();
+            $row = $st->get_result()->fetch_assoc();
+            $st->close();
+            return (int)($row['video_scan_id'] ?? 0);
+        }
+    }
+    return 0;
+}
+
 function safe_session_video_path(mysqli $db, array $job): string
 {
-    $input = (string)($job['input_path'] ?? '');
+    $input = trim((string)($job['input_path'] ?? ''));
     $orderId = (int)$job['order_id'];
     $sessionId = (int)$job['capture_session_id'];
-    $st = $db->prepare('SELECT app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1');
+    $videoScanId = sfm_job_video_scan_id($db, $job);
+    $logPrefix = 'SOURCE_VIDEO_VALIDATE | job_id=' . (int)($job['id'] ?? 0) . ' order_id=' . $orderId . ' capture_session_id=' . $sessionId . ' video_scan_id=' . $videoScanId;
+
+    $st = $db->prepare('SELECT id, app_session_uuid FROM capture_sessions WHERE id=? AND order_id=? AND deleted_at IS NULL LIMIT 1');
     if (!$st) {
         throw new RuntimeException('prepare session lookup failed: ' . $db->error);
     }
@@ -678,15 +707,75 @@ function safe_session_video_path(mysqli $db, array $job): string
     $session = $st->get_result()->fetch_assoc();
     $st->close();
     if (!$session) {
-        throw new RuntimeException('capture session not found');
+        worker_log($logPrefix . ' validation=FAIL reason=capture_session_not_found input_path=' . $input);
+        throw new RuntimeException('Source video path failed safety validation: ' . $input);
     }
-    $safeUuid = preg_replace('/[^a-zA-Z0-9._-]+/', '_', (string)$session['app_session_uuid']);
-    $base = realpath(rtrim(APP_STORAGE_DIR, '/') . '/orders/' . $orderId . '/sessions/' . $safeUuid . '/videos');
-    $real = realpath($input);
-    if ($base === false || $real === false || !is_file($real) || strpos($real, $base . '/') !== 0) {
-        throw new RuntimeException('input_path is outside allowed session videos directory');
+
+    $sessionUuid = (string)$session['app_session_uuid'];
+    $allowedDirs = array_values(array_unique([
+        capture_session_videos_dir($orderId, $sessionUuid, false, false),
+        capture_session_videos_dir($orderId, $sessionUuid, false, true),
+        capture_session_videos_dir($orderId, $sessionUuid, true, false),
+        capture_session_videos_dir($orderId, $sessionUuid, true, true),
+    ]));
+
+    $candidates = [];
+    if ($input !== '') { $candidates[] = $input; }
+
+    if ($videoScanId > 0) {
+        $st = $db->prepare('SELECT id, session_id, filename, storage_path FROM video_scans WHERE id=? AND deleted_at IS NULL LIMIT 1');
+        if (!$st) {
+            throw new RuntimeException('prepare video scan lookup failed: ' . $db->error);
+        }
+        $st->bind_param('i', $videoScanId);
+        $st->execute();
+        $scan = $st->get_result()->fetch_assoc();
+        $st->close();
+        if (!$scan || (int)$scan['session_id'] !== $sessionId) {
+            worker_log($logPrefix . ' validation=FAIL reason=video_scan_session_mismatch input_path=' . $input);
+            throw new RuntimeException('Source video path failed safety validation: ' . $input);
+        }
+        foreach (['storage_path', 'filename'] as $field) {
+            $value = trim((string)($scan[$field] ?? ''));
+            if ($value === '') { continue; }
+            $candidates[] = $value;
+            if (!str_starts_with($value, '/')) {
+                $relative = ltrim($value, '/');
+                $candidates[] = rtrim(source_storage_root(), '/') . '/' . $relative;
+                $candidates[] = rtrim(legacy_source_storage_root(), '/') . '/' . $relative;
+                if (str_starts_with($relative, 'orders/')) {
+                    $candidates[] = dirname(rtrim(source_storage_root(), '/')) . '/' . $relative;
+                    $candidates[] = dirname(rtrim(legacy_source_storage_root(), '/')) . '/' . $relative;
+                }
+                foreach ($allowedDirs as $dir) { $candidates[] = rtrim($dir, '/') . '/' . basename($value); }
+            }
+        }
     }
-    return $real;
+
+    $realAllowedDirs = [];
+    foreach ($allowedDirs as $dir) {
+        $realDir = realpath($dir);
+        if ($realDir !== false && is_dir($realDir)) { $realAllowedDirs[] = $realDir; }
+    }
+    $realAllowedDirs = array_values(array_unique($realAllowedDirs));
+    worker_log($logPrefix . ' input_path=' . $input . ' allowed_base_dirs=' . json_encode($realAllowedDirs, JSON_UNESCAPED_SLASHES));
+
+    foreach (array_values(array_unique($candidates)) as $candidate) {
+        $real = realpath($candidate);
+        $ext = strtolower(pathinfo($candidate, PATHINFO_EXTENSION));
+        $ok = $real !== false && is_file($real) && is_readable($real) && in_array($ext, ['mp4', 'mov', 'm4v'], true);
+        if ($ok) {
+            foreach ($realAllowedDirs as $realDir) {
+                if (path_is_inside_dir($real, $realDir)) {
+                    worker_log($logPrefix . ' candidate=' . $candidate . ' resolved_realpath=' . $real . ' validation=PASS');
+                    return $real;
+                }
+            }
+        }
+        worker_log($logPrefix . ' candidate=' . $candidate . ' resolved_realpath=' . ($real === false ? 'false' : $real) . ' validation=FAIL');
+    }
+
+    throw new RuntimeException('Source video path failed safety validation: ' . $input);
 }
 
 /*
@@ -1276,7 +1365,15 @@ while (true) {
         orchestrate_reconstruction_parents($dbcnx);
         $job = claim_next_job($dbcnx);
         if ($job) {
-            launch_job($dbcnx, $job);
+            try {
+                launch_job($dbcnx, $job);
+            } catch (Throwable $e) {
+                $id = (int)($job['id'] ?? 0);
+                if ($id > 0) {
+                    set_job($dbcnx, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), $e->getMessage());
+                }
+                worker_log('ERROR launch job id=' . $id . ' type=' . (string)($job['job_type'] ?? '') . ': ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+            }
         }
     } catch (Throwable $e) {
         worker_log('ERROR ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());

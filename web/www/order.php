@@ -5,6 +5,7 @@ require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
 require_once dirname(__DIR__) . '/remote_station/sfm_cleanup.php';
 require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
 require_once dirname(__DIR__) . '/libs/sfm_debug_public_lib.php';
+require_once dirname(__DIR__) . '/libs/source_storage_lib.php';
 auth_require_login();
 $user = auth_current_user(); $userId=(int)$user['id']; $role=$user['role'] ?? 'BROKER';
 $orderId=(int)($_GET['id']??0); if($orderId<=0){http_response_code(400);exit('Bad order id');}
@@ -239,16 +240,18 @@ function create_web_upload_capture_session(mysqli $dbcnx,int $orderId,int $userI
 function ensure_sfm_remote_jobs_table(mysqli $dbcnx): void {
   $dbcnx->query("CREATE TABLE IF NOT EXISTS sfm_remote_jobs (id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, capture_session_id BIGINT NOT NULL, job_type VARCHAR(64) NOT NULL, remote_job_id INT NOT NULL, parent_remote_job_id INT NULL, input_path TEXT NULL, output_path TEXT NULL, status VARCHAR(32) NOT NULL DEFAULT 'QUEUED', progress_percent INT DEFAULT 0, message TEXT NULL, result_json_path TEXT NULL, log_path TEXT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), KEY idx_sfm_remote_jobs_order_session (order_id, capture_session_id), KEY idx_sfm_remote_jobs_remote (remote_job_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 }
-function sfm_safe_uuid(string $uuid): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:'session'; }
+function sfm_safe_uuid(string $uuid): string { return storage_safe_session_uuid($uuid); }
 
 function sfm_session_videos_dir(int $orderId,string $appSessionUuid): string {
-  $safe=sfm_safe_uuid($appSessionUuid);
-  $base=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions';
-  $withOrder=$base.'/'.$safe.'_'.$orderId.'/videos';
+  $withOrder=capture_session_videos_dir($orderId,$appSessionUuid,false,true);
   if(is_dir($withOrder)){ return $withOrder; }
-  return $base.'/'.$safe.'/videos';
+  $canonical=capture_session_videos_dir($orderId,$appSessionUuid,false,false);
+  if(is_dir($canonical)){ return $canonical; }
+  $legacyWithOrder=capture_session_videos_dir($orderId,$appSessionUuid,true,true);
+  if(is_dir($legacyWithOrder)){ return $legacyWithOrder; }
+  return capture_session_videos_dir($orderId,$appSessionUuid,true,false);
 }
-function sfm_web_session_videos_dir(int $orderId,string $appSessionUuid): string { return APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.sfm_safe_uuid($appSessionUuid).'_'.$orderId.'/videos'; }
+function sfm_web_session_videos_dir(int $orderId,string $appSessionUuid): string { return capture_session_videos_dir($orderId,$appSessionUuid,false,true); }
 
 function video_scan_safe_uuid(string $uuid,int $scanId): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:('scan_'.$scanId); }
 function video_scan_metadata_info(int $scanId,string $appScanUuid,string $videoDir): array { $safe=video_scan_safe_uuid($appScanUuid,$scanId); $defs=['camera_info'=>['_camera_info.json','View camera_info'],'manifest'=>['_manifest.json','View manifest'],'imu'=>['_imu.jsonl','Download imu']]; $out=[]; foreach($defs as $type=>$def){ $path=$videoDir.'/'.$safe.$def[0]; $exists=is_file($path); $out[$type]=['exists'=>$exists,'label'=>$def[1],'url'=>$exists?('/api/video_scan_metadata.php?scan_id='.$scanId.'&type='.$type):'']; } return $out; }
@@ -411,7 +414,7 @@ function handle_external_video_upload(mysqli $dbcnx,int $orderId,int $userId): v
   $dbcnx->begin_transaction();
   try{
     if(!$sess){ $sess=create_web_upload_capture_session($dbcnx,$orderId,$userId); $sessionId=(int)$sess['id']; $createdSession=true; }
-    $safeSession=sfm_safe_uuid((string)$sess['app_session_uuid']).'_'.$orderId; $videoDir=APP_STORAGE_DIR.'/orders/'.$orderId.'/sessions/'.$safeSession.'/videos'; if(!is_dir($videoDir) && !mkdir($videoDir,0775,true)){ throw new RuntimeException('Failed to create session video directory.'); } if(!is_writable($videoDir)){ throw new RuntimeException('Session video directory is not writable by the web server.'); }
+    $safeSession=sfm_safe_uuid((string)$sess['app_session_uuid']).'_'.$orderId; $videoDir=sfm_web_session_videos_dir($orderId,(string)$sess['app_session_uuid']); if(!is_dir($videoDir) && !mkdir($videoDir,0775,true)){ throw new RuntimeException('Failed to create session video directory.'); } if(!is_writable($videoDir)){ throw new RuntimeException('Session video directory is not writable by the web server.'); }
     $filename=$uuid.'_video.'.$ext; $dest=$videoDir.'/'.$filename;
     if(!move_uploaded_file($tmp,$dest)){ throw new RuntimeException('Failed to move uploaded video into storage.'); }
     @chmod($dest,0664); $meta=ffprobe_video_metadata($dest); $now=date('Y-m-d H:i:s'); $rel='orders/'.$orderId.'/sessions/'.$safeSession.'/videos/'.$filename;
