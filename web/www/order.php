@@ -309,18 +309,59 @@ function ffprobe_video_metadata(string $path): array {
   if(preg_match('/^(\d+)\/(\d+)$/',$rate,$m) && (int)$m[2]>0){ $meta['fps']=round(((int)$m[1])/((int)$m[2]),3); }
   return $meta;
 }
+function video_scan_insert_fallback_value(string $column,array $values,array $info): array {
+  $now=(string)($values['created_at'] ?? date('Y-m-d H:i:s'));
+  $filename=(string)($values['filename'] ?? basename((string)($values['storage_path'] ?? '')));
+  $storagePath=(string)($values['storage_path'] ?? $filename);
+  $fallbacks=[
+    'app_scan_uuid'=>(string)($values['app_scan_uuid'] ?? ('web_'.bin2hex(random_bytes(16)))),
+    'filename'=>$filename,
+    'storage_path'=>$storagePath,
+    'source_video_path'=>$storagePath,
+    'storage_base_path'=>dirname($storagePath),
+    'local_camera_url'=>(string)($values['local_camera_url'] ?? ''),
+    'created_at'=>$now,
+    'updated_at'=>(string)($values['updated_at'] ?? $now),
+    'duration_sec'=>(float)($values['duration_sec'] ?? 0),
+    'size_bytes'=>(int)($values['size_bytes'] ?? 0),
+    'upload_state'=>(string)($values['upload_state'] ?? 'UPLOADED'),
+    'processing_state'=>(string)($values['processing_state'] ?? 'NOT_STARTED'),
+    'status'=>(string)($values['status'] ?? 'UPLOADED'),
+    'source_type'=>(string)($values['source_type'] ?? 'WEB_UPLOAD'),
+    'source_origin'=>(string)($values['source_origin'] ?? 'web_upload'),
+  ];
+  if(array_key_exists($column,$fallbacks)){ return [true,$fallbacks[$column]]; }
+  $type=strtolower((string)$info['Type']);
+  if(str_contains($type,'int')){ return [true,0]; }
+  if(str_contains($type,'decimal') || str_contains($type,'float') || str_contains($type,'double')){ return [true,0.0]; }
+  if(str_starts_with($type,'enum(')){ $allowed=enum_allowed_values_from_type((string)$info['Type']); if($allowed){ return [true,$allowed[0]]; } }
+  return [false,null];
+}
 function insert_web_uploaded_video_scan(mysqli $dbcnx,array $values): int {
   $colsInfo=table_columns_info($dbcnx,'video_scans');
   if(!$colsInfo){ throw new RuntimeException('Cannot inspect video_scans columns for web upload.'); }
-  $required=['order_id','session_id','filename','storage_path','app_scan_uuid','duration_sec','size_bytes','created_at'];
-  $cols=$required; $params=[]; $types='';
-  foreach($required as $c){ if(!isset($colsInfo[$c])){ throw new RuntimeException('Cannot insert uploaded video: missing required '.$c.' column.'); } }
-  foreach($required as $c){ $params[]=$values[$c]; $types.=in_array($c,['order_id','session_id','size_bytes'],true)?'i':($c==='duration_sec'?'d':'s'); }
-  foreach(['updated_at','status','upload_state','source_type','source_origin','camera_profile','label','comment'] as $c){ if(array_key_exists($c,$values)){ add_optional_insert_value($dbcnx,'video_scans',$colsInfo,$cols,$params,$types,$c,$values[$c]); } }
+  $cols=[]; $params=[]; $types='';
+  foreach($values as $c=>$v){
+    if(!isset($colsInfo[$c])){ continue; }
+    if($v===null && strtoupper((string)$colsInfo[$c]['Null'])==='NO'){ continue; }
+    add_optional_insert_value($dbcnx,'video_scans',$colsInfo,$cols,$params,$types,(string)$c,$v);
+  }
+  foreach($colsInfo as $c=>$info){
+    if($c==='id' || in_array($c,$cols,true)){ continue; }
+    $required=strtoupper((string)$info['Null'])==='NO' && $info['Default']===null && stripos((string)$info['Extra'],'auto_increment')===false;
+    if(!$required){ continue; }
+    [$ok,$fallback]=video_scan_insert_fallback_value((string)$c,$values,$info);
+    if(!$ok){ throw new RuntimeException('Cannot insert uploaded video: missing required '.$c.' column value.'); }
+    add_optional_insert_value($dbcnx,'video_scans',$colsInfo,$cols,$params,$types,(string)$c,$fallback);
+  }
+  if(!in_array('session_id',$cols,true)){ throw new RuntimeException('Cannot insert uploaded video: missing required session_id column.'); }
+  $hasPath=false; foreach(['storage_path','filename','source_video_path'] as $pathColumn){ if(in_array($pathColumn,$cols,true)){ $hasPath=true; break; } }
+  if(!$hasPath){ throw new RuntimeException('Cannot insert uploaded video: video_scans has no supported video filename/path column.'); }
+  if(isset($colsInfo['app_scan_uuid']) && strtoupper((string)$colsInfo['app_scan_uuid']['Null'])==='NO' && !in_array('app_scan_uuid',$cols,true)){ throw new RuntimeException('Cannot insert uploaded video: missing required app_scan_uuid column value.'); }
   $placeholders=implode(',',array_fill(0,count($cols),'?'));
   $sql='INSERT INTO video_scans (`'.implode('`,`',$cols).'`) VALUES ('.$placeholders.')';
   $st=$dbcnx->prepare($sql); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
-  $st->bind_param($types,...$params); if(!$st->execute()){ $msg=$st->error; $st->close(); throw new RuntimeException('DB execute error while inserting video scan: '.$msg); } $id=(int)$dbcnx->insert_id; $st->close(); return $id;
+  bind_dynamic_params($st,$types,$params); if(!$st->execute()){ $msg=$st->error; $st->close(); throw new RuntimeException('DB execute error while inserting video scan: '.$msg); } $id=(int)$dbcnx->insert_id; $st->close(); return $id;
 }
 
 function upload_ini_diagnostics(): string {
@@ -364,6 +405,8 @@ function handle_external_video_upload(mysqli $dbcnx,int $orderId,int $userId): v
   $target=(string)($_POST['capture_session_id'] ?? '');
   $createNew=($target==='new' || $target==='create_new' || $target==='');
   $sessionId=$createNew?0:(int)$target; $sess=$sessionId>0?sfm_session_for_order($dbcnx,$orderId,$sessionId):null;
+  if(!$createNew && $sessionId<=0){ throw new RuntimeException('Invalid capture session selection.'); }
+  if(!$createNew && !$sess){ throw new RuntimeException('Selected capture session does not belong to this order.'); }
   $createdSession=false; $dest=''; $sidecars=[]; $rel=''; $uuid='web_'.bin2hex(random_bytes(16));
   $dbcnx->begin_transaction();
   try{
@@ -434,8 +477,9 @@ function sfm_prepare_pipeline_dir(int $pipelineRunId): string {
 
 
 function sfm_session_video_scan_ids(mysqli $dbcnx,int $orderId,int $captureSessionId): array {
-  $ids=[]; $roleExpr="''"; foreach(['role','video_role','scan_role'] as $c){ if(column_exists($dbcnx,'video_scans',$c)){ $roleExpr='`'.$c.'`'; break; } }
-  $sql='SELECT id, '.$roleExpr.' AS role FROM video_scans WHERE order_id=? AND session_id=? AND deleted_at IS NULL ORDER BY id ASC';
+  $ids=[]; $roleExpr="''"; foreach(['role','video_role','scan_role'] as $c){ if(column_exists($dbcnx,'video_scans',$c)){ $roleExpr='vs.`'.$c.'`'; break; } }
+  $orderFilter=column_exists($dbcnx,'video_scans','order_id')?'vs.order_id=? AND vs.session_id=?':'cs.order_id=? AND vs.session_id=?';
+  $sql='SELECT vs.id, '.$roleExpr.' AS role FROM video_scans vs JOIN capture_sessions cs ON cs.id=vs.session_id WHERE '.$orderFilter.' AND vs.deleted_at IS NULL AND cs.deleted_at IS NULL ORDER BY vs.id ASC';
   $st=$dbcnx->prepare($sql); if(!$st){ return $ids; }
   $st->bind_param('ii',$orderId,$captureSessionId); $st->execute(); $rs=$st->get_result(); $hasRoles=false; $hasBackbone=false;
   while($r=$rs->fetch_assoc()){ $role=strtoupper((string)($r['role'] ?? '')); if($role!==''){$hasRoles=true;} if(in_array($role,['BACKBONE','MAIN'],true)){$hasBackbone=true;} $ids[]=(int)$r['id']; }
