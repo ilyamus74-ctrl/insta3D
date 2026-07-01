@@ -719,6 +719,27 @@ function safe_session_video_path(mysqli $db, array $job): string
         capture_session_videos_dir($orderId, $sessionUuid, true, true),
     ]));
 
+    // Hard allow canonical source media dirs used by APP/web uploads.
+    // Source media must live outside the web project:
+    // /home/storage/orders/<order_id>/sessions/<app_session_uuid>/videos/<file>
+    $allowedDirs[] = '/home/storage/orders/' . $orderId . '/sessions/' . $sessionUuid . '/videos';
+
+    // Legacy fallback if old installs stored source media under the project tree.
+    $allowedDirs[] = '/home/makler/web/storage/orders/' . $orderId . '/sessions/' . $sessionUuid . '/videos';
+
+    // If input_path itself is already under the exact canonical session videos dir,
+    // allow its dirname too. This keeps validation deterministic even if helpers
+    // build a different legacy path.
+    if ($input !== '') {
+        $canonicalPrefix = '/home/storage/orders/' . $orderId . '/sessions/' . $sessionUuid . '/videos/';
+        $legacyPrefix = '/home/makler/web/storage/orders/' . $orderId . '/sessions/' . $sessionUuid . '/videos/';
+        if (str_starts_with($input, $canonicalPrefix) || str_starts_with($input, $legacyPrefix)) {
+            $allowedDirs[] = dirname($input);
+        }
+    }
+
+    $allowedDirs = array_values(array_unique($allowedDirs));
+
     $candidates = [];
     if ($input !== '') { $candidates[] = $input; }
 
@@ -956,7 +977,20 @@ function launch_job(mysqli $db, array $job): void
     if ($type === 'EXTRACT_FRAMES') {
         $pipelineRunId = pipeline_run_for_job($job);
         if ($pipelineRunId > 0) { sfm_pipeline_update($db,$pipelineRunId,'RUNNING','EXTRACT_FRAMES',1,'Extracting and selecting frames'); }
-        $input = safe_session_video_path($db, $job);
+        try {
+            $input = safe_session_video_path($db, $job);
+        } catch (Throwable $e) {
+            $msg = 'Source video validation failed before remote launch: ' . $e->getMessage();
+            worker_log('ERROR ' . $msg);
+            set_job($db, $id, 'ERROR', 0, $msg);
+            if ($pipelineRunId > 0) {
+                sfm_pipeline_fail($db, $pipelineRunId, $msg, [
+                    'remote_job_id' => $remoteJobId,
+                    'job_type' => $type,
+                ]);
+            }
+            return;
+        }
         $rs=worker_run_parameters($db,$job); $ex=$rs['extract'] ?? []; $imuCfg=$rs['imu_frame_selection'] ?? []; $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: []; $localImu=safe_session_imu_path($db,$job); $localCameraInfo=safe_session_metadata_path($db,$job,'_camera_info.json'); $localManifest=safe_session_metadata_path($db,$job,'_manifest.json'); $sourceVideo=$params['source_video'] ?? []; $extractPayload=['extract'=>$ex,'imu_frame_selection'=>$imuCfg]; if(!is_array($sourceVideo)){$sourceVideo=[];} if($localCameraInfo){$sourceVideo['camera_info_path']=$localCameraInfo; worker_log('CAMERA_METADATA | camera_info sidecar found: '.$localCameraInfo);} if($localManifest){$sourceVideo['manifest_path']=$localManifest; worker_log('CAMERA_METADATA | manifest sidecar found: '.$localManifest);} if($sourceVideo){$extractPayload['source_video']=$sourceVideo;} if($localImu){$extractPayload['imu_jsonl_path']=$localImu; worker_log('IMU | Source sidecar found: '.$localImu);} else { worker_log('IMU | No source IMU sidecar found for video '.basename($input)); } $extractJson=json_encode($extractPayload, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)($ex['fps'] ?? ''), (string)($ex['max_frames'] ?? ''), (string)($ex['scale_width'] ?? ''), (string)($ex['jpeg_quality'] ?? ''), $extractJson, (string)($localImu ?? '')];
     } elseif ($type === 'COLMAP_SPARSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
