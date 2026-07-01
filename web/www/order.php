@@ -630,20 +630,69 @@ function ensure_video_scan_label_storage(mysqli $dbcnx): void {
     @$dbcnx->query('ALTER TABLE video_scans ADD COLUMN label VARCHAR(255) NULL');
   }
 }
-function safe_unlink_under_base(string $path,string $base): bool {
-  $realBase=realpath($base); if($realBase===false){ return true; }
-  $real=realpath($path); if($real===false){ return true; }
-  $realBase=rtrim($realBase,DIRECTORY_SEPARATOR);
-  if(!is_file($real) || strpos($real,$realBase.DIRECTORY_SEPARATOR)!==0){ return false; }
-  return @unlink($real);
+function path_is_inside_dir(string $realPath, string $realDir): bool {
+  $realDir=rtrim($realDir,DIRECTORY_SEPARATOR);
+  return $realPath===$realDir || str_starts_with($realPath,$realDir.DIRECTORY_SEPARATOR);
+}
+function video_scan_session_dir_variants(string $sessionUuid,int $orderId): array {
+  $safe=sfm_safe_uuid($sessionUuid);
+  $variants=[$safe];
+  if($safe!=='' && !str_ends_with($safe,'_'.$orderId)){ $variants[]=$safe.'_'.$orderId; }
+  return array_values(array_unique(array_filter($variants,static fn($v)=>$v!=='')));
+}
+function video_scan_allowed_video_dirs(int $orderId,string $sessionUuid): array {
+  $dirs=[];
+  foreach([APP_STORAGE_DIR, '/home/makler/web/storage'] as $root){
+    foreach(video_scan_session_dir_variants($sessionUuid,$orderId) as $sessionDir){
+      $dirs[]=rtrim($root,'/').'/orders/'.$orderId.'/sessions/'.$sessionDir.'/videos';
+    }
+  }
+  return array_values(array_unique($dirs));
 }
 function video_scan_source_candidates(array $scan,int $orderId,string $sessionUuid): array {
-  $safe=sfm_safe_uuid($sessionUuid); $filename=basename((string)($scan['filename'] ?? ''));
-  $paths=[]; foreach([APP_STORAGE_DIR, '/home/makler/web/storage'] as $root){
-    if($filename!==''){$paths[]=$root.'/orders/'.$orderId.'/sessions/'.$safe.'/videos/'.$filename;}
-    $storage=(string)($scan['storage_path'] ?? ''); if($storage!==''){$paths[]=$root.'/'.ltrim($storage,'/');}
+  $filename=basename((string)($scan['filename'] ?? ''));
+  $storage=(string)($scan['storage_path'] ?? '');
+  $paths=[];
+  foreach([APP_STORAGE_DIR, '/home/makler/web/storage'] as $root){
+    if($storage!==''){
+      $paths[]=str_starts_with($storage,'/') ? $storage : rtrim($root,'/').'/'.ltrim($storage,'/');
+    }
+    if($filename!==''){
+      foreach(video_scan_session_dir_variants($sessionUuid,$orderId) as $sessionDir){
+        $paths[]=rtrim($root,'/').'/orders/'.$orderId.'/sessions/'.$sessionDir.'/videos/'.$filename;
+      }
+    }
   }
   return array_values(array_unique($paths));
+}
+function video_scan_delete_diag(array $scan,int $orderId,string $candidate,$candidateReal,array $allowedDirs,array $allowedDirReals,string $reason): string {
+  return json_encode([
+    'video_scan_id'=>(int)($scan['id'] ?? 0),
+    'order_id'=>$orderId,
+    'session_id'=>(int)($scan['capture_session_id'] ?? ($scan['session_id'] ?? 0)),
+    'app_session_uuid'=>(string)($scan['app_session_uuid'] ?? ''),
+    'candidate_path'=>$candidate,
+    'candidate_realpath'=>$candidateReal===false ? null : $candidateReal,
+    'allowed_dirs'=>$allowedDirs,
+    'allowed_dir_realpaths'=>$allowedDirReals,
+    'reason'=>$reason,
+  ],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+}
+function safe_unlink_video_candidate(string $candidate,array $allowedDirs,array $allowedDirReals,array $scan,int $orderId,array &$deleted,array &$errors,bool $isSidecar=false): ?string {
+  if(!file_exists($candidate)){ return null; }
+  $real=realpath($candidate);
+  if($real===false){ $errors[]=video_scan_delete_diag($scan,$orderId,$candidate,false,$allowedDirs,$allowedDirReals,'existing path could not be resolved with realpath()'); return null; }
+  if(!is_file($real)){ $errors[]=video_scan_delete_diag($scan,$orderId,$candidate,$real,$allowedDirs,$allowedDirReals,'resolved path is not a file'); return null; }
+  $inside=false;
+  foreach($allowedDirReals as $allowedReal){ if($allowedReal!==false && path_is_inside_dir($real,$allowedReal)){ $inside=true; break; } }
+  if(!$inside){ $errors[]=video_scan_delete_diag($scan,$orderId,$candidate,$real,$allowedDirs,$allowedDirReals,'resolved path is outside all allowed video directories'); return null; }
+  $dir=dirname($real);
+  if(!is_readable($real) || !is_writable($real) || !is_writable($dir)){
+    $errors[]=video_scan_delete_diag($scan,$orderId,$candidate,$real,$allowedDirs,$allowedDirReals,'file or containing directory is not readable/writable enough to delete'); return null;
+  }
+  if(!@unlink($real)){ $errors[]=video_scan_delete_diag($scan,$orderId,$candidate,$real,$allowedDirs,$allowedDirReals,'unlink() failed'); return null; }
+  $deleted[]=$real;
+  return $real;
 }
 function delete_video_scan_for_order(mysqli $dbcnx,int $orderId,int $videoScanId,int $userId): array {
   $sql='SELECT vs.*, cs.id AS capture_session_id, cs.app_session_uuid, cs.order_id FROM video_scans vs JOIN capture_sessions cs ON cs.id=vs.session_id WHERE vs.id=? AND cs.order_id=? AND vs.deleted_at IS NULL AND cs.deleted_at IS NULL LIMIT 1';
@@ -661,18 +710,27 @@ function delete_video_scan_for_order(mysqli $dbcnx,int $orderId,int $videoScanId
   try{
     $cleanup=sfm_cleanup_delete_project_session_artifacts_and_media($dbcnx,$orderId,$sid,$videoScanId,true,true);
     $deleted=[]; $errors=[];
-    $safeSession=sfm_safe_uuid((string)$scan['app_session_uuid']);
-    $allowedVideoDirs=[]; foreach([APP_STORAGE_DIR, '/home/makler/web/storage'] as $root){ $allowedVideoDirs[]=rtrim($root,'/').'/orders/'.$orderId.'/sessions/'.$safeSession.'/videos'; }
+    $allowedVideoDirs=video_scan_allowed_video_dirs($orderId,(string)$scan['app_session_uuid']);
+    $allowedDirReals=[];
+    foreach($allowedVideoDirs as $allowedDir){ $allowedDirReals[]=realpath($allowedDir); }
     foreach(video_scan_source_candidates($scan,$orderId,(string)$scan['app_session_uuid']) as $path){
-      $dir=dirname($path); $dirReal=realpath($dir); $allowed=false; foreach($allowedVideoDirs as $allowedDir){ $allowedReal=realpath($allowedDir); if($allowedReal!==false && $dirReal!==false && rtrim($dirReal,'/')===rtrim($allowedReal,'/')){ $allowed=true; break; } }
-      if(!$allowed){ $errors[]=$path; continue; }
-      $baseName=pathinfo($path,PATHINFO_FILENAME); $stem=preg_replace('/_video$/','',$baseName);
-      foreach(array_unique([$path,$dir.'/'.$stem.'_manifest.json',$dir.'/'.$stem.'_camera_info.json',$dir.'/'.$baseName.'.json',$dir.'/'.$stem.'.json',$dir.'/'.$baseName.'.jsonl',$dir.'/'.$baseName.'.imu.jsonl',$dir.'/'.$stem.'_imu.jsonl']) as $candidate){
-        if(!file_exists($candidate)){ continue; }
-        if(safe_unlink_under_base($candidate,$dir)){ $deleted[]=$candidate; } else { $errors[]=$candidate; }
+      if(!file_exists($path)){ continue; }
+      $sourceReal=realpath($path);
+      $deletedSource=safe_unlink_video_candidate($path,$allowedVideoDirs,$allowedDirReals,$scan,$orderId,$deleted,$errors,false);
+      if($deletedSource===null || $sourceReal===false){ continue; }
+      $dir=dirname($sourceReal);
+      $baseName=pathinfo($sourceReal,PATHINFO_FILENAME);
+      foreach(array_unique([
+        $dir.'/'.$baseName.'_manifest.json',
+        $dir.'/'.$baseName.'_camera_info.json',
+        $dir.'/'.$baseName.'.json',
+        $dir.'/'.$baseName.'.jsonl',
+        $dir.'/'.$baseName.'.imu.jsonl',
+      ]) as $sidecar){
+        safe_unlink_video_candidate($sidecar,$allowedVideoDirs,$allowedDirReals,$scan,$orderId,$deleted,$errors,true);
       }
     }
-    if($errors){ throw new RuntimeException('Refused or failed to delete unsafe video paths: '.implode(', ',$errors)); }
+    if($errors){ throw new RuntimeException('Refused or failed to delete unsafe video paths: '.implode('; ',$errors)); }
     foreach($runs as $run){ $rid=(int)$run['id']; $st=$dbcnx->prepare('DELETE FROM sfm_remote_jobs WHERE pipeline_run_id=?'); if($st){$st->bind_param('i',$rid);$st->execute();$st->close();} $st=$dbcnx->prepare('DELETE FROM sfm_pipeline_runs WHERE id=?'); if($st){$st->bind_param('i',$rid);$st->execute();$st->close();} safe_rrmdir('/home/makler/web/remote_station/output/pipeline_'.$rid,'/home/makler/web/remote_station/output'); }
     if(column_exists($dbcnx,'video_scans','deleted_at')){
       $sets=['deleted_at=NOW(6)']; if(column_exists($dbcnx,'video_scans','upload_state')){$sets[]="upload_state='DELETED'";} if(column_exists($dbcnx,'video_scans','updated_at')){$sets[]='updated_at=NOW(6)';}
