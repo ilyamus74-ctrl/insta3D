@@ -589,6 +589,91 @@ function update_parent_pipeline_from_dense_child(mysqli $db, array $job, int $ch
 }
 
 
+
+function write_extract_frames_failure_result(int $remoteJobId, string $message, array $extra=[]): void
+{
+    $dir = remote_output_dir($remoteJobId);
+    if (!is_dir($dir)) { @mkdir($dir, 0775, true); }
+    $data = array_replace([
+        'status' => 'ERROR',
+        'stage' => 'EXTRACT_FRAMES',
+        'message' => $message,
+        'error' => $message,
+    ], $extra);
+    @file_put_contents($dir . '/result.json', json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+}
+
+function sfm_ffprobe_source_video(string $path): array
+{
+    [$code, $output, $cmd] = run_command([
+        'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=index,codec_name,codec_type,pix_fmt,width,height,duration:format=format_name,duration',
+        '-of', 'json', $path,
+    ]);
+    $data = json_decode($output, true);
+    if ($code !== 0 || !is_array($data)) {
+        throw new RuntimeException(format_command_failure($cmd, $code, $output));
+    }
+    $stream = is_array($data['streams'][0] ?? null) ? $data['streams'][0] : [];
+    $format = is_array($data['format'] ?? null) ? $data['format'] : [];
+    return [
+        'command' => $cmd,
+        'raw' => $data,
+        'codec' => (string)($stream['codec_name'] ?? ''),
+        'pix_fmt' => (string)($stream['pix_fmt'] ?? ''),
+        'width' => (int)($stream['width'] ?? 0),
+        'height' => (int)($stream['height'] ?? 0),
+        'duration' => (string)($format['duration'] ?? ($stream['duration'] ?? '')),
+        'format_name' => (string)($format['format_name'] ?? ''),
+    ];
+}
+
+function sfm_source_video_is_safe_mp4(string $path, array $probe): bool
+{
+    $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+    $formats = array_filter(array_map('trim', explode(',', strtolower((string)($probe['format_name'] ?? '')))));
+    return $ext === 'mp4'
+        && in_array('mp4', $formats, true)
+        && strtolower((string)($probe['codec'] ?? '')) === 'h264'
+        && strtolower((string)($probe['pix_fmt'] ?? '')) === 'yuv420p';
+}
+
+function normalize_extract_source_video_if_needed(mysqli $db, int $jobId, int $remoteJobId, int $pipelineRunId, string $input): string
+{
+    $probe = sfm_ffprobe_source_video($input);
+    $resolution = ((int)$probe['width']) . 'x' . ((int)$probe['height']);
+    $metaLine = sprintf('Source video codec=%s pix_fmt=%s resolution=%s duration=%s format=%s', $probe['codec'] ?: 'unknown', $probe['pix_fmt'] ?: 'unknown', $resolution, $probe['duration'] ?: 'unknown', $probe['format_name'] ?: 'unknown');
+    worker_log('EXTRACT_FRAMES | ' . $metaLine);
+    if ($pipelineRunId > 0) { pipeline_log($pipelineRunId, 'INFO', 'EXTRACT_FRAMES', $metaLine); }
+
+    if (sfm_source_video_is_safe_mp4($input, $probe)) {
+        if ($pipelineRunId > 0) { pipeline_log($pipelineRunId, 'INFO', 'EXTRACT_FRAMES', 'Source video already safe H.264/yuv420p MP4; normalization skipped'); }
+        worker_log('EXTRACT_FRAMES | normalization skipped source already safe');
+        return $input;
+    }
+
+    $dir = remote_output_dir($remoteJobId) . '/normalized';
+    if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+        throw new RuntimeException('Failed to create normalized video directory: ' . $dir);
+    }
+    $normalized = $dir . '/source_safe.mp4';
+    $args = ['ffmpeg', '-hide_banner', '-y', '-i', $input, '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', 'fps=30,format=yuv420p', '-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast', '-movflags', '+faststart', $normalized];
+    if ($pipelineRunId > 0) { pipeline_log($pipelineRunId, 'INFO', 'EXTRACT_FRAMES', 'Normalizing source video to safe MP4: ' . $normalized); }
+    [$code, $output, $cmd] = run_command($args);
+    write_job_text_log($remoteJobId, 'normalize_source_video_ffmpeg.log', "Command: {$cmd}\nExit code: {$code}\n\n{$output}\n");
+    $exitLine = 'ffmpeg normalization exit_code=' . $code . ' normalized_path=' . $normalized;
+    worker_log('EXTRACT_FRAMES | ' . $exitLine);
+    if ($pipelineRunId > 0) { pipeline_log($pipelineRunId, 'INFO', 'EXTRACT_FRAMES', $exitLine); }
+    if ($code !== 0 || !is_file($normalized) || filesize($normalized) <= 0) {
+        throw new RuntimeException(format_command_failure($cmd, $code, $output));
+    }
+    $normalizedProbe = sfm_ffprobe_source_video($normalized);
+    $normLine = sprintf('Normalized video codec=%s pix_fmt=%s resolution=%dx%d duration=%s normalized_path=%s', $normalizedProbe['codec'] ?: 'unknown', $normalizedProbe['pix_fmt'] ?: 'unknown', (int)$normalizedProbe['width'], (int)$normalizedProbe['height'], $normalizedProbe['duration'] ?: 'unknown', $normalized);
+    worker_log('EXTRACT_FRAMES | ' . $normLine);
+    if ($pipelineRunId > 0) { pipeline_log($pipelineRunId, 'INFO', 'EXTRACT_FRAMES', $normLine); }
+    return $normalized;
+}
+
 function set_job(mysqli $db, int $id, string $status, int $progress, string $message): void
 {
     $message = mb_substr($message, 0, 60000);
@@ -601,7 +686,7 @@ function set_job(mysqli $db, int $id, string $status, int $progress, string $mes
     $st->close();
     if (in_array($status, ['ERROR','FAILED','ERROR_EMPTY'], true)) {
         $q=$db->prepare('SELECT pipeline_run_id, job_type, chunk_index FROM sfm_remote_jobs WHERE id=? LIMIT 1');
-        if($q){ $q->bind_param('i',$id); $q->execute(); $j=$q->get_result()->fetch_assoc(); $q->close(); $pid=(int)($j['pipeline_run_id'] ?? 0); if($pid>0){ $userMessage = ((string)($j['job_type'] ?? '') === 'COLMAP_DENSE_CHUNK') ? dense_patchmatch_user_error($message) : 'Pipeline stage failed: '.(string)($j['job_type'] ?? 'job'); sfm_pipeline_fail($db,$pid,$userMessage,['child_job_id'=>$id,'child_job_type'=>$j['job_type'] ?? '', 'technical_message'=>$message]); } }
+        if($q){ $q->bind_param('i',$id); $q->execute(); $j=$q->get_result()->fetch_assoc(); $q->close(); $pid=(int)($j['pipeline_run_id'] ?? 0); if($pid>0){ $userMessage = ((string)($j['job_type'] ?? '') === 'COLMAP_DENSE_CHUNK') ? dense_patchmatch_user_error($message) : (((string)($j['job_type'] ?? '') === 'EXTRACT_FRAMES') ? mb_substr($message !== '' ? $message : 'Frame extraction failed', 0, 4000) : 'Pipeline stage failed: '.(string)($j['job_type'] ?? 'job')); sfm_pipeline_fail($db,$pid,$userMessage,['child_job_id'=>$id,'child_job_type'=>$j['job_type'] ?? '', 'technical_message'=>$message]); } }
     }
 }
 
@@ -991,6 +1076,16 @@ function launch_job(mysqli $db, array $job): void
             }
             return;
         }
+        try {
+            $input = normalize_extract_source_video_if_needed($db, $id, $remoteJobId, $pipelineRunId, $input);
+        } catch (Throwable $e) {
+            $msg = 'Source video normalization failed before frame extraction: ' . $e->getMessage();
+            worker_log('ERROR ' . $msg);
+            if ($pipelineRunId > 0) { pipeline_log($pipelineRunId, 'ERROR', 'EXTRACT_FRAMES', $msg); }
+            write_extract_frames_failure_result($remoteJobId, $msg, ['normalized_path' => remote_output_dir($remoteJobId) . '/normalized/source_safe.mp4']);
+            set_job($db, $id, 'ERROR', 0, $msg);
+            return;
+        }
         $rs=worker_run_parameters($db,$job); $ex=$rs['extract'] ?? []; $imuCfg=$rs['imu_frame_selection'] ?? []; $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: []; $localImu=safe_session_imu_path($db,$job); $localCameraInfo=safe_session_metadata_path($db,$job,'_camera_info.json'); $localManifest=safe_session_metadata_path($db,$job,'_manifest.json'); $sourceVideo=$params['source_video'] ?? []; $extractPayload=['extract'=>$ex,'imu_frame_selection'=>$imuCfg]; if(!is_array($sourceVideo)){$sourceVideo=[];} if($localCameraInfo){$sourceVideo['camera_info_path']=$localCameraInfo; worker_log('CAMERA_METADATA | camera_info sidecar found: '.$localCameraInfo);} if($localManifest){$sourceVideo['manifest_path']=$localManifest; worker_log('CAMERA_METADATA | manifest sidecar found: '.$localManifest);} if($sourceVideo){$extractPayload['source_video']=$sourceVideo;} if($localImu){$extractPayload['imu_jsonl_path']=$localImu; worker_log('IMU | Source sidecar found: '.$localImu);} else { worker_log('IMU | No source IMU sidecar found for video '.basename($input)); } $extractJson=json_encode($extractPayload, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)($ex['fps'] ?? ''), (string)($ex['max_frames'] ?? ''), (string)($ex['scale_width'] ?? ''), (string)($ex['jpeg_quality'] ?? ''), $extractJson, (string)($localImu ?? '')];
     } elseif ($type === 'COLMAP_SPARSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
@@ -1032,8 +1127,12 @@ function launch_job(mysqli $db, array $job): void
         return;
     }
     if ($code !== 0) {
-        set_job($db, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), format_command_failure($cmd, $code, $output));
-        worker_log("ERROR launch {$type} id={$id} remote={$remoteJobId}: " . format_command_failure($cmd, $code, $output));
+        $failure = format_command_failure($cmd, $code, $output);
+        if ($type === 'EXTRACT_FRAMES') {
+            write_extract_frames_failure_result($remoteJobId, $failure);
+        }
+        set_job($db, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), $failure);
+        worker_log("ERROR launch {$type} id={$id} remote={$remoteJobId}: " . $failure);
         return;
     }
     if ($type === 'EXPORT_PLY') {
