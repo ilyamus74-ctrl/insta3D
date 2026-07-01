@@ -166,7 +166,7 @@ $canOperatorClose = $role==='ADMIN' || ($role==='OPERATOR' && (int)$order['opera
 $canBrokerClose = $role==='ADMIN' || ((int)$order['broker_id']===$userId && empty($order['broker_closed_at']));
 $canReopen = $role==='ADMIN' || ((int)$order['broker_id']===$userId && (string)$order['status']!=='COMPLETED');
 $canCreatePublicLink = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
-$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['sfm_pipeline_restarted'])?'SfM pipeline restarted':(isset($_GET['sfm_job_queued'])?'SfM job queued':(isset($_GET['photo_deleted'])?'Снимок удалён':(isset($_GET['session_deleted'])?'Сессия удалена':(isset($_GET['video_uploaded'])?'External video uploaded':null))))))));
+$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['sfm_pipeline_restarted'])?'SfM pipeline restarted':(isset($_GET['sfm_job_queued'])?'SfM job queued':(isset($_GET['photo_deleted'])?'Снимок удалён':(isset($_GET['session_deleted'])?'Сессия удалена':(isset($_GET['video_deleted'])?'Видео удалено':(isset($_GET['video_uploaded'])?'External video uploaded':null)))))))));
 
 function table_exists(mysqli $dbcnx,string $table): bool { $t=$dbcnx->real_escape_string($table); $r=$dbcnx->query("SHOW TABLES LIKE '".$t."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
 function column_exists(mysqli $dbcnx,string $table,string $column): bool { $t=$dbcnx->real_escape_string($table); $c=$dbcnx->real_escape_string($column); $r=$dbcnx->query("SHOW COLUMNS FROM `".$t."` LIKE '".$c."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
@@ -264,7 +264,10 @@ function sfm_resolve_video_path(mysqli $dbcnx,int $orderId,int $sessionId,string
 function sfm_load_source_video(mysqli $dbcnx,int $orderId,int $sessionId,int $videoScanId): array {
   if($videoScanId<=0){ throw new RuntimeException('Source video is required'); }
   if(!sfm_session_for_order($dbcnx,$orderId,$sessionId)){ throw new RuntimeException('Capture session not found'); }
-  $st=$dbcnx->prepare("SELECT id, session_id, filename, storage_path, app_scan_uuid, created_at, duration_sec, size_bytes FROM video_scans WHERE id=? AND session_id=? AND deleted_at IS NULL LIMIT 1");
+  $labelSelect=column_exists($dbcnx,'video_scans','label')?', label':'';
+  $commentSelect=column_exists($dbcnx,'video_scans','comment')?', comment':'';
+  $deletedFilter=column_exists($dbcnx,'video_scans','upload_state')?" AND COALESCE(upload_state,'') <> 'DELETED'":'';
+  $st=$dbcnx->prepare("SELECT id, session_id, filename, storage_path, app_scan_uuid, created_at, duration_sec, size_bytes".$labelSelect.$commentSelect." FROM video_scans WHERE id=? AND session_id=? AND deleted_at IS NULL".$deletedFilter." LIMIT 1");
   if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
   $st->bind_param('ii',$videoScanId,$sessionId); $st->execute(); $v=$st->get_result()->fetch_assoc(); $st->close();
   if(!$v){ throw new RuntimeException('Source video not found for this capture session'); }
@@ -293,7 +296,9 @@ function sfm_resolve_video_sidecar_files(string $videoPath): array {
   return $out;
 }
 
-function sfm_source_video_snapshot(array $v): array { $sidecars=sfm_resolve_video_sidecar_files((string)($v['resolved_path'] ?? $v['storage_path'] ?? '')); return ['video_scan_id'=>(int)$v['id'],'filename'=>(string)($v['filename'] ?? ''),'storage_path'=>(string)($v['storage_path'] ?? ''),'video_path'=>(string)($v['resolved_path'] ?? ''),'app_scan_uuid'=>(string)($v['app_scan_uuid'] ?? ''),'created_at'=>(string)($v['created_at'] ?? ''),'duration_sec'=>(float)($v['duration_sec'] ?? 0),'size_bytes'=>(int)($v['size_bytes'] ?? 0)] + $sidecars; }
+function video_scan_human_label(array $v): string { return trim((string)($v['label'] ?? ($v['comment'] ?? ''))); }
+function video_scan_display_name(array $v): string { $label=video_scan_human_label($v); return $label!==''?$label:(string)($v['filename'] ?? ''); }
+function sfm_source_video_snapshot(array $v): array { $sidecars=sfm_resolve_video_sidecar_files((string)($v['resolved_path'] ?? $v['storage_path'] ?? '')); return ['video_scan_id'=>(int)$v['id'],'filename'=>(string)($v['filename'] ?? ''),'label'=>video_scan_human_label($v),'display_name'=>video_scan_display_name($v),'storage_path'=>(string)($v['storage_path'] ?? ''),'video_path'=>(string)($v['resolved_path'] ?? ''),'app_scan_uuid'=>(string)($v['app_scan_uuid'] ?? ''),'created_at'=>(string)($v['created_at'] ?? ''),'duration_sec'=>(float)($v['duration_sec'] ?? 0),'size_bytes'=>(int)($v['size_bytes'] ?? 0)] + $sidecars; }
 
 
 function web_upload_video_profiles(): array { return ['phone_web_upload'=>'pinhole_or_opencv','gopro_fisheye'=>'fisheye','insta360_rectilinear'=>'wide_rectilinear','other'=>'unknown']; }
@@ -618,6 +623,66 @@ function db_delete_or_soft_session_rows(mysqli $dbcnx,string $table,array $where
 ensure_sfm_remote_jobs_table($dbcnx);
 ensure_sfm_remote_jobs_chunk_columns($dbcnx);
 ensure_sfm_settings_pipeline_columns($dbcnx);
+ensure_video_scan_label_storage($dbcnx);
+
+function ensure_video_scan_label_storage(mysqli $dbcnx): void {
+  if(table_exists($dbcnx,'video_scans') && !column_exists($dbcnx,'video_scans','label') && !column_exists($dbcnx,'video_scans','comment')){
+    @$dbcnx->query('ALTER TABLE video_scans ADD COLUMN label VARCHAR(255) NULL');
+  }
+}
+function safe_unlink_under_base(string $path,string $base): bool {
+  $realBase=realpath($base); if($realBase===false){ return true; }
+  $real=realpath($path); if($real===false){ return true; }
+  $realBase=rtrim($realBase,DIRECTORY_SEPARATOR);
+  if(!is_file($real) || strpos($real,$realBase.DIRECTORY_SEPARATOR)!==0){ return false; }
+  return @unlink($real);
+}
+function video_scan_source_candidates(array $scan,int $orderId,string $sessionUuid): array {
+  $safe=sfm_safe_uuid($sessionUuid); $filename=basename((string)($scan['filename'] ?? ''));
+  $paths=[]; foreach([APP_STORAGE_DIR, '/home/makler/web/storage'] as $root){
+    if($filename!==''){$paths[]=$root.'/orders/'.$orderId.'/sessions/'.$safe.'/videos/'.$filename;}
+    $storage=(string)($scan['storage_path'] ?? ''); if($storage!==''){$paths[]=$root.'/'.ltrim($storage,'/');}
+  }
+  return array_values(array_unique($paths));
+}
+function delete_video_scan_for_order(mysqli $dbcnx,int $orderId,int $videoScanId,int $userId): array {
+  $sql='SELECT vs.*, cs.id AS capture_session_id, cs.app_session_uuid, cs.order_id FROM video_scans vs JOIN capture_sessions cs ON cs.id=vs.session_id WHERE vs.id=? AND cs.order_id=? AND vs.deleted_at IS NULL AND cs.deleted_at IS NULL LIMIT 1';
+  $st=$dbcnx->prepare($sql); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+  $st->bind_param('ii',$videoScanId,$orderId); $st->execute(); $scan=$st->get_result()->fetch_assoc(); $st->close();
+  if(!$scan){ throw new RuntimeException('Video not found for this order'); }
+  $sid=(int)$scan['capture_session_id'];
+  $runs=[]; $st=$dbcnx->prepare('SELECT id,status FROM sfm_pipeline_runs WHERE order_id=? AND capture_session_id=? AND video_scan_id=?'); if($st){$st->bind_param('iii',$orderId,$sid,$videoScanId);$st->execute();$rs=$st->get_result();while($r=$rs->fetch_assoc()){$runs[]=$r;}$st->close();}
+  $active=array_flip(SFM_CLEANUP_ACTIVE_STATUSES);
+  foreach($runs as $run){ if(isset($active[strtoupper((string)$run['status'])])){
+    $jobs=[]; $st=$dbcnx->prepare('SELECT * FROM sfm_remote_jobs WHERE pipeline_run_id=?'); if($st){$rid=(int)$run['id'];$st->bind_param('i',$rid);$st->execute();$rs=$st->get_result();while($j=$rs->fetch_assoc()){$jobs[]=$j;}$st->close();}
+    sfm_cancel_pipeline_jobs($jobs);
+  }}
+  $dbcnx->begin_transaction();
+  try{
+    $cleanup=sfm_cleanup_delete_project_session_artifacts_and_media($dbcnx,$orderId,$sid,$videoScanId,true,true);
+    $deleted=[]; $errors=[];
+    $safeSession=sfm_safe_uuid((string)$scan['app_session_uuid']);
+    $allowedVideoDirs=[]; foreach([APP_STORAGE_DIR, '/home/makler/web/storage'] as $root){ $allowedVideoDirs[]=rtrim($root,'/').'/orders/'.$orderId.'/sessions/'.$safeSession.'/videos'; }
+    foreach(video_scan_source_candidates($scan,$orderId,(string)$scan['app_session_uuid']) as $path){
+      $dir=dirname($path); $dirReal=realpath($dir); $allowed=false; foreach($allowedVideoDirs as $allowedDir){ $allowedReal=realpath($allowedDir); if($allowedReal!==false && $dirReal!==false && rtrim($dirReal,'/')===rtrim($allowedReal,'/')){ $allowed=true; break; } }
+      if(!$allowed){ $errors[]=$path; continue; }
+      $baseName=pathinfo($path,PATHINFO_FILENAME); $stem=preg_replace('/_video$/','',$baseName);
+      foreach(array_unique([$path,$dir.'/'.$stem.'_manifest.json',$dir.'/'.$stem.'_camera_info.json',$dir.'/'.$baseName.'.json',$dir.'/'.$stem.'.json',$dir.'/'.$baseName.'.jsonl',$dir.'/'.$baseName.'.imu.jsonl',$dir.'/'.$stem.'_imu.jsonl']) as $candidate){
+        if(!file_exists($candidate)){ continue; }
+        if(safe_unlink_under_base($candidate,$dir)){ $deleted[]=$candidate; } else { $errors[]=$candidate; }
+      }
+    }
+    if($errors){ throw new RuntimeException('Refused or failed to delete unsafe video paths: '.implode(', ',$errors)); }
+    foreach($runs as $run){ $rid=(int)$run['id']; $st=$dbcnx->prepare('DELETE FROM sfm_remote_jobs WHERE pipeline_run_id=?'); if($st){$st->bind_param('i',$rid);$st->execute();$st->close();} $st=$dbcnx->prepare('DELETE FROM sfm_pipeline_runs WHERE id=?'); if($st){$st->bind_param('i',$rid);$st->execute();$st->close();} safe_rrmdir('/home/makler/web/remote_station/output/pipeline_'.$rid,'/home/makler/web/remote_station/output'); }
+    if(column_exists($dbcnx,'video_scans','deleted_at')){
+      $sets=['deleted_at=NOW(6)']; if(column_exists($dbcnx,'video_scans','upload_state')){$sets[]="upload_state='DELETED'";} if(column_exists($dbcnx,'video_scans','updated_at')){$sets[]='updated_at=NOW(6)';}
+      $st=$dbcnx->prepare('UPDATE video_scans SET '.implode(',',$sets).' WHERE id=? AND session_id=?'); if(!$st){ throw new RuntimeException($dbcnx->error); } $st->bind_param('ii',$videoScanId,$sid); $st->execute(); $st->close();
+    } else { $st=$dbcnx->prepare('DELETE FROM video_scans WHERE id=? AND session_id=?'); if(!$st){ throw new RuntimeException($dbcnx->error); } $st->bind_param('ii',$videoScanId,$sid); $st->execute(); $st->close(); }
+    audit_log($userId,'VIDEO_SCAN_DELETED','TOUR_ORDER',$orderId,'Video deleted from order page',['video_scan_id'=>$videoScanId,'capture_session_id'=>$sid,'deleted_paths'=>$deleted,'cleanup'=>$cleanup]);
+    $dbcnx->commit(); return ['deleted_paths'=>$deleted,'cleanup'=>$cleanup];
+  }catch(Throwable $e){ $dbcnx->rollback(); throw $e; }
+}
+
 //ensure_sfm_pipeline_tables($dbcnx);
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
@@ -707,6 +772,18 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
        $st=$dbcnx->prepare("UPDATE sfm_remote_jobs SET message='Job files deleted', updated_at=NOW(6) WHERE order_id=? AND (id=? OR parent_remote_job_id=?)"); if($st){ $st->bind_param('iii',$orderId,$jobId,$remote); $st->execute(); $st->close(); }
      }
      header('Location: /order.php?id='.$orderId.'&sfm_job_queued=1'); exit;
+   }catch(Throwable $e){ $error=$e->getMessage(); }
+ }
+
+
+ if($action==='delete_video_scan' && $canDeleteMedia){
+   try{
+     $postedOrderId=(int)($_POST['order_id']??0);
+     if($postedOrderId>0 && $postedOrderId!==$orderId){ throw new RuntimeException('Bad order id for video delete'); }
+     $videoScanId=(int)($_POST['video_scan_id']??0);
+     if($videoScanId<=0){ throw new RuntimeException('Bad video id'); }
+     delete_video_scan_for_order($dbcnx,$orderId,$videoScanId,$userId);
+     header('Location: /order.php?id='.$orderId.'&video_deleted=1'); exit;
    }catch(Throwable $e){ $error=$e->getMessage(); }
  }
 
@@ -1030,8 +1107,10 @@ if($stmt){
 }
 
 $sfmPipelineRunsBySession=[];$sfmPipelineRunsBySessionVideoMode=[];$sfmLegacyRunsBySession=[];
-$stmt=$dbcnx->prepare("SELECT r.*, vs.filename AS source_filename, vs.created_at AS source_created_at, vs.duration_sec AS source_duration_sec, vs.size_bytes AS source_size_bytes, vs.deleted_at AS source_deleted_at FROM sfm_pipeline_runs r LEFT JOIN video_scans vs ON vs.id=r.video_scan_id WHERE r.order_id=? ORDER BY r.created_at DESC, r.id DESC");
-if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($r=$rs->fetch_assoc()){ $sid=(int)$r['capture_session_id']; $vid=(int)($r['video_scan_id'] ?? 0); $mode=(string)($r['pipeline_mode'] ?? ''); if(!isset($sfmPipelineRunsBySession[$sid])){$sfmPipelineRunsBySession[$sid]=[];} $r['log_url']='/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id']; $r['download_log_url']=$r['log_url'].'&download=1'; $r['point_cloud_url']=$r['output_point_cloud_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=point_cloud'):''; $r['mesh_url']=$r['output_mesh_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=mesh'):''; $r['display_message']=strtoupper((string)($r['status'] ?? ''))==='ERROR'?sfm_pipeline_error_message($r):(string)($r['message'] ?? ''); $r['source_filename']=$r['source_filename'] ?: (sfm_json_array((string)($r['parameters_json'] ?? '{}'))['source_video']['filename'] ?? 'Source video unknown'); $r['source_duration_sec']=(float)($r['source_duration_sec'] ?? (sfm_json_array((string)($r['parameters_json'] ?? '{}'))['source_video']['duration_sec'] ?? 0)); $r['source_size_human']=bytes_human((float)($r['source_size_bytes'] ?? 0)); $hasOutputFiles=((!empty($r['output_point_cloud_path']) && is_file((string)$r['output_point_cloud_path'])) || (!empty($r['output_mesh_path']) && is_file((string)$r['output_mesh_path']))); $r['artifacts_cleaned']=!empty($r['artifacts_deleted_at']) && !$hasOutputFiles; $staleTs=strtotime((string)($r['updated_at'] ?? $r['created_at'] ?? '')); $r['restart_stale_no_active']=in_array(strtoupper((string)($r['status'] ?? '')),['RESTARTING','CANCELLING'],true) && $staleTs && $staleTs < time()-600; if($r['restart_stale_no_active'] && trim((string)($r['display_message'] ?? ''))===''){ $r['display_message']='Restart failed before new run was created'; } if($r['artifacts_cleaned'] && trim((string)($r['display_message'] ?? ''))===''){ $r['display_message']='Artifacts for this old run were cleaned to free disk space. Please rerun reconstruction if needed.'; } $sfmPipelineRunsBySession[$sid][]=$r; if($vid>0 && $mode!==''){ $sfmPipelineRunsBySessionVideoMode[$sid][$vid][$mode][]=$r; } else { $sfmLegacyRunsBySession[$sid][]=$r; } } $stmt->close(); }
+$sourceLabelExpr=column_exists($dbcnx,'video_scans','label')?'vs.label':"''";
+$sourceCommentExpr=column_exists($dbcnx,'video_scans','comment')?'vs.comment':"''";
+$stmt=$dbcnx->prepare("SELECT r.*, vs.filename AS source_filename, ".$sourceLabelExpr." AS source_label, ".$sourceCommentExpr." AS source_comment, vs.created_at AS source_created_at, vs.duration_sec AS source_duration_sec, vs.size_bytes AS source_size_bytes, vs.deleted_at AS source_deleted_at FROM sfm_pipeline_runs r LEFT JOIN video_scans vs ON vs.id=r.video_scan_id WHERE r.order_id=? ORDER BY r.created_at DESC, r.id DESC");
+if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($r=$rs->fetch_assoc()){ $sid=(int)$r['capture_session_id']; $vid=(int)($r['video_scan_id'] ?? 0); $mode=(string)($r['pipeline_mode'] ?? ''); if(!isset($sfmPipelineRunsBySession[$sid])){$sfmPipelineRunsBySession[$sid]=[];} $r['log_url']='/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id']; $r['download_log_url']=$r['log_url'].'&download=1'; $r['point_cloud_url']=$r['output_point_cloud_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=point_cloud'):''; $r['mesh_url']=$r['output_mesh_path']?('/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id'].'&file=mesh'):''; $r['display_message']=strtoupper((string)($r['status'] ?? ''))==='ERROR'?sfm_pipeline_error_message($r):(string)($r['message'] ?? ''); $snap=sfm_json_array((string)($r['parameters_json'] ?? '{}'))['source_video'] ?? []; $r['source_filename']=$r['source_filename'] ?: ($snap['filename'] ?? 'Source video unknown'); $r['source_label']=trim((string)($r['source_label'] ?? $r['source_comment'] ?? ($snap['label'] ?? $snap['display_name'] ?? ''))); $r['source_duration_sec']=(float)($r['source_duration_sec'] ?? (sfm_json_array((string)($r['parameters_json'] ?? '{}'))['source_video']['duration_sec'] ?? 0)); $r['source_size_human']=bytes_human((float)($r['source_size_bytes'] ?? 0)); $hasOutputFiles=((!empty($r['output_point_cloud_path']) && is_file((string)$r['output_point_cloud_path'])) || (!empty($r['output_mesh_path']) && is_file((string)$r['output_mesh_path']))); $r['artifacts_cleaned']=!empty($r['artifacts_deleted_at']) && !$hasOutputFiles; $staleTs=strtotime((string)($r['updated_at'] ?? $r['created_at'] ?? '')); $r['restart_stale_no_active']=in_array(strtoupper((string)($r['status'] ?? '')),['RESTARTING','CANCELLING'],true) && $staleTs && $staleTs < time()-600; if($r['restart_stale_no_active'] && trim((string)($r['display_message'] ?? ''))===''){ $r['display_message']='Restart failed before new run was created'; } if($r['artifacts_cleaned'] && trim((string)($r['display_message'] ?? ''))===''){ $r['display_message']='Artifacts for this old run were cleaned to free disk space. Please rerun reconstruction if needed.'; } $sfmPipelineRunsBySession[$sid][]=$r; if($vid>0 && $mode!==''){ $sfmPipelineRunsBySessionVideoMode[$sid][$vid][$mode][]=$r; } else { $sfmLegacyRunsBySession[$sid][]=$r; } } $stmt->close(); }
 
 $sfmJobsBySession=[];
 $stmt=$dbcnx->prepare("SELECT * FROM sfm_remote_jobs WHERE order_id=? ORDER BY created_at DESC, id DESC");
@@ -1052,7 +1131,7 @@ foreach($captureSessions as $idx=>$session){
         $scanRow=$videosByFilename[$filename] ?? null;
         $metadata=['camera_info'=>['exists'=>false,'url'=>'','label'=>'View camera_info'],'manifest'=>['exists'=>false,'url'=>'','label'=>'View manifest'],'imu'=>['exists'=>false,'url'=>'','label'=>'Download imu']];
         if($scanRow){ $metadata=video_scan_metadata_info((int)$scanRow['id'],(string)($scanRow['app_scan_uuid'] ?? ''),$realVideoDir); }
-        $diskVideos[]=['filename'=>$filename,'path'=>$rv,'scan'=>$scanRow,'video_scan_id'=>$scanRow?(int)$scanRow['id']:0,'is_orphan'=>!$scanRow,'size_human'=>bytes_human((float)filesize($rv)),'modified_at'=>date('Y-m-d H:i:s',(int)filemtime($rv)),'uploaded_at'=>$scanRow?((string)($scanRow['created_at'] ?? '')):date('Y-m-d H:i:s',(int)filemtime($rv)),'duration_sec'=>$scanRow?(float)($scanRow['duration_sec'] ?? 0):0,'fps'=>0,'metadata'=>$metadata,'source_origin'=>$scanRow?(string)($scanRow['source_origin'] ?? ''):'','source_type'=>$scanRow?(string)($scanRow['source_type'] ?? ''):'','camera_profile'=>$scanRow?(string)($scanRow['camera_profile'] ?? ''):'','label'=>$scanRow?(string)($scanRow['label'] ?? ($scanRow['comment'] ?? '')):'','imu_available'=>$metadata['imu']['exists']];
+        $diskVideos[]=['filename'=>$filename,'path'=>$rv,'scan'=>$scanRow,'video_scan_id'=>$scanRow?(int)$scanRow['id']:0,'is_orphan'=>!$scanRow,'size_human'=>bytes_human((float)filesize($rv)),'modified_at'=>date('Y-m-d H:i:s',(int)filemtime($rv)),'uploaded_at'=>$scanRow?((string)($scanRow['created_at'] ?? '')):date('Y-m-d H:i:s',(int)filemtime($rv)),'duration_sec'=>$scanRow?(float)($scanRow['duration_sec'] ?? 0):0,'fps'=>0,'metadata'=>$metadata,'source_origin'=>$scanRow?(string)($scanRow['source_origin'] ?? ''):'','source_type'=>$scanRow?(string)($scanRow['source_type'] ?? ''):'','camera_profile'=>$scanRow?(string)($scanRow['camera_profile'] ?? ''):'','label'=>$scanRow?video_scan_human_label($scanRow):'','imu_available'=>$metadata['imu']['exists']];
       }
     }
   }

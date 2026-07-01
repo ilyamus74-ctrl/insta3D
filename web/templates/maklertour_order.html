@@ -169,12 +169,10 @@
           <form method="post" enctype="multipart/form-data" action="/order.php?id={$order.id}" class="external-video-upload-form">
             <input type="hidden" name="action" value="upload_external_video">
             <div class="row g-2 align-items-end">
-            {if $captureSessions|@count > 0}
               <div class="col-md-3"><label class="form-label small w-100">Target capture session<select name="capture_session_id" class="form-select form-select-sm">
-                {foreach from=$captureSessions item=targetSession name=targetSessions}<option value="{$targetSession.id}" {if $smarty.foreach.targetSessions.first}selected{/if}>#{$targetSession.id} — {$targetSession.app_session_uuid|default:'session'|escape}</option>{/foreach}
-                <option value="create_new">Create new web upload session</option>
+                {if $captureSessions|@count > 0}{foreach from=$captureSessions item=targetSession name=targetSessions}<option value="{$targetSession.id}" {if $smarty.foreach.targetSessions.first}selected{/if}>#{$targetSession.id} — {$targetSession.app_session_uuid|default:'session'|escape}</option>{/foreach}{/if}
+                <option value="create_new" {if $captureSessions|@count == 0}selected{/if}>Create new Web Upload Session</option>
               </select></label></div>
-            {/if}
             <div class="col-md-3"><label class="form-label small w-100">Video file<input type="file" name="video_file" accept=".mp4,.mov,.m4v,video/*" class="form-control form-control-sm" required></label></div>
             <div class="col-md-2"><label class="form-label small w-100">Camera/source profile<select name="camera_profile" class="form-select form-select-sm"><option value="phone_web_upload">phone_web_upload</option><option value="gopro_fisheye">gopro_fisheye</option><option value="insta360_rectilinear">insta360_rectilinear</option><option value="other">other</option></select></label></div>
             <div class="col-md-2"><label class="form-label small w-100">Label/comment<input type="text" name="video_label" class="form-control form-control-sm" maxlength="255" placeholder="optional"></label></div>
@@ -255,7 +253,14 @@
               {if $s.sfm_disk_videos|@count > 0}
                 {foreach from=$s.sfm_disk_videos item=dv}
                   <div class="border rounded p-2 mb-2 bg-white">
-                    <div><strong>{if $dv.label|default:'' != ''}{$dv.label|escape}{else}{$dv.filename|escape}{/if}</strong> — {$dv.filename|escape} — {$dv.size_human|escape} — uploaded at {$dv.uploaded_at|default:$dv.modified_at|escape}</div>
+                    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                      <div>
+                        <div class="fw-semibold">{if $dv.label|default:'' != ''}{$dv.label|escape} — <span class="text-muted">{$dv.filename|escape}</span>{else}{$dv.filename|escape}{/if}</div>
+                        {if $dv.label|default:'' != ''}<div class="small text-muted">Internal filename: {$dv.filename|escape}</div>{/if}
+                        <div class="small text-muted">Video scan ID: {$dv.video_scan_id|escape} · {$dv.size_human|escape} · Uploaded: {$dv.uploaded_at|default:$dv.modified_at|escape}{if $dv.duration_sec|default:0 > 0} · Duration: {$dv.duration_sec|escape} sec{/if}</div>
+                      </div>
+                      {if $canDeleteMedia && !$dv.is_orphan|default:false}<form method="post" action="/order.php?id={$order.id}" onsubmit="return confirm('Удалить это видео, связанные файлы и рендеры? Это действие нельзя отменить.');"><input type="hidden" name="action" value="delete_video_scan"><input type="hidden" name="order_id" value="{$order.id}"><input type="hidden" name="video_scan_id" value="{$dv.video_scan_id|escape}"><button type="submit" class="btn btn-sm btn-danger">Удалить видео</button></form>{/if}
+                    </div>
                     {if $dv.source_origin|default:'' == 'web_upload' || $dv.source_type|default:'' == 'WEB_UPLOAD'}<div class="small"><span class="badge bg-info text-dark">Web upload · no IMU</span> {if $dv.camera_profile|default:'' != ''}<span class="text-muted">Profile: {$dv.camera_profile|escape}</span>{/if}</div>{/if}
                     <div class="alert alert-success small py-2 my-2">Video uploaded. Ready to start Preview.</div>
                     <div class="small mt-1">
@@ -285,33 +290,11 @@
                   </div>
                 {/foreach}
               {else}<div class="small text-muted">No phone videos found in storage.</div>{/if}
-              {if $canDeleteMedia}
-                <div class="border rounded p-2 mb-3 bg-white">
-                  <div class="fw-semibold mb-2">Upload external video</div>
-                  <form method="post" enctype="multipart/form-data" action="/order.php?id={$order.id}" class="external-video-upload-form">
-                    <input type="hidden" name="action" value="upload_external_video">
-                    <input type="hidden" name="capture_session_id" value="{$s.id}">
-                    <div class="row g-2 align-items-end">
-                    <div class="col-md-4"><label class="form-label small w-100">Video file<input type="file" name="video_file" accept=".mp4,.mov,.m4v,video/*" class="form-control form-control-sm" required></label></div>
-                    <div class="col-md-3"><label class="form-label small w-100">Camera/source profile<select name="camera_profile" class="form-select form-select-sm"><option value="phone_web_upload">phone_web_upload</option><option value="gopro_fisheye">gopro_fisheye</option><option value="insta360_rectilinear">insta360_rectilinear</option><option value="other">other</option></select></label></div>
-                    <div class="col-md-3"><label class="form-label small w-100">Label/comment<input type="text" name="video_label" class="form-control form-control-sm" maxlength="255" placeholder="optional"></label></div>
-                    <div class="col-md-2"><div class="form-check small mb-2"><input type="checkbox" name="no_imu" value="1" class="form-check-input" id="no-imu-{$s.id}" checked><label class="form-check-label" for="no-imu-{$s.id}">This video has no IMU</label></div><button type="submit" class="btn btn-sm btn-primary external-video-upload-button">Upload</button></div>
-                    <div class="col-12 small text-muted">Large uploads require server limits high enough for the file size: PHP upload_max_filesize, post_max_size, max_input_time, max_execution_time; Apache/Nginx request body limit; and enough free disk in the PHP temp dir and final storage.</div>
-                    <div class="col-12 external-video-upload-status d-none" aria-live="polite">
-                      <div class="d-flex align-items-center gap-2 small text-primary">
-                        <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
-                        <span class="external-video-upload-status-text">Uploading video, please wait... Large files may take several minutes. Do not close this page.</span>
-                      </div>
-                      <div class="progress mt-2" style="height:6px;"><div class="progress-bar external-video-upload-progress" role="progressbar" style="width:0%;" aria-valuemin="0" aria-valuemax="100"></div></div>
-                    </div>
-                    </div>
-                  </form>
-                </div>
-              {/if}
               {if $s.sfm_multi_video_available|default:false}
                 <div class="border rounded p-2 mb-3 bg-white">
                   <div class="fw-semibold mb-1">Собрать 3D по всем видео</div>
                   <div class="small text-muted mb-2">Reconstruct from all videos: extracts frames into one combined set, then runs one shared sparse COLMAP model before dense/mesh. Standard and FullHD modes are reserved for later.</div>
+                  <div class="small mb-2"><span class="fw-semibold">Selected videos:</span> {foreach from=$s.sfm_disk_videos item=mv}{if !$mv.is_orphan|default:false && $mv.video_scan_id|default:0 > 0}<span class="badge bg-light text-dark border">{if $mv.label|default:'' != ''}{$mv.label|escape}{else}{$mv.filename|escape}{/if}</span> {/if}{/foreach}</div>
                   <form method="post" action="/order.php?id={$order.id}" class="d-inline">
                     <input type="hidden" name="action" value="start_sfm_multi_video_pipeline">
                     <input type="hidden" name="capture_session_id" value="{$s.id}">
@@ -468,8 +451,14 @@
               {foreach from=$s.sfm_disk_videos item=dv}
                 {if !$dv.is_orphan|default:false}
                   <div class="border rounded p-2 mb-3 bg-white" data-video-scan-id="{$dv.video_scan_id|escape}">
-                    <div class="fw-semibold">Reconstruction for {$dv.filename|escape}</div>
-                    <div class="small text-muted">Video scan ID: {$dv.video_scan_id|escape} · Uploaded: {$dv.uploaded_at|escape} · Duration: {$dv.duration_sec|default:0|escape} sec · Size: {$dv.size_human|escape} · IMU: {if $dv.metadata.imu.exists}yes{else}no{/if}{if $dv.camera_profile|default:'' != ''} · Profile: {$dv.camera_profile|escape}{/if}</div>{if $dv.source_origin|default:'' == 'web_upload' || $dv.source_type|default:'' == 'WEB_UPLOAD'}<div class="small mb-1"><span class="badge bg-info text-dark">Web upload · no IMU</span>{if $dv.label|default:'' != ''} <span class="text-muted">{$dv.label|escape}</span>{/if}</div>{/if}
+                    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                      <div>
+                        <div class="fw-semibold">Reconstruction for {if $dv.label|default:'' != ''}{$dv.label|escape}{else}{$dv.filename|escape}{/if}</div>
+                        <div class="small text-muted">Source video: {$dv.filename|escape}</div>
+                        <div class="small text-muted">Video scan ID: {$dv.video_scan_id|escape} · Uploaded: {$dv.uploaded_at|escape} · Duration: {$dv.duration_sec|default:0|escape} sec · Size: {$dv.size_human|escape} · IMU: {if $dv.metadata.imu.exists}yes{else}no{/if}{if $dv.camera_profile|default:'' != ''} · Profile: {$dv.camera_profile|escape}{/if}</div>
+                      </div>
+                      {if $canDeleteMedia}<form method="post" action="/order.php?id={$order.id}" onsubmit="return confirm('Удалить это видео, связанные файлы и рендеры? Это действие нельзя отменить.');"><input type="hidden" name="action" value="delete_video_scan"><input type="hidden" name="order_id" value="{$order.id}"><input type="hidden" name="video_scan_id" value="{$dv.video_scan_id|escape}"><button type="submit" class="btn btn-sm btn-danger">Удалить видео</button></form>{/if}
+                    </div>{if $dv.source_origin|default:'' == 'web_upload' || $dv.source_type|default:'' == 'WEB_UPLOAD'}<div class="small mb-1"><span class="badge bg-info text-dark">Web upload · no IMU</span>{if $dv.label|default:'' != ''} <span class="text-muted">{$dv.label|escape}</span>{/if}</div>{/if}
               <div class="row g-3 mb-3 sfm-pipeline-cards">
                 {foreach from=$dv.sfm_pipeline_cards item=pc key=pmode}
                   {assign var=run value=$pc.run}
@@ -477,11 +466,11 @@
                     <div class="card h-100 border-primary-subtle" data-pipeline-card data-video-scan-id="{$dv.video_scan_id|escape}" data-pipeline-mode="{$pmode|escape}"{if $run} data-pipeline-run-id="{$run.id}" data-pipeline-status="{$run.status|escape}"{/if}>
                       <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start gap-2">
-                          <h6 class="mb-1">{$pc.preset.label|escape}</h6>
+                          <h6 class="mb-1">{$pc.preset.label|escape}{if $dv.label|default:'' != ''} · {$dv.label|escape}{else} · {$dv.filename|escape}{/if}</h6>
                           {if $run}<span class="badge {if $run.status=='DONE'}bg-success{elseif $run.status=='ERROR'}bg-danger{elseif $run.status=='RUNNING' || $run.status=='QUEUED' || $run.status=='CANCELLING' || $run.status=='RESTARTING'}bg-primary{else}bg-secondary{/if}" data-pipeline-status-label>{$run.status|escape}</span>{else}<span class="badge bg-secondary" data-pipeline-status-label>NOT STARTED</span>{/if}
                         </div>
                         {if $run}
-                          <div class="small text-muted">Source video: <strong>{$run.source_filename|default:$dv.filename|escape}</strong></div>
+                          <div class="small text-muted">Source video: <strong>{$run.source_filename|default:$dv.filename|escape}</strong></div>{if $dv.label|default:'' != ''}<div class="small text-muted">Label: <strong>{$dv.label|escape}</strong></div>{/if}
                           <div class="small text-muted">Video scan ID: {$run.video_scan_id|default:$dv.video_scan_id|escape} · Pipeline run ID: {$run.id|escape}</div>
                           <div class="small text-muted">Uploaded: {$dv.uploaded_at|escape} · Duration: {$dv.duration_sec|default:0|escape} sec</div>
                           <div class="small text-muted mb-1">Stage: <span data-pipeline-stage>{$run.stage|escape}</span>{if $run.artifacts_cleaned|default:false} <span class="badge bg-warning text-dark ms-1">artifacts cleaned</span>{/if}</div>
