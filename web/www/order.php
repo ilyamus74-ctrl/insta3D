@@ -199,6 +199,46 @@ function enum_column_accepts(mysqli $dbcnx,string $table,string $column,string $
   $allowed=column_enum_allowed_values($dbcnx,$table,$column);
   return !$allowed || in_array($value,$allowed,true);
 }
+function video_scan_soft_delete_sets(mysqli $dbcnx,bool $includeDeletedUploadState=true): array {
+  $sets=['deleted_at=NOW(6)'];
+  if($includeDeletedUploadState && column_exists($dbcnx,'video_scans','upload_state') && enum_column_accepts($dbcnx,'video_scans','upload_state','DELETED')){
+    $sets[]="upload_state='DELETED'";
+  }
+  if(column_exists($dbcnx,'video_scans','updated_at')){ $sets[]='updated_at=NOW(6)'; }
+  return $sets;
+}
+function mark_video_scan_deleted(mysqli $dbcnx,int $videoScanId,int $sessionId): void {
+  if(column_exists($dbcnx,'video_scans','deleted_at')){
+    $sets=video_scan_soft_delete_sets($dbcnx,true);
+    $sql='UPDATE video_scans SET '.implode(',',$sets).' WHERE id=? AND session_id=?';
+    $st=$dbcnx->prepare($sql);
+    if(!$st){ throw new RuntimeException('DB prepare error for video delete SQL ['.$sql.']: '.$dbcnx->error); }
+    $st->bind_param('ii',$videoScanId,$sessionId);
+    if(!$st->execute()){
+      $err=$st->error; $errno=$st->errno; $st->close();
+      error_log('video_scan delete DB update failed; sql='.$sql.'; errno='.$errno.'; error='.$err);
+      $fallbackSets=video_scan_soft_delete_sets($dbcnx,false);
+      $fallbackSql='UPDATE video_scans SET '.implode(',',$fallbackSets).' WHERE id=? AND session_id=?';
+      $fallback=$dbcnx->prepare($fallbackSql);
+      if(!$fallback){ throw new RuntimeException('DB prepare error for video delete fallback SQL ['.$fallbackSql.']: '.$dbcnx->error); }
+      $fallback->bind_param('ii',$videoScanId,$sessionId);
+      if(!$fallback->execute()){
+        $fallbackErr=$fallback->error; $fallbackErrno=$fallback->errno; $fallback->close();
+        error_log('video_scan delete fallback DB update failed; sql='.$fallbackSql.'; errno='.$fallbackErrno.'; error='.$fallbackErr);
+        throw new RuntimeException('DB execute error while marking video deleted: '.$err.'; fallback failed: '.$fallbackErr);
+      }
+      $fallback->close();
+      return;
+    }
+    $st->close();
+    return;
+  }
+  $sql='DELETE FROM video_scans WHERE id=? AND session_id=?';
+  $st=$dbcnx->prepare($sql); if(!$st){ throw new RuntimeException('DB prepare error for video delete SQL ['.$sql.']: '.$dbcnx->error); }
+  $st->bind_param('ii',$videoScanId,$sessionId);
+  if(!$st->execute()){ $err=$st->error; $errno=$st->errno; $st->close(); error_log('video_scan hard delete failed; sql='.$sql.'; errno='.$errno.'; error='.$err); throw new RuntimeException('DB execute error while deleting video row: '.$err); }
+  $st->close();
+}
 function add_optional_insert_value(mysqli $dbcnx,string $table,array $colsInfo,array &$cols,array &$params,string &$types,string $column,$value): void {
   if(!isset($colsInfo[$column])){ return; }
   $type=strtolower((string)$colsInfo[$column]['Type']);
@@ -732,10 +772,7 @@ function delete_video_scan_for_order(mysqli $dbcnx,int $orderId,int $videoScanId
     }
     if($errors){ throw new RuntimeException('Refused or failed to delete unsafe video paths: '.implode('; ',$errors)); }
     foreach($runs as $run){ $rid=(int)$run['id']; $st=$dbcnx->prepare('DELETE FROM sfm_remote_jobs WHERE pipeline_run_id=?'); if($st){$st->bind_param('i',$rid);$st->execute();$st->close();} $st=$dbcnx->prepare('DELETE FROM sfm_pipeline_runs WHERE id=?'); if($st){$st->bind_param('i',$rid);$st->execute();$st->close();} safe_rrmdir('/home/makler/web/remote_station/output/pipeline_'.$rid,'/home/makler/web/remote_station/output'); }
-    if(column_exists($dbcnx,'video_scans','deleted_at')){
-      $sets=['deleted_at=NOW(6)']; if(column_exists($dbcnx,'video_scans','upload_state')){$sets[]="upload_state='DELETED'";} if(column_exists($dbcnx,'video_scans','updated_at')){$sets[]='updated_at=NOW(6)';}
-      $st=$dbcnx->prepare('UPDATE video_scans SET '.implode(',',$sets).' WHERE id=? AND session_id=?'); if(!$st){ throw new RuntimeException($dbcnx->error); } $st->bind_param('ii',$videoScanId,$sid); $st->execute(); $st->close();
-    } else { $st=$dbcnx->prepare('DELETE FROM video_scans WHERE id=? AND session_id=?'); if(!$st){ throw new RuntimeException($dbcnx->error); } $st->bind_param('ii',$videoScanId,$sid); $st->execute(); $st->close(); }
+    mark_video_scan_deleted($dbcnx,$videoScanId,$sid);
     audit_log($userId,'VIDEO_SCAN_DELETED','TOUR_ORDER',$orderId,'Video deleted from order page',['video_scan_id'=>$videoScanId,'capture_session_id'=>$sid,'deleted_paths'=>$deleted,'cleanup'=>$cleanup]);
     $dbcnx->commit(); return ['deleted_paths'=>$deleted,'cleanup'=>$cleanup];
   }catch(Throwable $e){ $dbcnx->rollback(); throw $e; }

@@ -129,7 +129,7 @@ if (!$isKnownX4Raw || $isAlreadyStitched) {
     }
     $processingLog = $logsDir . '/processing.log';
 
-    $stmt = $dbcnx->prepare("SELECT * FROM video_scans WHERE session_id = ? AND upload_state = 'UPLOADED'");
+    $stmt = $dbcnx->prepare("SELECT * FROM video_scans WHERE session_id = ? AND upload_state = 'UPLOADED' AND deleted_at IS NULL");
     $stmt->bind_param('i', $sessionId);
     $stmt->execute();
     $videos = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
