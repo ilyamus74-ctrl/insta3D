@@ -42,6 +42,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+private const val USB_RECIP_INTERFACE = 0x01
+
 /** Experimental, isolated stereo capture MVP for a phone camera + external USB UVC rig. */
 data class StereoRigConfig(
     val rigId: String = "phone_usb_v1",
@@ -367,8 +369,8 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         val alternates = selection.videoStreamingAlternates
         val selected = alternates.firstOrNull()
         var videoStreaming = selected?.usbInterface
-        var endpoint = selected?.endpoint
-        append("UVC discovery state: VideoControl ${if (videoControl == null) "missing" else "found id=${videoControl.id}"}; VideoStreaming alternates found count=${alternates.size}; Isochronous IN endpoint ${if (endpoint == null) "missing" else "found"}")
+        var selectedEndpoint = selected?.endpoint
+        append("UVC discovery state: VideoControl ${if (videoControl == null) "missing" else "found id=${videoControl.id}"}; VideoStreaming alternates found count=${alternates.size}; Isochronous IN endpoint ${if (selectedEndpoint == null) "missing" else "found"}")
         val rawDescriptors = runCatching { connection.rawDescriptors }.getOrNull()
         val parsedModes = parseUvcModes(rawDescriptors, ::append)
         selectedMode = chooseUvcMode(parsedModes)
@@ -376,11 +378,11 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         selectedResolutionFps = selectedMode?.let { "${it.width}x${it.height}@${it.fps}fps interval=${it.frameInterval100ns}" } ?: "640x480@30fps fallback"
         append("selected UVC pixel format=${selectedPixelFormat ?: "unknown"}")
         append("selected resolution/fps=${selectedResolutionFps}")
-        append("selected UVC interface vc=${videoControl?.id} vs=${videoStreaming?.id} endpoint_address=${endpoint?.address} endpoint_number=${endpoint?.endpointNumber} endpoint_type=${endpoint?.endpointTypeLabel()} endpoint_direction=${endpoint?.direction} endpoint_max_packet_size=${endpoint?.maxPacketSize} selected alternate setting=${videoStreaming?.alternateSetting ?: "unknown"} selected resolution/fps=${selectedResolutionFps} pixel format=${selectedPixelFormat ?: "unknown"}")
+        append("selected UVC interface vc=${videoControl?.id} vs=${videoStreaming?.id} endpoint_address=${selectedEndpoint?.address} endpoint_number=${selectedEndpoint?.endpointNumber} endpoint_type=${selectedEndpoint?.endpointTypeLabel()} endpoint_direction=${selectedEndpoint?.direction} endpoint_max_packet_size=${selectedEndpoint?.maxPacketSize} selected alternate setting=${videoStreaming?.alternateSetting ?: "unknown"} selected resolution/fps=${selectedResolutionFps} pixel format=${selectedPixelFormat ?: "unknown"}")
         update(info(device, UsbUvcStatus.UVC_ADAPTER_OPENING))
         if (videoControl == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoControl missing"))
         if (alternates.isEmpty()) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoStreaming alternates with endpoints missing"))
-        if (videoStreaming == null || endpoint == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: Isochronous IN endpoint missing"))
+        if (videoStreaming == null || selectedEndpoint == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: Isochronous IN endpoint missing"))
         val claimControl = connection.claimInterface(videoControl, true)
         append("claimInterface VideoControl id=${videoControl.id} result=$claimControl")
         if (!claimControl) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: claimInterface failed for VideoControl id=${videoControl.id}"))
@@ -397,7 +399,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             append("setInterface VideoStreaming id=${candidateInterface.id} alternate=${candidateInterface.alternateSetting ?: "unknown"} endpoint_address=${candidateEndpoint.address} max_packet_size=${candidateEndpoint.maxPacketSize} result=$setInterface")
             if (setInterface) {
                 videoStreaming = candidateInterface
-                endpoint = candidateEndpoint
+                selectedEndpoint = candidateEndpoint
                 selectedAltSetting = candidateInterface.alternateSetting
                 selectedMaxPacketSize = candidateEndpoint.maxPacketSize
                 selectedSetInterface = true
@@ -407,9 +409,10 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         }
         if (!selectedClaim) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: claimInterface failed for all VideoStreaming alternates"))
         if (!selectedSetInterface) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: setInterface failed for all VideoStreaming alternates"))
-        append("final selected endpoint address=${endpoint?.address} type=${endpoint?.type} direction=${endpoint?.direction} maxPacketSize=${endpoint?.maxPacketSize}")
+        val endpoint = selectedEndpoint ?: return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: Isochronous IN endpoint missing"))
+        append("final selected endpoint address=${endpoint.address} type=${endpoint.type} direction=${endpoint.direction} maxPacketSize=${endpoint.maxPacketSize}")
         return if (preview?.isAvailable == true) {
-            val mode = selectedMode ?: UvcSelectedMode(selectedPixelFormat ?: "MJPEG", 640, 480, 30, 333333, 640 * 480 * 2, endpoint?.maxPacketSize ?: 0)
+            val mode = selectedMode ?: UvcSelectedMode(selectedPixelFormat ?: "MJPEG", 640, 480, 30, 333333, 640 * 480 * 2, endpoint.maxPacketSize)
             runCatching { connection.commitProbe(videoStreaming, mode, endpoint, ::append) }.onFailure { append("UVC PROBE/COMMIT exception: ${it.stackTraceToString()}") }
             activeConnection = connection
             activeEndpoint = endpoint
@@ -679,7 +682,7 @@ private fun chooseUvcMode(modes: List<UvcSelectedMode>): UvcSelectedMode? =
 private fun ByteArray.le16(i: Int): Int = (getOrNull(i)?.toInt()?.and(0xff) ?: 0) or ((getOrNull(i + 1)?.toInt()?.and(0xff) ?: 0) shl 8)
 private fun ByteArray.le32(i: Int): Int = le16(i) or (le16(i + 2) shl 16)
 
-private fun UsbDeviceConnection.commitProbe(vs: UsbInterface?, mode: UvcSelectedMode, endpoint: UsbEndpoint?, log: (String) -> Unit) {
+private fun UsbDeviceConnection.commitProbe(vs: UsbInterface?, mode: UvcSelectedMode, endpoint: UsbEndpoint, log: (String) -> Unit) {
     val intf = vs?.id ?: return
     val payload = ByteArray(26)
     payload[2] = 1
@@ -687,11 +690,11 @@ private fun UsbDeviceConnection.commitProbe(vs: UsbInterface?, mode: UvcSelected
     fun put32(off: Int, v: Int) { payload[off] = v.toByte(); payload[off + 1] = (v shr 8).toByte(); payload[off + 2] = (v shr 16).toByte(); payload[off + 3] = (v shr 24).toByte() }
     put32(4, mode.frameInterval100ns)
     put32(18, mode.maxVideoFrameSize)
-    put32(22, endpoint?.maxPacketSize ?: mode.maxPayloadTransferSize)
-    val requestType = UsbConstants.USB_TYPE_CLASS or UsbConstants.USB_DIR_OUT or UsbConstants.USB_RECIP_INTERFACE
+    put32(22, endpoint.maxPacketSize)
+    val requestType = UsbConstants.USB_TYPE_CLASS or UsbConstants.USB_DIR_OUT or USB_RECIP_INTERFACE
     val probe = controlTransfer(requestType, 0x01, 0x0100, intf, payload, payload.size, 1000)
     val commit = controlTransfer(requestType, 0x01, 0x0200, intf, payload, payload.size, 1000)
-    log("UVC PROBE/COMMIT selected format=${mode.format} resolution=${mode.width}x${mode.height} fps=${mode.fps} interval=${mode.frameInterval100ns} max_video_frame_size=${mode.maxVideoFrameSize} max_payload_transfer_size=${endpoint?.maxPacketSize ?: mode.maxPayloadTransferSize} probe_result=$probe commit_result=$commit")
+    log("UVC PROBE/COMMIT selected format=${mode.format} resolution=${mode.width}x${mode.height} fps=${mode.fps} interval=${mode.frameInterval100ns} max_video_frame_size=${mode.maxVideoFrameSize} max_payload_transfer_size=${endpoint.maxPacketSize} probe_result=$probe commit_result=$commit")
 }
 
 private class UvcFrameAssembler(private val mode: UvcSelectedMode) {
