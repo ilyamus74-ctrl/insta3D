@@ -2857,6 +2857,10 @@ private fun StereoCaptureExperimentalScreen(
                         cam1Info.selectedResolutionFps?.let { append("\ncam1_selected_fps=$it") }
                         cam1Info.selectedAltSetting?.let { append("\ncam1_selected_alt_setting=$it") }
                         cam1Info.selectedMaxPacketSize?.let { append("\ncam1_selected_max_packet_size=$it") }
+                        append("\nreceive_loop_running=${cam1Info.receiveLoopRunning}")
+                        append("\nreceive_loop_exit_reason=${cam1Info.receiveLoopExitReason ?: "none"}")
+                        append("\nrequest_queue_depth=${cam1Info.requestQueueDepth}")
+                        append("\nlast_successful_transfer_ns=${cam1Info.lastSuccessfulTransferNs ?: "none"}")
                         cam1Info.error?.let { append("\n$it") }
                     }
                     Text(
@@ -2897,7 +2901,7 @@ private fun StereoCaptureExperimentalScreen(
                     }, enabled = isRecording) { Text("Stop") }
                     Button(onClick = { Toast.makeText(context, "Local export is stored under app files for backend upload integration.", Toast.LENGTH_LONG).show() }, enabled = !isRecording) { Text("Upload/export") }
                 }
-                Text("cam1 statuses: USB device found → permission missing/requested/granted → openDevice success → UVC adapter opening → UVC stream opened → UVC frames receiving → UVC preview rendering/active or UVC no frames timeout/decode failed. app_log.txt records USB interfaces, endpoints, selected format/resolution, frame counts, first/last timestamps, and render success/fail.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+                Text("cam1 statuses: USB device found → permission granted → openDevice success → UVC stream opened → packets receiving → frames assembled → frames decoded → preview rendering/active, or stalled/no packets/no decoded/no new frames/render failed. app_log.txt records device names, permissions, endpoints, alternates, receive loop, transfers, decode, and render results.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -2914,11 +2918,16 @@ private fun UsbUvcStatus.label(): String = when (this) {
     UsbUvcStatus.OPEN_DEVICE_FAILED -> "USB openDevice failed"
     UsbUvcStatus.UVC_ADAPTER_OPENING -> "UVC adapter opening"
     UsbUvcStatus.UVC_STREAM_OPENED -> "UVC stream opened, waiting for packets"
-    UsbUvcStatus.UVC_FRAMES_RECEIVING -> "UVC frames receiving"
+    UsbUvcStatus.UVC_PACKETS_RECEIVING -> "UVC packets receiving"
+    UsbUvcStatus.UVC_FRAMES_ASSEMBLED -> "UVC frames assembled"
+    UsbUvcStatus.UVC_FRAMES_DECODED -> "UVC frames decoded"
     UsbUvcStatus.UVC_PREVIEW_RENDERING -> "UVC preview rendering"
-    UsbUvcStatus.UVC_NO_FRAMES_TIMEOUT -> "UVC stream failed: no packets"
+    UsbUvcStatus.UVC_STALLED_NO_PACKETS -> "UVC stalled: no packets"
+    UsbUvcStatus.UVC_STALLED_NO_DECODED_FRAMES -> "UVC stalled: no decoded frames"
+    UsbUvcStatus.UVC_STALLED_NO_NEW_FRAMES -> "UVC stalled: no new frames"
     UsbUvcStatus.UVC_DECODE_FAILED -> "UVC decode failed"
     UsbUvcStatus.UVC_PREVIEW_ACTIVE -> "UVC preview active"
+    UsbUvcStatus.UVC_RENDER_FAILED -> "UVC render failed"
     UsbUvcStatus.UVC_PREVIEW_FAILED -> "UVC preview failed"
     UsbUvcStatus.ACTIVE -> "UVC recording active"
     UsbUvcStatus.ERROR -> "USB error"
