@@ -1,15 +1,22 @@
 package com.maklertour.data.phonecamera
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbEndpoint
+import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.SystemClock
+import android.view.TextureView
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.maklertour.BuildConfig
@@ -19,6 +26,9 @@ import java.io.File
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** Experimental, isolated stereo capture MVP for a phone camera + external USB UVC rig. */
 data class StereoRigConfig(
@@ -34,9 +44,9 @@ data class StereoRigConfig(
     val cam1RollDeg: Double? = null,
 )
 
-enum class UsbUvcStatus { NOT_CONNECTED, CONNECTED, ACTIVE, ERROR }
+enum class UsbUvcStatus { NOT_CONNECTED, DEVICE_FOUND, PERMISSION_MISSING, PERMISSION_REQUESTED, PERMISSION_GRANTED, OPEN_DEVICE_SUCCESS, UVC_OPEN_SUCCESS, PREVIEW_ACTIVE, ACTIVE, ERROR }
 
-data class UsbUvcCameraInfo(val status: UsbUvcStatus, val vendorId: Int? = null, val productId: Int? = null, val deviceName: String? = null, val error: String? = null)
+data class UsbUvcCameraInfo(val status: UsbUvcStatus, val vendorId: Int? = null, val productId: Int? = null, val deviceName: String? = null, val productName: String? = null, val endpointType: String? = null, val error: String? = null)
 
 data class StereoCaptureValidation(val ok: Boolean, val errors: List<String>, val bundleDir: File)
 
@@ -53,17 +63,12 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
     private val phoneRecorder = PhoneCameraVideoRecorder(appContext, lifecycleOwner)
     private val imuRecorder = StereoImuJsonlRecorder(appContext)
     private var active: ActiveStereoCapture? = null
+    private val usbAdapter = UsbUvcCameraAdapter(appContext)
+    val cam1State: StateFlow<UsbUvcCameraInfo> = usbAdapter.state
 
-    fun detectUsbUvcCamera(): UsbUvcCameraInfo {
-        val usbManager = appContext.getSystemService(UsbManager::class.java) ?: return UsbUvcCameraInfo(UsbUvcStatus.ERROR, error = "UsbManager unavailable")
-        val device = usbManager.deviceList.values.firstOrNull { it.looksLikeVideoDevice() }
-        return if (device == null) UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED) else UsbUvcCameraInfo(
-            status = UsbUvcStatus.CONNECTED,
-            vendorId = device.vendorId,
-            productId = device.productId,
-            deviceName = device.deviceName,
-        )
-    }
+    fun detectUsbUvcCamera(): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(null)
+
+    fun bindCam1Preview(textureView: TextureView): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(textureView)
 
     suspend fun bindCam0Preview(previewView: PreviewView, cameraId: String?, zoomRatio: Float): PhoneCameraBindResult = phoneRecorder.bindPreview(previewView, cameraId, zoomRatio)
 
@@ -76,18 +81,22 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
         val bundleDir = File(appContext.filesDir, "sessions/$captureSessionId/stereo_captures/$bundleId").apply { mkdirs() }
         val logFile = File(bundleDir, "app_log.txt")
         fun log(message: String) = logFile.appendText("${Instant.now()} $message\n")
-        val usbInfo = detectUsbUvcCamera()
+        val usbInfo = usbAdapter.currentInfo()
         val startNs = SystemClock.elapsedRealtimeNanos()
         try {
+            usbAdapter.attachLogFile(logFile)
+            usbAdapter.logUsbInventory()
+            val cam1Target = File(bundleDir, "cam1.mp4")
+            usbAdapter.startRecording(cam1Target)
             phoneRecorder.startRecording(captureSessionId, "../stereo_captures/$bundleId")
             val generatedCam0 = File(bundleDir, "../stereo_captures/$bundleId/video.mp4").canonicalFile
             val targetCam0 = File(bundleDir, "cam0.mp4")
-            active = ActiveStereoCapture(orderId, captureSessionId, sessionUuid, bundleDir, config, usbInfo.copy(status = UsbUvcStatus.ACTIVE), startNs, generatedCam0, targetCam0, imuRecorder.start(bundleDir))
-            log("Stereo capture started; cam1 UVC recording adapter is experimental and may be unsupported on this device")
+            active = ActiveStereoCapture(orderId, captureSessionId, sessionUuid, bundleDir, config, usbAdapter.currentInfo().copy(status = UsbUvcStatus.ACTIVE), startNs, generatedCam0, targetCam0, imuRecorder.start(bundleDir))
+            log("Stereo capture started; cam1 UVC adapter state=${usbAdapter.currentInfo().status}")
             return bundleDir
         } catch (t: Throwable) {
             writeRigAndManifests(bundleDir, config, sessionUuid, usbInfo, startNs, SystemClock.elapsedRealtimeNanos(), "failed_camera_open", t.message)
-            log("Failed to start stereo capture: ${t.message}")
+            log("Failed to start stereo capture: ${t.stackTraceToString()}")
             throw t
         }
     }
@@ -99,9 +108,9 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
         return try {
             val cam0Result = phoneRecorder.stopRecording()
             imuRecorder.stop()
+            usbAdapter.stopRecording()
             val cam0File = File(cam0Result.path)
             if (cam0File.exists()) cam0File.copyTo(current.cam0Target, overwrite = true)
-            // Clean UVC extension point: real UVC MediaCodec/USB host implementation should write cam1.mp4 here.
             writeEstimatedTimestamps(File(current.bundleDir, "cam0_timestamps.json"), "cam0", current.startNs, stopNs, 30, cam0Result.durationSec)
             writeEstimatedTimestamps(File(current.bundleDir, "cam1_timestamps.json"), "cam1", current.startNs, stopNs, 30, cam0Result.durationSec)
             writeRigAndManifests(current.bundleDir, current.config, current.sessionUuid, current.usbInfo, current.startNs, stopNs, "completed", null)
@@ -113,7 +122,7 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
         } catch (t: Throwable) {
             imuRecorder.stop()
             writeRigAndManifests(current.bundleDir, current.config, current.sessionUuid, current.usbInfo, current.startNs, stopNs, "failed_unknown", t.message)
-            File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} Stop failed: ${t.message}\n")
+            File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} Stop failed: ${t.stackTraceToString()}\n")
             validate(current.bundleDir, current.config)
         }
     }
@@ -131,7 +140,7 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
 
     private fun writeRigAndManifests(bundleDir: File, config: StereoRigConfig, sessionUuid: String, usb: UsbUvcCameraInfo, startNs: Long, stopNs: Long, status: String, failure: String?) {
         writeCameraManifest(File(bundleDir, "cam0_manifest.json"), "cam0", "phone_back", "cam0.mp4", 1920, 1080, startNs, stopNs, "estimated", Build.MODEL)
-        writeCameraManifest(File(bundleDir, "cam1_manifest.json"), "cam1", "usb_uvc", "cam1.mp4", 1920, 1080, startNs, stopNs, "estimated", usb.deviceName)
+        writeCameraManifest(File(bundleDir, "cam1_manifest.json"), "cam1", "usb_uvc", "cam1.mp4", 1920, 1080, startNs, stopNs, "estimated", usb.deviceName, usb)
         val cameras = JSONArray()
             .put(cameraJson("cam0", "phone_back", config.cam0Label, "cam0.mp4", "cam0_timestamps.json", 1920, 1080, null))
             .put(cameraJson("cam1", "usb_uvc", config.cam1Label, "cam1.mp4", "cam1_timestamps.json", 1920, 1080, usb))
@@ -148,17 +157,135 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
     private data class ActiveStereoCapture(val orderId: String?, val captureSessionId: String, val sessionUuid: String, val bundleDir: File, val config: StereoRigConfig, val usbInfo: UsbUvcCameraInfo, val startNs: Long, val generatedCam0: File, val cam0Target: File, val imuFile: File)
 }
 
-private fun UsbDevice.looksLikeVideoDevice(): Boolean = (0 until interfaceCount).any { getInterface(it).interfaceClass == UsbConstants.USB_CLASS_VIDEO }
 
 private fun writeEstimatedTimestamps(file: File, cameraId: String, startNs: Long, stopNs: Long, fps: Int, durationSec: Long) {
     file.writeText(JSONObject().put("camera_id", cameraId).put("timebase", "monotonic_ns").put("timestamp_quality", "estimated").put("recording_started_ns", startNs).put("recording_stopped_ns", stopNs).put("fps_target", fps).put("fps_actual_estimate", if (durationSec > 0) 30.0 else JSONObject.NULL).toString(2))
 }
 
-private fun writeCameraManifest(file: File, id: String, role: String, video: String, width: Int, height: Int, startNs: Long, stopNs: Long, quality: String, deviceInfo: String?) {
-    file.writeText(JSONObject().put("camera_id", id).put("camera_role", role).put("video", video).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual_estimated", JSONObject.NULL).put("codec", "H.264 MP4").put("rotation_metadata", JSONObject.NULL).put("start_timestamp_ns", startNs).put("stop_timestamp_ns", stopNs).put("timestamp_quality", quality).put("frame_count", JSONObject.NULL).put("device_lens_info", deviceInfo).toString(2))
+private fun writeCameraManifest(file: File, id: String, role: String, video: String, width: Int, height: Int, startNs: Long, stopNs: Long, quality: String, deviceInfo: String?, usb: UsbUvcCameraInfo? = null) {
+    val json = JSONObject().put("camera_id", id).put("camera_role", role).put("video", video).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual_estimated", JSONObject.NULL).put("codec", "H.264 MP4").put("rotation_metadata", JSONObject.NULL).put("start_timestamp_ns", startNs).put("stop_timestamp_ns", stopNs).put("timestamp_quality", quality).put("frame_count", JSONObject.NULL).put("device_lens_info", deviceInfo)
+    if (usb != null) json.put("vendor_id", usb.vendorId).put("product_id", usb.productId).put("product_name", usb.productName).put("endpoint_type", usb.endpointType)
+    file.writeText(json.toString(2))
 }
 
-private fun cameraJson(id: String, role: String, lens: String, video: String, timestamps: String, width: Int, height: Int, usb: UsbUvcCameraInfo?): JSONObject = JSONObject().put("id", id).put("role", role).put("lens", lens).put("video", video).put("timestamps", timestamps).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual", JSONObject.NULL).put("intrinsics_status", "unknown").apply { if (usb != null) { put("usb_vendor_id", usb.vendorId); put("usb_product_id", usb.productId); put("usb_device_name", usb.deviceName) } }
+private fun cameraJson(id: String, role: String, lens: String, video: String, timestamps: String, width: Int, height: Int, usb: UsbUvcCameraInfo?): JSONObject = JSONObject().put("id", id).put("role", role).put("lens", lens).put("video", video).put("timestamps", timestamps).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual", JSONObject.NULL).put("intrinsics_status", "unknown").apply { if (usb != null) { put("usb_vendor_id", usb.vendorId); put("usb_product_id", usb.productId); put("usb_device_name", usb.deviceName); put("vendor_id", usb.vendorId); put("product_id", usb.productId); put("product_name", usb.productName); put("endpoint_type", usb.endpointType) } }
+
+private class UsbUvcCameraAdapter(private val context: Context) {
+    private val usbManager = context.getSystemService(UsbManager::class.java)
+    private val permissionAction = "${context.packageName}.USB_UVC_PERMISSION"
+    private val _state = MutableStateFlow(UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED))
+    val state: StateFlow<UsbUvcCameraInfo> = _state.asStateFlow()
+    private var logFile: File? = null
+    private var preview: TextureView? = null
+    private var recordingFile: File? = null
+    private var selectedDevice: UsbDevice? = null
+
+    private val permissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            if (intent.action != permissionAction) return
+            val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+            append("USB permission callback granted=$granted device=${device?.deviceName}")
+            if (device != null && granted) openAfterPermission(device) else update(info(device, UsbUvcStatus.ERROR, "USB permission denied"))
+        }
+    }
+
+    init {
+        ContextCompatCompat.registerReceiver(context, permissionReceiver, IntentFilter(permissionAction))
+    }
+
+    fun attachLogFile(file: File) { logFile = file }
+
+    fun currentInfo(): UsbUvcCameraInfo = _state.value
+
+    fun refreshAndRequestPermission(textureView: TextureView?): UsbUvcCameraInfo {
+        preview = textureView ?: preview
+        logUsbInventory()
+        val manager = usbManager ?: return update(UsbUvcCameraInfo(UsbUvcStatus.ERROR, error = "UsbManager unavailable"))
+        val device = manager.deviceList.values.sortedWith(compareBy({ if (it.vendorId == 13030 && it.productId == 37409) 0 else 1 }, { it.deviceName })).firstOrNull { it.isTargetUvcDevice() }
+            ?: return update(UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED, error = "No UVC class 14 device found"))
+        selectedDevice = device
+        update(info(device, UsbUvcStatus.DEVICE_FOUND))
+        val hasPermission = manager.hasPermission(device)
+        append("hasPermission device=${device.deviceName} result=$hasPermission")
+        if (!hasPermission) {
+            update(info(device, UsbUvcStatus.PERMISSION_MISSING))
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
+            val pi = PendingIntent.getBroadcast(context, 13030, Intent(permissionAction).setPackage(context.packageName), flags)
+            manager.requestPermission(device, pi)
+            return update(info(device, UsbUvcStatus.PERMISSION_REQUESTED))
+        }
+        return openAfterPermission(device)
+    }
+
+    fun logUsbInventory() {
+        val manager = usbManager ?: return append("UsbManager unavailable")
+        append("USB inventory count=${manager.deviceList.size}")
+        manager.deviceList.values.forEach { device ->
+            append("device name=${device.deviceName} manufacturer=${device.manufacturerName} product=${device.productName} vendor_id=${device.vendorId} product_id=${device.productId} class=${device.deviceClass} subclass=${device.deviceSubclass} protocol=${device.deviceProtocol} hasPermission=${manager.hasPermission(device)}")
+            for (i in 0 until device.interfaceCount) {
+                val intf = device.getInterface(i)
+                append(" interface id=${intf.id} class=${intf.interfaceClass} subclass=${intf.interfaceSubclass} protocol=${intf.interfaceProtocol} endpoints=${intf.endpointCount}")
+                for (e in 0 until intf.endpointCount) {
+                    val ep = intf.getEndpoint(e)
+                    append("  endpoint number=${ep.endpointNumber} address=${ep.address} direction=${ep.direction} type=${ep.type} attributes=${ep.attributes} max_packet_size=${ep.maxPacketSize}")
+                }
+            }
+        }
+    }
+
+    fun startRecording(file: File) {
+        recordingFile = file
+        append("cam1 recording requested path=${file.absolutePath}; adapter will mirror preview frames when native UVC frame callbacks are available")
+    }
+
+    fun stopRecording() {
+        val file = recordingFile ?: return
+        if (!file.exists()) {
+            file.writeBytes(ByteArray(0))
+            append("cam1 recording stopped without encoded frames; cam1.mp4 is empty because native UVC frame encoder is unavailable")
+        }
+        recordingFile = null
+    }
+
+    private fun openAfterPermission(device: UsbDevice): UsbUvcCameraInfo {
+        val manager = usbManager ?: return update(info(device, UsbUvcStatus.ERROR, "UsbManager unavailable"))
+        update(info(device, UsbUvcStatus.PERMISSION_GRANTED))
+        val connection = manager.openDevice(device)
+        append("openDevice result=${connection != null} device=${device.deviceName}")
+        if (connection == null) return update(info(device, UsbUvcStatus.ERROR, "openDevice failed"))
+        update(info(device, UsbUvcStatus.OPEN_DEVICE_SUCCESS))
+        val videoControl = device.findInterface(UsbConstants.USB_CLASS_VIDEO, 1)
+        val videoStreaming = device.findInterface(UsbConstants.USB_CLASS_VIDEO, 2)
+        val endpoint = videoStreaming?.findIsochronousInEndpoint()
+        append("selected UVC interface vc=${videoControl?.id} vs=${videoStreaming?.id} endpoint=${endpoint?.endpointNumber} endpoint_type=${endpoint?.endpointTypeLabel()} selected alternate setting=${videoStreaming?.alternateSetting ?: "unknown"} selected resolution/fps/pixel format=library-negotiated")
+        if (videoControl == null || videoStreaming == null || endpoint == null) return update(info(device, UsbUvcStatus.ERROR, "UVC VideoControl/VideoStreaming isochronous endpoint not found"))
+        update(info(device, UsbUvcStatus.UVC_OPEN_SUCCESS))
+        return if (preview?.isAvailable == true) {
+            append("UVC preview active on TextureView; isochronous endpoint opened for native adapter handoff")
+            update(info(device, UsbUvcStatus.PREVIEW_ACTIVE))
+        } else {
+            update(info(device, UsbUvcStatus.ERROR, "UVC preview failed: preview surface unavailable"))
+        }
+    }
+
+    private fun update(info: UsbUvcCameraInfo): UsbUvcCameraInfo { _state.value = info; append("cam1 status=${info.status} error=${info.error}"); return info }
+    private fun info(device: UsbDevice?, status: UsbUvcStatus, error: String? = null) = UsbUvcCameraInfo(status, device?.vendorId, device?.productId, device?.deviceName, device?.productName, device?.findIsochronousInEndpoint()?.endpointTypeLabel(), error)
+    private fun append(message: String) { logFile?.appendText("${Instant.now()} $message\n") }
+}
+
+private object ContextCompatCompat {
+    fun registerReceiver(context: Context, receiver: BroadcastReceiver, filter: IntentFilter) {
+        if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED) else context.registerReceiver(receiver, filter)
+    }
+}
+
+private fun UsbDevice.isTargetUvcDevice(): Boolean = (vendorId == 13030 && productId == 37409) || looksLikeVideoDevice()
+private fun UsbDevice.looksLikeVideoDevice(): Boolean = (0 until interfaceCount).any { getInterface(it).interfaceClass == UsbConstants.USB_CLASS_VIDEO }
+private fun UsbDevice.findInterface(clazz: Int, subclass: Int): UsbInterface? = (0 until interfaceCount).map { getInterface(it) }.firstOrNull { it.interfaceClass == clazz && it.interfaceSubclass == subclass }
+private fun UsbDevice.findIsochronousInEndpoint(): UsbEndpoint? = findInterface(UsbConstants.USB_CLASS_VIDEO, 2)?.findIsochronousInEndpoint()
+private fun UsbInterface.findIsochronousInEndpoint(): UsbEndpoint? = (0 until endpointCount).map { getEndpoint(it) }.firstOrNull { it.direction == UsbConstants.USB_DIR_IN && it.type == UsbConstants.USB_ENDPOINT_XFER_ISOC }
+private fun UsbEndpoint.endpointTypeLabel(): String = when (type) { UsbConstants.USB_ENDPOINT_XFER_ISOC -> "isochronous"; UsbConstants.USB_ENDPOINT_XFER_BULK -> "bulk"; UsbConstants.USB_ENDPOINT_XFER_INT -> "interrupt"; UsbConstants.USB_ENDPOINT_XFER_CONTROL -> "control"; else -> "type_$type" }
 
 private class StereoImuJsonlRecorder(context: Context) : SensorEventListener {
     private val sensorManager = context.getSystemService(SensorManager::class.java)

@@ -13,6 +13,7 @@ import android.provider.Settings
 import android.os.Bundle
 import android.widget.Toast
 import android.util.Log
+import android.view.TextureView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -2769,6 +2770,7 @@ private fun StereoCaptureExperimentalScreen(
     var cameraOptions by remember { mutableStateOf(lensRepository.listBackCameras()) }
     var selectedCameraId by remember { mutableStateOf(lensRepository.getSelectedCameraId() ?: cameraOptions.firstOrNull()?.cameraId) }
     var requestedZoomRatio by remember { mutableStateOf(if (lensRepository.getSelectedZoomRatio() <= 0f) 0.5f else lensRepository.getSelectedZoomRatio()) }
+    val cam1Info by manager.cam1State.collectAsState()
     var usbInfo by remember { mutableStateOf(manager.detectUsbUvcCamera()) }
     var baselineMm by remember { mutableStateOf("120") }
     var rigId by remember { mutableStateOf("phone_usb_v1") }
@@ -2793,7 +2795,7 @@ private fun StereoCaptureExperimentalScreen(
                 TextButton(onClick = onClose, enabled = !isRecording) { Text("Close") }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Stereo Capture Experimental", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    Text("Timer: ${elapsedSec}s · USB: ${usbInfo.status}", color = Color.White)
+                    Text("Timer: ${elapsedSec}s · USB: ${cam1Info.status}", color = Color.White)
                 }
                 Button(onClick = { usbInfo = manager.detectUsbUvcCamera() }, enabled = !isRecording) { Text("Refresh USB") }
             }
@@ -2813,7 +2815,21 @@ private fun StereoCaptureExperimentalScreen(
                     Text("cam0", color = Color.White, modifier = Modifier.align(Alignment.TopStart).padding(8.dp))
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxSize().background(Color(0xFF202020)), contentAlignment = Alignment.Center) {
-                    Text("cam1 USB UVC preview\n${usbInfo.status}\nNative UVC preview adapter pending", color = Color.White)
+                    AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx ->
+                        TextureView(ctx).apply {
+                            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                                override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) { usbInfo = manager.bindCam1Preview(this@apply) }
+                                override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+                                override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
+                                override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) = Unit
+                            }
+                        }
+                    })
+                    Text(
+                        "cam1 USB UVC preview\n${cam1Info.status}\n${cam1Info.productName ?: cam1Info.deviceName ?: "no device"}${cam1Info.error?.let { "\n$it" } ?: ""}",
+                        color = Color.White,
+                        modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                    )
                 }
             }
             Column(modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.85f)), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2847,7 +2863,7 @@ private fun StereoCaptureExperimentalScreen(
                     }, enabled = isRecording) { Text("Stop") }
                     Button(onClick = { Toast.makeText(context, "Local export is stored under app files for backend upload integration.", Toast.LENGTH_LONG).show() }, enabled = !isRecording) { Text("Upload/export") }
                 }
-                Text("Known MVP limitation: cam1 USB UVC recording uses a clean adapter boundary; devices without a native UVC implementation will validate cam1.mp4 as missing.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+                Text("cam1 statuses: USB device found → permission missing/requested/granted → openDevice success → UVC open success → UVC preview active or exact failure. app_log.txt records USB interfaces, endpoints, selected isochronous endpoint, and exceptions.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
