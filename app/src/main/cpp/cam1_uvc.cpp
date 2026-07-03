@@ -287,6 +287,7 @@ void streamingThread(int64_t generation,int fd,int vendor,int product,std::strin
  auto* cbState = new CallbackState{generation};
  bool streamingStarted=false;
  uvc_error_t r=0;
+ int64_t streamStartNs=0;
  int selectedFormat=UVC_FRAME_FORMAT_UNKNOWN, selectedWidth=0, selectedHeight=0, selectedFps=0;
  struct Request { int fmt; const char* name; int w; int h; int fps; };
  const Request requests[] = {{UVC_FRAME_FORMAT_YUYV, "YUYV", 640, 480, 30},{UVC_FRAME_FORMAT_UNCOMPRESSED, "UNCOMPRESSED", 640, 480, 30}};
@@ -322,9 +323,32 @@ void streamingThread(int64_t generation,int fd,int vendor,int product,std::strin
  ALOGI("uvc_start_streaming result=%d error=%s generation=%lld", r, r < 0 ? libs.err(r).c_str() : "none", (long long)generation);
  if(r<0){ g_accept_frames=false; g_active_callback_state.store(nullptr); setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN, 0, 0, 0); setError("NATIVE_UVC_STREAM_START_FAILED: uvc_start_streaming " + libs.err(r)); goto done; }
  streamingStarted=true; clearError(); g_preview=true;
+ streamStartNs = nowNs();
  ALOGI("uvc_start_streaming ok generation=%lld", (long long)generation);
  ALOGI("real libuvc stream start succeeded selected format=%s width=%d height=%d fps=%d", frameFormatName(selectedFormat), selectedWidth, selectedHeight, selectedFps);
- while(!g_stop.load() && generation == g_session_generation.load()) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+ while(!g_stop.load() && generation == g_session_generation.load()) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  int64_t now = nowNs();
+  int64_t first = g_first_frame_ns.load();
+  if(first <= 0) {
+   int64_t noFirstFrameAgeMs = (now - streamStartNs) / 1000000LL;
+   if(noFirstFrameAgeMs > 3000) {
+    ALOGE("native UVC watchdog detected stalled stream generation=%lld", (long long)generation);
+    setError("NATIVE_UVC_STREAM_STALLED: no first frame for 3000ms");
+    break;
+   }
+   continue;
+  }
+  int64_t last = g_last_frame_ns.load();
+  if(last > 0) {
+   int64_t ageMs = (now - last) / 1000000LL;
+   if(ageMs > 2000) {
+    ALOGE("native UVC watchdog detected stalled stream generation=%lld", (long long)generation);
+    setError("NATIVE_UVC_STREAM_STALLED: no frames for 2000ms");
+    break;
+   }
+  }
+ }
 done:
  g_accept_frames=false;
  g_active_callback_state.store(nullptr);
@@ -366,6 +390,17 @@ static jboolean startPreviewLocked(){
   g_lifecycle_restarts++; requestStreamStopLocked(); g_thread.join(); ALOGI("previous stream joined");
  }
  g_stop=false;
+ g_first_frame_ns=0;
+ g_last_frame_ns=0;
+ {
+  std::lock_guard<std::mutex> lk(g_frame_lock);
+  g_latest_frame.clear();
+  g_latest_width=0;
+  g_latest_height=0;
+  g_latest_format=UVC_FRAME_FORMAT_UNKNOWN;
+  g_latest_timestamp_ns=0;
+  g_frame_dirty=false;
+ }
  int64_t generation=++g_session_generation;
  ALOGI("nativeStartPreview requested generation=%lld", (long long)generation);
  ensureRenderThreadLocked();
