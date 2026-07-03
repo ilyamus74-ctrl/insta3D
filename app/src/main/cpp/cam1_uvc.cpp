@@ -9,10 +9,13 @@
 #include <cstring>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <condition_variable>
 #include <mutex>
+#include <vector>
 #include <string>
 #include <thread>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 #define LOG_TAG "Cam1NativeUvc"
@@ -55,25 +58,46 @@ struct uvc_frame_t {
 using frame_cb_t = void (*)(uvc_frame_t*, void*);
 
 std::atomic<bool> g_opened{false}, g_preview{false}, g_recording{false}, g_stop{false};
+std::atomic<bool> g_accept_frames{false}, g_render_stop{false}, g_frame_dirty{false};
 std::atomic<int64_t> g_received{0}, g_decoded{0}, g_rendered{0}, g_last_frame_ns{0}, g_first_frame_ns{0}, g_recorded{0};
-std::atomic<int64_t> g_start_ns{0};
+std::atomic<int64_t> g_start_ns{0}, g_session_generation{0};
 std::atomic<int> g_selected_format{UVC_FRAME_FORMAT_UNKNOWN}, g_selected_width{0}, g_selected_height{0}, g_selected_fps{0};
-std::mutex g_lock;
+std::atomic<int> g_callbacks_in_flight{0};
+struct CallbackState;
+std::atomic<CallbackState*> g_active_callback_state{nullptr};
+std::atomic<int64_t> g_render_errors{0}, g_window_lock_failures{0}, g_surface_null_count{0}, g_callback_dropped_after_stop{0}, g_lifecycle_restarts{0};
+std::mutex g_lifecycle_lock;
+std::mutex g_state_lock;
+std::mutex g_window_lock;
+std::mutex g_frame_lock;
+std::condition_variable g_frame_cv;
 ANativeWindow* g_window = nullptr;
 std::thread g_thread;
+std::thread g_render_thread;
 std::string g_error;
 int g_fd=-1, g_vendor=0, g_product=0;
 int g_bus_num=-1, g_dev_addr=-1;
 std::string g_device_name;
 std::string g_usbfs;
 std::string g_selected_format_name;
+std::vector<uint8_t> g_latest_frame;
+uint32_t g_latest_width=0, g_latest_height=0;
+int g_latest_format=UVC_FRAME_FORMAT_UNKNOWN;
+int64_t g_latest_timestamp_ns=0;
 
 const char* frameFormatName(int fmt);
-int64_t nowNs(){ return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
-void setError(const std::string& s){ std::lock_guard<std::mutex> lk(g_lock); g_error=s; ALOGE("%s", s.c_str()); }
-void clearError(){ std::lock_guard<std::mutex> lk(g_lock); g_error.clear(); }
-void releaseWindow(){ if(g_window){ ANativeWindow_release(g_window); g_window=nullptr; } }
-void setSelectedMode(int format, int width, int height, int fps){ g_selected_format=format; g_selected_width=width; g_selected_height=height; g_selected_fps=fps; std::lock_guard<std::mutex> lk(g_lock); g_selected_format_name = format == UVC_FRAME_FORMAT_UNKNOWN ? "" : frameFormatName(format); }
+int64_t nowNs(){
+ timespec ts{};
+#ifdef CLOCK_BOOTTIME
+ if(clock_gettime(CLOCK_BOOTTIME, &ts) == 0) return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+#endif
+ if(clock_gettime(CLOCK_MONOTONIC, &ts) == 0) return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+ return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+void setError(const std::string& s){ std::lock_guard<std::mutex> lk(g_state_lock); g_error=s; ALOGE("%s", s.c_str()); }
+void clearError(){ std::lock_guard<std::mutex> lk(g_state_lock); g_error.clear(); }
+void releaseWindowLocked(){ if(g_window){ ANativeWindow_release(g_window); g_window=nullptr; } }
+void setSelectedMode(int format, int width, int height, int fps){ g_selected_format=format; g_selected_width=width; g_selected_height=height; g_selected_fps=fps; std::lock_guard<std::mutex> lk(g_state_lock); g_selected_format_name = format == UVC_FRAME_FORMAT_UNKNOWN ? "" : frameFormatName(format); }
 
 struct Libs {
  void* uvc=nullptr; void* usb=nullptr;
@@ -151,68 +175,137 @@ FrameMeta frameMeta(const uvc_frame_t* f){
  return m;
 }
 
-bool renderFrame(uvc_frame_t* f){
- std::lock_guard<std::mutex> lk(g_lock);
- if(!g_window || !f || !f->data || f->data_bytes==0) return false;
- FrameMeta m=frameMeta(f);
- if(m.width == 0 || m.height == 0) return false;
- ANativeWindow_setBuffersGeometry(g_window, (int)m.width, (int)m.height, WINDOW_FORMAT_RGBA_8888);
- ANativeWindow_Buffer b{}; if(ANativeWindow_lock(g_window,&b,nullptr)!=0) return false;
+bool renderYuyvToWindow(const std::vector<uint8_t>& frame, uint32_t width, uint32_t height, int format){
+ if(frame.empty() || width == 0 || height == 0) return false;
+ std::lock_guard<std::mutex> windowGuard(g_window_lock);
+ ANativeWindow* window = g_window;
+ if(!window){ g_surface_null_count++; return false; }
+ ANativeWindow_Buffer b{};
+ if(ANativeWindow_lock(window, &b, nullptr) != 0){
+  g_window_lock_failures++; ALOGE("ANativeWindow_lock failed generation=%lld", (long long)g_session_generation.load()); return false;
+ }
  auto* dst=(uint32_t*)b.bits; int bw=b.width,bh=b.height,stride=b.stride;
- const uint8_t* src=(const uint8_t*)f->data; size_t n=f->data_bytes;
- if(!dst || bw <= 0 || bh <= 0 || stride < bw){ ANativeWindow_unlockAndPost(g_window); return false; }
+ if(!dst || bw <= 0 || bh <= 0 || stride < bw){ ANativeWindow_unlockAndPost(window); g_render_errors++; return false; }
+ const uint8_t* src=frame.data(); size_t n=frame.size();
  for(int y=0;y<bh;y++){
-  uint32_t sy=(uint32_t)(((uint64_t)y * m.height) / (uint32_t)bh);
+  uint32_t sy=(uint32_t)(((uint64_t)y * height) / (uint32_t)bh);
   for(int x=0;x<bw;x++){
-   uint32_t sx=(uint32_t)(((uint64_t)x * m.width) / (uint32_t)bw);
-   if(m.format == UVC_FRAME_FORMAT_YUYV && n >= (size_t)m.width * m.height * 2u){
-    size_t pair=((size_t)sy * m.width + (sx & ~1u)) * 2u;
+   uint32_t sx=(uint32_t)(((uint64_t)x * width) / (uint32_t)bw);
+   if((format == UVC_FRAME_FORMAT_YUYV || format == UVC_FRAME_FORMAT_UNCOMPRESSED) && n >= (size_t)width * height * 2u){
+    size_t pair=((size_t)sy * width + (sx & ~1u)) * 2u;
     if(pair + 3 >= n) continue;
     uint8_t y0=src[pair], u=src[pair+1], y1=src[pair+2], v=src[pair+3];
     dst[y*stride+x]=yuvToRgba((sx & 1u) ? y1 : y0, u, v);
    } else {
-    uint8_t v=src[((size_t)sy*m.width+sx)%n];
+    uint8_t v=src[((size_t)sy*width+sx)%n];
     dst[y*stride+x]=0xff000000u | ((uint32_t)v<<16) | ((uint32_t)v<<8) | v;
    }
   }
  }
- ANativeWindow_unlockAndPost(g_window); g_rendered++; if(g_recording) g_recorded++; return true;
+ if(ANativeWindow_unlockAndPost(window) != 0){ g_render_errors++; return false; }
+ g_rendered++; if(g_recording) g_recorded++; return true;
 }
 
-void cb(uvc_frame_t* frame, void*){
- int64_t c=++g_received; g_decoded++; int64_t t=nowNs(); g_last_frame_ns=t;
- FrameMeta m=frameMeta(frame);
- char hex[16*3+1]{};
- if(frame && frame->data){
-  const uint8_t* p=(const uint8_t*)frame->data; size_t lim=frame->data_bytes < 16 ? frame->data_bytes : 16;
-  for(size_t i=0;i<lim;i++) snprintf(hex+i*3, sizeof(hex)-i*3, "%02x%s", p[i], i+1<lim ? " " : "");
+void renderThread(){
+ ALOGI("render thread start");
+ std::vector<uint8_t> local;
+ uint32_t w=0,h=0; int fmt=UVC_FRAME_FORMAT_UNKNOWN;
+ while(true){
+  {
+   std::unique_lock<std::mutex> lk(g_frame_lock);
+   g_frame_cv.wait(lk, []{ return g_render_stop.load() || g_frame_dirty.load(); });
+   if(g_render_stop.load() && !g_frame_dirty.load()) break;
+   local = g_latest_frame; w = g_latest_width; h = g_latest_height; fmt = g_latest_format; g_frame_dirty=false;
+  }
+  if(!renderYuyvToWindow(local, w, h, fmt)) g_render_errors++;
  }
- if(g_first_frame_ns.load()==0) { g_first_frame_ns=t; ALOGI("native UVC first frame received data_bytes=%zu width=%u height=%u frame_format=%d frame_format_name=%s sequence=%u first16=%s renderer=%s", frame?frame->data_bytes:0, m.width, m.height, frame?(int)frame->frame_format:0, frameFormatName(frame?(int)frame->frame_format:0), frame?frame->sequence:0, hex, m.renderer); clearError(); }
- if(c%30==0) ALOGI("native UVC frame callback count=%lld data_bytes=%zu width=%u height=%u frame_format=%d frame_format_name=%s sequence=%u first16=%s renderer=%s", (long long)c, frame?frame->data_bytes:0, m.width, m.height, frame?(int)frame->frame_format:0, frameFormatName(frame?(int)frame->frame_format:0), frame?frame->sequence:0, hex, m.renderer);
- if(renderFrame(frame)) clearError();
+ ALOGI("render thread stop");
 }
 
-void streamingThread(int fd,int vendor,int product,std::string devName,int busNum,int devAddr,std::string usbfs){
+void ensureRenderThreadLocked(){
+ if(g_render_thread.joinable()) return;
+ g_render_stop=false;
+ g_render_thread=std::thread(renderThread);
+}
+
+void stopRenderThreadLocked(){
+ g_render_stop=true;
+ g_frame_cv.notify_all();
+ if(g_render_thread.joinable()) g_render_thread.join();
+}
+
+void requestStreamStopLocked(){
+ g_accept_frames=false;
+ g_active_callback_state.store(nullptr);
+ g_stop=true;
+ g_session_generation++;
+ g_frame_cv.notify_all();
+}
+
+struct CallbackState { int64_t generation; };
+struct CallbackGuard { CallbackGuard(){ g_callbacks_in_flight++; } ~CallbackGuard(){ g_callbacks_in_flight--; } };
+
+void noteDroppedCallback(){
+ int64_t dropped = ++g_callback_dropped_after_stop;
+ if(dropped % 100 == 0) ALOGI("callback dropped after stop/stale count=%lld", (long long)dropped);
+}
+
+void cb(uvc_frame_t* frame, void* user){
+ auto* state = static_cast<CallbackState*>(user);
+ if(state == nullptr || state != g_active_callback_state.load()){
+  noteDroppedCallback(); return;
+ }
+ CallbackGuard guard;
+ if(state != g_active_callback_state.load() || !g_accept_frames.load()){
+  noteDroppedCallback(); return;
+ }
+ int64_t gen = state->generation;
+ int64_t current = g_session_generation.load();
+ if(gen != current){ noteDroppedCallback(); return; }
+ FrameMeta m=frameMeta(frame);
+ if(!frame || !frame->data || frame->data_bytes == 0 || m.width == 0 || m.height == 0) return;
+ int64_t c=++g_received; g_decoded++; int64_t t=nowNs(); g_last_frame_ns=t;
+ size_t expected = (size_t)m.width * m.height * 2u;
+ size_t copyBytes = frame->data_bytes < expected ? frame->data_bytes : expected;
+ {
+  std::lock_guard<std::mutex> lk(g_frame_lock);
+  g_latest_frame.assign((const uint8_t*)frame->data, (const uint8_t*)frame->data + copyBytes);
+  g_latest_width=m.width; g_latest_height=m.height; g_latest_format=m.format; g_latest_timestamp_ns=t; g_frame_dirty=true;
+ }
+ g_frame_cv.notify_one();
+ char hex[16*3+1]{};
+ const uint8_t* p=(const uint8_t*)frame->data; size_t lim=frame->data_bytes < 16 ? frame->data_bytes : 16;
+ for(size_t i=0;i<lim;i++) snprintf(hex+i*3, sizeof(hex)-i*3, "%02x%s", p[i], i+1<lim ? " " : "");
+ if(g_first_frame_ns.load()==0) { g_first_frame_ns=t; ALOGI("native UVC first frame received data_bytes=%zu width=%u height=%u frame_format=%d frame_format_name=%s sequence=%u first16=%s renderer=%s generation=%lld", frame->data_bytes, m.width, m.height, (int)frame->frame_format, frameFormatName((int)frame->frame_format), frame->sequence, hex, m.renderer, (long long)gen); clearError(); }
+ if(c%30==0) ALOGI("native UVC frame callback count=%lld data_bytes=%zu width=%u height=%u frame_format=%d frame_format_name=%s sequence=%u first16=%s renderer=%s generation=%lld", (long long)c, frame->data_bytes, m.width, m.height, (int)frame->frame_format, frameFormatName((int)frame->frame_format), frame->sequence, hex, m.renderer, (long long)gen);
+}
+
+void streamingThread(int64_t generation,int fd,int vendor,int product,std::string devName,int busNum,int devAddr,std::string usbfs){
+ ALOGI("streamingThread start generation=%lld", (long long)generation);
  if(!libs.load()){ setError("NATIVE_LIB_MISSING: libuvc/libusb shared libraries not found"); g_preview=false; return; }
  uvc_context_t* ctx=nullptr; uvc_device_t* dev=nullptr; uvc_device_handle_t* handle=nullptr; uvc_stream_ctrl_t* ctrl=(uvc_stream_ctrl_t*)calloc(1,256);
+ auto* cbState = new CallbackState{generation};
+ bool streamingStarted=false;
  uvc_error_t r=0;
  int selectedFormat=UVC_FRAME_FORMAT_UNKNOWN, selectedWidth=0, selectedHeight=0, selectedFps=0;
  struct Request { int fmt; const char* name; int w; int h; int fps; };
- const Request requests[] = {
-  {UVC_FRAME_FORMAT_YUYV, "YUYV", 640, 480, 30},
-  {UVC_FRAME_FORMAT_UNCOMPRESSED, "UNCOMPRESSED", 640, 480, 30},
- };
- ALOGI("native fd-aware init fields fd=%d vendor=%d product=%d deviceName=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s", fd, vendor, product, devName.c_str(), usbfs.c_str(), busNum, devAddr, g_window ? "true" : "false");
+ const Request requests[] = {{UVC_FRAME_FORMAT_YUYV, "YUYV", 640, 480, 30},{UVC_FRAME_FORMAT_UNCOMPRESSED, "UNCOMPRESSED", 640, 480, 30}};
+ bool surfacePresent=false;
+ {
+  std::lock_guard<std::mutex> lk(g_window_lock);
+  surfacePresent = g_window != nullptr;
+ }
+ ALOGI("native fd-aware init fields fd=%d vendor=%d product=%d deviceName=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s generation=%lld", fd, vendor, product, devName.c_str(), usbfs.c_str(), busNum, devAddr, surfacePresent ? "true" : "false", (long long)generation);
  if(!libs.uvc_init2){ setError("NATIVE_UVC_INIT_FAILED: uvc_init2 symbol missing"); goto done; }
  if(!libs.uvc_get_device_with_fd){ setError("NATIVE_UVC_OPEN_FAILED: uvc_get_device_with_fd symbol missing"); goto done; }
  r=libs.uvc_init2(&ctx,nullptr,usbfs.c_str());
- ALOGI("uvc_init2 usbfs=%s result=%d error=%s", usbfs.c_str(), r, r < 0 ? libs.err(r).c_str() : "none");
+ ALOGI("uvc_init2 usbfs=%s result=%d error=%s generation=%lld", usbfs.c_str(), r, r < 0 ? libs.err(r).c_str() : "none", (long long)generation);
  if(r<0){ setError("NATIVE_UVC_INIT_FAILED: uvc_init2 usbfs=" + usbfs + " " + libs.err(r)); goto done; }
  r=libs.uvc_get_device_with_fd(ctx,&dev,vendor,product,nullptr,fd,busNum,devAddr);
- ALOGI("uvc_get_device_with_fd fd=%d busNum=%d devAddr=%d vendor=%d product=%d result=%d error=%s", fd, busNum, devAddr, vendor, product, r, r < 0 ? libs.err(r).c_str() : "none");
+ ALOGI("uvc_get_device_with_fd fd=%d busNum=%d devAddr=%d vendor=%d product=%d result=%d error=%s generation=%lld", fd, busNum, devAddr, vendor, product, r, r < 0 ? libs.err(r).c_str() : "none", (long long)generation);
  if(r<0 || !dev){ setError("NATIVE_UVC_OPEN_FAILED: uvc_get_device_with_fd " + libs.err(r)); goto done; }
  r=libs.uvc_open(dev,&handle);
- ALOGI("uvc_open after fd device result=%d error=%s handle=%p", r, r < 0 ? libs.err(r).c_str() : "none", handle);
+ ALOGI("uvc_open after fd device result=%d error=%s handle=%p generation=%lld", r, r < 0 ? libs.err(r).c_str() : "none", handle, (long long)generation);
  if(r<0 || !handle){ setError("NATIVE_UVC_OPEN_FAILED: uvc_open " + libs.err(r)); goto done; }
  ALOGI("uvc_scan_control result=ok bNumInterfaces=see libuvc/device logs");
  ALOGI("future target only format=MJPEG width=1920 height=1080 fps=30 selected=false reason=MJPEG decoder not implemented for live preview");
@@ -223,44 +316,93 @@ void streamingThread(int fd,int vendor,int product,std::string devName,int busNu
  }
  if(r<0){ setError("NATIVE_UVC_STREAM_START_FAILED: uvc_get_stream_ctrl_format_size " + libs.err(r)); goto done; }
  setSelectedMode(selectedFormat, selectedWidth, selectedHeight, selectedFps);
- r=libs.uvc_start_streaming(handle,ctrl,cb,nullptr,0);
- ALOGI("uvc_start_streaming result=%d error=%s", r, r < 0 ? libs.err(r).c_str() : "none");
- if(r<0){ setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN, 0, 0, 0); setError("NATIVE_UVC_STREAM_START_FAILED: uvc_start_streaming " + libs.err(r)); goto done; }
- clearError();
+ g_accept_frames=true;
+ g_active_callback_state.store(cbState);
+ r=libs.uvc_start_streaming(handle,ctrl,cb,cbState,0);
+ ALOGI("uvc_start_streaming result=%d error=%s generation=%lld", r, r < 0 ? libs.err(r).c_str() : "none", (long long)generation);
+ if(r<0){ g_accept_frames=false; g_active_callback_state.store(nullptr); setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN, 0, 0, 0); setError("NATIVE_UVC_STREAM_START_FAILED: uvc_start_streaming " + libs.err(r)); goto done; }
+ streamingStarted=true; clearError(); g_preview=true;
+ ALOGI("uvc_start_streaming ok generation=%lld", (long long)generation);
  ALOGI("real libuvc stream start succeeded selected format=%s width=%d height=%d fps=%d", frameFormatName(selectedFormat), selectedWidth, selectedHeight, selectedFps);
- g_preview=true;
- while(!g_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(50));
- libs.uvc_stop_streaming(handle);
+ while(!g_stop.load() && generation == g_session_generation.load()) std::this_thread::sleep_for(std::chrono::milliseconds(50));
 done:
- g_preview=false; if(handle) libs.uvc_close(handle); if(dev && libs.uvc_unref_device) libs.uvc_unref_device(dev); if(ctx && libs.uvc_exit) libs.uvc_exit(ctx); free(ctrl);
+ g_accept_frames=false;
+ g_active_callback_state.store(nullptr);
+ if(streamingStarted && handle){ ALOGI("uvc_stop_streaming start generation=%lld", (long long)generation); libs.uvc_stop_streaming(handle); ALOGI("uvc_stop_streaming done generation=%lld", (long long)generation); std::this_thread::sleep_for(std::chrono::milliseconds(200)); }
+ for(int i=0;i<100 && g_callbacks_in_flight.load()>0;i++) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+ if(handle){ libs.uvc_close(handle); ALOGI("uvc_close done generation=%lld", (long long)generation); }
+ if(dev && libs.uvc_unref_device) libs.uvc_unref_device(dev);
+ if(ctx && libs.uvc_exit){ libs.uvc_exit(ctx); ALOGI("uvc_exit done generation=%lld", (long long)generation); }
+ free(ctrl);
+ delete cbState;
+ cbState=nullptr;
+ g_preview=false;
+ ALOGI("streamingThread stop generation=%lld", (long long)generation);
 }
 }
 
 extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeOpen(JNIEnv* env,jobject,jint fd,jint vendorId,jint productId,jstring deviceName,jint busNum,jint devAddr,jstring usbfs,jobject surface){
+ std::lock_guard<std::mutex> lifecycle(g_lifecycle_lock);
  clearError();
+ if(g_thread.joinable()){ ALOGI("stopping previous stream generation=%lld", (long long)g_session_generation.load()); requestStreamStopLocked(); g_thread.join(); ALOGI("previous stream joined"); }
  const char* n=env->GetStringUTFChars(deviceName,nullptr); std::string name=n?n:""; env->ReleaseStringUTFChars(deviceName,n);
  const char* u=env->GetStringUTFChars(usbfs,nullptr); std::string usbfsPath=u?u:""; env->ReleaseStringUTFChars(usbfs,u);
- std::lock_guard<std::mutex> lk(g_lock); releaseWindow(); if(surface) g_window=ANativeWindow_fromSurface(env,surface); g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_selected_format=UVC_FRAME_FORMAT_UNKNOWN; g_selected_width=0; g_selected_height=0; g_selected_fps=0; g_selected_format_name.clear(); g_error.clear(); g_fd=fd; g_vendor=vendorId; g_product=productId; g_device_name=name; g_bus_num=busNum; g_dev_addr=devAddr; g_usbfs=usbfsPath; g_opened=true; g_stop=false; g_start_ns=nowNs(); ALOGI("native UVC opened, waiting for frames fd=%d vendor=%d product=%d current_device=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s",fd,vendorId,productId,name.c_str(),usbfsPath.c_str(),busNum,devAddr,surface ? "true" : "false"); return JNI_TRUE;
+ stopRenderThreadLocked();
+ { std::lock_guard<std::mutex> lk(g_window_lock); releaseWindowLocked(); if(surface) g_window=ANativeWindow_fromSurface(env,surface); }
+ { std::lock_guard<std::mutex> lk(g_frame_lock); g_latest_frame.clear(); g_frame_dirty=false; }
+ ensureRenderThreadLocked();
+ g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_render_errors=0; g_window_lock_failures=0; g_surface_null_count=0; g_callback_dropped_after_stop=0;
+ setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN,0,0,0);
+ g_fd=fd; g_vendor=vendorId; g_product=productId; g_device_name=name; g_bus_num=busNum; g_dev_addr=devAddr; g_usbfs=usbfsPath; g_opened=true; g_start_ns=nowNs();
+ g_stop=false; g_accept_frames=false; g_render_stop=false;
+ ALOGI("native UVC opened, waiting for frames fd=%d vendor=%d product=%d current_device=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s",fd,vendorId,productId,name.c_str(),usbfsPath.c_str(),busNum,devAddr,surface ? "true" : "false");
+ return JNI_TRUE;
 }
-extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreview(JNIEnv*,jobject){ clearError(); if(!g_opened) return JNI_FALSE; if(g_thread.joinable()){g_stop=true; g_thread.join(); g_stop=false;} g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name, g_bus_num, g_dev_addr, g_usbfs); ALOGI("native UVC stream start posted on worker thread"); return JNI_TRUE; }
-extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreviewWithDevice(JNIEnv* env,jobject thiz,jint fd,jint vendor,jint product,jstring deviceName){
+
+static jboolean startPreviewLocked(){
+ clearError(); if(!g_opened) return JNI_FALSE;
+ if(g_thread.joinable()){
+  ALOGI("stopping previous stream generation=%lld", (long long)g_session_generation.load());
+  g_lifecycle_restarts++; requestStreamStopLocked(); g_thread.join(); ALOGI("previous stream joined");
+ }
+ g_stop=false;
+ int64_t generation=++g_session_generation;
+ ALOGI("nativeStartPreview requested generation=%lld", (long long)generation);
+ ensureRenderThreadLocked();
+ g_thread=std::thread(streamingThread, generation, g_fd, g_vendor, g_product, g_device_name, g_bus_num, g_dev_addr, g_usbfs);
+ ALOGI("native UVC stream start posted on worker thread generation=%lld", (long long)generation);
+ return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreview(JNIEnv*,jobject){
+ std::lock_guard<std::mutex> lifecycle(g_lifecycle_lock); return startPreviewLocked();
+}
+
+extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreviewWithDevice(JNIEnv* env,jobject,jint fd,jint vendor,jint product,jstring deviceName){
+ std::lock_guard<std::mutex> lifecycle(g_lifecycle_lock);
  clearError();
  const char* n=env->GetStringUTFChars(deviceName,nullptr); std::string name=n?n:""; env->ReleaseStringUTFChars(deviceName,n);
  if(g_bus_num < 0 || g_dev_addr < 0 || g_usbfs.empty()){
-   setError("NATIVE_UVC_OPEN_FAILED: nativeStartPreviewWithDevice requires prior nativeOpen with parsed USB path");
-   return JNI_FALSE;
+  setError("NATIVE_UVC_OPEN_FAILED: nativeStartPreviewWithDevice requires prior nativeOpen with parsed USB path"); return JNI_FALSE;
  }
- g_fd=fd; g_vendor=vendor; g_product=product; g_device_name=name;
- if(!g_opened) g_opened=true;
- if(g_thread.joinable()){g_stop=true; g_thread.join(); g_stop=false;}
- g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name, g_bus_num, g_dev_addr, g_usbfs);
- ALOGI("native UVC stream start-with-device posted fd=%d vendor=%d product=%d deviceName=%s usbfs=%s busNum=%d devAddr=%d", fd, vendor, product, name.c_str(), g_usbfs.c_str(), g_bus_num, g_dev_addr);
- return JNI_TRUE;
+ g_fd=fd; g_vendor=vendor; g_product=product; g_device_name=name; if(!g_opened) g_opened=true;
+ ALOGI("nativeStartPreviewWithDevice requested fd=%d vendor=%d product=%d deviceName=%s usbfs=%s busNum=%d devAddr=%d", fd, vendor, product, name.c_str(), g_usbfs.c_str(), g_bus_num, g_dev_addr);
+ return startPreviewLocked();
 }
-extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStopPreview(JNIEnv*,jobject){ g_stop=true; if(g_thread.joinable()) g_thread.join(); g_preview=false; }
+
+extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStopPreview(JNIEnv*,jobject){
+ std::lock_guard<std::mutex> lifecycle(g_lifecycle_lock);
+ if(g_thread.joinable()){ ALOGI("stopping previous stream generation=%lld", (long long)g_session_generation.load()); requestStreamStopLocked(); g_thread.join(); ALOGI("previous stream joined"); }
+ g_preview=false; g_accept_frames=false; stopRenderThreadLocked();
+}
 extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartRecording(JNIEnv* env,jobject,jstring path){ const char* p=env->GetStringUTFChars(path,nullptr); ALOGI("native UVC recording requested path=%s",p?p:""); env->ReleaseStringUTFChars(path,p); g_recorded=0; g_recording=g_opened.load(); return g_recording?JNI_TRUE:JNI_FALSE; }
 extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStopRecording(JNIEnv*,jobject){ g_recording=false; }
-extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeClose(JNIEnv*,jobject){ g_stop=true; if(g_thread.joinable()) g_thread.join(); g_recording=false; g_opened=false; g_selected_format=UVC_FRAME_FORMAT_UNKNOWN; g_selected_width=0; g_selected_height=0; g_selected_fps=0; std::lock_guard<std::mutex> lk(g_lock); g_selected_format_name.clear(); releaseWindow(); }
+extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeClose(JNIEnv*,jobject){
+ std::lock_guard<std::mutex> lifecycle(g_lifecycle_lock);
+ if(g_thread.joinable()){ ALOGI("stopping previous stream generation=%lld", (long long)g_session_generation.load()); requestStreamStopLocked(); g_thread.join(); ALOGI("previous stream joined"); }
+ g_recording=false; g_opened=false; g_preview=false; g_accept_frames=false; stopRenderThreadLocked(); setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN,0,0,0);
+ { std::lock_guard<std::mutex> lk(g_window_lock); releaseWindowLocked(); }
+}
 extern "C" JNIEXPORT jlongArray JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeSnapshot(JNIEnv* env,jobject){ double fps=0.0; auto last=g_last_frame_ns.load(); auto first=g_first_frame_ns.load(); auto rec=g_received.load(); if(first>0&&last>first) fps=(double)(rec-1)*1e9/(double)(last-first); int64_t fpsBits; memcpy(&fpsBits,&fps,8); jlong values[12]={g_received.load(),g_decoded.load(),g_rendered.load(),fpsBits,last,first,g_recorded.load(),g_preview.load()?1:0,g_selected_format.load(),g_selected_width.load(),g_selected_height.load(),g_selected_fps.load()}; jlongArray out=env->NewLongArray(12); env->SetLongArrayRegion(out,0,12,values); return out; }
-extern "C" JNIEXPORT jstring JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeSelectedFormatName(JNIEnv* env,jobject){ std::lock_guard<std::mutex> lk(g_lock); return env->NewStringUTF(g_selected_format_name.c_str()); }
-extern "C" JNIEXPORT jstring JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeLastError(JNIEnv* env,jobject){ std::lock_guard<std::mutex> lk(g_lock); return env->NewStringUTF(g_error.c_str()); }
+extern "C" JNIEXPORT jstring JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeSelectedFormatName(JNIEnv* env,jobject){ std::lock_guard<std::mutex> lk(g_state_lock); return env->NewStringUTF(g_selected_format_name.c_str()); }
+extern "C" JNIEXPORT jstring JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeLastError(JNIEnv* env,jobject){ std::lock_guard<std::mutex> lk(g_state_lock); return env->NewStringUTF(g_error.c_str()); }
