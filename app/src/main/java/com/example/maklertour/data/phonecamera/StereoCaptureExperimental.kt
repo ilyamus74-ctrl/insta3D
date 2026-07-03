@@ -16,6 +16,7 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import android.view.TextureView
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
@@ -44,7 +45,7 @@ data class StereoRigConfig(
     val cam1RollDeg: Double? = null,
 )
 
-enum class UsbUvcStatus { NOT_CONNECTED, DEVICE_FOUND, PERMISSION_MISSING, PERMISSION_REQUESTED, PERMISSION_GRANTED, OPEN_DEVICE_SUCCESS, UVC_OPEN_SUCCESS, PREVIEW_ACTIVE, ACTIVE, ERROR }
+enum class UsbUvcStatus { NOT_CONNECTED, DEVICE_FOUND, PERMISSION_MISSING, PERMISSION_REQUESTED, PERMISSION_GRANTED, PERMISSION_DENIED, OPEN_DEVICE_SUCCESS, OPEN_DEVICE_FAILED, UVC_ADAPTER_OPENING, UVC_PREVIEW_ACTIVE, UVC_PREVIEW_FAILED, ACTIVE, ERROR }
 
 data class UsbUvcCameraInfo(val status: UsbUvcStatus, val vendorId: Int? = null, val productId: Int? = null, val deviceName: String? = null, val productName: String? = null, val endpointType: String? = null, val error: String? = null)
 
@@ -69,6 +70,8 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
     fun detectUsbUvcCamera(): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(null)
 
     fun bindCam1Preview(textureView: TextureView): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(textureView)
+
+    fun close() = usbAdapter.close()
 
     suspend fun bindCam0Preview(previewView: PreviewView, cameraId: String?, zoomRatio: Float): PhoneCameraBindResult = phoneRecorder.bindPreview(previewView, cameraId, zoomRatio)
 
@@ -172,46 +175,61 @@ private fun cameraJson(id: String, role: String, lens: String, video: String, ti
 
 private class UsbUvcCameraAdapter(private val context: Context) {
     private val usbManager = context.getSystemService(UsbManager::class.java)
-    private val permissionAction = "${context.packageName}.USB_UVC_PERMISSION"
+    private val permissionAction = "com.maklertour.USB_PERMISSION"
     private val _state = MutableStateFlow(UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED))
     val state: StateFlow<UsbUvcCameraInfo> = _state.asStateFlow()
-    private var logFile: File? = null
+    private var logFile: File? = File(context.filesDir, "app_log.txt")
     private var preview: TextureView? = null
     private var recordingFile: File? = null
     private var selectedDevice: UsbDevice? = null
+    private var receiverRegistered = false
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             if (intent.action != permissionAction) return
-            val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+            val callbackDevice = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-            append("USB permission callback granted=$granted device=${device?.deviceName}")
-            if (device != null && granted) openAfterPermission(device) else update(info(device, UsbUvcStatus.ERROR, "USB permission denied"))
+            val device = callbackDevice ?: selectedDevice ?: findSelectedDeviceWithRetry()
+            append("permission callback received action=${intent.action}")
+            append("EXTRA_PERMISSION_GRANTED value=$granted")
+            append("EXTRA_DEVICE value=${callbackDevice?.deviceName} vendor=${callbackDevice?.vendorId} product=${callbackDevice?.productId}")
+            append("hasPermission after callback=${device?.let { usbManager?.hasPermission(it) }} selected=${selectedDevice?.deviceName}")
+            if (granted && device != null) {
+                selectedDevice = device
+                openAfterPermission(device)
+            } else if (!granted) {
+                update(info(device, UsbUvcStatus.PERMISSION_DENIED, "USB permission denied"))
+            } else {
+                update(info(selectedDevice, UsbUvcStatus.ERROR, "USB permission granted callback had no device"))
+            }
         }
-    }
-
-    init {
-        ContextCompatCompat.registerReceiver(context, permissionReceiver, IntentFilter(permissionAction))
     }
 
     fun attachLogFile(file: File) { logFile = file }
 
+    fun close() { unregisterPermissionReceiver() }
+
     fun currentInfo(): UsbUvcCameraInfo = _state.value
 
     fun refreshAndRequestPermission(textureView: TextureView?): UsbUvcCameraInfo {
+        append("Refresh USB pressed")
         preview = textureView ?: preview
         logUsbInventory()
         val manager = usbManager ?: return update(UsbUvcCameraInfo(UsbUvcStatus.ERROR, error = "UsbManager unavailable"))
-        val device = manager.deviceList.values.sortedWith(compareBy({ if (it.vendorId == 13030 && it.productId == 37409) 0 else 1 }, { it.deviceName })).firstOrNull { it.isTargetUvcDevice() }
+        val device = findSelectedDeviceWithRetry()
+            ?: selectedDevice?.also { append("deviceList empty or target absent; keeping selected device while pending=${_state.value.status == UsbUvcStatus.PERMISSION_REQUESTED}") }
             ?: return update(UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED, error = "No UVC class 14 device found"))
         selectedDevice = device
         update(info(device, UsbUvcStatus.DEVICE_FOUND))
         val hasPermission = manager.hasPermission(device)
-        append("hasPermission device=${device.deviceName} result=$hasPermission")
+        append("selected device name=${device.deviceName} vendor=${device.vendorId} product=${device.productId}")
+        append("hasPermission before request device=${device.deviceName} result=$hasPermission")
         if (!hasPermission) {
             update(info(device, UsbUvcStatus.PERMISSION_MISSING))
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
+            registerPermissionReceiver()
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
             val pi = PendingIntent.getBroadcast(context, 13030, Intent(permissionAction).setPackage(context.packageName), flags)
+            append("requestPermission called action=$permissionAction flags=$flags")
             manager.requestPermission(device, pi)
             return update(info(device, UsbUvcStatus.PERMISSION_REQUESTED))
         }
@@ -220,7 +238,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
 
     fun logUsbInventory() {
         val manager = usbManager ?: return append("UsbManager unavailable")
-        append("USB inventory count=${manager.deviceList.size}")
+        append("devices found count=${manager.deviceList.size}")
         manager.deviceList.values.forEach { device ->
             append("device name=${device.deviceName} manufacturer=${device.manufacturerName} product=${device.productName} vendor_id=${device.vendorId} product_id=${device.productId} class=${device.deviceClass} subclass=${device.deviceSubclass} protocol=${device.deviceProtocol} hasPermission=${manager.hasPermission(device)}")
             for (i in 0 until device.interfaceCount) {
@@ -253,25 +271,53 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         update(info(device, UsbUvcStatus.PERMISSION_GRANTED))
         val connection = manager.openDevice(device)
         append("openDevice result=${connection != null} device=${device.deviceName}")
-        if (connection == null) return update(info(device, UsbUvcStatus.ERROR, "openDevice failed"))
+        if (connection == null) return update(info(device, UsbUvcStatus.OPEN_DEVICE_FAILED, "openDevice failed"))
         update(info(device, UsbUvcStatus.OPEN_DEVICE_SUCCESS))
         val videoControl = device.findInterface(UsbConstants.USB_CLASS_VIDEO, 1)
         val videoStreaming = device.findInterface(UsbConstants.USB_CLASS_VIDEO, 2)
         val endpoint = videoStreaming?.findIsochronousInEndpoint()
         append("selected UVC interface vc=${videoControl?.id} vs=${videoStreaming?.id} endpoint=${endpoint?.endpointNumber} endpoint_type=${endpoint?.endpointTypeLabel()} selected alternate setting=${videoStreaming?.alternateSetting ?: "unknown"} selected resolution/fps/pixel format=library-negotiated")
-        if (videoControl == null || videoStreaming == null || endpoint == null) return update(info(device, UsbUvcStatus.ERROR, "UVC VideoControl/VideoStreaming isochronous endpoint not found"))
-        update(info(device, UsbUvcStatus.UVC_OPEN_SUCCESS))
+        update(info(device, UsbUvcStatus.UVC_ADAPTER_OPENING))
+        if (videoControl == null || videoStreaming == null || endpoint == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoControl/VideoStreaming isochronous endpoint not found"))
         return if (preview?.isAvailable == true) {
             append("UVC preview active on TextureView; isochronous endpoint opened for native adapter handoff")
-            update(info(device, UsbUvcStatus.PREVIEW_ACTIVE))
+            update(info(device, UsbUvcStatus.UVC_PREVIEW_ACTIVE))
         } else {
-            update(info(device, UsbUvcStatus.ERROR, "UVC preview failed: preview surface unavailable"))
+            update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: preview surface unavailable"))
         }
     }
 
-    private fun update(info: UsbUvcCameraInfo): UsbUvcCameraInfo { _state.value = info; append("cam1 status=${info.status} error=${info.error}"); return info }
+    private fun update(info: UsbUvcCameraInfo): UsbUvcCameraInfo { _state.value = info; append("exact error state status=${info.status} error=${info.error}"); return info }
     private fun info(device: UsbDevice?, status: UsbUvcStatus, error: String? = null) = UsbUvcCameraInfo(status, device?.vendorId, device?.productId, device?.deviceName, device?.productName, device?.findIsochronousInEndpoint()?.endpointTypeLabel(), error)
-    private fun append(message: String) { logFile?.appendText("${Instant.now()} $message\n") }
+    private fun findSelectedDeviceWithRetry(timeoutMs: Long = 1_500L): UsbDevice? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        do {
+            usbManager?.deviceList?.values
+                ?.sortedWith(compareBy({ if (it.vendorId == 13030 && it.productId == 37409) 0 else 1 }, { it.deviceName }))
+                ?.firstOrNull { it.isTargetUvcDevice() }
+                ?.let { return it }
+            if (timeoutMs <= 0L) break
+            SystemClock.sleep(100L)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        return null
+    }
+
+    private fun registerPermissionReceiver() {
+        if (!receiverRegistered) {
+            ContextCompatCompat.registerReceiver(context, permissionReceiver, IntentFilter(permissionAction))
+            receiverRegistered = true
+            append("USB permission receiver registered action=$permissionAction")
+        }
+    }
+
+    private fun unregisterPermissionReceiver() {
+        if (receiverRegistered) runCatching { context.unregisterReceiver(permissionReceiver) }.onSuccess { receiverRegistered = false }.onFailure { append("USB permission receiver unregister failed: ${it.message}") }
+    }
+
+    private fun append(message: String) {
+        Log.d("StereoUsbUvc", message)
+        logFile?.appendText("${Instant.now()} $message\n")
+    }
 }
 
 private object ContextCompatCompat {

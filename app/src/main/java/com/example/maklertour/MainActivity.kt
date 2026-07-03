@@ -10,6 +10,7 @@ import android.net.Uri
 import android.hardware.Sensor
 import android.hardware.SensorManager
 import android.provider.Settings
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import android.util.Log
@@ -80,6 +81,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
 import androidx.camera.view.PreviewView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
@@ -2766,6 +2768,12 @@ private fun StereoCaptureExperimentalScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val manager = remember(context, lifecycleOwner) { StereoCaptureExperimentalManager(context, lifecycleOwner) }
+    DisposableEffect(manager) { onDispose { manager.close() } }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            (context as? ComponentActivity)?.let { ActivityCompat.requestPermissions(it, arrayOf(Manifest.permission.RECORD_AUDIO), 13031) }
+        }
+    }
     val lensRepository = remember(context) { PhoneCameraLensRepository(context) }
     var cameraOptions by remember { mutableStateOf(lensRepository.listBackCameras()) }
     var selectedCameraId by remember { mutableStateOf(lensRepository.getSelectedCameraId() ?: cameraOptions.firstOrNull()?.cameraId) }
@@ -2795,7 +2803,7 @@ private fun StereoCaptureExperimentalScreen(
                 TextButton(onClick = onClose, enabled = !isRecording) { Text("Close") }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Stereo Capture Experimental", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    Text("Timer: ${elapsedSec}s · USB: ${cam1Info.status}", color = Color.White)
+                    Text("Timer: ${elapsedSec}s · USB: ${cam1Info.status.label()}", color = Color.White)
                 }
                 Button(onClick = { usbInfo = manager.detectUsbUvcCamera() }, enabled = !isRecording) { Text("Refresh USB") }
             }
@@ -2826,7 +2834,7 @@ private fun StereoCaptureExperimentalScreen(
                         }
                     })
                     Text(
-                        "cam1 USB UVC preview\n${cam1Info.status}\n${cam1Info.productName ?: cam1Info.deviceName ?: "no device"}${cam1Info.error?.let { "\n$it" } ?: ""}",
+                        "cam1 USB UVC preview\n${cam1Info.status.label()}\n${cam1Info.productName ?: cam1Info.deviceName ?: if (cam1Info.status == UsbUvcStatus.PERMISSION_REQUESTED) \"device selected; waiting for permission\" else \"no device\"}${cam1Info.error?.let { "\n$it" } ?: ""}",
                         color = Color.White,
                         modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
                     )
@@ -2863,8 +2871,24 @@ private fun StereoCaptureExperimentalScreen(
                     }, enabled = isRecording) { Text("Stop") }
                     Button(onClick = { Toast.makeText(context, "Local export is stored under app files for backend upload integration.", Toast.LENGTH_LONG).show() }, enabled = !isRecording) { Text("Upload/export") }
                 }
-                Text("cam1 statuses: USB device found → permission missing/requested/granted → openDevice success → UVC open success → UVC preview active or exact failure. app_log.txt records USB interfaces, endpoints, selected isochronous endpoint, and exceptions.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+                Text("cam1 statuses: USB device found → permission missing/requested/granted → openDevice success → UVC adapter opening → UVC preview active or exact failure. app_log.txt records USB interfaces, endpoints, selected isochronous endpoint, and exceptions.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
+}
+
+private fun UsbUvcStatus.label(): String = when (this) {
+    UsbUvcStatus.NOT_CONNECTED -> "USB not connected"
+    UsbUvcStatus.DEVICE_FOUND -> "USB device found"
+    UsbUvcStatus.PERMISSION_MISSING -> "USB permission missing"
+    UsbUvcStatus.PERMISSION_REQUESTED -> "USB permission requested"
+    UsbUvcStatus.PERMISSION_GRANTED -> "USB permission granted"
+    UsbUvcStatus.PERMISSION_DENIED -> "USB permission denied"
+    UsbUvcStatus.OPEN_DEVICE_SUCCESS -> "USB openDevice success"
+    UsbUvcStatus.OPEN_DEVICE_FAILED -> "USB openDevice failed"
+    UsbUvcStatus.UVC_ADAPTER_OPENING -> "UVC adapter opening"
+    UsbUvcStatus.UVC_PREVIEW_ACTIVE -> "UVC preview active"
+    UsbUvcStatus.UVC_PREVIEW_FAILED -> "UVC preview failed"
+    UsbUvcStatus.ACTIVE -> "UVC recording active"
+    UsbUvcStatus.ERROR -> "USB error"
 }
