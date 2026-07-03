@@ -51,7 +51,7 @@ data class StereoRigConfig(
     val cam1RollDeg: Double? = null,
 )
 
-enum class UsbUvcStatus { NOT_CONNECTED, DEVICE_FOUND, PERMISSION_MISSING, PERMISSION_REQUESTED, PERMISSION_GRANTED, PERMISSION_DENIED, OPEN_DEVICE_SUCCESS, OPEN_DEVICE_FAILED, UVC_ADAPTER_OPENING, UVC_STREAM_OPENED, UVC_PACKETS_RECEIVING, UVC_FRAMES_ASSEMBLED, UVC_FRAMES_DECODED, UVC_PREVIEW_RENDERING, UVC_STALLED_NO_PACKETS, UVC_STALLED_NO_DECODED_FRAMES, UVC_STALLED_NO_NEW_FRAMES, UVC_DECODE_FAILED, UVC_PREVIEW_ACTIVE, UVC_RENDER_FAILED, UVC_PREVIEW_FAILED, ACTIVE, ERROR }
+enum class UsbUvcStatus { NOT_CONNECTED, DEVICE_FOUND, PERMISSION_MISSING, PERMISSION_REQUESTED, PERMISSION_GRANTED, PERMISSION_DENIED, OPEN_DEVICE_SUCCESS, OPEN_DEVICE_FAILED, UVC_ADAPTER_OPENING, UVC_STREAM_OPENED, UVC_STREAM_STARTED, UVC_FIRST_FRAME_RECEIVED, UVC_PACKETS_RECEIVING, UVC_FRAMES_ASSEMBLED, UVC_FRAMES_DECODED, UVC_PREVIEW_RENDERING, UVC_STALLED_NO_PACKETS, UVC_STALLED_NO_DECODED_FRAMES, UVC_STALLED_NO_NEW_FRAMES, UVC_DECODE_FAILED, UVC_PREVIEW_ACTIVE, UVC_RENDER_FAILED, UVC_PREVIEW_FAILED, ACTIVE, ERROR }
 
 data class UsbUvcCameraInfo(
     val status: UsbUvcStatus,
@@ -267,7 +267,7 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
 
     override fun startPreview() = synchronized(lock) {
         val result = runCatching { nativeStartPreview() }
-        state = state.copy(previewRunning = result.getOrDefault(false), error = result.exceptionOrNull()?.message)
+        state = state.copy(previewRunning = result.getOrDefault(false), error = result.exceptionOrNull()?.message ?: nativeLastError().takeIf { it.isNotBlank() })
         log("preview start result backend=native libuvc running=${state.previewRunning} selected_format=${state.selectedFormat} selected_resolution=${state.selectedResolution} selected_fps=${state.selectedFps} error=${state.error ?: "none"}")
     }
 
@@ -300,6 +300,7 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
                 fpsEstimate = java.lang.Double.longBitsToDouble(counters[3]),
                 lastFrameAgeMs = lastNs?.let { (now - it) / 1_000_000L },
                 firstFrameTimestampNs = counters[5].takeIf { it > 0L }, recordedFrames = counters[6],
+                error = nativeLastError().takeIf { it.isNotBlank() },
             )
         }
         state
@@ -312,6 +313,7 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
     private external fun nativeStopRecording()
     private external fun nativeClose()
     private external fun nativeSnapshot(): LongArray
+    private external fun nativeLastError(): String
 
     companion object {
         init {
@@ -462,12 +464,13 @@ private class UsbUvcCameraAdapter(private val context: Context) {
 
     private fun updateFromBackend(device: UsbDevice, snap: Cam1UvcBackendState) {
         val status = when {
-            snap.framesRendered > 0L && (snap.lastFrameAgeMs ?: Long.MAX_VALUE) < 1000L -> UsbUvcStatus.UVC_PREVIEW_ACTIVE
-            snap.opened && snap.previewRunning -> UsbUvcStatus.UVC_STREAM_OPENED
             snap.error != null -> UsbUvcStatus.UVC_PREVIEW_FAILED
+            snap.framesRendered > 0L && (snap.lastFrameAgeMs ?: Long.MAX_VALUE) < 1000L -> UsbUvcStatus.UVC_PREVIEW_ACTIVE
+            snap.framesReceived > 0L -> UsbUvcStatus.UVC_FIRST_FRAME_RECEIVED
+            snap.opened && snap.previewRunning -> UsbUvcStatus.UVC_STREAM_STARTED
             else -> UsbUvcStatus.UVC_ADAPTER_OPENING
         }
-        update(info(device, status, if (snap.opened && snap.framesRendered == 0L) "native UVC opened, no frames" else snap.error).copy(
+        update(info(device, status, when { snap.error != null -> snap.error; snap.opened && snap.previewRunning && snap.framesReceived == 0L -> "native UVC opened, waiting for frames"; snap.framesReceived > 0L && snap.framesRendered == 0L -> "native UVC first frame received"; else -> null }).copy(
             cam1FramesReceived = snap.framesReceived, cam1FramesAssembled = snap.framesReceived,
             cam1FramesDecoded = snap.framesDecoded, cam1FramesRendered = snap.framesRendered,
             cam1FpsEstimate = snap.fpsEstimate, cam1LastFrameAgeMs = snap.lastFrameAgeMs,
