@@ -16,8 +16,6 @@ USB MANAGER STATE (dumpsys usb):
     }
     USB Event Log=UsbDeviceManager activity
     USB Event=[
-      06-29 13:34:26:514 USB UEVENT: {SUBSYSTEM=android_usb, SEQNUM=53940, ACTION=change, USB_STATE=CONNECTED, DEVPATH=/devices/virtual/android_usb/android0}
-      06-29 13:34:26:520 USB intent: Intent { act=android.hardware.usb.action.USB_STATE flg=0x31000000 xflg=0x4 (has extras) }
       06-29 13:34:26:571 USB UEVENT: {SUBSYSTEM=android_usb, SEQNUM=53941, ACTION=change, USB_STATE=DISCONNECTED, DEVPATH=/devices/virtual/android_usb/android0}
       06-29 13:34:26:650 USB UEVENT: {SUBSYSTEM=android_usb, SEQNUM=53942, ACTION=change, USB_STATE=CONNECTED, DEVPATH=/devices/virtual/android_usb/android0}
       06-29 13:34:26:652 USB UEVENT: {SUBSYSTEM=android_usb, SEQNUM=53943, ACTION=change, USB_STATE=CONFIGURED, DEVPATH=/devices/virtual/android_usb/android0}
@@ -216,6 +214,8 @@ USB MANAGER STATE (dumpsys usb):
       07-03 13:27:45:255 USB intent: Intent { act=android.hardware.usb.action.USB_STATE flg=0x31000000 xflg=0x4 (has extras) }
       07-03 13:27:59:514 USB intent: Intent { act=android.hardware.usb.action.USB_STATE flg=0x31000000 xflg=0x4 (has extras) }
       07-03 13:28:01:659 USB intent: Intent { act=android.hardware.usb.action.USB_STATE flg=0x31000000 xflg=0x4 (has extras) }
+      07-03 13:35:31:409 USB intent: Intent { act=android.hardware.usb.action.USB_STATE flg=0x31000000 xflg=0x4 (has extras) }
+      07-03 14:47:11:612 USB intent: Intent { act=android.hardware.usb.action.USB_STATE flg=0x31000000 xflg=0x4 (has extras) }
     ]
   }
   host_manager={
@@ -399,40 +399,8 @@ USB MANAGER STATE (dumpsys usb):
         ]
       }
     }
-    num_connects=71
+    num_connects=75
     connections=[
-      {
-        device_address=/dev/bus/usb/001/008
-        mode=-1
-        timestamp=1783068798928
-      }
-      {
-        device_address=/dev/bus/usb/001/009
-        mode=0
-        timestamp=1783068799555
-        manufacturer=13030
-        product=37409
-        is_headset={
-          in=false
-          out=false
-        }
-      }
-      {
-        device_address=/dev/bus/usb/001/009
-        mode=-1
-        timestamp=1783068935443
-      }
-      {
-        device_address=/dev/bus/usb/001/010
-        mode=0
-        timestamp=1783068935929
-        manufacturer=13030
-        product=37409
-        is_headset={
-          in=false
-          out=false
-        }
-      }
       {
         device_address=/dev/bus/usb/001/010
         mode=-1
@@ -657,6 +625,38 @@ USB MANAGER STATE (dumpsys usb):
           out=false
         }
       }
+      {
+        device_address=/dev/bus/usb/001/002
+        mode=-1
+        timestamp=1783078527458
+      }
+      {
+        device_address=/dev/bus/usb/001/003
+        mode=0
+        timestamp=1783078528119
+        manufacturer=13030
+        product=37409
+        is_headset={
+          in=false
+          out=false
+        }
+      }
+      {
+        device_address=/dev/bus/usb/001/003
+        mode=-1
+        timestamp=1783078530446
+      }
+      {
+        device_address=/dev/bus/usb/001/002
+        mode=0
+        timestamp=1783082831151
+        manufacturer=13030
+        product=37409
+        is_headset={
+          in=false
+          out=false
+        }
+      }
     ]
   }
   port_manager={
@@ -699,7 +699,7 @@ USB MANAGER STATE (dumpsys usb):
       can_change_mode=true
       can_change_power_role=true
       can_change_data_role=true
-      connected_at_millis=878195821
+      connected_at_millis=882945789
       last_connect_duration_millis=0
     }
     usb_hal_version=20
