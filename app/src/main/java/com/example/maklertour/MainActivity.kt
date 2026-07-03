@@ -2833,8 +2833,19 @@ private fun StereoCaptureExperimentalScreen(
                             }
                         }
                     })
+                    val cam1DisplayText = buildString {
+                        append("cam1 USB UVC preview\n")
+                        append(cam1Info.status.label())
+                        append('\n')
+                        append(
+                            cam1Info.productName
+                                ?: cam1Info.deviceName
+                                ?: if (cam1Info.status == UsbUvcStatus.PERMISSION_REQUESTED) "device selected; waiting for permission" else "no device"
+                        )
+                        cam1Info.error?.let { append("\n$it") }
+                    }
                     Text(
-                        "cam1 USB UVC preview\n${cam1Info.status.label()}\n${cam1Info.productName ?: cam1Info.deviceName ?: if (cam1Info.status == UsbUvcStatus.PERMISSION_REQUESTED) \"device selected; waiting for permission\" else \"no device\"}${cam1Info.error?.let { "\n$it" } ?: ""}",
+                        cam1DisplayText,
                         color = Color.White,
                         modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
                     )
