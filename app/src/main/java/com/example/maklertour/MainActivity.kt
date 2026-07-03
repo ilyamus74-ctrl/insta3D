@@ -2829,7 +2829,7 @@ private fun StereoCaptureExperimentalScreen(
                                 override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) { usbInfo = manager.bindCam1Preview(this@apply) }
                                 override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
                                 override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
-                                override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) = Unit
+                                override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) { manager.onCam1PreviewFrameRendered() }
                             }
                         }
                     })
@@ -2842,6 +2842,11 @@ private fun StereoCaptureExperimentalScreen(
                                 ?: cam1Info.deviceName
                                 ?: if (cam1Info.status == UsbUvcStatus.PERMISSION_REQUESTED) "device selected; waiting for permission" else "no device"
                         )
+                        append("\ncam1_frames_received=${cam1Info.cam1FramesReceived}")
+                        append("\ncam1_last_frame_age_ms=${cam1Info.cam1LastFrameAgeMs ?: "none"}")
+                        append("\ncam1_fps_estimate=${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1FpsEstimate)}")
+                        cam1Info.selectedPixelFormat?.let { append("\npixel_format=$it") }
+                        cam1Info.selectedResolutionFps?.let { append("\nresolution_fps=$it") }
                         cam1Info.error?.let { append("\n$it") }
                     }
                     Text(
@@ -2882,7 +2887,7 @@ private fun StereoCaptureExperimentalScreen(
                     }, enabled = isRecording) { Text("Stop") }
                     Button(onClick = { Toast.makeText(context, "Local export is stored under app files for backend upload integration.", Toast.LENGTH_LONG).show() }, enabled = !isRecording) { Text("Upload/export") }
                 }
-                Text("cam1 statuses: USB device found → permission missing/requested/granted → openDevice success → UVC adapter opening → UVC preview active or exact failure. app_log.txt records USB interfaces, endpoints, selected isochronous endpoint, and exceptions.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+                Text("cam1 statuses: USB device found → permission missing/requested/granted → openDevice success → UVC adapter opening → UVC stream opened → UVC frames receiving → UVC preview rendering/active or UVC no frames timeout/decode failed. app_log.txt records USB interfaces, endpoints, selected format/resolution, frame counts, first/last timestamps, and render success/fail.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -2898,6 +2903,11 @@ private fun UsbUvcStatus.label(): String = when (this) {
     UsbUvcStatus.OPEN_DEVICE_SUCCESS -> "USB openDevice success"
     UsbUvcStatus.OPEN_DEVICE_FAILED -> "USB openDevice failed"
     UsbUvcStatus.UVC_ADAPTER_OPENING -> "UVC adapter opening"
+    UsbUvcStatus.UVC_STREAM_OPENED -> "UVC stream opened"
+    UsbUvcStatus.UVC_FRAMES_RECEIVING -> "UVC frames receiving"
+    UsbUvcStatus.UVC_PREVIEW_RENDERING -> "UVC preview rendering"
+    UsbUvcStatus.UVC_NO_FRAMES_TIMEOUT -> "UVC no frames timeout"
+    UsbUvcStatus.UVC_DECODE_FAILED -> "UVC decode failed"
     UsbUvcStatus.UVC_PREVIEW_ACTIVE -> "UVC preview active"
     UsbUvcStatus.UVC_PREVIEW_FAILED -> "UVC preview failed"
     UsbUvcStatus.ACTIVE -> "UVC recording active"
