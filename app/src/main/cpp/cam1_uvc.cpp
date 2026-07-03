@@ -195,8 +195,14 @@ void cb(uvc_frame_t* frame, void*){
 void streamingThread(int fd,int vendor,int product,std::string devName,int busNum,int devAddr,std::string usbfs){
  if(!libs.load()){ setError("NATIVE_LIB_MISSING: libuvc/libusb shared libraries not found"); g_preview=false; return; }
  uvc_context_t* ctx=nullptr; uvc_device_t* dev=nullptr; uvc_device_handle_t* handle=nullptr; uvc_stream_ctrl_t* ctrl=(uvc_stream_ctrl_t*)calloc(1,256);
- ALOGI("native fd-aware init fields fd=%d vendor=%d product=%d deviceName=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s", fd, vendor, product, devName.c_str(), usbfs.c_str(), busNum, devAddr, g_window ? "true" : "false");
  uvc_error_t r=0;
+ int selectedFormat=UVC_FRAME_FORMAT_UNKNOWN, selectedWidth=0, selectedHeight=0, selectedFps=0;
+ struct Request { int fmt; const char* name; int w; int h; int fps; };
+ const Request requests[] = {
+  {UVC_FRAME_FORMAT_YUYV, "YUYV", 640, 480, 30},
+  {UVC_FRAME_FORMAT_UNCOMPRESSED, "UNCOMPRESSED", 640, 480, 30},
+ };
+ ALOGI("native fd-aware init fields fd=%d vendor=%d product=%d deviceName=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s", fd, vendor, product, devName.c_str(), usbfs.c_str(), busNum, devAddr, g_window ? "true" : "false");
  if(!libs.uvc_init2){ setError("NATIVE_UVC_INIT_FAILED: uvc_init2 symbol missing"); goto done; }
  if(!libs.uvc_get_device_with_fd){ setError("NATIVE_UVC_OPEN_FAILED: uvc_get_device_with_fd symbol missing"); goto done; }
  r=libs.uvc_init2(&ctx,nullptr,usbfs.c_str());
@@ -209,12 +215,7 @@ void streamingThread(int fd,int vendor,int product,std::string devName,int busNu
  ALOGI("uvc_open after fd device result=%d error=%s handle=%p", r, r < 0 ? libs.err(r).c_str() : "none", handle);
  if(r<0 || !handle){ setError("NATIVE_UVC_OPEN_FAILED: uvc_open " + libs.err(r)); goto done; }
  ALOGI("uvc_scan_control result=ok bNumInterfaces=see libuvc/device logs");
- int selectedFormat=UVC_FRAME_FORMAT_UNKNOWN, selectedWidth=0, selectedHeight=0, selectedFps=0;
  ALOGI("future target only format=MJPEG width=1920 height=1080 fps=30 selected=false reason=MJPEG decoder not implemented for live preview");
- struct Request { int fmt; const char* name; int w; int h; int fps; } requests[] = {
-  {UVC_FRAME_FORMAT_YUYV, "YUYV", 640, 480, 30},
-  {UVC_FRAME_FORMAT_UNCOMPRESSED, "UNCOMPRESSED", 640, 480, 30},
- };
  for(const auto& req: requests){
   r=libs.uvc_get_stream_ctrl_format_size(handle,ctrl,req.fmt,req.w,req.h,req.fps);
   ALOGI("requested format=%s width=%d height=%d fps=%d get_ctrl result=%d", req.name, req.w, req.h, req.fps, r);
