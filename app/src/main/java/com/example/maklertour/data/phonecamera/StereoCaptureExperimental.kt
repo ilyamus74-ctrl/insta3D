@@ -34,6 +34,8 @@ import org.json.JSONObject
 import java.io.File
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -240,6 +242,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
     private var selectedMaxPacketSize: Int? = null
     private var selectedMode: UvcSelectedMode? = null
     private var receiveThread: Thread? = null
+    private var firstPacketLatch: CountDownLatch? = null
     private var streaming = AtomicBoolean(false)
     private var activeConnection: UsbDeviceConnection? = null
     private var activeEndpoint: UsbEndpoint? = null
@@ -277,11 +280,18 @@ private class UsbUvcCameraAdapter(private val context: Context) {
 
     private fun stopStreamLoop() {
         streaming.set(false)
-        runCatching { receiveThread?.interrupt() }
-        receiveThread = null
+        stopReceiveThreadOnly()
         runCatching { activeConnection?.close() }
         activeConnection = null
         activeEndpoint = null
+    }
+
+    private fun stopReceiveThreadOnly() {
+        streaming.set(false)
+        runCatching { receiveThread?.interrupt() }
+        runCatching { receiveThread?.join(250L) }
+        receiveThread = null
+        firstPacketLatch = null
     }
 
     fun onPreviewFrameRendered() {
@@ -359,80 +369,99 @@ private class UsbUvcCameraAdapter(private val context: Context) {
     private fun openAfterPermission(device: UsbDevice): UsbUvcCameraInfo {
         stopStreamLoop()
         val manager = usbManager ?: return update(info(device, UsbUvcStatus.ERROR, "UsbManager unavailable"))
+        append("device selected")
         update(info(device, UsbUvcStatus.PERMISSION_GRANTED))
+        append("permission ok")
         val connection = manager.openDevice(device)
-        append("openDevice result=${connection != null} device=${device.deviceName}")
+        append("openDevice ok result=${connection != null} device=${device.deviceName}")
         if (connection == null) return update(info(device, UsbUvcStatus.OPEN_DEVICE_FAILED, "openDevice failed"))
         update(info(device, UsbUvcStatus.OPEN_DEVICE_SUCCESS))
         val selection = device.selectUvcInterfaces(::append)
         val videoControl = selection.videoControl
         val alternates = selection.videoStreamingAlternates
+            .filter { alt ->
+                alt.usbInterface.interfaceClass == 14 &&
+                    alt.usbInterface.interfaceSubclass == 2 &&
+                    alt.usbInterface.endpointCount > 0 &&
+                    alt.endpoint.direction == UsbConstants.USB_DIR_IN &&
+                    alt.endpoint.type == UsbConstants.USB_ENDPOINT_XFER_ISOC &&
+                    alt.endpoint.address == 130
+            }
+            .sortedWith(compareBy<UvcStreamingAlternate> { alt ->
+                listOf(5120, 4976, 3072, 2848, 1024, 512).indexOf(alt.endpoint.maxPacketSize).let { if (it >= 0) it else Int.MAX_VALUE }
+            })
+        append("VideoControl selected id=${videoControl?.id ?: "missing"}")
+        append("VideoStreaming selected candidates=${alternates.joinToString { "id=${it.usbInterface.id} alt=${it.usbInterface.alternateSetting ?: "unknown"} ep=${it.endpoint.address} max=${it.endpoint.maxPacketSize}" }}")
         val selected = alternates.firstOrNull()
-        var videoStreaming = selected?.usbInterface
-        var selectedEndpoint = selected?.endpoint
-        append("UVC discovery state: VideoControl ${if (videoControl == null) "missing" else "found id=${videoControl.id}"}; VideoStreaming alternates found count=${alternates.size}; Isochronous IN endpoint ${if (selectedEndpoint == null) "missing" else "found"}")
+        append("endpoint selected address=${selected?.endpoint?.address ?: "missing"} type=${selected?.endpoint?.type} direction=${selected?.endpoint?.direction} maxPacketSize=${selected?.endpoint?.maxPacketSize}")
+        append("UVC discovery state: VideoControl ${if (videoControl == null) "missing" else "found id=${videoControl.id}"}; VideoStreaming alternates found count=${alternates.size}; Isochronous IN endpoint ${if (selected?.endpoint == null) "missing" else "found"}")
         val rawDescriptors = runCatching { connection.rawDescriptors }.getOrNull()
         val parsedModes = parseUvcModes(rawDescriptors, ::append)
         selectedMode = chooseUvcMode(parsedModes)
-        selectedPixelFormat = selectedMode?.format ?: device.detectUvcPixelFormat(::append)?.substringBefore(" ")
+        selectedPixelFormat = selectedMode?.format ?: device.detectUvcPixelFormat(::append)?.substringBefore(" ") ?: "unknown"
         selectedResolutionFps = selectedMode?.let { "${it.width}x${it.height}@${it.fps}fps interval=${it.frameInterval100ns}" } ?: "640x480@30fps fallback"
         append("selected UVC pixel format=${selectedPixelFormat ?: "unknown"}")
         append("selected resolution/fps=${selectedResolutionFps}")
-        append("selected UVC interface vc=${videoControl?.id} vs=${videoStreaming?.id} endpoint_address=${selectedEndpoint?.address} endpoint_number=${selectedEndpoint?.endpointNumber} endpoint_type=${selectedEndpoint?.endpointTypeLabel()} endpoint_direction=${selectedEndpoint?.direction} endpoint_max_packet_size=${selectedEndpoint?.maxPacketSize} selected alternate setting=${videoStreaming?.alternateSetting ?: "unknown"} selected resolution/fps=${selectedResolutionFps} pixel format=${selectedPixelFormat ?: "unknown"}")
         update(info(device, UsbUvcStatus.UVC_ADAPTER_OPENING))
         if (videoControl == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoControl missing"))
-        if (alternates.isEmpty()) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoStreaming alternates with endpoints missing"))
-        if (videoStreaming == null || selectedEndpoint == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: Isochronous IN endpoint missing"))
+        if (alternates.isEmpty()) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoStreaming alternate with endpoint address=130 missing"))
         val claimControl = connection.claimInterface(videoControl, true)
-        append("claimInterface VideoControl id=${videoControl.id} result=$claimControl")
+        append("claim VideoControl result=$claimControl id=${videoControl.id}")
         if (!claimControl) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: claimInterface failed for VideoControl id=${videoControl.id}"))
-        var selectedClaim = false
-        var selectedSetInterface = false
+        if (preview?.isAvailable != true) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC stream start failed: preview surface unavailable"))
+
         for (candidate in alternates) {
             val candidateInterface = candidate.usbInterface
-            val candidateEndpoint = candidate.endpoint
+            val endpoint = candidate.endpoint
             val claimStreaming = connection.claimInterface(candidateInterface, true)
-            append("claimInterface VideoStreaming id=${candidateInterface.id} alternate=${candidateInterface.alternateSetting ?: "unknown"} endpoint_address=${candidateEndpoint.address} max_packet_size=${candidateEndpoint.maxPacketSize} result=$claimStreaming")
+            append("claim VideoStreaming result=$claimStreaming id=${candidateInterface.id} alternate=${candidateInterface.alternateSetting ?: "unknown"} endpoint_address=${endpoint.address} max_packet_size=${endpoint.maxPacketSize}")
             if (!claimStreaming) continue
-            selectedClaim = true
             val setInterface = connection.trySetInterface(candidateInterface, ::append)
-            append("setInterface VideoStreaming id=${candidateInterface.id} alternate=${candidateInterface.alternateSetting ?: "unknown"} endpoint_address=${candidateEndpoint.address} max_packet_size=${candidateEndpoint.maxPacketSize} result=$setInterface")
-            if (setInterface) {
-                videoStreaming = candidateInterface
-                selectedEndpoint = candidateEndpoint
-                selectedAltSetting = candidateInterface.alternateSetting
-                selectedMaxPacketSize = candidateEndpoint.maxPacketSize
-                selectedSetInterface = true
-                break
+            append("setInterface result=$setInterface id=${candidateInterface.id} alternate=${candidateInterface.alternateSetting ?: "unknown"} endpoint_address=${endpoint.address} max_packet_size=${endpoint.maxPacketSize}")
+            if (!setInterface) continue
+            selectedAltSetting = candidateInterface.alternateSetting
+            selectedMaxPacketSize = endpoint.maxPacketSize
+            val mode = selectedMode ?: UvcSelectedMode(selectedPixelFormat ?: "unknown", 640, 480, 30, 333333, 640 * 480 * 2, endpoint.maxPacketSize)
+            for (legacy in listOf(false, true)) {
+                stopReceiveThreadOnly()
+                val beforePackets = _state.value.cam1PacketsReceived
+                if (legacy) {
+                    append("legacy_raw_stream_attempt alternate=${candidateInterface.alternateSetting ?: "unknown"} max_packet_size=${endpoint.maxPacketSize}")
+                } else {
+                    runCatching { connection.commitProbe(candidateInterface, mode, endpoint, ::append) }
+                        .onFailure { append("UVC probe get/set result exception=${it.stackTraceToString()}") }
+                }
+                activeConnection = connection
+                activeEndpoint = endpoint
+                startStreamLoop(device, connection, endpoint, mode)
+                append("UVC stream opened, waiting for packets alternate=${candidateInterface.alternateSetting ?: "unknown"} max_packet_size=${endpoint.maxPacketSize} legacy=$legacy")
+                update(info(device, UsbUvcStatus.UVC_STREAM_OPENED, "UVC stream opened, waiting for packets"))
+                firstPacketLatch?.await(1000L, TimeUnit.MILLISECONDS)
+                if (_state.value.cam1PacketsReceived > beforePackets) {
+                    scheduleNoFramesTimeout(device)
+                    return update(info(device, UsbUvcStatus.UVC_STREAM_OPENED))
+                }
+                append("UVC stream failed: no packets alternate=${candidateInterface.alternateSetting ?: "unknown"} max_packet_size=${endpoint.maxPacketSize} legacy=$legacy")
             }
-            append("fallback to lower maxPacketSize VideoStreaming alternate after setInterface failed for max_packet_size=${candidateEndpoint.maxPacketSize}")
         }
-        if (!selectedClaim) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: claimInterface failed for all VideoStreaming alternates"))
-        if (!selectedSetInterface) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: setInterface failed for all VideoStreaming alternates"))
-        val endpoint = selectedEndpoint ?: return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: Isochronous IN endpoint missing"))
-        append("final selected endpoint address=${endpoint.address} type=${endpoint.type} direction=${endpoint.direction} maxPacketSize=${endpoint.maxPacketSize}")
-        return if (preview?.isAvailable == true) {
-            val mode = selectedMode ?: UvcSelectedMode(selectedPixelFormat ?: "MJPEG", 640, 480, 30, 333333, 640 * 480 * 2, endpoint.maxPacketSize)
-            runCatching { connection.commitProbe(videoStreaming, mode, endpoint, ::append) }.onFailure { append("UVC PROBE/COMMIT exception: ${it.stackTraceToString()}") }
-            activeConnection = connection
-            activeEndpoint = endpoint
-            startStreamLoop(device, connection, endpoint, mode)
-            append("UVC stream opened on TextureView; waiting for decoded/rendered frame before marking preview active")
-            scheduleNoFramesTimeout(device)
-            update(info(device, UsbUvcStatus.UVC_STREAM_OPENED))
-        } else {
-            update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC stream start failed: preview surface unavailable"))
-        }
+        stopReceiveThreadOnly()
+        return update(info(device, UsbUvcStatus.UVC_NO_FRAMES_TIMEOUT, "UVC stream failed: no packets"))
     }
 
     private fun startStreamLoop(device: UsbDevice, connection: UsbDeviceConnection, endpoint: UsbEndpoint, mode: UvcSelectedMode) {
         streaming.set(true)
+        firstPacketLatch = CountDownLatch(1)
         receiveThread = Thread({
-            val requests = (0 until 4).mapNotNull {
-                UsbRequest().takeIf { req -> req.initialize(connection, endpoint) }?.also { req ->
-                    req.clientData = ByteBuffer.allocate(endpoint.maxPacketSize.coerceAtLeast(1024))
-                    req.queue(req.clientData as ByteBuffer, (req.clientData as ByteBuffer).capacity())
-                }
+            val requests = (0 until 6).mapNotNull { index ->
+                runCatching {
+                    UsbRequest().takeIf { req -> req.initialize(connection, endpoint) }?.also { req ->
+                        append("UsbRequest allocated index=$index endpoint=${endpoint.address} maxPacketSize=${endpoint.maxPacketSize}")
+                        val buffer = ByteBuffer.allocateDirect(endpoint.maxPacketSize.coerceAtLeast(1024))
+                        req.clientData = buffer
+                        val queued = req.queue(buffer, buffer.capacity())
+                        append("UsbRequest queued index=$index result=$queued capacity=${buffer.capacity()}")
+                    }
+                }.onFailure { append("UsbRequest allocate/queue exception index=$index ${it.stackTraceToString()}") }.getOrNull()
             }
             append("continuous isochronous receive loop started in_flight=${requests.size} endpoint=${endpoint.address} maxPacketSize=${endpoint.maxPacketSize}")
             val assembler = UvcFrameAssembler(mode)
@@ -440,24 +469,29 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             while (streaming.get()) {
                 try {
                     val waited = connection.requestWait(1000)
+                    append("requestWait returned result=${waited != null}")
                     if (waited == null) {
                         val age = lastPacketNs?.let { (SystemClock.elapsedRealtimeNanos() - it) / 1_000_000L }
-                        if (age == null || age > 1000L) update(info(device, UsbUvcStatus.UVC_NO_FRAMES_TIMEOUT, "UVC timeout: no packets for ${age ?: "unknown"} ms"))
+                        if (age == null || age > 1000L) update(info(device, UsbUvcStatus.UVC_NO_FRAMES_TIMEOUT, "UVC stream failed: no packets"))
                         continue
                     }
                     val req = waited
                     val buffer = req.clientData as ByteBuffer
-                    val bytes = buffer.position().takeIf { it > 0 } ?: buffer.limit()
+                    val bytes = buffer.position().takeIf { it > 0 } ?: buffer.limit().takeIf { it in 1..buffer.capacity() } ?: buffer.capacity()
+                    append("bytes received count=$bytes endpoint=${endpoint.address}")
                     buffer.flip()
                     val packet = ByteArray(bytes.coerceAtMost(buffer.remaining()))
                     buffer.get(packet)
                     buffer.clear()
                     onPacket(device, packet)
-                    assembler.accept(packet, ::append)?.let { frame ->
-                        onFrameAssembled(device)
-                        decodeAndRender(device, frame, mode)
+                    if (packet.isNotEmpty()) {
+                        assembler.accept(packet, ::append)?.let { frame ->
+                            onFrameAssembled(device)
+                            decodeAndRender(device, frame, mode)
+                        }
                     }
-                    req.queue(buffer, buffer.capacity())
+                    val requeued = req.queue(buffer, buffer.capacity())
+                    append("UsbRequest queued requeue result=$requeued capacity=${buffer.capacity()}")
                     val nowMs = SystemClock.elapsedRealtime()
                     if (nowMs - lastLog >= 1000L) {
                         lastLog = nowMs
@@ -465,10 +499,10 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                     }
                 } catch (t: Throwable) {
                     append("UVC receive loop exception: ${t.stackTraceToString()}")
-                    update(info(device, UsbUvcStatus.UVC_DECODE_FAILED, t.message))
+                    if (_state.value.cam1PacketsReceived > 0L && _state.value.cam1FramesAssembled > 0L) update(info(device, UsbUvcStatus.UVC_DECODE_FAILED, t.message)) else update(info(device, UsbUvcStatus.UVC_NO_FRAMES_TIMEOUT, "UVC stream failed: no packets"))
                 }
             }
-            requests.forEach { runCatching { it.close() } }
+            requests.forEach { runCatching { it.close() }.onFailure { e -> append("UsbRequest close exception: ${e.stackTraceToString()}") } }
         }, "UsbUvcIsochronousReceive").also { it.isDaemon = true; it.start() }
     }
 
@@ -476,7 +510,10 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         val now = SystemClock.elapsedRealtimeNanos()
         if (!firstPacketLogged) { firstPacketLogged = true; append("first packet timestamp_ns=$now size=${packet.size} header_len=${packet.firstOrNull()?.toInt()?.and(0xff)} flags=${packet.getOrNull(1)?.toInt()?.and(0xff)}") }
         lastPacketNs = now
-        update(info(device, UsbUvcStatus.UVC_FRAMES_RECEIVING).copy(cam1PacketsReceived = _state.value.cam1PacketsReceived + 1, cam1LastPacketAgeMs = 0L))
+        val nextPackets = _state.value.cam1PacketsReceived + 1
+        append("packet counter incremented count=$nextPackets size=${packet.size}")
+        firstPacketLatch?.countDown()
+        update(info(device, UsbUvcStatus.UVC_FRAMES_RECEIVING).copy(cam1PacketsReceived = nextPackets, cam1LastPacketAgeMs = 0L))
     }
 
     private fun onFrameAssembled(device: UsbDevice) {
@@ -521,9 +558,9 @@ private class UsbUvcCameraAdapter(private val context: Context) {
 
     private fun scheduleNoFramesTimeout(device: UsbDevice) {
         mainHandler.postDelayed({
-            if (_state.value.cam1FramesReceived == 0L && _state.value.status == UsbUvcStatus.UVC_STREAM_OPENED) {
-                append("UVC no frames timeout; frame_count=0 preview render success=false")
-                update(info(device, UsbUvcStatus.UVC_NO_FRAMES_TIMEOUT, "UVC stream opened but no decoded/rendered frames arrived"))
+            if (_state.value.cam1PacketsReceived == 0L && _state.value.status == UsbUvcStatus.UVC_STREAM_OPENED) {
+                append("UVC no packets timeout; packet_count=0 preview render success=false")
+                update(info(device, UsbUvcStatus.UVC_NO_FRAMES_TIMEOUT, "UVC stream failed: no packets"))
             }
         }, 3_000L)
     }
@@ -693,8 +730,9 @@ private fun UsbDeviceConnection.commitProbe(vs: UsbInterface?, mode: UvcSelected
     put32(22, endpoint.maxPacketSize)
     val requestType = UsbConstants.USB_TYPE_CLASS or UsbConstants.USB_DIR_OUT or USB_RECIP_INTERFACE
     val probe = controlTransfer(requestType, 0x01, 0x0100, intf, payload, payload.size, 1000)
+    log("UVC probe get/set result=$probe interface=$intf selected format=${mode.format} resolution=${mode.width}x${mode.height} fps=${mode.fps} interval=${mode.frameInterval100ns} max_video_frame_size=${mode.maxVideoFrameSize} max_payload_transfer_size=${endpoint.maxPacketSize}")
     val commit = controlTransfer(requestType, 0x01, 0x0200, intf, payload, payload.size, 1000)
-    log("UVC PROBE/COMMIT selected format=${mode.format} resolution=${mode.width}x${mode.height} fps=${mode.fps} interval=${mode.frameInterval100ns} max_video_frame_size=${mode.maxVideoFrameSize} max_payload_transfer_size=${endpoint.maxPacketSize} probe_result=$probe commit_result=$commit")
+    log("UVC commit result=$commit interface=$intf")
 }
 
 private class UvcFrameAssembler(private val mode: UvcSelectedMode) {
