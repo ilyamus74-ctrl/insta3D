@@ -51,7 +51,7 @@ data class StereoRigConfig(
     val cam1RollDeg: Double? = null,
 )
 
-enum class UsbUvcStatus { NOT_CONNECTED, DEVICE_FOUND, PERMISSION_MISSING, PERMISSION_REQUESTED, PERMISSION_GRANTED, PERMISSION_DENIED, OPEN_DEVICE_SUCCESS, OPEN_DEVICE_FAILED, UVC_ADAPTER_OPENING, NATIVE_LIB_MISSING, NATIVE_UVC_INIT_FAILED, NATIVE_UVC_STREAM_START_FAILED, UVC_STREAM_OPENED, UVC_STREAM_STARTED, UVC_FIRST_FRAME_RECEIVED, UVC_PACKETS_RECEIVING, UVC_FRAMES_ASSEMBLED, UVC_FRAMES_DECODED, UVC_PREVIEW_RENDERING, UVC_STALLED_NO_PACKETS, UVC_STALLED_NO_DECODED_FRAMES, UVC_STALLED_NO_NEW_FRAMES, UVC_DECODE_FAILED, UVC_PREVIEW_ACTIVE, UVC_RENDER_FAILED, UVC_PREVIEW_FAILED, ACTIVE, ERROR }
+enum class UsbUvcStatus { NOT_CONNECTED, DEVICE_FOUND, PERMISSION_MISSING, PERMISSION_REQUESTED, PERMISSION_GRANTED, PERMISSION_DENIED, OPEN_DEVICE_SUCCESS, OPEN_DEVICE_FAILED, UVC_ADAPTER_OPENING, NATIVE_LIB_MISSING, NATIVE_UVC_INIT_FAILED, NATIVE_UVC_OPEN_FAILED, NATIVE_UVC_STREAM_START_FAILED, UVC_STREAM_STARTING, UVC_STREAM_OPENED, UVC_STREAM_STARTED, UVC_FIRST_FRAME_RECEIVED, UVC_PACKETS_RECEIVING, UVC_FRAMES_ASSEMBLED, UVC_FRAMES_DECODED, UVC_PREVIEW_RENDERING, UVC_STALLED_NO_PACKETS, UVC_STALLED_NO_DECODED_FRAMES, UVC_STALLED_NO_NEW_FRAMES, UVC_DECODE_FAILED, UVC_PREVIEW_ACTIVE, UVC_RENDER_FAILED, UVC_PREVIEW_FAILED, ACTIVE, ERROR }
 
 data class UsbUvcCameraInfo(
     val status: UsbUvcStatus,
@@ -250,7 +250,7 @@ private data class Cam1UvcBackendState(
 
 private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1UvcBackend {
     private val lock = Any()
-    private var state = Cam1UvcBackendState(selectedFormat = "MJPEG", selectedResolution = "640x480", selectedFps = 30)
+    private var state = Cam1UvcBackendState()
     private var outputFile: File? = null
 
     override fun open(deviceInfo: Cam1UvcDeviceInfo, previewSurface: android.view.Surface?) = synchronized(lock) {
@@ -258,16 +258,22 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
         log("native UVC open requested vendor=${deviceInfo.vendorId} product=${deviceInfo.productId} name=${deviceInfo.productName} deviceName=${deviceInfo.deviceName} fd=${deviceInfo.fileDescriptor} surface=${previewSurface != null}")
         val result = runCatching { nativeOpen(deviceInfo.fileDescriptor, deviceInfo.vendorId, deviceInfo.productId, deviceInfo.deviceName, previewSurface) }
         state = if (result.getOrDefault(false)) {
-            state.copy(opened = true, error = null, selectedFormat = "MJPEG", selectedResolution = "640x480", selectedFps = 30)
+            state.copy(opened = true, previewRunning = false, error = null, selectedFormat = null, selectedResolution = null, selectedFps = null)
         } else {
-            state.copy(opened = false, error = result.exceptionOrNull()?.message ?: "native libuvc backend unavailable or failed to open")
+            state.copy(opened = false, previewRunning = false, error = result.exceptionOrNull()?.message ?: "NATIVE_UVC_OPEN_FAILED: native libuvc backend unavailable or failed to open", selectedFormat = null, selectedResolution = null, selectedFps = null)
         }
         log("native UVC open result opened=${state.opened} error=${state.error ?: "none"}")
     }
 
     override fun startPreview() = synchronized(lock) {
         val result = runCatching { nativeStartPreview() }
-        state = state.copy(previewRunning = result.getOrDefault(false), error = result.exceptionOrNull()?.message ?: nativeLastError().takeIf { it.isNotBlank() })
+        val nativeError = result.exceptionOrNull()?.message ?: nativeLastError().takeIf { it.isNotBlank() }
+        val error = when {
+            nativeError != null -> nativeError
+            !result.getOrDefault(false) -> "NATIVE_UVC_STREAM_START_FAILED: nativeStartPreview returned false"
+            else -> null
+        }
+        state = state.copy(previewRunning = false, error = error)
         log("preview start result backend=native libuvc running=${state.previewRunning} selected_format=${state.selectedFormat} selected_resolution=${state.selectedResolution} selected_fps=${state.selectedFps} error=${state.error ?: "none"}")
     }
 
@@ -288,18 +294,23 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
         outputFile = null
     }
 
-    override fun close() = synchronized(lock) { runCatching { nativeClose() }; state = Cam1UvcBackendState(selectedFormat = "MJPEG", selectedResolution = "640x480", selectedFps = 30) }
+    override fun close() = synchronized(lock) { runCatching { nativeClose() }; state = Cam1UvcBackendState() }
 
     override fun snapshot(): Cam1UvcBackendState = synchronized(lock) {
         val counters = runCatching { nativeSnapshot() }.getOrNull()
         if (counters != null && counters.size >= 8) {
             val now = SystemClock.elapsedRealtimeNanos()
             val lastNs = counters[4].takeIf { it > 0L }
+            val streamRunning = counters[7] > 0L
             state = state.copy(
+                previewRunning = streamRunning,
                 framesReceived = counters[0], framesDecoded = counters[1], framesRendered = counters[2],
                 fpsEstimate = java.lang.Double.longBitsToDouble(counters[3]),
                 lastFrameAgeMs = lastNs?.let { (now - it) / 1_000_000L },
                 firstFrameTimestampNs = counters[5].takeIf { it > 0L }, recordedFrames = counters[6],
+                selectedFormat = if (streamRunning) "MJPEG" else null,
+                selectedResolution = if (streamRunning) "640x480" else null,
+                selectedFps = if (streamRunning) 30 else null,
                 error = nativeLastError().takeIf { it.isNotBlank() },
             )
         }
@@ -441,7 +452,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             backend.open(Cam1UvcDeviceInfo(device.vendorId, device.productId, device.deviceName, device.productName, connection.fileDescriptor), surface)
             backend.startPreview()
             val snap = backend.snapshot()
-            append("selected UVC format/resolution/fps ${snap.selectedFormat}/${snap.selectedResolution}/${snap.selectedFps}")
+            append("selected UVC format/resolution/fps ${snap.selectedFormat ?: "none"}/${snap.selectedResolution ?: "none"}/${snap.selectedFps ?: "none"}")
             updateFromBackend(device, snap)
             startBackendPolling(device, generation)
         }
@@ -456,7 +467,6 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                 if (generation != cam1Generation || thisPoll != pollGeneration) return
                 val snap = backend.snapshot()
                 updateFromBackend(device, snap)
-                if (snap.opened && snap.previewRunning && snap.framesRendered == 0L) update(info(device, UsbUvcStatus.UVC_STREAM_OPENED, "real libuvc stream opened, waiting for frames"))
                 if (snap.framesRendered > 0L && snap.framesRendered == lastRendered) update(info(device, UsbUvcStatus.UVC_STALLED_NO_NEW_FRAMES, "UVC stalled: no new frames"))
                 lastRendered = snap.framesRendered
                 mainHandler.postDelayed(this, 200L)
@@ -468,14 +478,16 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         val status = when {
             snap.error?.contains("NATIVE_LIB_MISSING") == true -> UsbUvcStatus.NATIVE_LIB_MISSING
             snap.error?.contains("NATIVE_UVC_INIT_FAILED") == true -> UsbUvcStatus.NATIVE_UVC_INIT_FAILED
+            snap.error?.contains("NATIVE_UVC_OPEN_FAILED") == true -> UsbUvcStatus.NATIVE_UVC_OPEN_FAILED
             snap.error?.contains("NATIVE_UVC_STREAM_START_FAILED") == true -> UsbUvcStatus.NATIVE_UVC_STREAM_START_FAILED
             snap.error != null -> UsbUvcStatus.UVC_PREVIEW_FAILED
             snap.framesRendered > 0L && (snap.lastFrameAgeMs ?: Long.MAX_VALUE) < 1000L -> UsbUvcStatus.UVC_PREVIEW_ACTIVE
             snap.framesReceived > 0L -> UsbUvcStatus.UVC_FIRST_FRAME_RECEIVED
             snap.opened && snap.previewRunning -> UsbUvcStatus.UVC_STREAM_OPENED
+            snap.opened -> UsbUvcStatus.UVC_STREAM_STARTING
             else -> UsbUvcStatus.UVC_ADAPTER_OPENING
         }
-        update(info(device, status, when { snap.error != null -> snap.error; snap.opened && snap.previewRunning && snap.framesReceived == 0L -> "real libuvc stream opened, waiting for frames"; snap.framesReceived > 0L && snap.framesRendered == 0L -> "native UVC first frame received"; else -> null }).copy(
+        update(info(device, status, when { snap.error != null -> snap.error; snap.framesReceived > 0L && snap.framesRendered == 0L -> "native UVC first frame received"; snap.opened && snap.previewRunning && snap.framesReceived == 0L -> "real libuvc stream opened, waiting for frames"; snap.opened -> "native UVC stream starting"; else -> null }).copy(
             cam1FramesReceived = snap.framesReceived, cam1FramesAssembled = snap.framesReceived,
             cam1FramesDecoded = snap.framesDecoded, cam1FramesRendered = snap.framesRendered,
             cam1FpsEstimate = snap.fpsEstimate, cam1LastFrameAgeMs = snap.lastFrameAgeMs,

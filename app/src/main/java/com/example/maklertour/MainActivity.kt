@@ -2893,7 +2893,7 @@ private fun StereoCaptureExperimentalScreen(
                     }, enabled = isRecording) { Text("Stop") }
                     Button(onClick = { Toast.makeText(context, "Local export is stored under app files for backend upload integration.", Toast.LENGTH_LONG).show() }, enabled = !isRecording) { Text("Upload/export") }
                 }
-                Text("cam1 statuses: USB device found → permission granted → openDevice success → native UVC opened → frames received/decoded/rendered → preview active, or native UVC opened with no frames / stalled. app_log.txt records device names, permissions, endpoints, selected native backend, selected format/resolution/fps, frame counters, recording path/size, and native errors.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+                Text("cam1 statuses: USB device found → permission granted → openDevice success → UVC stream starting → frames received/decoded/rendered → preview active, or native library missing / stream start failed / stalled with no frames. app_log.txt records device names, permissions, endpoints, selected native backend, selected format/resolution/fps after stream start, frame counters, recording path/size, and native errors.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -2911,7 +2911,9 @@ private fun UsbUvcStatus.label(): String = when (this) {
     UsbUvcStatus.UVC_ADAPTER_OPENING -> "UVC adapter opening"
     UsbUvcStatus.NATIVE_LIB_MISSING -> "native UVC library missing"
     UsbUvcStatus.NATIVE_UVC_INIT_FAILED -> "native UVC init failed"
+    UsbUvcStatus.NATIVE_UVC_OPEN_FAILED -> "native UVC open failed"
     UsbUvcStatus.NATIVE_UVC_STREAM_START_FAILED -> "native UVC stream start failed"
+    UsbUvcStatus.UVC_STREAM_STARTING -> "native UVC stream starting"
     UsbUvcStatus.UVC_STREAM_OPENED -> "real UVC stream opened, waiting for frames"
     UsbUvcStatus.UVC_STREAM_STARTED -> "native UVC stream started"
     UsbUvcStatus.UVC_FIRST_FRAME_RECEIVED -> "native UVC first frame received"

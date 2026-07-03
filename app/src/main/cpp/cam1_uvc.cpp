@@ -34,6 +34,7 @@ std::string g_device_name;
 
 int64_t nowNs(){ return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 void setError(const std::string& s){ std::lock_guard<std::mutex> lk(g_lock); g_error=s; ALOGE("%s", s.c_str()); }
+void clearError(){ std::lock_guard<std::mutex> lk(g_lock); g_error.clear(); }
 void releaseWindow(){ if(g_window){ ANativeWindow_release(g_window); g_window=nullptr; } }
 
 struct Libs {
@@ -112,11 +113,13 @@ done:
 }
 
 extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeOpen(JNIEnv* env,jobject,jint fd,jint vendorId,jint productId,jstring deviceName,jobject surface){
+ clearError();
  const char* n=env->GetStringUTFChars(deviceName,nullptr); std::string name=n?n:""; env->ReleaseStringUTFChars(deviceName,n);
  std::lock_guard<std::mutex> lk(g_lock); releaseWindow(); if(surface) g_window=ANativeWindow_fromSurface(env,surface); g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_error.clear(); g_fd=fd; g_vendor=vendorId; g_product=productId; g_device_name=name; g_opened=true; g_stop=false; g_start_ns=nowNs(); ALOGI("native UVC opened, waiting for frames fd=%d vendor=%d product=%d current_device=%s",fd,vendorId,productId,name.c_str()); return JNI_TRUE;
 }
-extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreview(JNIEnv*,jobject){ if(!g_opened) return JNI_FALSE; if(g_thread.joinable()){g_stop=true; g_thread.join(); g_stop=false;} g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name); ALOGI("native UVC stream start posted on worker thread"); return JNI_TRUE; }
+extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreview(JNIEnv*,jobject){ clearError(); if(!g_opened) return JNI_FALSE; if(g_thread.joinable()){g_stop=true; g_thread.join(); g_stop=false;} g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name); ALOGI("native UVC stream start posted on worker thread"); return JNI_TRUE; }
 extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreviewWithDevice(JNIEnv* env,jobject thiz,jint fd,jint vendor,jint product,jstring deviceName){
+ clearError();
  const char* n=env->GetStringUTFChars(deviceName,nullptr); std::string name=n?n:""; env->ReleaseStringUTFChars(deviceName,n);
  g_fd=fd; g_vendor=vendor; g_product=product; g_device_name=name;
  if(!g_opened) g_opened=true;
