@@ -51,7 +51,7 @@ data class StereoRigConfig(
     val cam1RollDeg: Double? = null,
 )
 
-enum class UsbUvcStatus { NOT_CONNECTED, DEVICE_FOUND, PERMISSION_MISSING, PERMISSION_REQUESTED, PERMISSION_GRANTED, PERMISSION_DENIED, OPEN_DEVICE_SUCCESS, OPEN_DEVICE_FAILED, UVC_ADAPTER_OPENING, UVC_STREAM_OPENED, UVC_STREAM_STARTED, UVC_FIRST_FRAME_RECEIVED, UVC_PACKETS_RECEIVING, UVC_FRAMES_ASSEMBLED, UVC_FRAMES_DECODED, UVC_PREVIEW_RENDERING, UVC_STALLED_NO_PACKETS, UVC_STALLED_NO_DECODED_FRAMES, UVC_STALLED_NO_NEW_FRAMES, UVC_DECODE_FAILED, UVC_PREVIEW_ACTIVE, UVC_RENDER_FAILED, UVC_PREVIEW_FAILED, ACTIVE, ERROR }
+enum class UsbUvcStatus { NOT_CONNECTED, DEVICE_FOUND, PERMISSION_MISSING, PERMISSION_REQUESTED, PERMISSION_GRANTED, PERMISSION_DENIED, OPEN_DEVICE_SUCCESS, OPEN_DEVICE_FAILED, UVC_ADAPTER_OPENING, NATIVE_LIB_MISSING, NATIVE_UVC_INIT_FAILED, NATIVE_UVC_STREAM_START_FAILED, UVC_STREAM_OPENED, UVC_STREAM_STARTED, UVC_FIRST_FRAME_RECEIVED, UVC_PACKETS_RECEIVING, UVC_FRAMES_ASSEMBLED, UVC_FRAMES_DECODED, UVC_PREVIEW_RENDERING, UVC_STALLED_NO_PACKETS, UVC_STALLED_NO_DECODED_FRAMES, UVC_STALLED_NO_NEW_FRAMES, UVC_DECODE_FAILED, UVC_PREVIEW_ACTIVE, UVC_RENDER_FAILED, UVC_PREVIEW_FAILED, ACTIVE, ERROR }
 
 data class UsbUvcCameraInfo(
     val status: UsbUvcStatus,
@@ -317,6 +317,8 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
 
     companion object {
         init {
+            runCatching { System.loadLibrary("usb1.0") }
+            runCatching { System.loadLibrary("uvc") }
             runCatching { System.loadLibrary("cam1_uvc") }
         }
     }
@@ -454,7 +456,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                 if (generation != cam1Generation || thisPoll != pollGeneration) return
                 val snap = backend.snapshot()
                 updateFromBackend(device, snap)
-                if (snap.opened && snap.previewRunning && snap.framesRendered == 0L) update(info(device, UsbUvcStatus.UVC_STREAM_OPENED, "native UVC opened, no frames"))
+                if (snap.opened && snap.previewRunning && snap.framesRendered == 0L) update(info(device, UsbUvcStatus.UVC_STREAM_OPENED, "real libuvc stream opened, waiting for frames"))
                 if (snap.framesRendered > 0L && snap.framesRendered == lastRendered) update(info(device, UsbUvcStatus.UVC_STALLED_NO_NEW_FRAMES, "UVC stalled: no new frames"))
                 lastRendered = snap.framesRendered
                 mainHandler.postDelayed(this, 200L)
@@ -464,13 +466,16 @@ private class UsbUvcCameraAdapter(private val context: Context) {
 
     private fun updateFromBackend(device: UsbDevice, snap: Cam1UvcBackendState) {
         val status = when {
+            snap.error?.contains("NATIVE_LIB_MISSING") == true -> UsbUvcStatus.NATIVE_LIB_MISSING
+            snap.error?.contains("NATIVE_UVC_INIT_FAILED") == true -> UsbUvcStatus.NATIVE_UVC_INIT_FAILED
+            snap.error?.contains("NATIVE_UVC_STREAM_START_FAILED") == true -> UsbUvcStatus.NATIVE_UVC_STREAM_START_FAILED
             snap.error != null -> UsbUvcStatus.UVC_PREVIEW_FAILED
             snap.framesRendered > 0L && (snap.lastFrameAgeMs ?: Long.MAX_VALUE) < 1000L -> UsbUvcStatus.UVC_PREVIEW_ACTIVE
             snap.framesReceived > 0L -> UsbUvcStatus.UVC_FIRST_FRAME_RECEIVED
-            snap.opened && snap.previewRunning -> UsbUvcStatus.UVC_STREAM_STARTED
+            snap.opened && snap.previewRunning -> UsbUvcStatus.UVC_STREAM_OPENED
             else -> UsbUvcStatus.UVC_ADAPTER_OPENING
         }
-        update(info(device, status, when { snap.error != null -> snap.error; snap.opened && snap.previewRunning && snap.framesReceived == 0L -> "native UVC opened, waiting for frames"; snap.framesReceived > 0L && snap.framesRendered == 0L -> "native UVC first frame received"; else -> null }).copy(
+        update(info(device, status, when { snap.error != null -> snap.error; snap.opened && snap.previewRunning && snap.framesReceived == 0L -> "real libuvc stream opened, waiting for frames"; snap.framesReceived > 0L && snap.framesRendered == 0L -> "native UVC first frame received"; else -> null }).copy(
             cam1FramesReceived = snap.framesReceived, cam1FramesAssembled = snap.framesReceived,
             cam1FramesDecoded = snap.framesDecoded, cam1FramesRendered = snap.framesRendered,
             cam1FpsEstimate = snap.fpsEstimate, cam1LastFrameAgeMs = snap.lastFrameAgeMs,

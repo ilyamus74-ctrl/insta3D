@@ -53,7 +53,10 @@ struct Libs {
  uvc_error_t (*uvc_wrap)(int, uvc_context_t**, uvc_device_handle_t**)=nullptr;
  bool load(){
    usb=dlopen("libusb1.0.so", RTLD_NOW|RTLD_GLOBAL); if(!usb) usb=dlopen("libusb-1.0.so", RTLD_NOW|RTLD_GLOBAL);
-   uvc=dlopen("libuvc.so", RTLD_NOW|RTLD_GLOBAL); if(!uvc) return false;
+   ALOGI("native library load result libusb=%p", usb);
+   uvc=dlopen("libuvc.so", RTLD_NOW|RTLD_GLOBAL);
+   ALOGI("native library load result libuvc=%p", uvc);
+   if(!usb || !uvc) return false;
    #define SYM(x) x=(decltype(x))dlsym(uvc,#x)
    SYM(uvc_init); SYM(uvc_exit); SYM(uvc_find_device); SYM(uvc_open); SYM(uvc_close); SYM(uvc_unref_device);
    SYM(uvc_get_stream_ctrl_format_size); SYM(uvc_start_streaming); SYM(uvc_stop_streaming); SYM(uvc_strerror);
@@ -83,22 +86,23 @@ void cb(uvc_frame_t* frame, void*){
 }
 
 void streamingThread(int fd,int vendor,int product,std::string devName){
- if(!libs.load()){ setError("native UVC stream failed: libuvc/libusb shared libraries not found"); g_preview=false; return; }
+ if(!libs.load()){ setError("NATIVE_LIB_MISSING: libuvc/libusb shared libraries not found"); g_preview=false; return; }
  uvc_context_t* ctx=nullptr; uvc_device_t* dev=nullptr; uvc_device_handle_t* handle=nullptr; uvc_stream_ctrl_t* ctrl=(uvc_stream_ctrl_t*)calloc(1,256);
  ALOGI("libusb init/context via libuvc; current deviceName=%s fd=%d", devName.c_str(), fd);
  uvc_error_t r=0;
  if(libs.uvc_wrap){ r=libs.uvc_wrap(fd,&ctx,&handle); ALOGI("uvc_wrap(fd) result=%d", r); }
  else { r=libs.uvc_init(&ctx,nullptr); ALOGI("libuvc init/context result=%d", r); if(r>=0 && libs.uvc_get_device_with_fd){ r=libs.uvc_get_device_with_fd(ctx,&dev,vendor,product,nullptr,fd,devName.c_str()); ALOGI("uvc_get_device_with_fd result=%d", r); if(r>=0) r=libs.uvc_open(dev,&handle); } else if(r>=0 && libs.uvc_find_device && libs.uvc_open){ r=libs.uvc_find_device(ctx,&dev,vendor,product,nullptr); ALOGI("uvc_find_device fallback result=%d", r); if(r>=0) r=libs.uvc_open(dev,&handle); } }
- if(r<0 || !handle){ setError("native UVC stream failed: open handle " + libs.err(r)); goto done; }
+ if(r<0 || !handle){ setError("NATIVE_UVC_INIT_FAILED: open handle " + libs.err(r)); goto done; }
  ALOGI("uvc_scan_control result=ok bNumInterfaces=see libuvc/device logs");
  // Prefer safe mode observed in working app: 720x480 MJPEG @ 30fps (frame size 1036800) with interval 333333.
  r=libs.uvc_get_stream_ctrl_format_size(handle,ctrl,1,720,480,30);
  ALOGI("selected format=MJPEG resolution=720x480 fps=30 frame_interval=333333 target_dwMaxPayloadTransferSize=3072 target_dwMaxVideoFrameSize=1036800 get_ctrl=%d", r);
  if(r<0){ r=libs.uvc_get_stream_ctrl_format_size(handle,ctrl,1,640,480,30); ALOGI("fallback selected format=MJPEG resolution=640x480 fps=30 get_ctrl=%d", r); }
- if(r<0){ setError("native UVC stream failed: get stream ctrl " + libs.err(r)); goto done; }
+ if(r<0){ setError("NATIVE_UVC_INIT_FAILED: get stream ctrl " + libs.err(r)); goto done; }
  r=libs.uvc_start_streaming(handle,ctrl,cb,nullptr,0);
  ALOGI("uvc_stream_start result=%d dwMaxPayloadTransferSize target=3072 dwMaxVideoFrameSize target=1036800", r);
- if(r<0){ setError("native UVC stream failed: uvc_stream_start " + libs.err(r)); goto done; }
+ if(r<0){ setError("NATIVE_UVC_STREAM_START_FAILED: uvc_stream_start " + libs.err(r)); goto done; }
+ ALOGI("real libuvc stream start succeeded selected format=MJPEG width=640 height=480 fps=30 frame_interval=333333 payload_size=3072");
  g_preview=true;
  while(!g_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(50));
  libs.uvc_stop_streaming(handle);
@@ -112,7 +116,15 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_Nativ
  std::lock_guard<std::mutex> lk(g_lock); releaseWindow(); if(surface) g_window=ANativeWindow_fromSurface(env,surface); g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_error.clear(); g_fd=fd; g_vendor=vendorId; g_product=productId; g_device_name=name; g_opened=true; g_stop=false; g_start_ns=nowNs(); ALOGI("native UVC opened, waiting for frames fd=%d vendor=%d product=%d current_device=%s",fd,vendorId,productId,name.c_str()); return JNI_TRUE;
 }
 extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreview(JNIEnv*,jobject){ if(!g_opened) return JNI_FALSE; if(g_thread.joinable()){g_stop=true; g_thread.join(); g_stop=false;} g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name); ALOGI("native UVC stream start posted on worker thread"); return JNI_TRUE; }
-extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreviewWithDevice(JNIEnv*,jobject,jint fd,jint vendor,jint product,jstring){return JNI_FALSE;}
+extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreviewWithDevice(JNIEnv* env,jobject thiz,jint fd,jint vendor,jint product,jstring deviceName){
+ const char* n=env->GetStringUTFChars(deviceName,nullptr); std::string name=n?n:""; env->ReleaseStringUTFChars(deviceName,n);
+ g_fd=fd; g_vendor=vendor; g_product=product; g_device_name=name;
+ if(!g_opened) g_opened=true;
+ if(g_thread.joinable()){g_stop=true; g_thread.join(); g_stop=false;}
+ g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name);
+ ALOGI("native UVC stream start-with-device posted fd=%d vendor=%d product=%d deviceName=%s", fd, vendor, product, name.c_str());
+ return JNI_TRUE;
+}
 extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStopPreview(JNIEnv*,jobject){ g_stop=true; if(g_thread.joinable()) g_thread.join(); g_preview=false; }
 extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartRecording(JNIEnv* env,jobject,jstring path){ const char* p=env->GetStringUTFChars(path,nullptr); ALOGI("native UVC recording requested path=%s",p?p:""); env->ReleaseStringUTFChars(path,p); g_recorded=0; g_recording=g_opened.load(); return g_recording?JNI_TRUE:JNI_FALSE; }
 extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStopRecording(JNIEnv*,jobject){ g_recording=false; }
