@@ -3,7 +3,7 @@ USB MANAGER STATE (dumpsys usb):
   device_manager={
     handler={
       current_functions_applied=true
-      screen_locked=false
+      screen_locked=true
       connected=false
       configured=false
       host_connected=true
@@ -220,7 +220,7 @@ USB MANAGER STATE (dumpsys usb):
   }
   host_manager={
     devices={
-      name=/dev/bus/usb/001/003
+      name=/dev/bus/usb/001/004
       vendor_id=13030
       product_id=37409
       class=239
@@ -399,24 +399,8 @@ USB MANAGER STATE (dumpsys usb):
         ]
       }
     }
-    num_connects=59
+    num_connects=61
     connections=[
-      {
-        device_address=/dev/bus/usb/001/002
-        mode=-1
-        timestamp=1783064552513
-      }
-      {
-        device_address=/dev/bus/usb/001/003
-        mode=0
-        timestamp=1783064553996
-        manufacturer=13030
-        product=37409
-        is_headset={
-          in=false
-          out=false
-        }
-      }
       {
         device_address=/dev/bus/usb/001/003
         mode=-1
@@ -657,6 +641,22 @@ USB MANAGER STATE (dumpsys usb):
           out=false
         }
       }
+      {
+        device_address=/dev/bus/usb/001/003
+        mode=-1
+        timestamp=1783074704407
+      }
+      {
+        device_address=/dev/bus/usb/001/004
+        mode=0
+        timestamp=1783074705007
+        manufacturer=13030
+        product=37409
+        is_headset={
+          in=false
+          out=false
+        }
+      }
     ]
   }
   port_manager={
@@ -712,7 +712,7 @@ USB MANAGER STATE (dumpsys usb):
       name=WebCamera
       has_output=false
       has_input=true
-      address=/dev/bus/usb/001/003
+      address=/dev/bus/usb/001/004
     }
   }
   settings_manager={
@@ -820,10 +820,16 @@ USB MANAGER STATE (dumpsys usb):
   permissions_manager={
     user_permissions={
       user_id=0
-      device_permissions={
-        device_name=/dev/bus/usb/001/012
-        uids=10451
-      }
+      device_permissions=[
+        {
+          device_name=/dev/bus/usb/001/004
+          uids=10451
+        }
+        {
+          device_name=/dev/bus/usb/001/012
+          uids=10451
+        }
+      ]
     }
   }
 }
