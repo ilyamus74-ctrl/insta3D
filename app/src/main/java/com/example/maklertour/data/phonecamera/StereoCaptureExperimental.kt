@@ -326,9 +326,9 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
                 fpsEstimate = java.lang.Double.longBitsToDouble(counters[3]),
                 lastFrameAgeMs = lastNs?.let { (now - it) / 1_000_000L },
                 firstFrameTimestampNs = counters[5].takeIf { it > 0L }, recordedFrames = counters[6],
-                selectedFormat = if (streamRunning) "MJPEG" else null,
-                selectedResolution = if (streamRunning) "640x480" else null,
-                selectedFps = if (streamRunning) 30 else null,
+                selectedFormat = if (streamRunning && counters.size >= 12) nativeSelectedFormatName().takeIf { it.isNotBlank() } else null,
+                selectedResolution = if (streamRunning && counters.size >= 12 && counters[9] > 0L && counters[10] > 0L) "${counters[9]}x${counters[10]}" else null,
+                selectedFps = if (streamRunning && counters.size >= 12 && counters[11] > 0L) counters[11].toInt() else null,
                 error = nativeLastError().takeIf { it.isNotBlank() },
             )
         }
@@ -342,6 +342,7 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
     private external fun nativeStopRecording()
     private external fun nativeClose()
     private external fun nativeSnapshot(): LongArray
+    private external fun nativeSelectedFormatName(): String
     private external fun nativeLastError(): String
 
     companion object {
@@ -512,7 +513,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             snap.opened -> UsbUvcStatus.UVC_STREAM_STARTING
             else -> UsbUvcStatus.UVC_ADAPTER_OPENING
         }
-        update(info(device, status, when { snap.error != null -> snap.error; snap.framesReceived > 0L && snap.framesRendered == 0L -> "native UVC first frame received"; snap.opened && snap.previewRunning && snap.framesReceived == 0L -> "real libuvc stream opened, waiting for frames"; snap.opened -> "native UVC stream starting"; else -> null }).copy(
+        update(info(device, status, when { snap.error != null -> snap.error; snap.framesRendered > 0L -> null; snap.framesReceived > 0L -> "native UVC first frame received"; snap.opened && snap.previewRunning && snap.framesReceived == 0L -> "real libuvc stream opened, waiting for frames"; snap.opened -> "native UVC stream starting"; else -> null }).copy(
             cam1FramesReceived = snap.framesReceived, cam1FramesAssembled = snap.framesReceived,
             cam1FramesDecoded = snap.framesDecoded, cam1FramesRendered = snap.framesRendered,
             cam1FpsEstimate = snap.fpsEstimate, cam1LastFrameAgeMs = snap.lastFrameAgeMs,
