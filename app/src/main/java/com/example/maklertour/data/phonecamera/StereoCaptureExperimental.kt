@@ -553,18 +553,39 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         if (!nativeStall && (snap.lastFrameAgeMs ?: 0L) <= 2_000L) return
         if (restartAttempts >= MAX_STALL_RESTART_ATTEMPTS) return
         if (nowMs - lastRestartMs < STALL_RESTART_RATE_LIMIT_MS) return
-        append("cam1 real stall detected, restarting native UVC preview")
+        append("cam1 real stall detected, fully reopening native UVC preview")
         onRestartPosted(true, nowMs)
         cam1Handler.post {
             if (generation != cam1Generation || poll != pollGeneration) return@post
             backend.stopPreview()
+            backend.close()
+            runCatching { activeConnection?.close() }
+            activeConnection = null
             if (generation != cam1Generation || poll != pollGeneration) return@post
+
+            val connection = usbManager?.openDevice(device)
+            append("reopenDevice(after stall) deviceName=${device.deviceName} result=${connection != null}")
+            if (connection == null) {
+                mainHandler.post {
+                    if (generation != cam1Generation || poll != pollGeneration) return@post
+                    onRestartCompleted()
+                    update(info(device, UsbUvcStatus.OPEN_DEVICE_FAILED, "openDevice failed during stalled UVC reopen"))
+                }
+                return@post
+            }
+            activeConnection = connection
+            val surface = preview?.takeIf { it.isAvailable }?.surfaceTexture?.let { android.view.Surface(it) }
+            backend.open(Cam1UvcDeviceInfo(device.vendorId, device.productId, device.deviceName, device.productName, connection.fileDescriptor), surface)
             backend.startPreview()
             val restartedSnap = backend.snapshot()
             mainHandler.post {
                 if (generation != cam1Generation || poll != pollGeneration) return@post
                 onRestartCompleted()
-                updateFromBackend(device, restartedSnap)
+                if (restartedSnap.error != null || !restartedSnap.opened) {
+                    updateFromBackend(device, restartedSnap.copy(error = restartedSnap.error ?: "UVC_PREVIEW_FAILED: stalled UVC reopen failed"))
+                } else {
+                    updateFromBackend(device, restartedSnap)
+                }
             }
         }
     }
