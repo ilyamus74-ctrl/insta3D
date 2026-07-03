@@ -330,7 +330,7 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
         private const val LOAD_TAG = "NativeLibuvcCam1Backend"
 
         init {
-            listOf("usb100", "jpeg-turbo1500", "uvc", "UVCCamera", "UACAudio", "cam1_uvc").forEach { library ->
+            listOf("usb100", "jpeg-turbo1500", "uvc", "cam1_uvc").forEach { library ->
                 try {
                     System.loadLibrary(library)
                     Log.i(LOAD_TAG, "System.loadLibrary success library=$library")
