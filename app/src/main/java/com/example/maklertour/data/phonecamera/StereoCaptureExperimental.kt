@@ -15,11 +15,6 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
-import android.hardware.usb.UsbRequest
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Color
-import android.graphics.Paint
 import android.os.Build
 import android.os.SystemClock
 import android.os.Handler
@@ -33,9 +28,6 @@ import com.maklertour.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
-import java.util.concurrent.atomic.AtomicBoolean
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -43,7 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-private const val USB_RECIP_INTERFACE = 0x01
+private const val DEBUG_JAVA_UVC_BACKEND = false
 
 /** Experimental, isolated stereo capture MVP for a phone camera + external USB UVC rig. */
 data class StereoRigConfig(
@@ -221,6 +213,113 @@ private fun writeCameraManifest(file: File, id: String, role: String, video: Str
 
 private fun cameraJson(id: String, role: String, lens: String, video: String, timestamps: String, width: Int, height: Int, usb: UsbUvcCameraInfo?): JSONObject = JSONObject().put("id", id).put("role", role).put("lens", lens).put("video", video).put("timestamps", timestamps).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual", JSONObject.NULL).put("intrinsics_status", "unknown").apply { if (usb != null) { put("usb_vendor_id", usb.vendorId); put("usb_product_id", usb.productId); put("usb_device_name", usb.deviceName); put("vendor_id", usb.vendorId); put("product_id", usb.productId); put("product_name", usb.productName); put("endpoint_type", usb.endpointType) } }
 
+private interface Cam1UvcBackend {
+    fun open(deviceInfo: Cam1UvcDeviceInfo, previewSurface: android.view.Surface?)
+    fun startPreview()
+    fun stopPreview()
+    fun startRecording(outputFile: File)
+    fun stopRecording()
+    fun close()
+    fun snapshot(): Cam1UvcBackendState
+}
+
+private data class Cam1UvcDeviceInfo(
+    val vendorId: Int,
+    val productId: Int,
+    val deviceName: String,
+    val productName: String?,
+    val fileDescriptor: Int,
+)
+
+private data class Cam1UvcBackendState(
+    val opened: Boolean = false,
+    val previewRunning: Boolean = false,
+    val recording: Boolean = false,
+    val framesReceived: Long = 0L,
+    val framesDecoded: Long = 0L,
+    val framesRendered: Long = 0L,
+    val fpsEstimate: Double = 0.0,
+    val lastFrameAgeMs: Long? = null,
+    val selectedFormat: String? = null,
+    val selectedResolution: String? = null,
+    val selectedFps: Int? = null,
+    val recordedFrames: Long = 0L,
+    val firstFrameTimestampNs: Long? = null,
+    val error: String? = null,
+)
+
+private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1UvcBackend {
+    private val lock = Any()
+    private var state = Cam1UvcBackendState(selectedFormat = "MJPEG", selectedResolution = "640x480", selectedFps = 30)
+    private var outputFile: File? = null
+
+    override fun open(deviceInfo: Cam1UvcDeviceInfo, previewSurface: android.view.Surface?) = synchronized(lock) {
+        log("selected backend: native libuvc")
+        log("native UVC open requested vendor=${deviceInfo.vendorId} product=${deviceInfo.productId} name=${deviceInfo.productName} deviceName=${deviceInfo.deviceName} fd=${deviceInfo.fileDescriptor} surface=${previewSurface != null}")
+        val result = runCatching { nativeOpen(deviceInfo.fileDescriptor, deviceInfo.vendorId, deviceInfo.productId, deviceInfo.deviceName, previewSurface) }
+        state = if (result.getOrDefault(false)) {
+            state.copy(opened = true, error = null, selectedFormat = "MJPEG", selectedResolution = "640x480", selectedFps = 30)
+        } else {
+            state.copy(opened = false, error = result.exceptionOrNull()?.message ?: "native libuvc backend unavailable or failed to open")
+        }
+        log("native UVC open result opened=${state.opened} error=${state.error ?: "none"}")
+    }
+
+    override fun startPreview() = synchronized(lock) {
+        val result = runCatching { nativeStartPreview() }
+        state = state.copy(previewRunning = result.getOrDefault(false), error = result.exceptionOrNull()?.message)
+        log("preview start result backend=native libuvc running=${state.previewRunning} selected_format=${state.selectedFormat} selected_resolution=${state.selectedResolution} selected_fps=${state.selectedFps} error=${state.error ?: "none"}")
+    }
+
+    override fun stopPreview() = synchronized(lock) { runCatching { nativeStopPreview() }; state = state.copy(previewRunning = false) }
+
+    override fun startRecording(outputFile: File) = synchronized(lock) {
+        this.outputFile = outputFile
+        outputFile.parentFile?.mkdirs()
+        val result = runCatching { nativeStartRecording(outputFile.absolutePath) }
+        state = state.copy(recording = result.getOrDefault(false), recordedFrames = 0L, error = result.exceptionOrNull()?.message)
+        log("cam1 recording requested backend=native libuvc path=${outputFile.absolutePath} started=${state.recording} error=${state.error ?: "none"}")
+    }
+
+    override fun stopRecording() = synchronized(lock) {
+        runCatching { nativeStopRecording() }
+        outputFile?.let { log("cam1 recording stopped path=${it.absolutePath} size=${it.length()} encoded_frames=${state.recordedFrames} valid=${it.exists() && it.length() > 0L && state.recordedFrames > 0L}") }
+        state = state.copy(recording = false)
+        outputFile = null
+    }
+
+    override fun close() = synchronized(lock) { runCatching { nativeClose() }; state = Cam1UvcBackendState(selectedFormat = "MJPEG", selectedResolution = "640x480", selectedFps = 30) }
+
+    override fun snapshot(): Cam1UvcBackendState = synchronized(lock) {
+        val counters = runCatching { nativeSnapshot() }.getOrNull()
+        if (counters != null && counters.size >= 8) {
+            val now = SystemClock.elapsedRealtimeNanos()
+            val lastNs = counters[4].takeIf { it > 0L }
+            state = state.copy(
+                framesReceived = counters[0], framesDecoded = counters[1], framesRendered = counters[2],
+                fpsEstimate = java.lang.Double.longBitsToDouble(counters[3]),
+                lastFrameAgeMs = lastNs?.let { (now - it) / 1_000_000L },
+                firstFrameTimestampNs = counters[5].takeIf { it > 0L }, recordedFrames = counters[6],
+            )
+        }
+        state
+    }
+
+    private external fun nativeOpen(fd: Int, vendorId: Int, productId: Int, deviceName: String, surface: android.view.Surface?): Boolean
+    private external fun nativeStartPreview(): Boolean
+    private external fun nativeStopPreview()
+    private external fun nativeStartRecording(path: String): Boolean
+    private external fun nativeStopRecording()
+    private external fun nativeClose()
+    private external fun nativeSnapshot(): LongArray
+
+    companion object {
+        init {
+            runCatching { System.loadLibrary("cam1_uvc") }
+        }
+    }
+}
+
 private class UsbUvcCameraAdapter(private val context: Context) {
     private val usbManager = context.getSystemService(UsbManager::class.java)
     private val permissionAction = "com.maklertour.USB_PERMISSION"
@@ -228,169 +327,58 @@ private class UsbUvcCameraAdapter(private val context: Context) {
     val state: StateFlow<UsbUvcCameraInfo> = _state.asStateFlow()
     private var logFile: File? = File(context.filesDir, "app_log.txt")
     private var preview: TextureView? = null
-    private var recordingFile: File? = null
     private var selectedDevice: UsbDevice? = null
+    private var activeConnection: UsbDeviceConnection? = null
     private var receiverRegistered = false
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var firstFrameNs: Long? = null
-    private var lastFrameNs: Long? = null
-    private var lastPacketNs: Long? = null
-    private var firstPacketLogged = false
-    private var firstCompleteFrameLogged = false
-    private var firstDecodedLogged = false
-    private var firstRenderedLogged = false
-    private var selectedPixelFormat: String? = null
-    private var selectedResolutionFps: String? = null
-    private var selectedAltSetting: Int? = null
-    private var selectedMaxPacketSize: Int? = null
-    private var selectedMode: UvcSelectedMode? = null
-    private val cam1Thread = HandlerThread("Cam1UvcThread").also { it.start() }
+    private val cam1Thread = HandlerThread("Cam1NativeUvcThread").also { it.start() }
     private val cam1Handler = Handler(cam1Thread.looper)
-    private var activeRequests: List<UsbRequest> = emptyList()
+    private val backend: Cam1UvcBackend = NativeLibuvcCam1Backend(::append)
     @Volatile private var cam1Generation = 0
-    @Volatile private var lastUiUpdateMs = 0L
-    private var streaming = AtomicBoolean(false)
-    private var activeConnection: UsbDeviceConnection? = null
-    private var activeEndpoint: UsbEndpoint? = null
-    private var recordingStartFrameCount: Long = 0L
-    private var lastRecordingFrameCount: Long = 0L
-    private var lastSelectedDeviceName: String? = null
-    @Volatile private var receiveLoopRunning = false
-    @Volatile private var receiveLoopExitReason: String? = null
-    @Volatile private var requestQueueDepth = 0
-    @Volatile private var lastSuccessfulTransferNs: Long? = null
+    @Volatile private var pollGeneration = 0
+    private var lastRecordingFrameCount = 0L
+    private var recordingStartFrameCount = 0L
+    private var recordingFile: File? = null
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             if (intent.action != permissionAction) return
-            val callbackDevice = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+            val device = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-            val currentDevice = findSelectedDeviceWithRetry(0L)
-            val device = currentDevice ?: callbackDevice ?: selectedDevice
-            append("permission callback received action=${intent.action}")
-            append("EXTRA_PERMISSION_GRANTED value=$granted")
-            append("EXTRA_DEVICE value=${callbackDevice?.deviceName} vendor=${callbackDevice?.vendorId} product=${callbackDevice?.productId}")
-            append("permission callback currentDeviceName=${currentDevice?.deviceName} previousDeviceName=${selectedDevice?.deviceName} hasPermission(currentDevice)=${currentDevice?.let { usbManager?.hasPermission(it) }}")
-            if (callbackDevice != null && currentDevice != null && callbackDevice.deviceName != currentDevice.deviceName) append("stale device detection permission callbackDeviceName=${callbackDevice.deviceName} currentDeviceName=${currentDevice.deviceName}; ignoring stale callback device")
-            if (granted && device != null) {
-                selectedDevice = device
-                lastSelectedDeviceName = device.deviceName
-                if (usbManager?.hasPermission(device) == true) {
-                    openAfterPermissionAsync(device)
-                } else {
-                    append("permission callback did not grant current deviceName=${device.deviceName}; requesting permission again")
-                    requestPermissionForCurrentDevice(device)
-                }
-            } else if (!granted) {
-                update(info(device, UsbUvcStatus.PERMISSION_DENIED, "USB permission denied"))
-            } else {
-                update(info(selectedDevice, UsbUvcStatus.ERROR, "USB permission granted callback had no device"))
-            }
+            append("permission callback received granted=$granted deviceName=${device?.deviceName}")
+            if (granted) openAfterPermissionAsync(findSelectedDeviceWithRetry(0L) ?: device ?: selectedDevice) else update(info(device ?: selectedDevice, UsbUvcStatus.PERMISSION_DENIED, "USB permission denied"))
         }
     }
 
     fun attachLogFile(file: File) { logFile = file }
-
-    fun close() { stopStreamLoop(); unregisterPermissionReceiver(); cam1Thread.quitSafely() }
-
+    fun close() { stopNativeBackend(); unregisterPermissionReceiver(); cam1Thread.quitSafely() }
     fun currentInfo(): UsbUvcCameraInfo = _state.value
-
     fun recordedFrameCount(): Long = lastRecordingFrameCount
-
-    private fun stopStreamLoop() {
-        cam1Generation++
-        streaming.set(false)
-        val requests = activeRequests
-        activeRequests = emptyList()
-        requests.forEach { runCatching { it.cancel() }; runCatching { it.close() } }
-        runCatching { activeConnection?.close() }
-        activeConnection = null
-        activeEndpoint = null
-        append("UVC stop requested thread=${Thread.currentThread().name} generation=$cam1Generation")
-    }
-
-    private fun stopReceiveThreadOnly() {
-        streaming.set(false)
-        val requests = activeRequests
-        activeRequests = emptyList()
-        requests.forEach { runCatching { it.cancel() }; runCatching { it.close() } }
-    }
-
-    fun onPreviewFrameRendered() {
-        // TextureView callbacks can fire for any canvas post; counters are updated only by decoded UVC renders.
-    }
-
-    private fun onDecodedFrameRendered(device: UsbDevice) {
-        val now = SystemClock.elapsedRealtimeNanos()
-        if (firstFrameNs == null) {
-            firstFrameNs = now
-            append("cam1 first rendered frame timestamp_ns=$now")
-            update(info(device, UsbUvcStatus.UVC_FRAMES_DECODED))
-        }
-        lastFrameNs = now
-        val nextCount = _state.value.cam1FramesRendered + 1L
-        val first = firstFrameNs ?: now
-        val fps = if (now > first && nextCount > 1L) (nextCount - 1L) * 1_000_000_000.0 / (now - first) else 0.0
-        if (!firstRenderedLogged) { firstRenderedLogged = true; append("first rendered frame timestamp_ns=$now") }
-        append("cam1 rendered frame count=$nextCount first_frame_timestamp_ns=$first last_frame_timestamp_ns=$now preview render success=true")
-        update(info(device, UsbUvcStatus.UVC_PREVIEW_ACTIVE).copy(cam1FramesRendered = nextCount, cam1LastFrameAgeMs = 0L, cam1FpsEstimate = fps))
-    }
+    fun onPreviewFrameRendered() = Unit
 
     fun refreshAndRequestPermission(textureView: TextureView?): UsbUvcCameraInfo {
         append("Refresh USB pressed")
         preview = textureView ?: preview
-        val previousDeviceName = selectedDevice?.deviceName ?: lastSelectedDeviceName
-        stopStreamLoop()
-        clearSelectedUsbState(resetCounters = true)
+        stopNativeBackend()
+        _state.value = UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED)
         logUsbInventory()
         val manager = usbManager ?: return update(UsbUvcCameraInfo(UsbUvcStatus.ERROR, error = "UsbManager unavailable"))
-        val device = findSelectedDeviceWithRetry(0L)
-            ?: return update(UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED, error = "No UVC class 14 device found"))
-        val currentDeviceName = device.deviceName
-        if (previousDeviceName != null && previousDeviceName != currentDeviceName) append("stale device detection previousDeviceName=$previousDeviceName currentDeviceName=$currentDeviceName; resetting UVC state")
+        val device = findSelectedDeviceWithRetry(0L) ?: return update(UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED, error = "No UVC class 14 device found"))
         selectedDevice = device
-        lastSelectedDeviceName = currentDeviceName
         update(info(device, UsbUvcStatus.DEVICE_FOUND))
         val hasPermission = manager.hasPermission(device)
-        append("selected deviceName=$currentDeviceName previousDeviceName=$previousDeviceName vendor=${device.vendorId} product=${device.productId}")
-        append("hasPermission(currentDevice) deviceName=$currentDeviceName result=$hasPermission")
-        if (!hasPermission) {
-            return requestPermissionForCurrentDevice(device)
-        }
+        append("selected deviceName=${device.deviceName} vendor=${device.vendorId} product=${device.productId} permission status=$hasPermission")
+        if (!hasPermission) return requestPermissionForCurrentDevice(device)
         return openAfterPermissionAsync(device)
     }
 
     private fun requestPermissionForCurrentDevice(device: UsbDevice): UsbUvcCameraInfo {
-        val manager = usbManager ?: return update(info(device, UsbUvcStatus.ERROR, "UsbManager unavailable"))
-        update(info(device, UsbUvcStatus.PERMISSION_MISSING))
         registerPermissionReceiver()
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
         val pi = PendingIntent.getBroadcast(context, 13030, Intent(permissionAction).setPackage(context.packageName), flags)
-        append("requestPermission called action=$permissionAction flags=$flags deviceName=${device.deviceName}")
-        manager.requestPermission(device, pi)
+        usbManager?.requestPermission(device, pi)
+        append("requestPermission called deviceName=${device.deviceName}")
         return update(info(device, UsbUvcStatus.PERMISSION_REQUESTED))
-    }
-
-    private fun clearSelectedUsbState(resetCounters: Boolean) {
-        selectedDevice = null
-        activeEndpoint = null
-        selectedPixelFormat = null
-        selectedResolutionFps = null
-        selectedAltSetting = null
-        selectedMaxPacketSize = null
-        selectedMode = null
-        firstFrameNs = null
-        lastFrameNs = null
-        lastPacketNs = null
-        firstPacketLogged = false
-        firstCompleteFrameLogged = false
-        firstDecodedLogged = false
-        firstRenderedLogged = false
-        receiveLoopRunning = false
-        receiveLoopExitReason = "reset"
-        requestQueueDepth = 0
-        lastSuccessfulTransferNs = null
-        if (resetCounters) _state.value = UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED, receiveLoopExitReason = receiveLoopExitReason)
     }
 
     fun logUsbInventory() {
@@ -412,340 +400,102 @@ private class UsbUvcCameraAdapter(private val context: Context) {
     fun startRecording(file: File) {
         recordingFile = file
         recordingStartFrameCount = _state.value.cam1FramesReceived
-        lastRecordingFrameCount = 0L
-        append("cam1 recording requested path=${file.absolutePath}; current frame count=${_state.value.cam1FramesReceived}; cam1.mp4 valid only if file exists, size > 0, and frame count > 0")
+        cam1Handler.post { backend.startRecording(file) }
     }
 
     fun stopRecording() {
-        val file = recordingFile ?: return
-        lastRecordingFrameCount = (_state.value.cam1FramesReceived - recordingStartFrameCount).coerceAtLeast(0L)
-        if (!file.exists()) file.writeBytes(ByteArray(0))
-        append("cam1 recording stopped; file_exists=${file.exists()} size=${file.length()} frame_count=${lastRecordingFrameCount}; cam1.mp4 valid=${file.exists() && file.length() > 0L && lastRecordingFrameCount > 0L}")
+        val file = recordingFile
+        val done = java.util.concurrent.CountDownLatch(1)
+        cam1Handler.post {
+            try {
+                backend.stopRecording()
+                val snap = backend.snapshot()
+                lastRecordingFrameCount = (snap.framesReceived - recordingStartFrameCount).coerceAtLeast(0L)
+                if (file != null) append("recording file path=${file.absolutePath} size=${file.length()} cam1_frames=${lastRecordingFrameCount}")
+            } finally {
+                done.countDown()
+            }
+        }
+        done.await(2, java.util.concurrent.TimeUnit.SECONDS)
         recordingFile = null
     }
 
-    private fun openAfterPermissionAsync(device: UsbDevice): UsbUvcCameraInfo {
-        stopStreamLoop()
+    private fun openAfterPermissionAsync(device: UsbDevice?): UsbUvcCameraInfo {
+        if (device == null) return update(UsbUvcCameraInfo(UsbUvcStatus.ERROR, error = "No current USB device after permission"))
+        stopNativeBackend()
+        selectedDevice = device
         val generation = cam1Generation
-        update(info(device, UsbUvcStatus.PERMISSION_GRANTED))
-        update(info(device, UsbUvcStatus.UVC_ADAPTER_OPENING, "UVC opening on background thread"))
-        cam1Handler.post { openAfterPermissionOnCam1Thread(device, generation) }
+        update(info(device, UsbUvcStatus.UVC_ADAPTER_OPENING, "native UVC opening on background thread"))
+        cam1Handler.post {
+            if (generation != cam1Generation) return@post
+            val connection = usbManager?.openDevice(device)
+            append("openDevice(currentDevice) deviceName=${device.deviceName} result=${connection != null}")
+            if (connection == null) { update(info(device, UsbUvcStatus.OPEN_DEVICE_FAILED, "openDevice failed")); return@post }
+            activeConnection = connection
+            update(info(device, UsbUvcStatus.OPEN_DEVICE_SUCCESS))
+            val surface = preview?.takeIf { it.isAvailable }?.surfaceTexture?.let { android.view.Surface(it) }
+            backend.open(Cam1UvcDeviceInfo(device.vendorId, device.productId, device.deviceName, device.productName, connection.fileDescriptor), surface)
+            backend.startPreview()
+            val snap = backend.snapshot()
+            append("selected UVC format/resolution/fps ${snap.selectedFormat}/${snap.selectedResolution}/${snap.selectedFps}")
+            updateFromBackend(device, snap)
+            startBackendPolling(device, generation)
+        }
         return _state.value
     }
 
-    private fun openAfterPermissionOnCam1Thread(device: UsbDevice, generation: Int): UsbUvcCameraInfo {
-        if (!assertNotMainUvc("openAfterPermission")) return update(info(device, UsbUvcStatus.ERROR, "UVC open attempted on main thread"))
-        if (generation != cam1Generation) return _state.value
-        val manager = usbManager ?: return update(info(device, UsbUvcStatus.ERROR, "UsbManager unavailable"))
-        append("device selected")
-        update(info(device, UsbUvcStatus.PERMISSION_GRANTED))
-        append("permission ok")
-        val connection = manager.openDevice(device)
-        append("openDevice(currentDevice) deviceName=${device.deviceName} result=${connection != null}")
-        if (connection == null) return update(info(device, UsbUvcStatus.OPEN_DEVICE_FAILED, "openDevice failed"))
-        activeConnection = connection
-        update(info(device, UsbUvcStatus.OPEN_DEVICE_SUCCESS))
-        val selection = device.selectUvcInterfaces(::append)
-        val videoControl = selection.videoControl
-        val alternates = selection.videoStreamingAlternates
-            .filter { alt ->
-                alt.usbInterface.interfaceClass == 14 &&
-                    alt.usbInterface.interfaceSubclass == 2 &&
-                    alt.usbInterface.endpointCount > 0 &&
-                    alt.endpoint.direction == UsbConstants.USB_DIR_IN &&
-                    alt.endpoint.type == UsbConstants.USB_ENDPOINT_XFER_ISOC &&
-                    alt.endpoint.address == 130
-            }
-            .sortedWith(compareBy<UvcStreamingAlternate> { alt ->
-                listOf(5120, 4976, 3072, 2848, 1024, 512).indexOf(alt.endpoint.maxPacketSize).let { if (it >= 0) it else Int.MAX_VALUE }
-            })
-        append("VideoControl selected id=${videoControl?.id ?: "missing"}")
-        append("VideoStreaming selected candidates=${alternates.joinToString { "id=${it.usbInterface.id} alt=${it.usbInterface.alternateSetting ?: "unknown"} ep=${it.endpoint.address} max=${it.endpoint.maxPacketSize}" }}")
-        val selected = alternates.firstOrNull()
-        append("endpoint selected address=${selected?.endpoint?.address ?: "missing"} type=${selected?.endpoint?.type} direction=${selected?.endpoint?.direction} maxPacketSize=${selected?.endpoint?.maxPacketSize}")
-        append("UVC discovery state: VideoControl ${if (videoControl == null) "missing" else "found id=${videoControl.id}"}; VideoStreaming alternates found count=${alternates.size}; Isochronous IN endpoint ${if (selected?.endpoint == null) "missing" else "found"}")
-        val rawDescriptors = runCatching { connection.rawDescriptors }.getOrNull()
-        val parsedModes = parseUvcModes(rawDescriptors, ::append)
-        selectedMode = chooseUvcMode(parsedModes)
-        selectedPixelFormat = selectedMode?.format ?: device.detectUvcPixelFormat(::append)?.substringBefore(" ") ?: "unknown"
-        selectedResolutionFps = selectedMode?.let { "${it.width}x${it.height}@${it.fps}fps interval=${it.frameInterval100ns}" } ?: "640x480@30fps fallback"
-        append("selected UVC pixel format=${selectedPixelFormat ?: "unknown"}")
-        append("selected resolution/fps=${selectedResolutionFps}")
-        update(info(device, UsbUvcStatus.UVC_ADAPTER_OPENING))
-        if (videoControl == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoControl missing"))
-        if (alternates.isEmpty()) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoStreaming alternate with endpoint address=130 missing"))
-        val claimControl = connection.claimInterface(videoControl, true)
-        append("claim VideoControl result=$claimControl id=${videoControl.id}")
-        if (!claimControl) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: claimInterface failed for VideoControl id=${videoControl.id}"))
-        if (preview?.isAvailable != true) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC stream start failed: preview surface unavailable"))
-
-        for (candidate in alternates) {
-            val candidateInterface = candidate.usbInterface
-            val endpoint = candidate.endpoint
-            val claimStreaming = connection.claimInterface(candidateInterface, true)
-            append("claim VideoStreaming result=$claimStreaming id=${candidateInterface.id} alternate=${candidateInterface.alternateSetting ?: "unknown"} endpoint_address=${endpoint.address} max_packet_size=${endpoint.maxPacketSize}")
-            if (!claimStreaming) continue
-            val setInterface = connection.trySetInterface(candidateInterface, ::append)
-            append("setInterface result=$setInterface id=${candidateInterface.id} alternate=${candidateInterface.alternateSetting ?: "unknown"} endpoint_address=${endpoint.address} max_packet_size=${endpoint.maxPacketSize}")
-            if (!setInterface) continue
-            selectedAltSetting = candidateInterface.alternateSetting
-            selectedMaxPacketSize = endpoint.maxPacketSize
-            val mode = selectedMode ?: UvcSelectedMode(selectedPixelFormat ?: "unknown", 640, 480, 30, 333333, 640 * 480 * 2, endpoint.maxPacketSize)
-            for (legacy in listOf(false, true)) {
-                stopReceiveThreadOnly()
-                val beforePackets = _state.value.cam1PacketsReceived
-                if (legacy) {
-                    append("legacy_raw_stream_attempt alternate=${candidateInterface.alternateSetting ?: "unknown"} max_packet_size=${endpoint.maxPacketSize}")
-                } else {
-                    runCatching { connection.commitProbe(candidateInterface, mode, endpoint, ::append) }
-                        .onFailure { append("UVC probe get/set result exception=${it.stackTraceToString()}") }
-                }
-                activeConnection = connection
-                activeEndpoint = endpoint
-                startStreamLoop(device, connection, endpoint, mode)
-                append("UVC stream opened, waiting for packets alternate=${candidateInterface.alternateSetting ?: "unknown"} max_packet_size=${endpoint.maxPacketSize} legacy=$legacy")
-                update(info(device, UsbUvcStatus.UVC_STREAM_OPENED, "UVC stream opened, waiting for packets"))
-                val deadline = SystemClock.elapsedRealtime() + 1000L
-                while (streaming.get() && SystemClock.elapsedRealtime() < deadline && _state.value.cam1PacketsReceived <= beforePackets) {
-                    SystemClock.sleep(25L)
-                }
-                if (_state.value.cam1PacketsReceived > beforePackets) {
-                    scheduleNoFramesTimeout(device)
-                    return update(info(device, UsbUvcStatus.UVC_STREAM_OPENED))
-                }
-                append("UVC stream failed: no packets alternate=${candidateInterface.alternateSetting ?: "unknown"} max_packet_size=${endpoint.maxPacketSize} legacy=$legacy")
-            }
-        }
-        stopReceiveThreadOnly()
-        runCatching { connection.close() }
-        if (activeConnection === connection) activeConnection = null
-        return update(info(device, UsbUvcStatus.UVC_STALLED_NO_PACKETS, "UVC stream failed: no packets"))
-    }
-
-    private fun startStreamLoop(device: UsbDevice, connection: UsbDeviceConnection, endpoint: UsbEndpoint, mode: UvcSelectedMode) {
-        streaming.set(true)
-        Thread({
-            if (!assertNotMainUvc("receive loop")) return@Thread
-            val requests = (0 until 6).mapNotNull { index ->
-                runCatching {
-                    UsbRequest().takeIf { req -> req.initialize(connection, endpoint) }?.also { req ->
-                        append("UsbRequest allocated index=$index endpoint=${endpoint.address} maxPacketSize=${endpoint.maxPacketSize}")
-                        val buffer = ByteBuffer.allocateDirect(endpoint.maxPacketSize.coerceAtLeast(1024))
-                        req.clientData = buffer
-                        val queued = req.queue(buffer, buffer.capacity())
-                        append("UsbRequest queued index=$index result=$queued capacity=${buffer.capacity()}")
-                    }
-                }.onFailure { append("UsbRequest allocate/queue exception index=$index ${it.stackTraceToString()}") }.getOrNull()
-            }
-            activeRequests = requests
-            requestQueueDepth = requests.size
-            receiveLoopRunning = true
-            receiveLoopExitReason = null
-            append("receive loop start receive_loop_running=true request_queue_depth=${requests.size} endpoint=${endpoint.address} maxPacketSize=${endpoint.maxPacketSize}")
-            val assembler = UvcFrameAssembler(mode)
-            var lastLog = SystemClock.elapsedRealtime()
-            while (streaming.get()) {
-                try {
-                    val waited = connection.requestWait(1000)
-                    append("requestWait returned result=${waited != null}")
-                    if (waited == null) {
-                        val age = lastPacketNs?.let { (SystemClock.elapsedRealtimeNanos() - it) / 1_000_000L }
-                        if (age == null || age > 1000L) update(info(device, UsbUvcStatus.UVC_STALLED_NO_PACKETS, "UVC stream failed: no packets"))
-                        continue
-                    }
-                    val req = waited
-                    val buffer = req.clientData as ByteBuffer
-                    val bytes = buffer.position().takeIf { it > 0 } ?: buffer.limit().takeIf { it in 1..buffer.capacity() } ?: buffer.capacity()
-                    append("requestWait result=request endpoint=${endpoint.address} bytes=$bytes")
-                    append("bytes received count=$bytes endpoint=${endpoint.address}")
-                    buffer.flip()
-                    val packet = ByteArray(bytes.coerceAtMost(buffer.remaining()))
-                    buffer.get(packet)
-                    buffer.clear()
-                    if (packet.isNotEmpty()) {
-                        lastSuccessfulTransferNs = SystemClock.elapsedRealtimeNanos()
-                        onPacket(device, packet)
-                    }
-                    if (packet.isNotEmpty()) {
-                        assembler.accept(packet, ::append)?.let { frame ->
-                            onFrameAssembled(device)
-                            decodeAndRender(device, frame, mode)
-                        }
-                    }
-                    val requeued = req.queue(buffer, buffer.capacity())
-                    append("UsbRequest queued requeue result=$requeued capacity=${buffer.capacity()}")
-                    val nowMs = SystemClock.elapsedRealtime()
-                    if (nowMs - lastLog >= 1000L) {
-                        lastLog = nowMs
-                        append("cam1 counters packets=${_state.value.cam1PacketsReceived} assembled=${_state.value.cam1FramesAssembled} decoded=${_state.value.cam1FramesDecoded} rendered=${_state.value.cam1FramesRendered}")
-                    }
-                } catch (t: Throwable) {
-                    append("UVC receive loop exception: ${t.stackTraceToString()}")
-                    if (_state.value.cam1PacketsReceived > 0L && _state.value.cam1FramesAssembled > 0L) update(info(device, UsbUvcStatus.UVC_DECODE_FAILED, t.message)) else update(info(device, UsbUvcStatus.UVC_STALLED_NO_PACKETS, "UVC stream failed: no packets"))
-                }
-            }
-            receiveLoopRunning = false
-            receiveLoopExitReason = if (streaming.get()) "loop ended unexpectedly" else "stop requested"
-            requestQueueDepth = 0
-            append("receive loop exit receive_loop_running=false receive_loop_exit_reason=$receiveLoopExitReason")
-            requests.forEach { runCatching { it.close() }.onFailure { e -> append("UsbRequest close exception: ${e.stackTraceToString()}") } }
-        }, "Cam1UvcThread-receive").also { it.isDaemon = true; it.start() }
-    }
-
-    private fun onPacket(device: UsbDevice, packet: ByteArray) {
-        val now = SystemClock.elapsedRealtimeNanos()
-        if (!firstPacketLogged) { firstPacketLogged = true; append("first packet timestamp_ns=$now size=${packet.size} header_len=${packet.firstOrNull()?.toInt()?.and(0xff)} flags=${packet.getOrNull(1)?.toInt()?.and(0xff)}") }
-        lastPacketNs = now
-        val nextPackets = _state.value.cam1PacketsReceived + 1
-        append("packet counter incremented count=$nextPackets size=${packet.size}")
-        throttledUpdate(info(device, UsbUvcStatus.UVC_PACKETS_RECEIVING).copy(cam1PacketsReceived = nextPackets, cam1LastPacketAgeMs = 0L))
-    }
-
-    private fun onFrameAssembled(device: UsbDevice) {
-        val now = SystemClock.elapsedRealtimeNanos()
-        if (!firstCompleteFrameLogged) { firstCompleteFrameLogged = true; append("first complete frame timestamp_ns=$now") }
-        append("frame assembled count=${_state.value.cam1FramesAssembled + 1}"); update(info(device, UsbUvcStatus.UVC_FRAMES_ASSEMBLED).copy(cam1FramesAssembled = _state.value.cam1FramesAssembled + 1, cam1FramesReceived = _state.value.cam1FramesReceived + 1))
-    }
-
-    private fun decodeAndRender(device: UsbDevice, frame: ByteArray, mode: UvcSelectedMode) {
-        val bitmap = try {
-            if (mode.format == "YUYV") yuyvToBitmap(frame, mode.width, mode.height) else BitmapFactory.decodeByteArray(frame, 0, frame.size)
-        } catch (t: Throwable) {
-            append("UVC decode failed: ${t.stackTraceToString()}")
-            update(info(device, UsbUvcStatus.UVC_DECODE_FAILED, t.message).copy(cam1DecodeErrors = _state.value.cam1DecodeErrors + 1))
-            null
-        } ?: run {
-            update(info(device, UsbUvcStatus.UVC_DECODE_FAILED, "Bitmap decode returned null").copy(cam1DecodeErrors = _state.value.cam1DecodeErrors + 1))
-            return
-        }
-        if (!firstDecodedLogged) { firstDecodedLogged = true; append("first decoded frame timestamp_ns=${SystemClock.elapsedRealtimeNanos()} size=${bitmap.width}x${bitmap.height}") }
-        append("decode success count=${_state.value.cam1FramesDecoded + 1} bitmap=${bitmap.width}x${bitmap.height}"); update(info(device, UsbUvcStatus.UVC_FRAMES_DECODED).copy(cam1FramesDecoded = _state.value.cam1FramesDecoded + 1))
-        recordingFile?.let { file ->
-            runCatching {
-                if (!file.exists()) file.parentFile?.mkdirs()
-                file.appendBytes(frame)
-            }.onFailure { append("cam1 recording frame write failed: ${it.stackTraceToString()}") }
-        }
-        mainHandler.post {
-            try {
-                val tv = preview ?: return@post
-                val canvas = tv.lockCanvas()
-                if (canvas != null) {
-                    canvas.drawColor(Color.BLACK)
-                    canvas.drawBitmap(bitmap, null, android.graphics.Rect(0, 0, canvas.width, canvas.height), Paint(Paint.FILTER_BITMAP_FLAG))
-                    tv.unlockCanvasAndPost(canvas)
-                    onDecodedFrameRendered(device)
-                }
-            } catch (t: Throwable) {
-                append("UVC render failed: ${t.stackTraceToString()}")
-                update(info(device, UsbUvcStatus.UVC_RENDER_FAILED, t.message).copy(cam1RenderErrors = _state.value.cam1RenderErrors + 1))
-            }
-        }
-    }
-
-    private fun scheduleNoFramesTimeout(device: UsbDevice) {
-        mainHandler.postDelayed(object : Runnable {
-            private var lastRendered = _state.value.cam1FramesRendered
+    private fun startBackendPolling(device: UsbDevice, generation: Int) {
+        val thisPoll = ++pollGeneration
+        mainHandler.post(object : Runnable {
+            private var lastRendered = -1L
             override fun run() {
-                val current = _state.value
-                val packetAge = current.cam1LastPacketAgeMs
-                val frameAge = current.cam1LastFrameAgeMs
-                when {
-                    current.cam1PacketsReceived == 0L || packetAge == null || packetAge > 1000L -> {
-                        append("UVC stalled: no packets packet_count=${current.cam1PacketsReceived} last_packet_age_ms=$packetAge")
-                        update(info(device, UsbUvcStatus.UVC_STALLED_NO_PACKETS, "UVC stalled: no packets"))
-                    }
-                    current.cam1FramesDecoded == 0L -> {
-                        append("UVC stalled: no decoded frames packets=${current.cam1PacketsReceived} assembled=${current.cam1FramesAssembled}")
-                        update(info(device, UsbUvcStatus.UVC_STALLED_NO_DECODED_FRAMES, "UVC stalled: no decoded frames"))
-                    }
-                    current.cam1FramesRendered == 0L || frameAge == null || frameAge > 1000L || current.cam1FramesRendered == lastRendered -> {
-                        append("UVC stalled: no new frames rendered=${current.cam1FramesRendered} last_rendered_frame_age_ms=$frameAge")
-                        update(info(device, UsbUvcStatus.UVC_STALLED_NO_NEW_FRAMES, "UVC stalled: no new frames"))
-                    }
-                }
-                lastRendered = _state.value.cam1FramesRendered
-                if (streaming.get()) mainHandler.postDelayed(this, 1000L)
+                if (generation != cam1Generation || thisPoll != pollGeneration) return
+                val snap = backend.snapshot()
+                updateFromBackend(device, snap)
+                if (snap.opened && snap.previewRunning && snap.framesRendered == 0L) update(info(device, UsbUvcStatus.UVC_STREAM_OPENED, "native UVC opened, no frames"))
+                if (snap.framesRendered > 0L && snap.framesRendered == lastRendered) update(info(device, UsbUvcStatus.UVC_STALLED_NO_NEW_FRAMES, "UVC stalled: no new frames"))
+                lastRendered = snap.framesRendered
+                mainHandler.postDelayed(this, 200L)
             }
-        }, 1_000L)
+        })
     }
 
-    private fun throttledUpdate(info: UsbUvcCameraInfo): UsbUvcCameraInfo {
-        val nowMs = SystemClock.elapsedRealtime()
-        return if (nowMs - lastUiUpdateMs >= 200L || info.status != _state.value.status) {
-            lastUiUpdateMs = nowMs
-            update(info)
-        } else _state.value
-    }
-
-    private fun assertNotMainUvc(stage: String): Boolean {
-        val thread = Thread.currentThread().name
-        append("UVC stage=$stage thread=$thread")
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            append("ERROR UVC blocking stage attempted on main thread stage=$stage thread=$thread")
-            return false
+    private fun updateFromBackend(device: UsbDevice, snap: Cam1UvcBackendState) {
+        val status = when {
+            snap.framesRendered > 0L && (snap.lastFrameAgeMs ?: Long.MAX_VALUE) < 1000L -> UsbUvcStatus.UVC_PREVIEW_ACTIVE
+            snap.opened && snap.previewRunning -> UsbUvcStatus.UVC_STREAM_OPENED
+            snap.error != null -> UsbUvcStatus.UVC_PREVIEW_FAILED
+            else -> UsbUvcStatus.UVC_ADAPTER_OPENING
         }
-        return true
+        update(info(device, status, if (snap.opened && snap.framesRendered == 0L) "native UVC opened, no frames" else snap.error).copy(
+            cam1FramesReceived = snap.framesReceived, cam1FramesAssembled = snap.framesReceived,
+            cam1FramesDecoded = snap.framesDecoded, cam1FramesRendered = snap.framesRendered,
+            cam1FpsEstimate = snap.fpsEstimate, cam1LastFrameAgeMs = snap.lastFrameAgeMs,
+            selectedPixelFormat = snap.selectedFormat, selectedResolutionFps = snap.selectedResolution?.let { "$it@${snap.selectedFps ?: 30}fps" },
+        ))
     }
 
-    private fun update(info: UsbUvcCameraInfo): UsbUvcCameraInfo {
-        val now = SystemClock.elapsedRealtimeNanos()
-        val last = lastFrameNs
-        val merged = info.copy(
-            cam1FramesReceived = if (info.cam1FramesReceived == 0L) _state.value.cam1FramesReceived else info.cam1FramesReceived,
-            cam1PacketsReceived = if (info.cam1PacketsReceived == 0L) _state.value.cam1PacketsReceived else info.cam1PacketsReceived,
-            cam1FramesAssembled = if (info.cam1FramesAssembled == 0L) _state.value.cam1FramesAssembled else info.cam1FramesAssembled,
-            cam1FramesDecoded = if (info.cam1FramesDecoded == 0L) _state.value.cam1FramesDecoded else info.cam1FramesDecoded,
-            cam1FramesRendered = if (info.cam1FramesRendered == 0L) _state.value.cam1FramesRendered else info.cam1FramesRendered,
-            cam1DecodeErrors = if (info.cam1DecodeErrors == 0L) _state.value.cam1DecodeErrors else info.cam1DecodeErrors,
-            cam1RenderErrors = if (info.cam1RenderErrors == 0L) _state.value.cam1RenderErrors else info.cam1RenderErrors,
-            cam1LastPacketAgeMs = lastPacketNs?.let { (now - it) / 1_000_000L },
-            cam1LastFrameAgeMs = last?.let { (now - it) / 1_000_000L },
-            cam1FpsEstimate = if (info.cam1FpsEstimate == 0.0) _state.value.cam1FpsEstimate else info.cam1FpsEstimate,
-            selectedPixelFormat = selectedPixelFormat,
-            selectedResolutionFps = selectedResolutionFps,
-            selectedAltSetting = selectedAltSetting,
-            selectedMaxPacketSize = selectedMaxPacketSize,
-            receiveLoopRunning = receiveLoopRunning,
-            receiveLoopExitReason = receiveLoopExitReason,
-            requestQueueDepth = requestQueueDepth,
-            lastSuccessfulTransferNs = lastSuccessfulTransferNs,
-        )
-        val corrected = if (merged.status == UsbUvcStatus.UVC_PREVIEW_ACTIVE && (merged.cam1FramesRendered == 0L || (merged.cam1LastFrameAgeMs ?: Long.MAX_VALUE) >= 1000L)) {
-            merged.copy(status = UsbUvcStatus.UVC_STALLED_NO_NEW_FRAMES, error = "UVC stalled: no new frames")
-        } else merged
-        _state.value = corrected; append("exact error state status=${corrected.status} error=${corrected.error} frame_count=${corrected.cam1FramesReceived}"); return corrected
+    private fun stopNativeBackend() {
+        cam1Generation++
+        pollGeneration++
+        cam1Handler.post { backend.stopRecording(); backend.stopPreview(); backend.close(); runCatching { activeConnection?.close() }; activeConnection = null }
+        append("native UVC stop requested generation=$cam1Generation debug_java_uvc_backend=$DEBUG_JAVA_UVC_BACKEND")
     }
+
+    private fun update(info: UsbUvcCameraInfo): UsbUvcCameraInfo { _state.value = info; append("cam1 state status=${info.status} error=${info.error} frames_received=${info.cam1FramesReceived} frames_decoded=${info.cam1FramesDecoded} frames_rendered=${info.cam1FramesRendered} fps=${info.cam1FpsEstimate}"); return info }
     private fun info(device: UsbDevice?, status: UsbUvcStatus, error: String? = null) = UsbUvcCameraInfo(status, device?.vendorId, device?.productId, device?.deviceName, device?.productName, device?.findIsochronousInEndpoint()?.endpointTypeLabel(), error)
     private fun findSelectedDeviceWithRetry(timeoutMs: Long = 1_500L): UsbDevice? {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         do {
-            usbManager?.deviceList?.values
-                ?.sortedWith(compareBy({ if (it.vendorId == 13030 && it.productId == 37409) 0 else 1 }, { it.deviceName }))
-                ?.firstOrNull { it.isTargetUvcDevice() }
-                ?.let { return it }
+            usbManager?.deviceList?.values?.sortedWith(compareBy({ if (it.vendorId == 13030 && it.productId == 37409) 0 else 1 }, { it.deviceName }))?.firstOrNull { it.isTargetUvcDevice() }?.let { return it }
             if (timeoutMs <= 0L) break
             SystemClock.sleep(100L)
         } while (SystemClock.elapsedRealtime() < deadline)
         return null
     }
-
-    private fun registerPermissionReceiver() {
-        if (!receiverRegistered) {
-            ContextCompatCompat.registerReceiver(context, permissionReceiver, IntentFilter(permissionAction))
-            receiverRegistered = true
-            append("USB permission receiver registered action=$permissionAction")
-        }
-    }
-
-    private fun unregisterPermissionReceiver() {
-        if (receiverRegistered) runCatching { context.unregisterReceiver(permissionReceiver) }.onSuccess { receiverRegistered = false }.onFailure { append("USB permission receiver unregister failed: ${it.message}") }
-    }
-
-    private fun append(message: String) {
-        Log.d("StereoUsbUvc", message)
-        runCatching { logFile?.appendText("${Instant.now()} $message\n") }
-    }
+    private fun registerPermissionReceiver() { if (!receiverRegistered) { ContextCompatCompat.registerReceiver(context, permissionReceiver, IntentFilter(permissionAction)); receiverRegistered = true; append("USB permission receiver registered action=$permissionAction") } }
+    private fun unregisterPermissionReceiver() { if (receiverRegistered) runCatching { context.unregisterReceiver(permissionReceiver) }.onSuccess { receiverRegistered = false } }
+    private fun append(message: String) { Log.d("StereoUsbUvc", message); runCatching { logFile?.appendText("${Instant.now()} $message\n") } }
 }
 
 private object ContextCompatCompat {
@@ -756,146 +506,12 @@ private object ContextCompatCompat {
 
 private fun UsbDevice.isTargetUvcDevice(): Boolean = (vendorId == 13030 && productId == 37409) || looksLikeVideoDevice()
 private fun UsbDevice.looksLikeVideoDevice(): Boolean = (0 until interfaceCount).any { getInterface(it).interfaceClass == UsbConstants.USB_CLASS_VIDEO }
-private fun UsbDevice.findInterface(clazz: Int, subclass: Int): UsbInterface? = (0 until interfaceCount).map { getInterface(it) }.firstOrNull { it.interfaceClass == clazz && it.interfaceSubclass == subclass }
 private fun UsbDevice.findIsochronousInEndpoint(): UsbEndpoint? = selectUvcInterfaces().videoStreamingAlternates.firstOrNull()?.endpoint
 private fun UsbInterface.findIsochronousInEndpoint(): UsbEndpoint? = (0 until endpointCount).map { getEndpoint(it) }.firstOrNull { it.direction == UsbConstants.USB_DIR_IN && it.type == UsbConstants.USB_ENDPOINT_XFER_ISOC }
 private fun UsbEndpoint.endpointTypeLabel(): String = when (type) { UsbConstants.USB_ENDPOINT_XFER_ISOC -> "isochronous"; UsbConstants.USB_ENDPOINT_XFER_BULK -> "bulk"; UsbConstants.USB_ENDPOINT_XFER_INT -> "interrupt"; UsbConstants.USB_ENDPOINT_XFER_CONTROL -> "control"; else -> "type_$type" }
 
 private data class UvcStreamingAlternate(val usbInterface: UsbInterface, val endpoint: UsbEndpoint)
 private data class UvcInterfaceSelection(val videoControl: UsbInterface?, val videoStreamingAlternates: List<UvcStreamingAlternate>)
-
-private fun UsbDevice.detectUvcPixelFormat(log: (String) -> Unit = {}): String? {
-    // Android's public USB API exposes interfaces/endpoints but not parsed UVC VS
-    // frame descriptors here. Keep this conservative: report the formats this
-    // adapter can diagnose once native frame payload callbacks are wired.
-    val advertised = mutableSetOf<String>()
-    for (i in 0 until interfaceCount) {
-        val intf = getInterface(i)
-        if ((intf.interfaceClass == UsbConstants.USB_CLASS_VIDEO || intf.interfaceClass == 14) && intf.interfaceSubclass == 2) {
-            advertised += "MJPEG/YUYV descriptor parse pending"
-        }
-    }
-    val result = advertised.firstOrNull()
-    log("UVC pixel format detection result=${result ?: "unknown"}; MJPEG decode path expects JPEG payload to Bitmap/Surface, YUYV path expects YUYV to RGB preview conversion when frame callbacks are available")
-    return result
-}
-
-private fun UsbDevice.selectUvcInterfaces(log: (String) -> Unit = {}): UvcInterfaceSelection {
-    var videoControl: UsbInterface? = null
-    val streamingAlternates = mutableListOf<UvcStreamingAlternate>()
-    for (i in 0 until interfaceCount) {
-        val intf = getInterface(i)
-        log("UVC interface scan index=$i id=${intf.id} alternate=${intf.alternateSetting ?: "unknown"} class=${intf.interfaceClass} subclass=${intf.interfaceSubclass} protocol=${intf.interfaceProtocol} endpointCount=${intf.endpointCount}")
-        for (e in 0 until intf.endpointCount) {
-            val ep = intf.getEndpoint(e)
-            log(" UVC endpoint scan interface_index=$i endpoint_index=$e number=${ep.endpointNumber} address=${ep.address} direction=${ep.direction} type=${ep.type} attributes=${ep.attributes} max_packet_size=${ep.maxPacketSize}")
-        }
-        val isVideo = intf.interfaceClass == UsbConstants.USB_CLASS_VIDEO || intf.interfaceClass == 14
-        if (isVideo && intf.interfaceSubclass == 1 && videoControl == null) videoControl = intf
-        if (isVideo && intf.interfaceSubclass == 2 && intf.endpointCount > 0) {
-            intf.findIsochronousInEndpoint()?.let { streamingAlternates += UvcStreamingAlternate(intf, it) }
-        }
-    }
-    return UvcInterfaceSelection(videoControl, streamingAlternates.sortedByDescending { it.endpoint.maxPacketSize })
-}
-
-private fun UsbDeviceConnection.trySetInterface(usbInterface: UsbInterface, log: (String) -> Unit): Boolean = try {
-    setInterface(usbInterface)
-} catch (t: Throwable) {
-    log("setInterface exception id=${usbInterface.id} alternate=${usbInterface.alternateSetting ?: "unknown"} failure=${t.stackTraceToString()}")
-    false
-}
-
-private data class UvcSelectedMode(val format: String, val width: Int, val height: Int, val fps: Int, val frameInterval100ns: Int, val maxVideoFrameSize: Int, val maxPayloadTransferSize: Int)
-
-private fun parseUvcModes(raw: ByteArray?, log: (String) -> Unit): List<UvcSelectedMode> {
-    if (raw == null) return emptyList()
-    val modes = mutableListOf<UvcSelectedMode>()
-    var format = "MJPEG"
-    var i = 0
-    while (i + 2 < raw.size) {
-        val len = raw[i].toInt() and 0xff
-        if (len < 3 || i + len > raw.size) break
-        val type = raw[i + 1].toInt() and 0xff
-        val sub = raw[i + 2].toInt() and 0xff
-        if (type == 0x24) {
-            if (sub == 0x06) format = "MJPEG"
-            if (sub == 0x04) {
-                val guid = raw.copyOfRange(i + 5, (i + 21).coerceAtMost(i + len)).toString(Charsets.ISO_8859_1)
-                format = if (guid.contains("YUY2", ignoreCase = true)) "YUYV" else "UNCOMPRESSED"
-            }
-            if ((sub == 0x07 || sub == 0x05) && len >= 26) {
-                val width = raw.le16(i + 5)
-                val height = raw.le16(i + 7)
-                val maxFrame = raw.le32(i + 17)
-                val interval = raw.le32(i + 21).takeIf { it > 0 } ?: 333333
-                val fps = (10_000_000.0 / interval).toInt().coerceAtLeast(1)
-                modes += UvcSelectedMode(format, width, height, fps, interval, maxFrame, 0)
-            }
-        }
-        i += len
-    }
-    modes.forEach { log("parsed UVC mode format=${it.format} resolution=${it.width}x${it.height} fps=${it.fps} interval=${it.frameInterval100ns} max_video_frame_size=${it.maxVideoFrameSize}") }
-    return modes
-}
-
-private fun chooseUvcMode(modes: List<UvcSelectedMode>): UvcSelectedMode? =
-    modes.sortedWith(compareBy<UvcSelectedMode>(
-        { if (it.format == "MJPEG") 0 else 1 },
-        { kotlin.math.abs(it.width * it.height - 640 * 480) },
-        { kotlin.math.abs(it.fps - 30) },
-    )).firstOrNull()
-
-private fun ByteArray.le16(i: Int): Int = (getOrNull(i)?.toInt()?.and(0xff) ?: 0) or ((getOrNull(i + 1)?.toInt()?.and(0xff) ?: 0) shl 8)
-private fun ByteArray.le32(i: Int): Int = le16(i) or (le16(i + 2) shl 16)
-
-private fun UsbDeviceConnection.commitProbe(vs: UsbInterface?, mode: UvcSelectedMode, endpoint: UsbEndpoint, log: (String) -> Unit) {
-    val intf = vs?.id ?: return
-    val payload = ByteArray(26)
-    payload[2] = 1
-    payload[3] = 1
-    fun put32(off: Int, v: Int) { payload[off] = v.toByte(); payload[off + 1] = (v shr 8).toByte(); payload[off + 2] = (v shr 16).toByte(); payload[off + 3] = (v shr 24).toByte() }
-    put32(4, mode.frameInterval100ns)
-    put32(18, mode.maxVideoFrameSize)
-    put32(22, endpoint.maxPacketSize)
-    val requestType = UsbConstants.USB_TYPE_CLASS or UsbConstants.USB_DIR_OUT or USB_RECIP_INTERFACE
-    val probe = controlTransfer(requestType, 0x01, 0x0100, intf, payload, payload.size, 1000)
-    log("UVC probe get/set result=$probe interface=$intf selected format=${mode.format} resolution=${mode.width}x${mode.height} fps=${mode.fps} interval=${mode.frameInterval100ns} max_video_frame_size=${mode.maxVideoFrameSize} max_payload_transfer_size=${endpoint.maxPacketSize}")
-    val commit = controlTransfer(requestType, 0x01, 0x0200, intf, payload, payload.size, 1000)
-    log("UVC commit result=$commit interface=$intf")
-}
-
-private class UvcFrameAssembler(private val mode: UvcSelectedMode) {
-    private val out = ByteArrayOutputStream()
-    fun accept(packet: ByteArray, log: (String) -> Unit): ByteArray? {
-        if (packet.isEmpty()) return null
-        val headerLen = (packet[0].toInt() and 0xff).coerceIn(2, packet.size)
-        val flags = packet.getOrNull(1)?.toInt()?.and(0xff) ?: 0
-        val eof = flags and 0x02 != 0
-        val payload = packet.copyOfRange(headerLen, packet.size)
-        if (mode.format == "MJPEG" && payload.size >= 2 && payload[0] == 0xff.toByte() && payload[1] == 0xd8.toByte()) out.reset()
-        out.write(payload)
-        val bytes = out.toByteArray()
-        val jpegEoi = mode.format == "MJPEG" && bytes.size >= 2 && bytes[bytes.size - 2] == 0xff.toByte() && bytes[bytes.size - 1] == 0xd9.toByte()
-        val yuyvFull = mode.format == "YUYV" && bytes.size >= mode.width * mode.height * 2
-        return if (eof || jpegEoi || yuyvFull) {
-            log("UVC payload frame boundary header_len=$headerLen flags=$flags eof=$eof frame_size=${bytes.size}")
-            out.reset(); bytes
-        } else null
-    }
-}
-
-private fun yuyvToBitmap(data: ByteArray, width: Int, height: Int): Bitmap {
-    val pixels = IntArray(width * height)
-    var p = 0
-    var i = 0
-    while (i + 3 < data.size && p + 1 < pixels.size) {
-        val y0 = data[i].toInt() and 0xff; val u = (data[i + 1].toInt() and 0xff) - 128; val y1 = data[i + 2].toInt() and 0xff; val v = (data[i + 3].toInt() and 0xff) - 128
-        fun rgb(y: Int): Int { val r = (y + 1.402 * v).toInt().coerceIn(0, 255); val g = (y - 0.344136 * u - 0.714136 * v).toInt().coerceIn(0, 255); val b = (y + 1.772 * u).toInt().coerceIn(0, 255); return android.graphics.Color.rgb(r, g, b) }
-        pixels[p++] = rgb(y0); pixels[p++] = rgb(y1); i += 4
-    }
-    return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
-}
 
 private class StereoImuJsonlRecorder(context: Context) : SensorEventListener {
     private val sensorManager = context.getSystemService(SensorManager::class.java)

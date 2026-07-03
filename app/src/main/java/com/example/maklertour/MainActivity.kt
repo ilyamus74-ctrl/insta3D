@@ -2842,12 +2842,9 @@ private fun StereoCaptureExperimentalScreen(
                                 ?: cam1Info.deviceName
                                 ?: if (cam1Info.status == UsbUvcStatus.PERMISSION_REQUESTED) "device selected; waiting for permission" else "no device"
                         )
-                        append("\ncam1_packets_received=${cam1Info.cam1PacketsReceived}")
                         append("\ncam1_frames_received=${cam1Info.cam1FramesReceived}")
-                        append("\ncam1_frames_assembled=${cam1Info.cam1FramesAssembled}")
                         append("\ncam1_frames_decoded=${cam1Info.cam1FramesDecoded}")
                         append("\ncam1_frames_rendered=${cam1Info.cam1FramesRendered}")
-                        append("\ncam1_last_packet_age_ms=${cam1Info.cam1LastPacketAgeMs ?: "none"}")
                         append("\ncam1_last_frame_age_ms=${cam1Info.cam1LastFrameAgeMs ?: "none"}")
                         append("\ncam1_decode_errors=${cam1Info.cam1DecodeErrors}")
                         append("\ncam1_render_errors=${cam1Info.cam1RenderErrors}")
@@ -2855,12 +2852,7 @@ private fun StereoCaptureExperimentalScreen(
                         cam1Info.selectedPixelFormat?.let { append("\ncam1_selected_format=$it") }
                         cam1Info.selectedResolutionFps?.let { append("\ncam1_selected_resolution=$it") }
                         cam1Info.selectedResolutionFps?.let { append("\ncam1_selected_fps=$it") }
-                        cam1Info.selectedAltSetting?.let { append("\ncam1_selected_alt_setting=$it") }
-                        cam1Info.selectedMaxPacketSize?.let { append("\ncam1_selected_max_packet_size=$it") }
-                        append("\nreceive_loop_running=${cam1Info.receiveLoopRunning}")
-                        append("\nreceive_loop_exit_reason=${cam1Info.receiveLoopExitReason ?: "none"}")
-                        append("\nrequest_queue_depth=${cam1Info.requestQueueDepth}")
-                        append("\nlast_successful_transfer_ns=${cam1Info.lastSuccessfulTransferNs ?: "none"}")
+                        append("\ncam1_backend=native libuvc")
                         cam1Info.error?.let { append("\n$it") }
                     }
                     Text(
@@ -2901,7 +2893,7 @@ private fun StereoCaptureExperimentalScreen(
                     }, enabled = isRecording) { Text("Stop") }
                     Button(onClick = { Toast.makeText(context, "Local export is stored under app files for backend upload integration.", Toast.LENGTH_LONG).show() }, enabled = !isRecording) { Text("Upload/export") }
                 }
-                Text("cam1 statuses: USB device found → permission granted → openDevice success → UVC stream opened → packets receiving → frames assembled → frames decoded → preview rendering/active, or stalled/no packets/no decoded/no new frames/render failed. app_log.txt records device names, permissions, endpoints, alternates, receive loop, transfers, decode, and render results.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+                Text("cam1 statuses: USB device found → permission granted → openDevice success → native UVC opened → frames received/decoded/rendered → preview active, or native UVC opened with no frames / stalled. app_log.txt records device names, permissions, endpoints, selected native backend, selected format/resolution/fps, frame counters, recording path/size, and native errors.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -2917,7 +2909,7 @@ private fun UsbUvcStatus.label(): String = when (this) {
     UsbUvcStatus.OPEN_DEVICE_SUCCESS -> "USB openDevice success"
     UsbUvcStatus.OPEN_DEVICE_FAILED -> "USB openDevice failed"
     UsbUvcStatus.UVC_ADAPTER_OPENING -> "UVC adapter opening"
-    UsbUvcStatus.UVC_STREAM_OPENED -> "UVC stream opened, waiting for packets"
+    UsbUvcStatus.UVC_STREAM_OPENED -> "native UVC opened, waiting for frames"
     UsbUvcStatus.UVC_PACKETS_RECEIVING -> "UVC packets receiving"
     UsbUvcStatus.UVC_FRAMES_ASSEMBLED -> "UVC frames assembled"
     UsbUvcStatus.UVC_FRAMES_DECODED -> "UVC frames decoded"
