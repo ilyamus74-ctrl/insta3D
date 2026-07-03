@@ -10,6 +10,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
@@ -273,17 +274,48 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         append("openDevice result=${connection != null} device=${device.deviceName}")
         if (connection == null) return update(info(device, UsbUvcStatus.OPEN_DEVICE_FAILED, "openDevice failed"))
         update(info(device, UsbUvcStatus.OPEN_DEVICE_SUCCESS))
-        val videoControl = device.findInterface(UsbConstants.USB_CLASS_VIDEO, 1)
-        val videoStreaming = device.findInterface(UsbConstants.USB_CLASS_VIDEO, 2)
-        val endpoint = videoStreaming?.findIsochronousInEndpoint()
-        append("selected UVC interface vc=${videoControl?.id} vs=${videoStreaming?.id} endpoint=${endpoint?.endpointNumber} endpoint_type=${endpoint?.endpointTypeLabel()} selected alternate setting=${videoStreaming?.alternateSetting ?: "unknown"} selected resolution/fps/pixel format=library-negotiated")
+        val selection = device.selectUvcInterfaces(::append)
+        val videoControl = selection.videoControl
+        val alternates = selection.videoStreamingAlternates
+        val selected = alternates.firstOrNull()
+        var videoStreaming = selected?.usbInterface
+        var endpoint = selected?.endpoint
+        append("UVC discovery state: VideoControl ${if (videoControl == null) "missing" else "found id=${videoControl.id}"}; VideoStreaming alternates found count=${alternates.size}; Isochronous IN endpoint ${if (endpoint == null) "missing" else "found"}")
+        append("selected UVC interface vc=${videoControl?.id} vs=${videoStreaming?.id} endpoint_address=${endpoint?.address} endpoint_number=${endpoint?.endpointNumber} endpoint_type=${endpoint?.endpointTypeLabel()} endpoint_direction=${endpoint?.direction} endpoint_max_packet_size=${endpoint?.maxPacketSize} selected alternate setting=${videoStreaming?.alternateSetting ?: "unknown"} selected resolution/fps/pixel format=library-negotiated")
         update(info(device, UsbUvcStatus.UVC_ADAPTER_OPENING))
-        if (videoControl == null || videoStreaming == null || endpoint == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoControl/VideoStreaming isochronous endpoint not found"))
+        if (videoControl == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoControl missing"))
+        if (alternates.isEmpty()) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: VideoStreaming alternates with endpoints missing"))
+        if (videoStreaming == null || endpoint == null) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: Isochronous IN endpoint missing"))
+        val claimControl = connection.claimInterface(videoControl, true)
+        append("claimInterface VideoControl id=${videoControl.id} result=$claimControl")
+        if (!claimControl) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: claimInterface failed for VideoControl id=${videoControl.id}"))
+        var selectedClaim = false
+        var selectedSetInterface = false
+        for (candidate in alternates) {
+            val candidateInterface = candidate.usbInterface
+            val candidateEndpoint = candidate.endpoint
+            val claimStreaming = connection.claimInterface(candidateInterface, true)
+            append("claimInterface VideoStreaming id=${candidateInterface.id} alternate=${candidateInterface.alternateSetting ?: "unknown"} endpoint_address=${candidateEndpoint.address} max_packet_size=${candidateEndpoint.maxPacketSize} result=$claimStreaming")
+            if (!claimStreaming) continue
+            selectedClaim = true
+            val setInterface = connection.trySetInterface(candidateInterface, ::append)
+            append("setInterface VideoStreaming id=${candidateInterface.id} alternate=${candidateInterface.alternateSetting ?: "unknown"} endpoint_address=${candidateEndpoint.address} max_packet_size=${candidateEndpoint.maxPacketSize} result=$setInterface")
+            if (setInterface) {
+                videoStreaming = candidateInterface
+                endpoint = candidateEndpoint
+                selectedSetInterface = true
+                break
+            }
+            append("fallback to lower maxPacketSize VideoStreaming alternate after setInterface failed for max_packet_size=${candidateEndpoint.maxPacketSize}")
+        }
+        if (!selectedClaim) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: claimInterface failed for all VideoStreaming alternates"))
+        if (!selectedSetInterface) return update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: setInterface failed for all VideoStreaming alternates"))
+        append("final selected endpoint address=${endpoint?.address} type=${endpoint?.type} direction=${endpoint?.direction} maxPacketSize=${endpoint?.maxPacketSize}")
         return if (preview?.isAvailable == true) {
             append("UVC preview active on TextureView; isochronous endpoint opened for native adapter handoff")
             update(info(device, UsbUvcStatus.UVC_PREVIEW_ACTIVE))
         } else {
-            update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC preview failed: preview surface unavailable"))
+            update(info(device, UsbUvcStatus.UVC_PREVIEW_FAILED, "UVC stream start failed: preview surface unavailable"))
         }
     }
 
@@ -329,9 +361,38 @@ private object ContextCompatCompat {
 private fun UsbDevice.isTargetUvcDevice(): Boolean = (vendorId == 13030 && productId == 37409) || looksLikeVideoDevice()
 private fun UsbDevice.looksLikeVideoDevice(): Boolean = (0 until interfaceCount).any { getInterface(it).interfaceClass == UsbConstants.USB_CLASS_VIDEO }
 private fun UsbDevice.findInterface(clazz: Int, subclass: Int): UsbInterface? = (0 until interfaceCount).map { getInterface(it) }.firstOrNull { it.interfaceClass == clazz && it.interfaceSubclass == subclass }
-private fun UsbDevice.findIsochronousInEndpoint(): UsbEndpoint? = findInterface(UsbConstants.USB_CLASS_VIDEO, 2)?.findIsochronousInEndpoint()
+private fun UsbDevice.findIsochronousInEndpoint(): UsbEndpoint? = selectUvcInterfaces().videoStreamingAlternates.firstOrNull()?.endpoint
 private fun UsbInterface.findIsochronousInEndpoint(): UsbEndpoint? = (0 until endpointCount).map { getEndpoint(it) }.firstOrNull { it.direction == UsbConstants.USB_DIR_IN && it.type == UsbConstants.USB_ENDPOINT_XFER_ISOC }
 private fun UsbEndpoint.endpointTypeLabel(): String = when (type) { UsbConstants.USB_ENDPOINT_XFER_ISOC -> "isochronous"; UsbConstants.USB_ENDPOINT_XFER_BULK -> "bulk"; UsbConstants.USB_ENDPOINT_XFER_INT -> "interrupt"; UsbConstants.USB_ENDPOINT_XFER_CONTROL -> "control"; else -> "type_$type" }
+
+private data class UvcStreamingAlternate(val usbInterface: UsbInterface, val endpoint: UsbEndpoint)
+private data class UvcInterfaceSelection(val videoControl: UsbInterface?, val videoStreamingAlternates: List<UvcStreamingAlternate>)
+
+private fun UsbDevice.selectUvcInterfaces(log: (String) -> Unit = {}): UvcInterfaceSelection {
+    var videoControl: UsbInterface? = null
+    val streamingAlternates = mutableListOf<UvcStreamingAlternate>()
+    for (i in 0 until interfaceCount) {
+        val intf = getInterface(i)
+        log("UVC interface scan index=$i id=${intf.id} alternate=${intf.alternateSetting ?: "unknown"} class=${intf.interfaceClass} subclass=${intf.interfaceSubclass} protocol=${intf.interfaceProtocol} endpointCount=${intf.endpointCount}")
+        for (e in 0 until intf.endpointCount) {
+            val ep = intf.getEndpoint(e)
+            log(" UVC endpoint scan interface_index=$i endpoint_index=$e number=${ep.endpointNumber} address=${ep.address} direction=${ep.direction} type=${ep.type} attributes=${ep.attributes} max_packet_size=${ep.maxPacketSize}")
+        }
+        val isVideo = intf.interfaceClass == UsbConstants.USB_CLASS_VIDEO || intf.interfaceClass == 14
+        if (isVideo && intf.interfaceSubclass == 1 && videoControl == null) videoControl = intf
+        if (isVideo && intf.interfaceSubclass == 2 && intf.endpointCount > 0) {
+            intf.findIsochronousInEndpoint()?.let { streamingAlternates += UvcStreamingAlternate(intf, it) }
+        }
+    }
+    return UvcInterfaceSelection(videoControl, streamingAlternates.sortedByDescending { it.endpoint.maxPacketSize })
+}
+
+private fun UsbDeviceConnection.trySetInterface(usbInterface: UsbInterface, log: (String) -> Unit): Boolean = try {
+    setInterface(usbInterface)
+} catch (t: Throwable) {
+    log("setInterface exception id=${usbInterface.id} alternate=${usbInterface.alternateSetting ?: "unknown"} failure=${t.stackTraceToString()}")
+    false
+}
 
 private class StereoImuJsonlRecorder(context: Context) : SensorEventListener {
     private val sensorManager = context.getSystemService(SensorManager::class.java)
