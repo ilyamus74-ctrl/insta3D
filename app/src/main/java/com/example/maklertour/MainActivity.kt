@@ -2842,11 +2842,21 @@ private fun StereoCaptureExperimentalScreen(
                                 ?: cam1Info.deviceName
                                 ?: if (cam1Info.status == UsbUvcStatus.PERMISSION_REQUESTED) "device selected; waiting for permission" else "no device"
                         )
+                        append("\ncam1_packets_received=${cam1Info.cam1PacketsReceived}")
                         append("\ncam1_frames_received=${cam1Info.cam1FramesReceived}")
+                        append("\ncam1_frames_assembled=${cam1Info.cam1FramesAssembled}")
+                        append("\ncam1_frames_decoded=${cam1Info.cam1FramesDecoded}")
+                        append("\ncam1_frames_rendered=${cam1Info.cam1FramesRendered}")
+                        append("\ncam1_last_packet_age_ms=${cam1Info.cam1LastPacketAgeMs ?: "none"}")
                         append("\ncam1_last_frame_age_ms=${cam1Info.cam1LastFrameAgeMs ?: "none"}")
+                        append("\ncam1_decode_errors=${cam1Info.cam1DecodeErrors}")
+                        append("\ncam1_render_errors=${cam1Info.cam1RenderErrors}")
                         append("\ncam1_fps_estimate=${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1FpsEstimate)}")
-                        cam1Info.selectedPixelFormat?.let { append("\npixel_format=$it") }
-                        cam1Info.selectedResolutionFps?.let { append("\nresolution_fps=$it") }
+                        cam1Info.selectedPixelFormat?.let { append("\ncam1_selected_format=$it") }
+                        cam1Info.selectedResolutionFps?.let { append("\ncam1_selected_resolution=$it") }
+                        cam1Info.selectedResolutionFps?.let { append("\ncam1_selected_fps=$it") }
+                        cam1Info.selectedAltSetting?.let { append("\ncam1_selected_alt_setting=$it") }
+                        cam1Info.selectedMaxPacketSize?.let { append("\ncam1_selected_max_packet_size=$it") }
                         cam1Info.error?.let { append("\n$it") }
                     }
                     Text(
