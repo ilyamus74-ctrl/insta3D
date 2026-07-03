@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <dlfcn.h>
 #include <mutex>
 #include <string>
@@ -30,7 +31,9 @@ ANativeWindow* g_window = nullptr;
 std::thread g_thread;
 std::string g_error;
 int g_fd=-1, g_vendor=0, g_product=0;
+int g_bus_num=-1, g_dev_addr=-1;
 std::string g_device_name;
+std::string g_usbfs;
 
 int64_t nowNs(){ return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 void setError(const std::string& s){ std::lock_guard<std::mutex> lk(g_lock); g_error=s; ALOGE("%s", s.c_str()); }
@@ -40,6 +43,7 @@ void releaseWindow(){ if(g_window){ ANativeWindow_release(g_window); g_window=nu
 struct Libs {
  void* uvc=nullptr; void* usb=nullptr;
  uvc_error_t (*uvc_init)(uvc_context_t**, void*)=nullptr;
+ uvc_error_t (*uvc_init2)(uvc_context_t**, void*, const char*)=nullptr;
  void (*uvc_exit)(uvc_context_t*)=nullptr;
  uvc_error_t (*uvc_find_device)(uvc_context_t*, uvc_device_t**, int, int, const char*)=nullptr;
  uvc_error_t (*uvc_open)(uvc_device_t*, uvc_device_handle_t**)=nullptr;
@@ -50,7 +54,7 @@ struct Libs {
  void (*uvc_stop_streaming)(uvc_device_handle_t*)=nullptr;
  const char* (*uvc_strerror)(uvc_error_t)=nullptr;
  // Android/libuvc forks commonly expose one of these fd helpers.
- uvc_error_t (*uvc_get_device_with_fd)(uvc_context_t*, uvc_device_t**, int, int, const char*, int, const char*)=nullptr;
+ uvc_error_t (*uvc_get_device_with_fd)(uvc_context_t*, uvc_device_t**, int, int, const char*, int, int, int)=nullptr;
  uvc_error_t (*uvc_wrap)(int, uvc_context_t**, uvc_device_handle_t**)=nullptr;
  void* tryDlopen(const char* name){
    dlerror();
@@ -72,11 +76,11 @@ struct Libs {
    ALOGI("native library load summary libusb=%p libuvc=%p", usb, uvc);
    if(!usb || !uvc) return false;
    #define SYM(x) x=(decltype(x))dlsym(uvc,#x)
-   SYM(uvc_init); SYM(uvc_exit); SYM(uvc_find_device); SYM(uvc_open); SYM(uvc_close); SYM(uvc_unref_device);
+   SYM(uvc_init); SYM(uvc_init2); SYM(uvc_exit); SYM(uvc_find_device); SYM(uvc_open); SYM(uvc_close); SYM(uvc_unref_device);
    SYM(uvc_get_stream_ctrl_format_size); SYM(uvc_start_streaming); SYM(uvc_stop_streaming); SYM(uvc_strerror);
    SYM(uvc_get_device_with_fd); SYM(uvc_wrap);
    #undef SYM
-   return uvc_init && uvc_exit && uvc_get_stream_ctrl_format_size && uvc_start_streaming && uvc_stop_streaming && uvc_close;
+   return uvc_exit && uvc_open && uvc_get_stream_ctrl_format_size && uvc_start_streaming && uvc_stop_streaming && uvc_close;
  }
  std::string err(uvc_error_t e){ return uvc_strerror ? uvc_strerror(e) : std::to_string(e); }
 } libs;
@@ -99,36 +103,22 @@ void cb(uvc_frame_t* frame, void*){
  renderFrame(frame);
 }
 
-void streamingThread(int fd,int vendor,int product,std::string devName){
+void streamingThread(int fd,int vendor,int product,std::string devName,int busNum,int devAddr,std::string usbfs){
  if(!libs.load()){ setError("NATIVE_LIB_MISSING: libuvc/libusb shared libraries not found"); g_preview=false; return; }
  uvc_context_t* ctx=nullptr; uvc_device_t* dev=nullptr; uvc_device_handle_t* handle=nullptr; uvc_stream_ctrl_t* ctrl=(uvc_stream_ctrl_t*)calloc(1,256);
- ALOGI("libusb init/context via libuvc; current deviceName=%s fd=%d", devName.c_str(), fd);
+ ALOGI("native fd-aware init fields fd=%d vendor=%d product=%d deviceName=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s", fd, vendor, product, devName.c_str(), usbfs.c_str(), busNum, devAddr, g_window ? "true" : "false");
  uvc_error_t r=0;
- if(libs.uvc_wrap){ r=libs.uvc_wrap(fd,&ctx,&handle); ALOGI("uvc_wrap(fd) result=%d", r); }
- else {
-   r=libs.uvc_init(&ctx,nullptr);
-   ALOGI("uvc_init result=%d error=%s", r, r < 0 ? libs.err(r).c_str() : "none");
-   if(r<0){ setError("NATIVE_UVC_INIT_FAILED: uvc_init " + libs.err(r)); goto done; }
-   if(libs.uvc_get_device_with_fd){
-     r=libs.uvc_get_device_with_fd(ctx,&dev,vendor,product,nullptr,fd,devName.c_str());
-     ALOGI("uvc_get_device_with_fd fd=%d vendor=%d product=%d deviceName=%s result=%d error=%s", fd, vendor, product, devName.c_str(), r, r < 0 ? libs.err(r).c_str() : "none");
-     if(r>=0){
-       r=libs.uvc_open(dev,&handle);
-       ALOGI("uvc_open after fd device result=%d error=%s handle=%p", r, r < 0 ? libs.err(r).c_str() : "none", handle);
-     }
-   } else if(libs.uvc_find_device && libs.uvc_open){
-     r=libs.uvc_find_device(ctx,&dev,vendor,product,nullptr);
-     ALOGI("uvc_find_device fallback vendor=%d product=%d result=%d error=%s", vendor, product, r, r < 0 ? libs.err(r).c_str() : "none");
-     if(r>=0){
-       r=libs.uvc_open(dev,&handle);
-       ALOGI("uvc_open after find_device result=%d error=%s handle=%p", r, r < 0 ? libs.err(r).c_str() : "none", handle);
-     }
-   } else {
-     r=-1;
-     ALOGE("no uvc_get_device_with_fd or uvc_find_device/uvc_open symbols available");
-   }
- }
- if(r<0 || !handle){ setError("NATIVE_UVC_OPEN_FAILED: open handle " + libs.err(r)); goto done; }
+ if(!libs.uvc_init2){ setError("NATIVE_UVC_INIT_FAILED: uvc_init2 symbol missing"); goto done; }
+ if(!libs.uvc_get_device_with_fd){ setError("NATIVE_UVC_OPEN_FAILED: uvc_get_device_with_fd symbol missing"); goto done; }
+ r=libs.uvc_init2(&ctx,nullptr,usbfs.c_str());
+ ALOGI("uvc_init2 usbfs=%s result=%d error=%s", usbfs.c_str(), r, r < 0 ? libs.err(r).c_str() : "none");
+ if(r<0){ setError("NATIVE_UVC_INIT_FAILED: uvc_init2 usbfs=" + usbfs + " " + libs.err(r)); goto done; }
+ r=libs.uvc_get_device_with_fd(ctx,&dev,vendor,product,nullptr,fd,busNum,devAddr);
+ ALOGI("uvc_get_device_with_fd fd=%d busNum=%d devAddr=%d vendor=%d product=%d result=%d error=%s", fd, busNum, devAddr, vendor, product, r, r < 0 ? libs.err(r).c_str() : "none");
+ if(r<0 || !dev){ setError("NATIVE_UVC_OPEN_FAILED: uvc_get_device_with_fd " + libs.err(r)); goto done; }
+ r=libs.uvc_open(dev,&handle);
+ ALOGI("uvc_open after fd device result=%d error=%s handle=%p", r, r < 0 ? libs.err(r).c_str() : "none", handle);
+ if(r<0 || !handle){ setError("NATIVE_UVC_OPEN_FAILED: uvc_open " + libs.err(r)); goto done; }
  ALOGI("uvc_scan_control result=ok bNumInterfaces=see libuvc/device logs");
  // Prefer safe mode observed in working app: 720x480 MJPEG @ 30fps (frame size 1036800) with interval 333333.
  r=libs.uvc_get_stream_ctrl_format_size(handle,ctrl,1,720,480,30);
@@ -137,7 +127,7 @@ void streamingThread(int fd,int vendor,int product,std::string devName){
  if(r<0){ setError("NATIVE_UVC_STREAM_START_FAILED: uvc_get_stream_ctrl_format_size " + libs.err(r)); goto done; }
  r=libs.uvc_start_streaming(handle,ctrl,cb,nullptr,0);
  ALOGI("uvc_start_streaming result=%d error=%s dwMaxPayloadTransferSize target=3072 dwMaxVideoFrameSize target=1036800", r, r < 0 ? libs.err(r).c_str() : "none");
- if(r<0){ setError("NATIVE_UVC_STREAM_START_FAILED: uvc_stream_start " + libs.err(r)); goto done; }
+ if(r<0){ setError("NATIVE_UVC_STREAM_START_FAILED: uvc_start_streaming " + libs.err(r)); goto done; }
  ALOGI("real libuvc stream start succeeded selected format=MJPEG width=640 height=480 fps=30 frame_interval=333333 payload_size=3072");
  g_preview=true;
  while(!g_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -147,20 +137,25 @@ done:
 }
 }
 
-extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeOpen(JNIEnv* env,jobject,jint fd,jint vendorId,jint productId,jstring deviceName,jobject surface){
+extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeOpen(JNIEnv* env,jobject,jint fd,jint vendorId,jint productId,jstring deviceName,jint busNum,jint devAddr,jstring usbfs,jobject surface){
  clearError();
  const char* n=env->GetStringUTFChars(deviceName,nullptr); std::string name=n?n:""; env->ReleaseStringUTFChars(deviceName,n);
- std::lock_guard<std::mutex> lk(g_lock); releaseWindow(); if(surface) g_window=ANativeWindow_fromSurface(env,surface); g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_error.clear(); g_fd=fd; g_vendor=vendorId; g_product=productId; g_device_name=name; g_opened=true; g_stop=false; g_start_ns=nowNs(); ALOGI("native UVC opened, waiting for frames fd=%d vendor=%d product=%d current_device=%s",fd,vendorId,productId,name.c_str()); return JNI_TRUE;
+ const char* u=env->GetStringUTFChars(usbfs,nullptr); std::string usbfsPath=u?u:""; env->ReleaseStringUTFChars(usbfs,u);
+ std::lock_guard<std::mutex> lk(g_lock); releaseWindow(); if(surface) g_window=ANativeWindow_fromSurface(env,surface); g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_error.clear(); g_fd=fd; g_vendor=vendorId; g_product=productId; g_device_name=name; g_bus_num=busNum; g_dev_addr=devAddr; g_usbfs=usbfsPath; g_opened=true; g_stop=false; g_start_ns=nowNs(); ALOGI("native UVC opened, waiting for frames fd=%d vendor=%d product=%d current_device=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s",fd,vendorId,productId,name.c_str(),usbfsPath.c_str(),busNum,devAddr,surface ? "true" : "false"); return JNI_TRUE;
 }
-extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreview(JNIEnv*,jobject){ clearError(); if(!g_opened) return JNI_FALSE; if(g_thread.joinable()){g_stop=true; g_thread.join(); g_stop=false;} g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name); ALOGI("native UVC stream start posted on worker thread"); return JNI_TRUE; }
+extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreview(JNIEnv*,jobject){ clearError(); if(!g_opened) return JNI_FALSE; if(g_thread.joinable()){g_stop=true; g_thread.join(); g_stop=false;} g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name, g_bus_num, g_dev_addr, g_usbfs); ALOGI("native UVC stream start posted on worker thread"); return JNI_TRUE; }
 extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartPreviewWithDevice(JNIEnv* env,jobject thiz,jint fd,jint vendor,jint product,jstring deviceName){
  clearError();
  const char* n=env->GetStringUTFChars(deviceName,nullptr); std::string name=n?n:""; env->ReleaseStringUTFChars(deviceName,n);
+ if(g_bus_num < 0 || g_dev_addr < 0 || g_usbfs.empty()){
+   setError("NATIVE_UVC_OPEN_FAILED: nativeStartPreviewWithDevice requires prior nativeOpen with parsed USB path");
+   return JNI_FALSE;
+ }
  g_fd=fd; g_vendor=vendor; g_product=product; g_device_name=name;
  if(!g_opened) g_opened=true;
  if(g_thread.joinable()){g_stop=true; g_thread.join(); g_stop=false;}
- g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name);
- ALOGI("native UVC stream start-with-device posted fd=%d vendor=%d product=%d deviceName=%s", fd, vendor, product, name.c_str());
+ g_thread=std::thread(streamingThread, g_fd, g_vendor, g_product, g_device_name, g_bus_num, g_dev_addr, g_usbfs);
+ ALOGI("native UVC stream start-with-device posted fd=%d vendor=%d product=%d deviceName=%s usbfs=%s busNum=%d devAddr=%d", fd, vendor, product, name.c_str(), g_usbfs.c_str(), g_bus_num, g_dev_addr);
  return JNI_TRUE;
 }
 extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStopPreview(JNIEnv*,jobject){ g_stop=true; if(g_thread.joinable()) g_thread.join(); g_preview=false; }

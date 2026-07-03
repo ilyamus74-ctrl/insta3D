@@ -248,6 +248,15 @@ private data class Cam1UvcBackendState(
     val error: String? = null,
 )
 
+private data class UsbPathInfo(val busNum: Int, val devAddr: Int, val usbfs: String)
+
+private fun parseUsbDevicePath(deviceName: String): UsbPathInfo? {
+    val match = Regex("^(/dev/bus/usb)/(\\d+)/(\\d+)$").matchEntire(deviceName) ?: return null
+    val busNum = match.groupValues[2].toIntOrNull() ?: return null
+    val devAddr = match.groupValues[3].toIntOrNull() ?: return null
+    return UsbPathInfo(busNum = busNum, devAddr = devAddr, usbfs = match.groupValues[1])
+}
+
 private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1UvcBackend {
     private val lock = Any()
     private var state = Cam1UvcBackendState()
@@ -255,8 +264,17 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
 
     override fun open(deviceInfo: Cam1UvcDeviceInfo, previewSurface: android.view.Surface?) = synchronized(lock) {
         log("selected backend: native libuvc")
-        log("native UVC open requested vendor=${deviceInfo.vendorId} product=${deviceInfo.productId} name=${deviceInfo.productName} deviceName=${deviceInfo.deviceName} fd=${deviceInfo.fileDescriptor} surface=${previewSurface != null}")
-        val result = runCatching { nativeOpen(deviceInfo.fileDescriptor, deviceInfo.vendorId, deviceInfo.productId, deviceInfo.deviceName, previewSurface) }
+        val usbPathInfo = parseUsbDevicePath(deviceInfo.deviceName)
+        if (usbPathInfo == null) {
+            val error = "NATIVE_UVC_OPEN_FAILED: cannot parse USB device path ${deviceInfo.deviceName}"
+            state = state.copy(opened = false, previewRunning = false, error = error, selectedFormat = null, selectedResolution = null, selectedFps = null)
+            log(error)
+            return@synchronized
+        }
+        log("native UVC open requested vendor=${deviceInfo.vendorId} product=${deviceInfo.productId} name=${deviceInfo.productName} deviceName=${deviceInfo.deviceName} fd=${deviceInfo.fileDescriptor} usbfs=${usbPathInfo.usbfs} busNum=${usbPathInfo.busNum} devAddr=${usbPathInfo.devAddr} surface=${previewSurface != null}")
+        val result = runCatching {
+            nativeOpen(deviceInfo.fileDescriptor, deviceInfo.vendorId, deviceInfo.productId, deviceInfo.deviceName, usbPathInfo.busNum, usbPathInfo.devAddr, usbPathInfo.usbfs, previewSurface)
+        }
         state = if (result.getOrDefault(false)) {
             state.copy(opened = true, previewRunning = false, error = null, selectedFormat = null, selectedResolution = null, selectedFps = null)
         } else {
@@ -317,7 +335,7 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
         state
     }
 
-    private external fun nativeOpen(fd: Int, vendorId: Int, productId: Int, deviceName: String, surface: android.view.Surface?): Boolean
+    private external fun nativeOpen(fd: Int, vendorId: Int, productId: Int, deviceName: String, busNum: Int, devAddr: Int, usbfs: String, surface: android.view.Surface?): Boolean
     private external fun nativeStartPreview(): Boolean
     private external fun nativeStopPreview()
     private external fun nativeStartRecording(path: String): Boolean
