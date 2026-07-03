@@ -99,6 +99,9 @@ import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
+import com.maklertour.data.phonecamera.StereoCaptureExperimentalManager
+import com.maklertour.data.phonecamera.StereoRigConfig
+import com.maklertour.data.phonecamera.UsbUvcStatus
 import com.maklertour.data.phonecamera.PhoneScanCalibrationMetadata
 import com.maklertour.data.local.RoomDatabaseProvider
 import com.maklertour.data.network.ConnectivityState
@@ -1224,6 +1227,7 @@ private fun CameraScreen(
     var scanName by remember { mutableStateOf("") }
     var showNoSessionDialog by remember { mutableStateOf(false) }
     var showPhoneCameraScan by remember { mutableStateOf(false) }
+    var showStereoCapture by remember { mutableStateOf(false) }
     val videoScanBusy = videoScanUiState in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.RECORDING, VideoScanUiState.STOPPING)
     val defaultPointName = stringResource(R.string.point_default_format, selectedSessionPointsCount + 1)
     val defaultScanName = stringResource(R.string.scan_video_default_name_format, scanVideos.size + 1)
@@ -1320,6 +1324,10 @@ private fun CameraScreen(
                         },
                         enabled = selectedSessionName != null && !isCapturing && !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING && scanName.isNotBlank(),
                     ) { Text("Снять видео на телефон") }
+                    Button(
+                        onClick = { if (selectedSessionName == null) showNoSessionDialog = true else showStereoCapture = true },
+                        enabled = selectedSessionName != null && !isCapturing && !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING,
+                    ) { Text("Stereo Capture Experimental") }
                     when (videoScanUiState) {
                         VideoScanUiState.SWITCHING_MODE, VideoScanUiState.RECORDING, VideoScanUiState.STOPPING -> {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1350,6 +1358,18 @@ private fun CameraScreen(
 
         if (isCapturing && !isRecordingScanVideo) {
             CaptureOverlay()
+        }
+        if (showStereoCapture) {
+            Dialog(
+                onDismissRequest = { showStereoCapture = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+            ) {
+                StereoCaptureExperimentalScreen(
+                    orderId = selectedOrder?.id?.toString(),
+                    captureSessionId = selectedSessionName ?: "local",
+                    onClose = { showStereoCapture = false },
+                )
+            }
         }
         if (showPhoneCameraScan) {
             Dialog(
@@ -2734,3 +2754,101 @@ private fun defaultVideoScanNameForRole(role: com.maklertour.domain.ScanVideoRol
 
 private fun videoRoleLabel(role: com.maklertour.domain.ScanVideoRole): String =
     if (role == com.maklertour.domain.ScanVideoRole.DETAIL) "Детали" else "Основной проход"
+
+@Composable
+private fun StereoCaptureExperimentalScreen(
+    orderId: String?,
+    captureSessionId: String,
+    onClose: () -> Unit,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    val manager = remember(context, lifecycleOwner) { StereoCaptureExperimentalManager(context, lifecycleOwner) }
+    val lensRepository = remember(context) { PhoneCameraLensRepository(context) }
+    var cameraOptions by remember { mutableStateOf(lensRepository.listBackCameras()) }
+    var selectedCameraId by remember { mutableStateOf(lensRepository.getSelectedCameraId() ?: cameraOptions.firstOrNull()?.cameraId) }
+    var requestedZoomRatio by remember { mutableStateOf(if (lensRepository.getSelectedZoomRatio() <= 0f) 0.5f else lensRepository.getSelectedZoomRatio()) }
+    var usbInfo by remember { mutableStateOf(manager.detectUsbUvcCamera()) }
+    var baselineMm by remember { mutableStateOf("120") }
+    var rigId by remember { mutableStateOf("phone_usb_v1") }
+    var cam0Label by remember { mutableStateOf(if (requestedZoomRatio <= 0.51f) "phone_back_0_5x" else "phone_back_1x") }
+    var cam1Label by remember { mutableStateOf("usb_uvc") }
+    var status by remember { mutableStateOf("Ready") }
+    var isRecording by remember { mutableStateOf(false) }
+    var elapsedSec by remember { mutableStateOf(0L) }
+    var validationText by remember { mutableStateOf("Not recorded") }
+
+    LaunchedEffect(isRecording) {
+        elapsedSec = 0L
+        while (isRecording) {
+            delay(1_000)
+            elapsedSec += 1L
+        }
+    }
+
+    Surface(modifier = Modifier.fillMaxSize().zIndex(20f), color = Color.Black) {
+        Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onClose, enabled = !isRecording) { Text("Close") }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Stereo Capture Experimental", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text("Timer: ${elapsedSec}s · USB: ${usbInfo.status}", color = Color.White)
+                }
+                Button(onClick = { usbInfo = manager.detectUsbUvcCamera() }, enabled = !isRecording) { Text("Refresh USB") }
+            }
+            Row(modifier = Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(modifier = Modifier.weight(1f).fillMaxSize().background(Color.DarkGray), contentAlignment = Alignment.Center) {
+                    AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx ->
+                        PreviewView(ctx).apply {
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                            scope.launch {
+                                runCatching { manager.bindCam0Preview(this@apply, selectedCameraId, requestedZoomRatio) }
+                                    .onSuccess { status = if (it.success) "cam0 preview active" else "cam0 preview error: ${it.error}" }
+                                    .onFailure { status = "cam0 preview error: ${it.message}" }
+                            }
+                        }
+                    })
+                    Text("cam0", color = Color.White, modifier = Modifier.align(Alignment.TopStart).padding(8.dp))
+                }
+                Box(modifier = Modifier.weight(1f).fillMaxSize().background(Color(0xFF202020)), contentAlignment = Alignment.Center) {
+                    Text("cam1 USB UVC preview\n${usbInfo.status}\nNative UVC preview adapter pending", color = Color.White)
+                }
+            }
+            Column(modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.85f)), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = { requestedZoomRatio = 0.5f; cam0Label = "phone_back_0_5x" }, enabled = !isRecording) { Text("0.5x / ultra-wide") }
+                    Button(onClick = { requestedZoomRatio = 1f; cam0Label = "phone_back_1x" }, enabled = !isRecording) { Text("1x / wide") }
+                    Button(onClick = { cameraOptions = lensRepository.listBackCameras(); selectedCameraId = cameraOptions.firstOrNull()?.cameraId }, enabled = !isRecording) { Text("Refresh lenses") }
+                }
+                OutlinedTextField(value = rigId, onValueChange = { rigId = it }, label = { Text("rig_id") }, enabled = !isRecording, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = cam0Label, onValueChange = { cam0Label = it }, label = { Text("cam0_label") }, enabled = !isRecording, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = cam1Label, onValueChange = { cam1Label = it }, label = { Text("cam1_label") }, enabled = !isRecording, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = baselineMm, onValueChange = { baselineMm = it }, label = { Text("baseline_mm (required)") }, enabled = !isRecording, modifier = Modifier.fillMaxWidth())
+                Text("Status: $status · IMU: ${if (isRecording) "recording" else "idle"}", color = Color.White)
+                Text("Validation: $validationText", color = if (validationText.startsWith("OK")) Color(0xFFB7F7C1) else Color(0xFFFFD166))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val baseline = baselineMm.toDoubleOrNull()
+                        if (baseline == null || baseline <= 0.0) { validationText = "baseline_mm must be > 0"; return@Button }
+                        scope.launch {
+                            runCatching { manager.start(orderId, captureSessionId, StereoRigConfig(rigId, cam0Label, cam1Label, baseline)) }
+                                .onSuccess { isRecording = true; status = "recording to ${it.name}" }
+                                .onFailure { status = "start failed: ${it.message}" }
+                        }
+                    }, enabled = !isRecording) { Text("Record") }
+                    Button(onClick = {
+                        scope.launch {
+                            val result = manager.stop()
+                            isRecording = false
+                            validationText = if (result.ok) "OK: ${result.bundleDir.name}" else "Failed: ${result.errors.joinToString()}"
+                        }
+                    }, enabled = isRecording) { Text("Stop") }
+                    Button(onClick = { Toast.makeText(context, "Local export is stored under app files for backend upload integration.", Toast.LENGTH_LONG).show() }, enabled = !isRecording) { Text("Upload/export") }
+                }
+                Text("Known MVP limitation: cam1 USB UVC recording uses a clean adapter boundary; devices without a native UVC implementation will validate cam1.mp4 as missing.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
