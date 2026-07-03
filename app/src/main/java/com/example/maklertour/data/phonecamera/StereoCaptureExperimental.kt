@@ -23,6 +23,7 @@ import android.graphics.Paint
 import android.os.Build
 import android.os.SystemClock
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.util.Log
 import android.view.TextureView
@@ -34,8 +35,6 @@ import org.json.JSONObject
 import java.io.File
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -245,8 +244,11 @@ private class UsbUvcCameraAdapter(private val context: Context) {
     private var selectedAltSetting: Int? = null
     private var selectedMaxPacketSize: Int? = null
     private var selectedMode: UvcSelectedMode? = null
-    private var receiveThread: Thread? = null
-    private var firstPacketLatch: CountDownLatch? = null
+    private val cam1Thread = HandlerThread("Cam1UvcThread").also { it.start() }
+    private val cam1Handler = Handler(cam1Thread.looper)
+    private var activeRequests: List<UsbRequest> = emptyList()
+    @Volatile private var cam1Generation = 0
+    @Volatile private var lastUiUpdateMs = 0L
     private var streaming = AtomicBoolean(false)
     private var activeConnection: UsbDeviceConnection? = null
     private var activeEndpoint: UsbEndpoint? = null
@@ -274,7 +276,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                 selectedDevice = device
                 lastSelectedDeviceName = device.deviceName
                 if (usbManager?.hasPermission(device) == true) {
-                    openAfterPermission(device)
+                    openAfterPermissionAsync(device)
                 } else {
                     append("permission callback did not grant current deviceName=${device.deviceName}; requesting permission again")
                     requestPermissionForCurrentDevice(device)
@@ -289,26 +291,29 @@ private class UsbUvcCameraAdapter(private val context: Context) {
 
     fun attachLogFile(file: File) { logFile = file }
 
-    fun close() { stopStreamLoop(); unregisterPermissionReceiver() }
+    fun close() { stopStreamLoop(); unregisterPermissionReceiver(); cam1Thread.quitSafely() }
 
     fun currentInfo(): UsbUvcCameraInfo = _state.value
 
     fun recordedFrameCount(): Long = lastRecordingFrameCount
 
     private fun stopStreamLoop() {
+        cam1Generation++
         streaming.set(false)
-        stopReceiveThreadOnly()
+        val requests = activeRequests
+        activeRequests = emptyList()
+        requests.forEach { runCatching { it.cancel() }; runCatching { it.close() } }
         runCatching { activeConnection?.close() }
         activeConnection = null
         activeEndpoint = null
+        append("UVC stop requested thread=${Thread.currentThread().name} generation=$cam1Generation")
     }
 
     private fun stopReceiveThreadOnly() {
         streaming.set(false)
-        runCatching { receiveThread?.interrupt() }
-        runCatching { receiveThread?.join(250L) }
-        receiveThread = null
-        firstPacketLatch = null
+        val requests = activeRequests
+        activeRequests = emptyList()
+        requests.forEach { runCatching { it.cancel() }; runCatching { it.close() } }
     }
 
     fun onPreviewFrameRendered() {
@@ -352,7 +357,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         if (!hasPermission) {
             return requestPermissionForCurrentDevice(device)
         }
-        return openAfterPermission(device)
+        return openAfterPermissionAsync(device)
     }
 
     private fun requestPermissionForCurrentDevice(device: UsbDevice): UsbUvcCameraInfo {
@@ -419,8 +424,18 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         recordingFile = null
     }
 
-    private fun openAfterPermission(device: UsbDevice): UsbUvcCameraInfo {
+    private fun openAfterPermissionAsync(device: UsbDevice): UsbUvcCameraInfo {
         stopStreamLoop()
+        val generation = cam1Generation
+        update(info(device, UsbUvcStatus.PERMISSION_GRANTED))
+        update(info(device, UsbUvcStatus.UVC_ADAPTER_OPENING, "UVC opening on background thread"))
+        cam1Handler.post { openAfterPermissionOnCam1Thread(device, generation) }
+        return _state.value
+    }
+
+    private fun openAfterPermissionOnCam1Thread(device: UsbDevice, generation: Int): UsbUvcCameraInfo {
+        if (!assertNotMainUvc("openAfterPermission")) return update(info(device, UsbUvcStatus.ERROR, "UVC open attempted on main thread"))
+        if (generation != cam1Generation) return _state.value
         val manager = usbManager ?: return update(info(device, UsbUvcStatus.ERROR, "UsbManager unavailable"))
         append("device selected")
         update(info(device, UsbUvcStatus.PERMISSION_GRANTED))
@@ -428,6 +443,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         val connection = manager.openDevice(device)
         append("openDevice(currentDevice) deviceName=${device.deviceName} result=${connection != null}")
         if (connection == null) return update(info(device, UsbUvcStatus.OPEN_DEVICE_FAILED, "openDevice failed"))
+        activeConnection = connection
         update(info(device, UsbUvcStatus.OPEN_DEVICE_SUCCESS))
         val selection = device.selectUvcInterfaces(::append)
         val videoControl = selection.videoControl
@@ -489,7 +505,10 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                 startStreamLoop(device, connection, endpoint, mode)
                 append("UVC stream opened, waiting for packets alternate=${candidateInterface.alternateSetting ?: "unknown"} max_packet_size=${endpoint.maxPacketSize} legacy=$legacy")
                 update(info(device, UsbUvcStatus.UVC_STREAM_OPENED, "UVC stream opened, waiting for packets"))
-                firstPacketLatch?.await(1000L, TimeUnit.MILLISECONDS)
+                val deadline = SystemClock.elapsedRealtime() + 1000L
+                while (streaming.get() && SystemClock.elapsedRealtime() < deadline && _state.value.cam1PacketsReceived <= beforePackets) {
+                    SystemClock.sleep(25L)
+                }
                 if (_state.value.cam1PacketsReceived > beforePackets) {
                     scheduleNoFramesTimeout(device)
                     return update(info(device, UsbUvcStatus.UVC_STREAM_OPENED))
@@ -498,13 +517,15 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             }
         }
         stopReceiveThreadOnly()
+        runCatching { connection.close() }
+        if (activeConnection === connection) activeConnection = null
         return update(info(device, UsbUvcStatus.UVC_STALLED_NO_PACKETS, "UVC stream failed: no packets"))
     }
 
     private fun startStreamLoop(device: UsbDevice, connection: UsbDeviceConnection, endpoint: UsbEndpoint, mode: UvcSelectedMode) {
         streaming.set(true)
-        firstPacketLatch = CountDownLatch(1)
-        receiveThread = Thread({
+        Thread({
+            if (!assertNotMainUvc("receive loop")) return@Thread
             val requests = (0 until 6).mapNotNull { index ->
                 runCatching {
                     UsbRequest().takeIf { req -> req.initialize(connection, endpoint) }?.also { req ->
@@ -516,6 +537,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                     }
                 }.onFailure { append("UsbRequest allocate/queue exception index=$index ${it.stackTraceToString()}") }.getOrNull()
             }
+            activeRequests = requests
             requestQueueDepth = requests.size
             receiveLoopRunning = true
             receiveLoopExitReason = null
@@ -567,7 +589,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             requestQueueDepth = 0
             append("receive loop exit receive_loop_running=false receive_loop_exit_reason=$receiveLoopExitReason")
             requests.forEach { runCatching { it.close() }.onFailure { e -> append("UsbRequest close exception: ${e.stackTraceToString()}") } }
-        }, "UsbUvcIsochronousReceive").also { it.isDaemon = true; it.start() }
+        }, "Cam1UvcThread-receive").also { it.isDaemon = true; it.start() }
     }
 
     private fun onPacket(device: UsbDevice, packet: ByteArray) {
@@ -576,8 +598,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         lastPacketNs = now
         val nextPackets = _state.value.cam1PacketsReceived + 1
         append("packet counter incremented count=$nextPackets size=${packet.size}")
-        firstPacketLatch?.countDown()
-        update(info(device, UsbUvcStatus.UVC_PACKETS_RECEIVING).copy(cam1PacketsReceived = nextPackets, cam1LastPacketAgeMs = 0L))
+        throttledUpdate(info(device, UsbUvcStatus.UVC_PACKETS_RECEIVING).copy(cam1PacketsReceived = nextPackets, cam1LastPacketAgeMs = 0L))
     }
 
     private fun onFrameAssembled(device: UsbDevice) {
@@ -605,18 +626,20 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                 file.appendBytes(frame)
             }.onFailure { append("cam1 recording frame write failed: ${it.stackTraceToString()}") }
         }
-        try {
-            val tv = preview ?: return
-            val canvas = tv.lockCanvas()
-            if (canvas != null) {
-                canvas.drawColor(Color.BLACK)
-                canvas.drawBitmap(bitmap, null, android.graphics.Rect(0, 0, canvas.width, canvas.height), Paint(Paint.FILTER_BITMAP_FLAG))
-                tv.unlockCanvasAndPost(canvas)
-                onDecodedFrameRendered(device)
+        mainHandler.post {
+            try {
+                val tv = preview ?: return@post
+                val canvas = tv.lockCanvas()
+                if (canvas != null) {
+                    canvas.drawColor(Color.BLACK)
+                    canvas.drawBitmap(bitmap, null, android.graphics.Rect(0, 0, canvas.width, canvas.height), Paint(Paint.FILTER_BITMAP_FLAG))
+                    tv.unlockCanvasAndPost(canvas)
+                    onDecodedFrameRendered(device)
+                }
+            } catch (t: Throwable) {
+                append("UVC render failed: ${t.stackTraceToString()}")
+                update(info(device, UsbUvcStatus.UVC_RENDER_FAILED, t.message).copy(cam1RenderErrors = _state.value.cam1RenderErrors + 1))
             }
-        } catch (t: Throwable) {
-            append("UVC render failed: ${t.stackTraceToString()}")
-            update(info(device, UsbUvcStatus.UVC_RENDER_FAILED, t.message).copy(cam1RenderErrors = _state.value.cam1RenderErrors + 1))
         }
     }
 
@@ -645,6 +668,24 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                 if (streaming.get()) mainHandler.postDelayed(this, 1000L)
             }
         }, 1_000L)
+    }
+
+    private fun throttledUpdate(info: UsbUvcCameraInfo): UsbUvcCameraInfo {
+        val nowMs = SystemClock.elapsedRealtime()
+        return if (nowMs - lastUiUpdateMs >= 200L || info.status != _state.value.status) {
+            lastUiUpdateMs = nowMs
+            update(info)
+        } else _state.value
+    }
+
+    private fun assertNotMainUvc(stage: String): Boolean {
+        val thread = Thread.currentThread().name
+        append("UVC stage=$stage thread=$thread")
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            append("ERROR UVC blocking stage attempted on main thread stage=$stage thread=$thread")
+            return false
+        }
+        return true
     }
 
     private fun update(info: UsbUvcCameraInfo): UsbUvcCameraInfo {
@@ -703,7 +744,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
 
     private fun append(message: String) {
         Log.d("StereoUsbUvc", message)
-        logFile?.appendText("${Instant.now()} $message\n")
+        runCatching { logFile?.appendText("${Instant.now()} $message\n") }
     }
 }
 
