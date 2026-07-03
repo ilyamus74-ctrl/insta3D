@@ -327,10 +327,17 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
     private external fun nativeLastError(): String
 
     companion object {
+        private const val LOAD_TAG = "NativeLibuvcCam1Backend"
+
         init {
-            runCatching { System.loadLibrary("usb1.0") }
-            runCatching { System.loadLibrary("uvc") }
-            runCatching { System.loadLibrary("cam1_uvc") }
+            listOf("usb100", "jpeg-turbo1500", "uvc", "UVCCamera", "UACAudio", "cam1_uvc").forEach { library ->
+                try {
+                    System.loadLibrary(library)
+                    Log.i(LOAD_TAG, "System.loadLibrary success library=$library")
+                } catch (e: UnsatisfiedLinkError) {
+                    Log.e(LOAD_TAG, "System.loadLibrary failure library=$library error=${e.message}")
+                }
+            }
         }
     }
 }

@@ -52,11 +52,24 @@ struct Libs {
  // Android/libuvc forks commonly expose one of these fd helpers.
  uvc_error_t (*uvc_get_device_with_fd)(uvc_context_t*, uvc_device_t**, int, int, const char*, int, const char*)=nullptr;
  uvc_error_t (*uvc_wrap)(int, uvc_context_t**, uvc_device_handle_t**)=nullptr;
+ void* tryDlopen(const char* name){
+   dlerror();
+   ALOGI("dlopen attempt library=%s", name);
+   void* handle = dlopen(name, RTLD_NOW|RTLD_GLOBAL);
+   if(handle){
+     ALOGI("dlopen success library=%s handle=%p", name, handle);
+   } else {
+     const char* err = dlerror();
+     ALOGE("dlopen failure library=%s error=%s", name, err ? err : "unknown");
+   }
+   return handle;
+ }
  bool load(){
-   usb=dlopen("libusb1.0.so", RTLD_NOW|RTLD_GLOBAL); if(!usb) usb=dlopen("libusb-1.0.so", RTLD_NOW|RTLD_GLOBAL);
-   ALOGI("native library load result libusb=%p", usb);
-   uvc=dlopen("libuvc.so", RTLD_NOW|RTLD_GLOBAL);
-   ALOGI("native library load result libuvc=%p", uvc);
+   if(!usb) usb=tryDlopen("libusb1.0.so");
+   if(!usb) usb=tryDlopen("libusb-1.0.so");
+   if(!usb) usb=tryDlopen("libusb100.so");
+   if(!uvc) uvc=tryDlopen("libuvc.so");
+   ALOGI("native library load summary libusb=%p libuvc=%p", usb, uvc);
    if(!usb || !uvc) return false;
    #define SYM(x) x=(decltype(x))dlsym(uvc,#x)
    SYM(uvc_init); SYM(uvc_exit); SYM(uvc_find_device); SYM(uvc_open); SYM(uvc_close); SYM(uvc_unref_device);
@@ -92,16 +105,38 @@ void streamingThread(int fd,int vendor,int product,std::string devName){
  ALOGI("libusb init/context via libuvc; current deviceName=%s fd=%d", devName.c_str(), fd);
  uvc_error_t r=0;
  if(libs.uvc_wrap){ r=libs.uvc_wrap(fd,&ctx,&handle); ALOGI("uvc_wrap(fd) result=%d", r); }
- else { r=libs.uvc_init(&ctx,nullptr); ALOGI("libuvc init/context result=%d", r); if(r>=0 && libs.uvc_get_device_with_fd){ r=libs.uvc_get_device_with_fd(ctx,&dev,vendor,product,nullptr,fd,devName.c_str()); ALOGI("uvc_get_device_with_fd result=%d", r); if(r>=0) r=libs.uvc_open(dev,&handle); } else if(r>=0 && libs.uvc_find_device && libs.uvc_open){ r=libs.uvc_find_device(ctx,&dev,vendor,product,nullptr); ALOGI("uvc_find_device fallback result=%d", r); if(r>=0) r=libs.uvc_open(dev,&handle); } }
- if(r<0 || !handle){ setError("NATIVE_UVC_INIT_FAILED: open handle " + libs.err(r)); goto done; }
+ else {
+   r=libs.uvc_init(&ctx,nullptr);
+   ALOGI("uvc_init result=%d error=%s", r, r < 0 ? libs.err(r).c_str() : "none");
+   if(r<0){ setError("NATIVE_UVC_INIT_FAILED: uvc_init " + libs.err(r)); goto done; }
+   if(libs.uvc_get_device_with_fd){
+     r=libs.uvc_get_device_with_fd(ctx,&dev,vendor,product,nullptr,fd,devName.c_str());
+     ALOGI("uvc_get_device_with_fd fd=%d vendor=%d product=%d deviceName=%s result=%d error=%s", fd, vendor, product, devName.c_str(), r, r < 0 ? libs.err(r).c_str() : "none");
+     if(r>=0){
+       r=libs.uvc_open(dev,&handle);
+       ALOGI("uvc_open after fd device result=%d error=%s handle=%p", r, r < 0 ? libs.err(r).c_str() : "none", handle);
+     }
+   } else if(libs.uvc_find_device && libs.uvc_open){
+     r=libs.uvc_find_device(ctx,&dev,vendor,product,nullptr);
+     ALOGI("uvc_find_device fallback vendor=%d product=%d result=%d error=%s", vendor, product, r, r < 0 ? libs.err(r).c_str() : "none");
+     if(r>=0){
+       r=libs.uvc_open(dev,&handle);
+       ALOGI("uvc_open after find_device result=%d error=%s handle=%p", r, r < 0 ? libs.err(r).c_str() : "none", handle);
+     }
+   } else {
+     r=-1;
+     ALOGE("no uvc_get_device_with_fd or uvc_find_device/uvc_open symbols available");
+   }
+ }
+ if(r<0 || !handle){ setError("NATIVE_UVC_OPEN_FAILED: open handle " + libs.err(r)); goto done; }
  ALOGI("uvc_scan_control result=ok bNumInterfaces=see libuvc/device logs");
  // Prefer safe mode observed in working app: 720x480 MJPEG @ 30fps (frame size 1036800) with interval 333333.
  r=libs.uvc_get_stream_ctrl_format_size(handle,ctrl,1,720,480,30);
  ALOGI("selected format=MJPEG resolution=720x480 fps=30 frame_interval=333333 target_dwMaxPayloadTransferSize=3072 target_dwMaxVideoFrameSize=1036800 get_ctrl=%d", r);
  if(r<0){ r=libs.uvc_get_stream_ctrl_format_size(handle,ctrl,1,640,480,30); ALOGI("fallback selected format=MJPEG resolution=640x480 fps=30 get_ctrl=%d", r); }
- if(r<0){ setError("NATIVE_UVC_INIT_FAILED: get stream ctrl " + libs.err(r)); goto done; }
+ if(r<0){ setError("NATIVE_UVC_STREAM_START_FAILED: uvc_get_stream_ctrl_format_size " + libs.err(r)); goto done; }
  r=libs.uvc_start_streaming(handle,ctrl,cb,nullptr,0);
- ALOGI("uvc_stream_start result=%d dwMaxPayloadTransferSize target=3072 dwMaxVideoFrameSize target=1036800", r);
+ ALOGI("uvc_start_streaming result=%d error=%s dwMaxPayloadTransferSize target=3072 dwMaxVideoFrameSize target=1036800", r, r < 0 ? libs.err(r).c_str() : "none");
  if(r<0){ setError("NATIVE_UVC_STREAM_START_FAILED: uvc_stream_start " + libs.err(r)); goto done; }
  ALOGI("real libuvc stream start succeeded selected format=MJPEG width=640 height=480 fps=30 frame_interval=333333 payload_size=3072");
  g_preview=true;
