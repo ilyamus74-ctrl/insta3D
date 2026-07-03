@@ -506,7 +506,7 @@ private object ContextCompatCompat {
 
 private fun UsbDevice.isTargetUvcDevice(): Boolean = (vendorId == 13030 && productId == 37409) || looksLikeVideoDevice()
 private fun UsbDevice.looksLikeVideoDevice(): Boolean = (0 until interfaceCount).any { getInterface(it).interfaceClass == UsbConstants.USB_CLASS_VIDEO }
-private fun UsbDevice.findIsochronousInEndpoint(): UsbEndpoint? = selectUvcInterfaces().videoStreamingAlternates.firstOrNull()?.endpoint
+private fun UsbDevice.findIsochronousInEndpoint(): UsbEndpoint? = (0 until interfaceCount).asSequence().map { getInterface(it) }.mapNotNull { it.findIsochronousInEndpoint() }.firstOrNull()
 private fun UsbInterface.findIsochronousInEndpoint(): UsbEndpoint? = (0 until endpointCount).map { getEndpoint(it) }.firstOrNull { it.direction == UsbConstants.USB_DIR_IN && it.type == UsbConstants.USB_ENDPOINT_XFER_ISOC }
 private fun UsbEndpoint.endpointTypeLabel(): String = when (type) { UsbConstants.USB_ENDPOINT_XFER_ISOC -> "isochronous"; UsbConstants.USB_ENDPOINT_XFER_BULK -> "bulk"; UsbConstants.USB_ENDPOINT_XFER_INT -> "interrupt"; UsbConstants.USB_ENDPOINT_XFER_CONTROL -> "control"; else -> "type_$type" }
 
