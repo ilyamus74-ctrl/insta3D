@@ -413,12 +413,16 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         return openAfterPermissionAsync(device)
     }
 
-    private fun requestPermissionForCurrentDevice(device: UsbDevice): UsbUvcCameraInfo {
+    private fun requestPermission(device: UsbDevice) {
         registerPermissionReceiver()
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
         val pi = PendingIntent.getBroadcast(context, 13030, Intent(permissionAction).setPackage(context.packageName), flags)
         usbManager?.requestPermission(device, pi)
         append("requestPermission called deviceName=${device.deviceName}")
+    }
+
+    private fun requestPermissionForCurrentDevice(device: UsbDevice): UsbUvcCameraInfo {
+        requestPermission(device)
         return update(info(device, UsbUvcStatus.PERMISSION_REQUESTED))
     }
 
@@ -563,28 +567,43 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             activeConnection = null
             if (generation != cam1Generation || poll != pollGeneration) return@post
 
-            val connection = usbManager?.openDevice(device)
-            append("reopenDevice(after stall) deviceName=${device.deviceName} result=${connection != null}")
+            val freshDevice = findSelectedDeviceWithRetry(timeoutMs = 1_500L) ?: device
+            selectedDevice = freshDevice
+
+            if (usbManager?.hasPermission(freshDevice) != true) {
+                append("reopenDevice(after stall) no permission for fresh device=${freshDevice.deviceName}, requesting permission")
+                requestPermission(freshDevice)
+                mainHandler.post {
+                    if (generation != cam1Generation || poll != pollGeneration) return@post
+                    onRestartCompleted()
+                    update(info(freshDevice, UsbUvcStatus.PERMISSION_REQUESTED, "USB permission requested during stalled reopen"))
+                }
+                return@post
+            }
+
+            val connection = usbManager?.openDevice(freshDevice)
+            append("reopenDevice(after stall) deviceName=${freshDevice.deviceName} result=${connection != null}")
             if (connection == null) {
                 mainHandler.post {
                     if (generation != cam1Generation || poll != pollGeneration) return@post
                     onRestartCompleted()
-                    update(info(device, UsbUvcStatus.OPEN_DEVICE_FAILED, "openDevice failed during stalled UVC reopen"))
+                    update(info(freshDevice, UsbUvcStatus.OPEN_DEVICE_FAILED, "openDevice failed during stalled UVC reopen"))
                 }
                 return@post
             }
             activeConnection = connection
+            val freshFileDescriptor = connection.fileDescriptor
             val surface = preview?.takeIf { it.isAvailable }?.surfaceTexture?.let { android.view.Surface(it) }
-            backend.open(Cam1UvcDeviceInfo(device.vendorId, device.productId, device.deviceName, device.productName, connection.fileDescriptor), surface)
+            backend.open(Cam1UvcDeviceInfo(freshDevice.vendorId, freshDevice.productId, freshDevice.deviceName, freshDevice.productName, freshFileDescriptor), surface)
             backend.startPreview()
             val restartedSnap = backend.snapshot()
             mainHandler.post {
                 if (generation != cam1Generation || poll != pollGeneration) return@post
                 onRestartCompleted()
                 if (restartedSnap.error != null || !restartedSnap.opened) {
-                    updateFromBackend(device, restartedSnap.copy(error = restartedSnap.error ?: "UVC_PREVIEW_FAILED: stalled UVC reopen failed"))
+                    updateFromBackend(freshDevice, restartedSnap.copy(error = restartedSnap.error ?: "UVC_PREVIEW_FAILED: stalled UVC reopen failed"))
                 } else {
-                    updateFromBackend(device, restartedSnap)
+                    updateFromBackend(freshDevice, restartedSnap)
                 }
             }
         }

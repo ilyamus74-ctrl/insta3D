@@ -156,13 +156,47 @@ const char* frameFormatName(int fmt){
 }
 
 uint8_t clampByte(int v){ return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
-uint32_t yuvToRgba(int y, int u, int v){
+void yuvToRgbaBytes(int y, int u, int v, uint8_t* out){
  int c=y-16, d=u-128, e=v-128;
  int r=(298*c + 409*e + 128) >> 8;
  int g=(298*c - 100*d - 208*e + 128) >> 8;
  int b=(298*c + 516*d + 128) >> 8;
- return 0xff000000u | ((uint32_t)clampByte(r) << 16) | ((uint32_t)clampByte(g) << 8) | clampByte(b);
+ out[0]=clampByte(r); out[1]=clampByte(g); out[2]=clampByte(b); out[3]=255;
 }
+
+struct TurboJpeg {
+ void* handle=nullptr;
+ bool attempted=false;
+ bool available=false;
+ void* (*tjInitDecompress)()=nullptr;
+ int (*tjDecompressHeader3)(void*, const unsigned char*, unsigned long, int*, int*, int*, int*)=nullptr;
+ int (*tjDecompress2)(void*, const unsigned char*, unsigned long, unsigned char*, int, int, int, int, int)=nullptr;
+ int (*tjDestroy)(void*)=nullptr;
+ bool load(){
+  if(attempted) return available;
+  attempted=true;
+  const char* loadedName="none";
+  handle=dlopen("libjpeg-turbo1500.so", RTLD_NOW|RTLD_LOCAL);
+  if(handle) loadedName="libjpeg-turbo1500.so";
+  if(!handle){
+   handle=dlopen("libturbojpeg.so", RTLD_NOW|RTLD_LOCAL);
+   if(handle) loadedName="libturbojpeg.so";
+  }
+  if(handle){
+   tjInitDecompress=(decltype(tjInitDecompress))dlsym(handle,"tjInitDecompress");
+   tjDecompressHeader3=(decltype(tjDecompressHeader3))dlsym(handle,"tjDecompressHeader3");
+   tjDecompress2=(decltype(tjDecompress2))dlsym(handle,"tjDecompress2");
+   tjDestroy=(decltype(tjDestroy))dlsym(handle,"tjDestroy");
+  }
+  available=handle && tjInitDecompress && tjDecompressHeader3 && tjDecompress2 && tjDestroy;
+  ALOGI("turbojpeg symbol load summary library=%s handle=%p tjInitDecompress=%s tjDecompressHeader3=%s tjDecompress2=%s tjDestroy=%s available=%s", loadedName, handle, tjInitDecompress ? "true" : "false", tjDecompressHeader3 ? "true" : "false", tjDecompress2 ? "true" : "false", tjDestroy ? "true" : "false", available ? "true" : "false");
+  ALOGI("MJPEG decoder availability turbojpeg=%s", available ? "true" : "false");
+  return available;
+ }
+} turbojpeg;
+std::mutex g_turbojpeg_lock;
+
+bool ensureTurboJpeg(){ std::lock_guard<std::mutex> lk(g_turbojpeg_lock); return turbojpeg.load(); }
 
 struct FrameMeta { uint32_t width; uint32_t height; int format; const char* renderer; };
 FrameMeta frameMeta(const uvc_frame_t* f){
@@ -184,26 +218,80 @@ bool renderYuyvToWindow(const std::vector<uint8_t>& frame, uint32_t width, uint3
  if(ANativeWindow_lock(window, &b, nullptr) != 0){
   g_window_lock_failures++; ALOGE("ANativeWindow_lock failed generation=%lld", (long long)g_session_generation.load()); return false;
  }
- auto* dst=(uint32_t*)b.bits; int bw=b.width,bh=b.height,stride=b.stride;
+ auto* dst=(uint8_t*)b.bits; int bw=b.width,bh=b.height,stride=b.stride;
  if(!dst || bw <= 0 || bh <= 0 || stride < bw){ ANativeWindow_unlockAndPost(window); g_render_errors++; return false; }
  const uint8_t* src=frame.data(); size_t n=frame.size();
  for(int y=0;y<bh;y++){
   uint32_t sy=(uint32_t)(((uint64_t)y * height) / (uint32_t)bh);
+  uint8_t* row = dst + (size_t)y * stride * 4u;
   for(int x=0;x<bw;x++){
    uint32_t sx=(uint32_t)(((uint64_t)x * width) / (uint32_t)bw);
+   uint8_t* px = row + (size_t)x * 4u;
    if((format == UVC_FRAME_FORMAT_YUYV || format == UVC_FRAME_FORMAT_UNCOMPRESSED) && n >= (size_t)width * height * 2u){
     size_t pair=((size_t)sy * width + (sx & ~1u)) * 2u;
     if(pair + 3 >= n) continue;
     uint8_t y0=src[pair], u=src[pair+1], y1=src[pair+2], v=src[pair+3];
-    dst[y*stride+x]=yuvToRgba((sx & 1u) ? y1 : y0, u, v);
+    yuvToRgbaBytes((sx & 1u) ? y1 : y0, u, v, px);
+   } else if(format == UVC_FRAME_FORMAT_UYVY && n >= (size_t)width * height * 2u){
+    size_t pair=((size_t)sy * width + (sx & ~1u)) * 2u;
+    if(pair + 3 >= n) continue;
+    uint8_t u=src[pair], y0=src[pair+1], v=src[pair+2], y1=src[pair+3];
+    yuvToRgbaBytes((sx & 1u) ? y1 : y0, u, v, px);
    } else {
     uint8_t v=src[((size_t)sy*width+sx)%n];
-    dst[y*stride+x]=0xff000000u | ((uint32_t)v<<16) | ((uint32_t)v<<8) | v;
+    px[0]=v; px[1]=v; px[2]=v; px[3]=255;
    }
   }
  }
  if(ANativeWindow_unlockAndPost(window) != 0){ g_render_errors++; return false; }
- g_rendered++; if(g_recording) g_recorded++; return true;
+ g_decoded++; g_rendered++; if(g_recording) g_recorded++; return true;
+}
+
+bool renderRgbaToWindow(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height){
+ if(rgba.empty() || width == 0 || height == 0 || rgba.size() < (size_t)width * height * 4u) return false;
+ std::lock_guard<std::mutex> windowGuard(g_window_lock);
+ ANativeWindow* window = g_window;
+ if(!window){ g_surface_null_count++; return false; }
+ ANativeWindow_Buffer b{};
+ if(ANativeWindow_lock(window, &b, nullptr) != 0){
+  g_window_lock_failures++; ALOGE("ANativeWindow_lock failed generation=%lld", (long long)g_session_generation.load()); return false;
+ }
+ auto* dst=(uint8_t*)b.bits; int bw=b.width,bh=b.height,stride=b.stride;
+ if(!dst || bw <= 0 || bh <= 0 || stride < bw){ ANativeWindow_unlockAndPost(window); g_render_errors++; return false; }
+ for(int y=0;y<bh;y++){
+  uint32_t sy=(uint32_t)(((uint64_t)y * height) / (uint32_t)bh);
+  uint8_t* row = dst + (size_t)y * stride * 4u;
+  for(int x=0;x<bw;x++){
+   uint32_t sx=(uint32_t)(((uint64_t)x * width) / (uint32_t)bw);
+   const uint8_t* sp = rgba.data() + ((size_t)sy * width + sx) * 4u;
+   uint8_t* dp = row + (size_t)x * 4u;
+   dp[0]=sp[0]; dp[1]=sp[1]; dp[2]=sp[2]; dp[3]=sp[3];
+  }
+ }
+ if(ANativeWindow_unlockAndPost(window) != 0){ g_render_errors++; return false; }
+ g_decoded++; g_rendered++; if(g_recording) g_recorded++; return true;
+}
+
+bool renderMjpegToWindow(const std::vector<uint8_t>& frame){
+ if(frame.empty() || !ensureTurboJpeg()) return false;
+ void* dec=turbojpeg.tjInitDecompress();
+ if(!dec) return false;
+ int w=0,h=0,subsamp=0,cs=0;
+ bool ok=false;
+ if(turbojpeg.tjDecompressHeader3(dec, frame.data(), (unsigned long)frame.size(), &w, &h, &subsamp, &cs) == 0 && w > 0 && h > 0){
+  std::vector<uint8_t> rgba((size_t)w * (size_t)h * 4u);
+  constexpr int TJPF_RGBA = 7;
+  if(turbojpeg.tjDecompress2(dec, frame.data(), (unsigned long)frame.size(), rgba.data(), w, 0, h, TJPF_RGBA, 0) == 0){
+   ok = renderRgbaToWindow(rgba, (uint32_t)w, (uint32_t)h);
+  }
+ }
+ turbojpeg.tjDestroy(dec);
+ return ok;
+}
+
+bool renderFrameToWindow(const std::vector<uint8_t>& frame, uint32_t width, uint32_t height, int format){
+ if(format == UVC_FRAME_FORMAT_MJPEG || format == UVC_FRAME_FORMAT_COMPRESSED) return renderMjpegToWindow(frame);
+ return renderYuyvToWindow(frame, width, height, format);
 }
 
 void renderThread(){
@@ -217,7 +305,7 @@ void renderThread(){
    if(g_render_stop.load() && !g_frame_dirty.load()) break;
    local = g_latest_frame; w = g_latest_width; h = g_latest_height; fmt = g_latest_format; g_frame_dirty=false;
   }
-  if(!renderYuyvToWindow(local, w, h, fmt)) g_render_errors++;
+  if(!renderFrameToWindow(local, w, h, fmt)) g_render_errors++;
  }
  ALOGI("render thread stop");
 }
@@ -264,9 +352,20 @@ void cb(uvc_frame_t* frame, void* user){
  if(gen != current){ noteDroppedCallback(); return; }
  FrameMeta m=frameMeta(frame);
  if(!frame || !frame->data || frame->data_bytes == 0 || m.width == 0 || m.height == 0) return;
- int64_t c=++g_received; g_decoded++; int64_t t=nowNs(); g_last_frame_ns=t;
+ size_t bytes = frame->actual_bytes > 0 ? frame->actual_bytes : frame->data_bytes;
+ if(bytes > frame->data_bytes) bytes = frame->data_bytes;
  size_t expected = (size_t)m.width * m.height * 2u;
- size_t copyBytes = frame->data_bytes < expected ? frame->data_bytes : expected;
+ size_t copyBytes = 0;
+ if(m.format == UVC_FRAME_FORMAT_MJPEG || m.format == UVC_FRAME_FORMAT_COMPRESSED){
+  copyBytes = bytes;
+ } else if(m.format == UVC_FRAME_FORMAT_YUYV || m.format == UVC_FRAME_FORMAT_UYVY || m.format == UVC_FRAME_FORMAT_UNCOMPRESSED){
+  if(bytes < expected) return;
+  copyBytes = expected;
+ } else {
+  return;
+ }
+ if(copyBytes == 0 || copyBytes > frame->data_bytes) return;
+ int64_t c=++g_received; int64_t t=nowNs(); g_last_frame_ns=t;
  {
   std::lock_guard<std::mutex> lk(g_frame_lock);
   g_latest_frame.assign((const uint8_t*)frame->data, (const uint8_t*)frame->data + copyBytes);
@@ -276,8 +375,8 @@ void cb(uvc_frame_t* frame, void* user){
  char hex[16*3+1]{};
  const uint8_t* p=(const uint8_t*)frame->data; size_t lim=frame->data_bytes < 16 ? frame->data_bytes : 16;
  for(size_t i=0;i<lim;i++) snprintf(hex+i*3, sizeof(hex)-i*3, "%02x%s", p[i], i+1<lim ? " " : "");
- if(g_first_frame_ns.load()==0) { g_first_frame_ns=t; ALOGI("native UVC first frame received data_bytes=%zu width=%u height=%u frame_format=%d frame_format_name=%s sequence=%u first16=%s renderer=%s generation=%lld", frame->data_bytes, m.width, m.height, (int)frame->frame_format, frameFormatName((int)frame->frame_format), frame->sequence, hex, m.renderer, (long long)gen); clearError(); }
- if(c%30==0) ALOGI("native UVC frame callback count=%lld data_bytes=%zu width=%u height=%u frame_format=%d frame_format_name=%s sequence=%u first16=%s renderer=%s generation=%lld", (long long)c, frame->data_bytes, m.width, m.height, (int)frame->frame_format, frameFormatName((int)frame->frame_format), frame->sequence, hex, m.renderer, (long long)gen);
+ if(g_first_frame_ns.load()==0) { g_first_frame_ns=t; ALOGI("native UVC first frame received data_bytes=%zu actual_bytes=%zu width=%u height=%u frame_format=%d frame_format_name=%s sequence=%u first16=%s renderer=%s generation=%lld", frame->data_bytes, frame->actual_bytes, m.width, m.height, (int)frame->frame_format, frameFormatName((int)frame->frame_format), frame->sequence, hex, m.renderer, (long long)gen); clearError(); }
+ if(c%30==0) ALOGI("native UVC frame callback count=%lld data_bytes=%zu actual_bytes=%zu width=%u height=%u frame_format=%d frame_format_name=%s sequence=%u first16=%s renderer=%s generation=%lld", (long long)c, frame->data_bytes, frame->actual_bytes, m.width, m.height, (int)frame->frame_format, frameFormatName((int)frame->frame_format), frame->sequence, hex, m.renderer, (long long)gen);
 }
 
 void streamingThread(int64_t generation,int fd,int vendor,int product,std::string devName,int busNum,int devAddr,std::string usbfs){
@@ -290,7 +389,8 @@ void streamingThread(int64_t generation,int fd,int vendor,int product,std::strin
  int64_t streamStartNs=0;
  int selectedFormat=UVC_FRAME_FORMAT_UNKNOWN, selectedWidth=0, selectedHeight=0, selectedFps=0;
  struct Request { int fmt; const char* name; int w; int h; int fps; };
- const Request requests[] = {{UVC_FRAME_FORMAT_YUYV, "YUYV", 640, 480, 30},{UVC_FRAME_FORMAT_UNCOMPRESSED, "UNCOMPRESSED", 640, 480, 30}};
+ const bool mjpegAvailable = ensureTurboJpeg();
+ const Request requests[] = {{UVC_FRAME_FORMAT_MJPEG, "MJPEG", 640, 480, 30},{UVC_FRAME_FORMAT_MJPEG, "MJPEG", 1280, 720, 30},{UVC_FRAME_FORMAT_MJPEG, "MJPEG", 1920, 1080, 30},{UVC_FRAME_FORMAT_YUYV, "YUYV", 640, 480, 30},{UVC_FRAME_FORMAT_UNCOMPRESSED, "UNCOMPRESSED", 640, 480, 30}};
  bool surfacePresent=false;
  {
   std::lock_guard<std::mutex> lk(g_window_lock);
@@ -309,8 +409,9 @@ void streamingThread(int64_t generation,int fd,int vendor,int product,std::strin
  ALOGI("uvc_open after fd device result=%d error=%s handle=%p generation=%lld", r, r < 0 ? libs.err(r).c_str() : "none", handle, (long long)generation);
  if(r<0 || !handle){ setError("NATIVE_UVC_OPEN_FAILED: uvc_open " + libs.err(r)); goto done; }
  ALOGI("uvc_scan_control result=ok bNumInterfaces=see libuvc/device logs");
- ALOGI("future target only format=MJPEG width=1920 height=1080 fps=30 selected=false reason=MJPEG decoder not implemented for live preview");
+ r = -1;
  for(const auto& req: requests){
+  if((req.fmt == UVC_FRAME_FORMAT_MJPEG || req.fmt == UVC_FRAME_FORMAT_COMPRESSED) && !mjpegAvailable){ ALOGI("skipping format=%s width=%d height=%d fps=%d reason=turbojpeg unavailable", req.name, req.w, req.h, req.fps); continue; }
   r=libs.uvc_get_stream_ctrl_format_size(handle,ctrl,req.fmt,req.w,req.h,req.fps);
   ALOGI("requested format=%s width=%d height=%d fps=%d get_ctrl result=%d", req.name, req.w, req.h, req.fps, r);
   if(r>=0){ selectedFormat=req.fmt; selectedWidth=req.w; selectedHeight=req.h; selectedFps=req.fps; ALOGI("selected format=%s", req.name); break; }
@@ -372,7 +473,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_Nativ
  const char* n=env->GetStringUTFChars(deviceName,nullptr); std::string name=n?n:""; env->ReleaseStringUTFChars(deviceName,n);
  const char* u=env->GetStringUTFChars(usbfs,nullptr); std::string usbfsPath=u?u:""; env->ReleaseStringUTFChars(usbfs,u);
  stopRenderThreadLocked();
- { std::lock_guard<std::mutex> lk(g_window_lock); releaseWindowLocked(); if(surface) g_window=ANativeWindow_fromSurface(env,surface); }
+ { std::lock_guard<std::mutex> lk(g_window_lock); releaseWindowLocked(); if(surface) { g_window=ANativeWindow_fromSurface(env,surface); if(g_window) ANativeWindow_setBuffersGeometry(g_window, 0, 0, WINDOW_FORMAT_RGBA_8888); } }
  { std::lock_guard<std::mutex> lk(g_frame_lock); g_latest_frame.clear(); g_frame_dirty=false; }
  ensureRenderThreadLocked();
  g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_render_errors=0; g_window_lock_failures=0; g_surface_null_count=0; g_callback_dropped_after_stop=0;
