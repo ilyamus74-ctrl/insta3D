@@ -135,15 +135,25 @@ import com.maklertour.data.repository.OrdersRepoResult
 import com.maklertour.data.repository.TakeOrderRepoResult
 import com.maklertour.data.repository.OrdersRepository
 import com.maklertour.data.rig.CalibrationSettings
+import com.maklertour.data.rig.CalibrationStatus
 import com.maklertour.data.rig.CameraMode
 import com.maklertour.data.rig.CameraModeSelection
 import com.maklertour.data.rig.CameraModeSource
 import com.maklertour.data.rig.StereoRigProfile
 import com.maklertour.data.rig.StereoRigProfileStore
+import com.maklertour.data.rig.toJson
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import org.json.JSONObject
+import org.json.JSONArray
 import coil.compose.AsyncImage
 import java.io.File
+import java.util.TimeZone
+import java.util.Locale
+import java.util.Date
+import java.text.SimpleDateFormat
+import java.io.FileOutputStream
+import android.graphics.Bitmap
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -2933,6 +2943,9 @@ private fun StereoCaptureExperimentalScreen(
     var activeProfile by remember { mutableStateOf(profileStore.loadActiveProfile()) }
     var showRigSettings by remember { mutableStateOf(false) }
     var showDiagnostics by remember { mutableStateOf(false) }
+    var showCalibrationCapture by remember { mutableStateOf(false) }
+    var cam0PreviewView by remember { mutableStateOf<PreviewView?>(null) }
+    var cam1TextureView by remember { mutableStateOf<TextureView?>(null) }
     var status by remember { mutableStateOf("Ready") }
     var isRecording by remember { mutableStateOf(false) }
     var elapsedSec by remember { mutableStateOf(0L) }
@@ -2982,13 +2995,14 @@ private fun StereoCaptureExperimentalScreen(
                     Text("Stereo Capture", color = Color.White, style = MaterialTheme.typography.titleMedium)
                     Text("${elapsedSec}s · USB ${cam1Info.status.label()} · cam0 ${if (status.contains("cam0 preview active")) "active" else "ready"}", color = Color.White, style = MaterialTheme.typography.bodySmall)
                 }
-                Button(onClick = { refreshProfileAndUsb() }, enabled = !isRecording) { Text("Refresh USB") }
+                Box(modifier = Modifier.size(96.dp, 1.dp))
             }
 
             val cam0Card: @Composable (Modifier) -> Unit = { modifier ->
                 Box(modifier = modifier.background(Color.DarkGray), contentAlignment = Alignment.Center) {
                     AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx ->
                         PreviewView(ctx).apply {
+                            cam0PreviewView = this
                             scaleType = PreviewView.ScaleType.FILL_CENTER
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                             scope.launch {
@@ -3005,6 +3019,7 @@ private fun StereoCaptureExperimentalScreen(
                 Box(modifier = modifier.background(Color(0xFF202020)), contentAlignment = Alignment.Center) {
                     AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx ->
                         TextureView(ctx).apply {
+                            cam1TextureView = this
                             surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                                 override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) { usbInfo = manager.refreshCam1(activeProfile.cam1Mode, this@apply) }
                                 override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
@@ -3053,6 +3068,7 @@ private fun StereoCaptureExperimentalScreen(
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { refreshProfileAndUsb() }, enabled = !isRecording) { Text("Refresh USB") }
+                Button(onClick = { showCalibrationCapture = true }, enabled = !isRecording) { Text("Calibration") }
                 Button(onClick = {
                     val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
                     val currentBaseline = currentProfile.baselineMm
@@ -3096,6 +3112,15 @@ private fun StereoCaptureExperimentalScreen(
             }
         }
     }
+    if (showCalibrationCapture) {
+        CalibrationCaptureDialog(
+            profile = activeProfile,
+            cam0BitmapProvider = { cam0PreviewView?.bitmap },
+            cam1BitmapProvider = { cam1TextureView?.bitmap },
+            onDismiss = { showCalibrationCapture = false },
+            onSessionSaved = { updatedProfile -> activeProfile = updatedProfile },
+        )
+    }
     if (showRigSettings) {
         AlertDialog(
             onDismissRequest = { showRigSettings = false },
@@ -3104,6 +3129,148 @@ private fun StereoCaptureExperimentalScreen(
             confirmButton = { TextButton(onClick = { activeProfile = profileStore.loadActiveProfile(); showRigSettings = false }) { Text("Close") } },
         )
     }
+}
+
+
+@Composable
+private fun CalibrationCaptureDialog(
+    profile: StereoRigProfile,
+    cam0BitmapProvider: () -> Bitmap?,
+    cam1BitmapProvider: () -> Bitmap?,
+    onDismiss: () -> Unit,
+    onSessionSaved: (StereoRigProfile) -> Unit,
+) {
+    val context = LocalContext.current
+    val profileStore = remember(context) { StereoRigProfileStore(context) }
+    val settings = profile.calibrationSettings
+    var sessionDir by remember { mutableStateOf<File?>(null) }
+    var pairCount by remember { mutableStateOf(0) }
+    var message by remember { mutableStateOf("Ready for manual checkerboard captures") }
+
+    fun ensureSessionDir(): File {
+        val existing = sessionDir
+        if (existing != null) return existing
+        val createdAt = utcNowIso8601()
+        val dir = File(context.filesDir, "calibration_sessions/${calibrationTimestamp()}").apply { mkdirs() }
+        File(dir, "pairs").mkdirs()
+        val input = JSONObject()
+            .put("created_at_utc", createdAt)
+            .put("active_rig_profile", profile.toJson())
+            .put("checkerboard_inner_cols", settings.checkerboardInnerCols)
+            .put("checkerboard_inner_rows", settings.checkerboardInnerRows)
+            .put("square_size_mm", settings.squareSizeMm)
+            .put("required_pairs", settings.requiredPairs)
+            .put("capture_source", "preview_bitmap")
+            .put("note", "not hardware synchronized")
+        File(dir, "calibration_input.json").writeText(input.toString(2))
+        File(dir, "pairs_manifest.json").writeText(JSONObject().put("pairs", JSONArray()).toString(2))
+        sessionDir = dir
+        return dir
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize().padding(12.dp), color = Color(0xFF101010)) {
+            Column(modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Calibration Capture", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = onDismiss) { Text("Close") }
+                }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Active profile: ${profile.rigId}")
+                        Text("Checkerboard: ${settings.checkerboardInnerCols} x ${settings.checkerboardInnerRows} inner corners")
+                        Text("Square size: ${settings.squareSizeMm} mm")
+                        Text("Captured pairs: $pairCount / ${settings.requiredPairs}")
+                        Text("Source: preview bitmap · not hardware synchronized")
+                        Text(message)
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PreviewBitmapPanel("cam0", cam0BitmapProvider, Modifier.weight(1f).aspectRatio(16f / 9f))
+                    PreviewBitmapPanel("cam1", cam1BitmapProvider, Modifier.weight(1f).aspectRatio(16f / 9f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val cam0 = cam0BitmapProvider()
+                        val cam1 = cam1BitmapProvider()
+                        if (cam0 == null || cam1 == null) {
+                            message = "Preview bitmap unavailable for ${if (cam0 == null) "cam0" else "cam1"}; wait for live previews."
+                            return@Button
+                        }
+                        runCatching {
+                            val dir = ensureSessionDir()
+                            val nextIndex = pairCount + 1
+                            val pairsDir = File(dir, "pairs").apply { mkdirs() }
+                            val cam0Name = "pair_${nextIndex.toString().padStart(4, '0')}_cam0.jpg"
+                            val cam1Name = "pair_${nextIndex.toString().padStart(4, '0')}_cam1.jpg"
+                            saveJpeg(cam0, File(pairsDir, cam0Name))
+                            saveJpeg(cam1, File(pairsDir, cam1Name))
+                            appendCalibrationPairManifest(dir, nextIndex, "pairs/$cam0Name", "pairs/$cam1Name")
+                            pairCount = nextIndex
+                            message = "Captured pair $nextIndex to ${dir.name}"
+                        }.onFailure { message = "Capture failed: ${it.message}" }
+                    }) { Text("Capture pair") }
+                    Button(onClick = {
+                        if (pairCount < 1) {
+                            message = "Capture at least one pair before saving session."
+                        } else {
+                            val dir = ensureSessionDir()
+                            val updated = profile.copy(calibrationStatus = CalibrationStatus.CAPTURED, lastCalibrationSessionPath = dir.absolutePath)
+                            profileStore.saveActiveProfile(updated)
+                            onSessionSaved(updated)
+                            message = "Saved session and marked profile captured."
+                        }
+                    }) { Text("Save session") }
+                    Button(onClick = onDismiss) { Text("Close") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreviewBitmapPanel(label: String, bitmapProvider: () -> Bitmap?, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.background(Color.DarkGray), contentAlignment = Alignment.Center) {
+        val bitmap = bitmapProvider()
+        if (bitmap != null) {
+            AsyncImage(model = bitmap, contentDescription = label, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        } else {
+            Text("Waiting for $label preview", color = Color.White)
+        }
+        Text(label, color = Color.White, modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.55f)).padding(8.dp))
+    }
+}
+
+private fun saveJpeg(bitmap: Bitmap, file: File) {
+    FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out) }
+}
+
+private fun appendCalibrationPairManifest(sessionDir: File, pairIndex: Int, cam0File: String, cam1File: String) {
+    val manifestFile = File(sessionDir, "pairs_manifest.json")
+    val manifest = if (manifestFile.exists()) JSONObject(manifestFile.readText()) else JSONObject().put("pairs", JSONArray())
+    val pairs = manifest.optJSONArray("pairs") ?: JSONArray().also { manifest.put("pairs", it) }
+    pairs.put(
+        JSONObject()
+            .put("pair_index", pairIndex)
+            .put("cam0_file", cam0File)
+            .put("cam1_file", cam1File)
+            .put("captured_at_utc", utcNowIso8601())
+            .put("cam0_source", "preview_bitmap")
+            .put("cam1_source", "preview_bitmap")
+    )
+    manifestFile.writeText(manifest.toString(2))
+}
+
+private fun utcNowIso8601(): String {
+    val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+    formatter.timeZone = TimeZone.getTimeZone("UTC")
+    return formatter.format(Date())
+}
+
+private fun calibrationTimestamp(): String {
+    val formatter = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+    formatter.timeZone = TimeZone.getTimeZone("UTC")
+    return formatter.format(Date())
 }
 
 private fun UsbUvcStatus.label(): String = when (this) {

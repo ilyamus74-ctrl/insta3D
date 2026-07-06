@@ -36,6 +36,7 @@ data class StereoRigProfile(
     val cam1Mode: CameraMode?,
     val calibrationSettings: CalibrationSettings,
     val calibrationStatus: CalibrationStatus,
+    val lastCalibrationSessionPath: String? = null,
 ) {
     companion object
 }
@@ -88,6 +89,7 @@ class StereoRigProfileStore(private val context: Context) {
             cam1Mode = CameraMode(CameraModeSource.USB_UVC, "MJPEG", 640, 480, 30, CameraModeSelection.AUTO),
             calibrationSettings = CalibrationSettings(9, 6, 25.0, 20),
             calibrationStatus = CalibrationStatus.NOT_CALIBRATED,
+            lastCalibrationSessionPath = null,
         )
     }
 }
@@ -101,6 +103,7 @@ fun StereoRigProfile.toJson(): JSONObject = JSONObject()
     .put("cam1Mode", cam1Mode?.toJson())
     .put("calibrationSettings", calibrationSettings.toJson())
     .put("calibrationStatus", calibrationStatus.name)
+    .put("lastCalibrationSessionPath", lastCalibrationSessionPath)
 
 fun CameraMode.toJson(): JSONObject = JSONObject()
     .put("source", source.name)
@@ -125,6 +128,7 @@ private fun StereoRigProfile.Companion.fromJson(json: JSONObject): StereoRigProf
     cam1Mode = json.optJSONObject("cam1Mode")?.toCameraMode(),
     calibrationSettings = json.optJSONObject("calibrationSettings")?.toCalibrationSettings() ?: CalibrationSettings(9, 6, 25.0, 20),
     calibrationStatus = runCatching { CalibrationStatus.valueOf(json.optString("calibrationStatus")) }.getOrDefault(CalibrationStatus.NOT_CALIBRATED),
+    lastCalibrationSessionPath = json.optString("lastCalibrationSessionPath").takeIf { it.isNotBlank() },
 )
 
 private fun JSONObject.toCameraMode(): CameraMode = CameraMode(
