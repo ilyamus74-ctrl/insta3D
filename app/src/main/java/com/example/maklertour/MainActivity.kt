@@ -141,6 +141,8 @@ import com.maklertour.data.repository.OrdersRepository
 import com.maklertour.data.calibration.CalibrationBoardDetector
 import com.maklertour.data.calibration.CalibrationDetectionResult
 import com.maklertour.data.calibration.OpenCvCalibrationBoardDetector
+import com.maklertour.data.calibration.StereoCalibrationProcessor
+import com.maklertour.data.calibration.toJson
 import com.maklertour.data.rig.CalibrationSettings
 import com.maklertour.data.rig.CalibrationStatus
 import com.maklertour.data.rig.CameraMode
@@ -3172,6 +3174,8 @@ private fun CalibrationCaptureDialog(
     var cam1Detection by remember { mutableStateOf<CalibrationDetectionResult?>(null) }
     var autoCapture by remember { mutableStateOf(false) }
     var lastAutoCaptureMs by remember { mutableStateOf(0L) }
+    var calibrationRunning by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
     val requiredPairs = settings.requiredPairs
     val remainingPairs = (requiredPairs - pairCount).coerceAtLeast(0)
     val progressGuidance = if (pairCount >= requiredPairs) {
@@ -3320,10 +3324,40 @@ private fun CalibrationCaptureDialog(
                             val updated = profile.copy(calibrationStatus = CalibrationStatus.CAPTURED, lastCalibrationSessionPath = dir.absolutePath)
                             profileStore.saveActiveProfile(updated)
                             onSessionSaved(updated)
-                            message = "Saved session and marked profile captured."
+                            message = "Saved captured session. Profile remains CAPTURED until calibration succeeds."
                         }
-                    }) { Text("Save captured session") }
-                    Button(onClick = onDismiss) { Text("Close") }
+                    }, enabled = !calibrationRunning) { Text("Save captured session") }
+                    if (pairCount >= settings.requiredPairs) {
+                        Button(
+                            onClick = {
+                                val dir = ensureSessionDir()
+                                calibrationRunning = true
+                                message = "Running offline stereo calibration..."
+                                coroutineScope.launch {
+                                    val result = withContext(Dispatchers.Default) { StereoCalibrationProcessor().run(dir) }
+                                    calibrationRunning = false
+                                    if (result.status == "success") {
+                                        val updated = profile.copy(
+                                            calibrationStatus = CalibrationStatus.CALIBRATED,
+                                            lastCalibrationSessionPath = dir.absolutePath,
+                                            calibrationResultPath = result.resultPath,
+                                            calibrationResult = result.toJson(),
+                                        )
+                                        profileStore.saveActiveProfile(updated)
+                                        onSessionSaved(updated)
+                                        message = "Calibration successful. RMS: ${String.format(Locale.US, "%.3f", result.stereoRms ?: 0.0)}. Profile saved."
+                                    } else {
+                                        val updated = profile.copy(calibrationStatus = CalibrationStatus.CAPTURED, lastCalibrationSessionPath = dir.absolutePath)
+                                        profileStore.saveActiveProfile(updated)
+                                        onSessionSaved(updated)
+                                        message = "Calibration failed: ${result.errors.lastOrNull() ?: "unknown error"}"
+                                    }
+                                }
+                            },
+                            enabled = !calibrationRunning,
+                        ) { Text(if (calibrationRunning) "Calibrating..." else "Run calibration") }
+                    }
+                    Button(onClick = onDismiss, enabled = !calibrationRunning) { Text("Close") }
                 }
             }
         }
