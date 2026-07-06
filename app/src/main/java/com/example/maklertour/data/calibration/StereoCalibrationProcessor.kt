@@ -141,9 +141,18 @@ class StereoCalibrationProcessor(
             Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
             val found = Calib3d.findChessboardCorners(gray, boardSize, corners, Calib3d.CALIB_CB_ADAPTIVE_THRESH or Calib3d.CALIB_CB_NORMALIZE_IMAGE)
             if (found && corners.rows() == expectedCorners) {
-                Imgproc.cornerSubPix(gray, corners, Size(11.0, 11.0), Size(-1.0, -1.0), TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 30, 0.1))
-                CornerDetection(corners.clone(), Size(bitmap.width.toDouble(), bitmap.height.toDouble()), null)
-            } else CornerDetection(null, Size(bitmap.width.toDouble(), bitmap.height.toDouble()), "checkerboard not found")
+                Imgproc.cornerSubPix(
+                    gray,
+                    corners,
+                    Size(11.0, 11.0),
+                    Size(-1.0, -1.0),
+                    TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 30, 0.1),
+                )
+                val refinedCorners = MatOfPoint2f(*corners.toArray())
+                CornerDetection(refinedCorners, Size(bitmap.width.toDouble(), bitmap.height.toDouble()), null)
+            } else {
+                CornerDetection(null, Size(bitmap.width.toDouble(), bitmap.height.toDouble()), "checkerboard not found")
+            }
         } finally { rgba.release(); gray.release(); corners.release(); bitmap.recycle() }
     }
 
