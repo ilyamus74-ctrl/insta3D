@@ -201,14 +201,14 @@ fun StereoCalibrationResult.toJson(): JSONObject = JSONObject()
     .put("checkerboard_inner_cols", checkerboardInnerCols).put("checkerboard_inner_rows", checkerboardInnerRows).put("square_size_mm", squareSizeMm)
     .put("pairs_total", pairsTotal).put("pairs_used", pairsUsed).put("cam0_rms", cam0Rms).put("cam1_rms", cam1Rms).put("stereo_rms", stereoRms)
     .put("cam0_image_width", cam0ImageWidth).put("cam0_image_height", cam0ImageHeight).put("cam1_image_width", cam1ImageWidth).put("cam1_image_height", cam1ImageHeight)
-    .put("cam0_camera_matrix", cam0CameraMatrix.toJsonArray2()).put("cam0_dist_coeffs", cam0DistCoeffs.toJsonArray())
-    .put("cam1_camera_matrix", cam1CameraMatrix.toJsonArray2()).put("cam1_dist_coeffs", cam1DistCoeffs.toJsonArray())
-    .put("stereo_R", stereoR.toJsonArray2()).put("stereo_T", stereoT.toJsonArray()).put("stereo_E", stereoE.toJsonArray2()).put("stereo_F", stereoF.toJsonArray2())
-    .put("errors", errors.toJsonArray())
+    .put("cam0_camera_matrix", cam0CameraMatrix.toDoubleJsonArray2()).put("cam0_dist_coeffs", cam0DistCoeffs.toDoubleJsonArray())
+    .put("cam1_camera_matrix", cam1CameraMatrix.toDoubleJsonArray2()).put("cam1_dist_coeffs", cam1DistCoeffs.toDoubleJsonArray())
+    .put("stereo_R", stereoR.toDoubleJsonArray2()).put("stereo_T", stereoT.toDoubleJsonArray()).put("stereo_E", stereoE.toDoubleJsonArray2()).put("stereo_F", stereoF.toDoubleJsonArray2())
+    .put("errors", errors.toStringJsonArray())
 
 private fun utcNow(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date())
 private fun Mat.toFlatList(): List<Double> = (0 until rows()).flatMap { r -> (0 until cols()).map { c -> get(r, c)[0] } }
 private fun Mat.toNestedList(): List<List<Double>> = (0 until rows()).map { r -> (0 until cols()).map { c -> get(r, c)[0] } }
-private fun List<Double>.toJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
-private fun List<String>.toJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
-private fun List<List<Double>>.toJsonArray2() = JSONArray().also { outer -> forEach { outer.put(it.toJsonArray()) } }
+private fun List<Double>.toDoubleJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
+private fun List<String>.toStringJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
+private fun List<List<Double>>.toDoubleJsonArray2() = JSONArray().also { outer -> forEach { outer.put(it.toDoubleJsonArray()) } }
