@@ -141,10 +141,21 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     fun getZoomWarning(): String? = if (kotlin.math.abs(requestedZoomRatio - effectiveZoomRatio) > 0.01f) "requested ${zoomPresetLabel(requestedZoomRatio)} but CameraX applied ${zoomPresetLabel(effectiveZoomRatio)}" else null
 
     suspend fun startRecording(sessionId: String, scanId: String): File {
-        val preparedVideoCapture = videoCapture ?: error("Camera preview is not bound")
-        val lens = selectedLensOption ?: lensRepository.selectedOrDefault().first
         val dir = File(context.filesDir, "sessions/$sessionId/phone_scans/$scanId").apply { mkdirs() }
         val file = File(dir, "video.mp4")
+        startRecordingInternal(file)
+        return dir
+    }
+
+    suspend fun startRecordingToFile(outputFile: File): File {
+        startRecordingInternal(outputFile)
+        return outputFile.parentFile ?: outputFile
+    }
+
+    private suspend fun startRecordingInternal(file: File) {
+        val preparedVideoCapture = videoCapture ?: error("Camera preview is not bound")
+        val lens = selectedLensOption ?: lensRepository.selectedOrDefault().first
+        file.parentFile?.mkdirs()
         boundCamera?.let { applySelectedZoom(it) }
         Log.d(TAG, "startRecording(): output path=${file.absolutePath} camera_id=${lens.cameraId} lens=${lens.lensLabel} requestedZoom=$requestedZoomRatio effectiveZoom=$effectiveZoomRatio")
         val deferred = CompletableDeferred<PhoneVideoRecordingResult>()
@@ -175,7 +186,6 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             throw IllegalStateException("recording start failed: ${e.message}", e)
         }
         Log.d(TAG, "startRecording(): started")
-        return dir
     }
 
     suspend fun stopRecording(): PhoneVideoRecordingResult {

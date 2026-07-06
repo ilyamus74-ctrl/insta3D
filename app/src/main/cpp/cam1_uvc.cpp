@@ -17,6 +17,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <errno.h>
 
 #define LOG_TAG "Cam1NativeUvc"
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -70,6 +71,7 @@ std::mutex g_lifecycle_lock;
 std::mutex g_state_lock;
 std::mutex g_window_lock;
 std::mutex g_frame_lock;
+std::mutex g_record_lock;
 std::condition_variable g_frame_cv;
 ANativeWindow* g_window = nullptr;
 std::thread g_thread;
@@ -87,6 +89,7 @@ std::vector<uint8_t> g_latest_frame;
 uint32_t g_latest_width=0, g_latest_height=0;
 int g_latest_format=UVC_FRAME_FORMAT_UNKNOWN;
 int64_t g_latest_timestamp_ns=0;
+FILE* g_record_file=nullptr;
 
 const char* frameFormatName(int fmt);
 int64_t nowNs(){
@@ -247,7 +250,7 @@ bool renderYuyvToWindow(const std::vector<uint8_t>& frame, uint32_t width, uint3
   }
  }
  if(ANativeWindow_unlockAndPost(window) != 0){ g_render_errors++; return false; }
- g_decoded++; g_rendered++; if(g_recording) g_recorded++; return true;
+ g_decoded++; g_rendered++; return true;
 }
 
 bool renderRgbaToWindow(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height){
@@ -272,7 +275,7 @@ bool renderRgbaToWindow(const std::vector<uint8_t>& rgba, uint32_t width, uint32
   }
  }
  if(ANativeWindow_unlockAndPost(window) != 0){ g_render_errors++; return false; }
- g_decoded++; g_rendered++; if(g_recording) g_recorded++; return true;
+ g_decoded++; g_rendered++; return true;
 }
 
 bool renderMjpegToWindow(const std::vector<uint8_t>& frame){
@@ -368,6 +371,16 @@ void cb(uvc_frame_t* frame, void* user){
   return;
  }
  if(copyBytes == 0 || copyBytes > frame->data_bytes) return;
+ if(g_recording.load()){
+  if(m.format == UVC_FRAME_FORMAT_MJPEG || m.format == UVC_FRAME_FORMAT_COMPRESSED){
+   std::lock_guard<std::mutex> recordGuard(g_record_lock);
+   if(g_recording.load() && g_record_file){
+    size_t written = fwrite(frame->data, 1, copyBytes, g_record_file);
+    if(written == copyBytes) { g_recorded++; }
+    else { setError("NATIVE_UVC_RECORD_WRITE_FAILED: fwrite failed"); g_recording=false; }
+   }
+  }
+ }
  int64_t c=++g_received; int64_t t=nowNs(); g_last_frame_ns=t;
  {
   std::lock_guard<std::mutex> lk(g_frame_lock);
@@ -551,12 +564,33 @@ extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLib
  if(g_thread.joinable()){ ALOGI("stopping previous stream generation=%lld", (long long)g_session_generation.load()); requestStreamStopLocked(); g_thread.join(); ALOGI("previous stream joined"); }
  g_preview=false; g_accept_frames=false; stopRenderThreadLocked();
 }
-extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartRecording(JNIEnv* env,jobject,jstring path){ const char* p=env->GetStringUTFChars(path,nullptr); ALOGI("native UVC recording requested path=%s",p?p:""); env->ReleaseStringUTFChars(path,p); g_recorded=0; g_recording=g_opened.load(); return g_recording?JNI_TRUE:JNI_FALSE; }
-extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStopRecording(JNIEnv*,jobject){ g_recording=false; }
+extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStartRecording(JNIEnv* env,jobject,jstring path){
+ const char* p=env->GetStringUTFChars(path,nullptr);
+ std::string out=p?p:"";
+ ALOGI("native UVC recording requested path=%s", out.c_str());
+ env->ReleaseStringUTFChars(path,p);
+ clearError();
+ g_recorded=0;
+ if(!g_opened.load()){ setError("NATIVE_UVC_RECORD_START_FAILED: camera is not open"); return JNI_FALSE; }
+ int fmt=g_selected_format.load();
+ if(fmt != UVC_FRAME_FORMAT_MJPEG && fmt != UVC_FRAME_FORMAT_COMPRESSED){ setError(std::string("cam1 raw ") + frameFormatName(fmt) + " recording not implemented"); return JNI_FALSE; }
+ if(out.empty()){ setError("NATIVE_UVC_RECORD_START_FAILED: empty output path"); return JNI_FALSE; }
+ std::lock_guard<std::mutex> recordGuard(g_record_lock);
+ if(g_record_file){ fclose(g_record_file); g_record_file=nullptr; }
+ g_record_file=fopen(out.c_str(), "wb");
+ if(!g_record_file){ setError(std::string("NATIVE_UVC_RECORD_START_FAILED: fopen failed errno=") + std::to_string(errno)); return JNI_FALSE; }
+ g_recording=true;
+ return JNI_TRUE;
+}
+extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeStopRecording(JNIEnv*,jobject){
+ g_recording=false;
+ std::lock_guard<std::mutex> recordGuard(g_record_lock);
+ if(g_record_file){ fflush(g_record_file); fclose(g_record_file); g_record_file=nullptr; }
+}
 extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeClose(JNIEnv*,jobject){
  std::lock_guard<std::mutex> lifecycle(g_lifecycle_lock);
  if(g_thread.joinable()){ ALOGI("stopping previous stream generation=%lld", (long long)g_session_generation.load()); requestStreamStopLocked(); g_thread.join(); ALOGI("previous stream joined"); }
- g_recording=false; g_opened=false; g_preview=false; g_accept_frames=false; stopRenderThreadLocked(); setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN,0,0,0);
+ g_recording=false; { std::lock_guard<std::mutex> recordGuard(g_record_lock); if(g_record_file){ fflush(g_record_file); fclose(g_record_file); g_record_file=nullptr; } } g_opened=false; g_preview=false; g_accept_frames=false; stopRenderThreadLocked(); setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN,0,0,0);
  { std::lock_guard<std::mutex> lk(g_window_lock); releaseWindowLocked(); }
 }
 extern "C" JNIEXPORT jlongArray JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeSnapshot(JNIEnv* env,jobject){ double fps=0.0; auto last=g_last_frame_ns.load(); auto first=g_first_frame_ns.load(); auto rec=g_received.load(); if(first>0&&last>first) fps=(double)(rec-1)*1e9/(double)(last-first); int64_t fpsBits; memcpy(&fpsBits,&fps,8); jlong values[12]={g_received.load(),g_decoded.load(),g_rendered.load(),fpsBits,last,first,g_recorded.load(),g_preview.load()?1:0,g_selected_format.load(),g_selected_width.load(),g_selected_height.load(),g_selected_fps.load()}; jlongArray out=env->NewLongArray(12); env->SetLongArrayRegion(out,0,12,values); return out; }

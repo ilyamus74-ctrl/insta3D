@@ -3076,7 +3076,7 @@ private fun StereoCaptureExperimentalScreen(
                     Text("Status: $status · Validation: $validationText")
                     if (isRecording) {
                         Text("● REC stereo video · ${elapsedSec}s", color = Color(0xFFFF4D4D), style = MaterialTheme.typography.titleMedium)
-                        Text("Recording cam0.mp4 + cam1.mp4 + imu.jsonl", color = Color(0xFFFFD166))
+                        Text("Recording cam0.mp4 + cam1.mjpeg + imu.jsonl", color = Color(0xFFFFD166))
                     }
                 }
             }
@@ -3108,7 +3108,7 @@ private fun StereoCaptureExperimentalScreen(
                     if (!cam1Ready) Text("Wait for live cam1 preview before recording.", color = Color(0xFFFFD166))
                 }
             }
-            Text("Stereo video records cam0.mp4, cam1.mp4, imu.jsonl, rig.json and manifests.", color = Color.White, style = MaterialTheme.typography.bodySmall)
+            Text("Stereo video records cam0.mp4, cam1.mjpeg, imu.jsonl, rig.json and manifests.", color = Color.White, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { showDiagnostics = !showDiagnostics }) { Text(if (showDiagnostics) "Hide diagnostics" else "Show diagnostics") }
                 Button(onClick = { cameraOptions = lensRepository.listBackCameras(); selectedCameraId = cameraOptions.firstOrNull()?.cameraId }, enabled = !isRecording) { Text("Refresh lenses") }

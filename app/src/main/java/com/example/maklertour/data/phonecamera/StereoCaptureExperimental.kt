@@ -128,12 +128,12 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
         try {
             usbAdapter.attachLogFile(logFile)
             usbAdapter.logUsbInventory()
-            val cam1Target = File(bundleDir, "cam1.mp4")
+            val cam1Target = File(bundleDir, "cam1.mjpeg")
             val cam1StartError = usbAdapter.startRecording(cam1Target)
             log("cam1 recording started path=${cam1Target.absolutePath} error=${cam1StartError ?: "none"}")
-            phoneRecorder.startRecording(captureSessionId, "../stereo_captures/$bundleId")
-            val generatedCam0 = File(appContext.filesDir, "sessions/$captureSessionId/stereo_captures/$bundleId/video.mp4").canonicalFile
             val targetCam0 = File(bundleDir, "cam0.mp4")
+            phoneRecorder.startRecordingToFile(targetCam0)
+            val generatedCam0 = targetCam0
             log("cam0 recording started path=${generatedCam0.absolutePath}")
             active = ActiveStereoCapture(orderId, captureSessionId, sessionUuid, bundleDir, config, usbAdapter.currentInfo().copy(status = UsbUvcStatus.ACTIVE), startNs, generatedCam0, targetCam0, imuRecorder.start(bundleDir), listOfNotNull(cam1StartError))
             log("Stereo capture started; cam1 UVC adapter state=${usbAdapter.currentInfo().status}")
@@ -143,6 +143,9 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
             runCatching { usbAdapter.stopRecording() }
                 .onSuccess { cleanupMessages += "cam1 cleanup stop result=${it ?: "ok"}" }
                 .onFailure { cleanupMessages += "cam1 cleanup stop failed: ${it.message}" }
+            runCatching { phoneRecorder.stopRecording() }
+                .onSuccess { cleanupMessages += "cam0 cleanup stop ok path=${it.path} size=${it.fileSizeBytes}" }
+                .onFailure { cleanupMessages += "cam0 cleanup stop skipped/failed: ${it.message}" }
             runCatching { imuRecorder.stop() }
                 .onSuccess { cleanupMessages += "imu cleanup stop ok" }
                 .onFailure { cleanupMessages += "imu cleanup stop failed: ${it.message}" }
@@ -170,14 +173,14 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
             if (cam0Result == null) stopErrors += "cam0 result unavailable"
 
             val cam0File = cam0Result?.let { File(it.path) }
-            if (cam0File?.exists() == true) cam0File.copyTo(current.cam0Target, overwrite = true)
+            if (cam0File?.exists() == true && cam0File.canonicalPath != current.cam0Target.canonicalPath) cam0File.copyTo(current.cam0Target, overwrite = true)
             val cam0Size = current.cam0Target.takeIf { it.exists() }?.length() ?: 0L
-            val cam1File = File(current.bundleDir, "cam1.mp4")
+            val cam1File = File(current.bundleDir, "cam1.mjpeg")
             val cam1Size = cam1File.takeIf { it.exists() }?.length() ?: 0L
             File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} cam0 recording finalized size=$cam0Size path=${current.cam0Target.absolutePath} source=${cam0File?.absolutePath ?: "unavailable"} source_size=${cam0File?.length() ?: 0L}\n")
             File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} cam1 recording finalized size=$cam1Size path=${cam1File.absolutePath}\n")
             if (cam0Size <= 0L) stopErrors += "cam0.mp4 missing or empty after finalize"
-            if (cam1Size <= 0L) stopErrors += "cam1.mp4 missing or empty after finalize"
+            if (cam1Size <= 0L) stopErrors += "cam1.mjpeg missing or empty after finalize"
             val durationSec = cam0Result?.durationSec ?: ((stopNs - current.startNs) / 1_000_000_000L).coerceAtLeast(0L)
             writeEstimatedTimestamps(File(current.bundleDir, "cam0_timestamps.json"), "cam0", current.startNs, stopNs, 30, durationSec)
             writeEstimatedTimestamps(File(current.bundleDir, "cam1_timestamps.json"), "cam1", current.startNs, stopNs, 30, durationSec)
@@ -201,8 +204,8 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
 
     fun validate(bundleDir: File, config: StereoRigConfig): StereoCaptureValidation {
         val errors = mutableListOf<String>()
-        listOf("cam0.mp4", "cam1.mp4").forEach { name -> if (!File(bundleDir, name).let { it.exists() && it.length() > 0L }) errors += "$name missing or empty" }
-        if (usbAdapter.recordedFrameCount() <= 0L) errors += "cam1.mp4 has no confirmed cam1 frames during recording"
+        listOf("cam0.mp4", "cam1.mjpeg").forEach { name -> if (!File(bundleDir, name).let { it.exists() && it.length() > 0L }) errors += "$name missing or empty" }
+        if (usbAdapter.recordedFrameCount() <= 0L) errors += "cam1.mjpeg has no confirmed cam1 MJPEG frames during recording"
         listOf("cam0_manifest.json", "cam1_manifest.json", "cam0_timestamps.json", "cam1_timestamps.json").forEach { if (!File(bundleDir, it).exists()) errors += "$it missing" }
         if (!File(bundleDir, "imu.jsonl").let { it.exists() && it.length() > 0L }) errors += "imu.jsonl missing or empty"
         runCatching { JSONObject(File(bundleDir, "rig.json").readText()) }.onFailure { errors += "rig.json invalid JSON" }
@@ -216,10 +219,10 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
         val cam1Height = usb.selectedHeight() ?: 1080
         val errors = failure?.takeIf { it.isNotBlank() }?.split(", ") ?: emptyList()
         writeCameraManifest(File(bundleDir, "cam0_manifest.json"), "cam0", "phone_back", "cam0.mp4", 1920, 1080, startNs, stopNs, "estimated", Build.MODEL, fileSizeBytes = File(bundleDir, "cam0.mp4").takeIf { it.exists() }?.length())
-        writeCameraManifest(File(bundleDir, "cam1_manifest.json"), "cam1", "usb_uvc", "cam1.mp4", cam1Width, cam1Height, startNs, stopNs, "estimated", usb.deviceName, usb, File(bundleDir, "cam1.mp4").takeIf { it.exists() }?.length())
+        writeCameraManifest(File(bundleDir, "cam1_manifest.json"), "cam1", "usb_uvc", "cam1.mjpeg", cam1Width, cam1Height, startNs, stopNs, "estimated", usb.deviceName, usb, File(bundleDir, "cam1.mjpeg").takeIf { it.exists() }?.length(), codec = "MJPEG elementary stream", frameCount = usbAdapter.recordedFrameCount().takeIf { it > 0L })
         val cameras = JSONArray()
             .put(cameraJson("cam0", "phone_back", config.cam0Label, "cam0.mp4", "cam0_timestamps.json", 1920, 1080, null))
-            .put(cameraJson("cam1", "usb_uvc", config.cam1Label, "cam1.mp4", "cam1_timestamps.json", cam1Width, cam1Height, usb))
+            .put(cameraJson("cam1", "usb_uvc", config.cam1Label, "cam1.mjpeg", "cam1_timestamps.json", cam1Width, cam1Height, usb))
         val rig = JSONObject()
             .put("capture_type", "stereo_rig").put("schema_version", 1).put("rig_id", config.rigId).put("session_uuid", sessionUuid)
             .put("created_at_utc", Instant.now().toString()).put("timebase", "monotonic_ns").put("capture_status", status).put("failure_reason", failure).put("errors", JSONArray(errors))
@@ -238,8 +241,8 @@ private fun writeEstimatedTimestamps(file: File, cameraId: String, startNs: Long
     file.writeText(JSONObject().put("camera_id", cameraId).put("timebase", "monotonic_ns").put("timestamp_quality", "estimated").put("recording_started_ns", startNs).put("recording_stopped_ns", stopNs).put("fps_target", fps).put("fps_actual_estimate", if (durationSec > 0) 30.0 else JSONObject.NULL).toString(2))
 }
 
-private fun writeCameraManifest(file: File, id: String, role: String, video: String, width: Int, height: Int, startNs: Long, stopNs: Long, quality: String, deviceInfo: String?, usb: UsbUvcCameraInfo? = null, fileSizeBytes: Long? = null) {
-    val json = JSONObject().put("camera_id", id).put("camera_role", role).put("video", video).put("file_name", video).put("file_size_bytes", fileSizeBytes ?: JSONObject.NULL).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual_estimated", JSONObject.NULL).put("codec", "H.264 MP4").put("rotation_metadata", JSONObject.NULL).put("start_timestamp_ns", startNs).put("stop_timestamp_ns", stopNs).put("timestamp_quality", quality).put("frame_count", JSONObject.NULL).put("device_lens_info", deviceInfo)
+private fun writeCameraManifest(file: File, id: String, role: String, video: String, width: Int, height: Int, startNs: Long, stopNs: Long, quality: String, deviceInfo: String?, usb: UsbUvcCameraInfo? = null, fileSizeBytes: Long? = null, codec: String = "H.264 MP4", frameCount: Long? = null) {
+    val json = JSONObject().put("camera_id", id).put("camera_role", role).put("video", video).put("file_name", video).put("file_size_bytes", fileSizeBytes ?: JSONObject.NULL).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual_estimated", JSONObject.NULL).put("codec", codec).put("rotation_metadata", JSONObject.NULL).put("start_timestamp_ns", startNs).put("stop_timestamp_ns", stopNs).put("timestamp_quality", quality).put("frame_count", frameCount ?: JSONObject.NULL).put("device_lens_info", deviceInfo)
     if (usb != null) json.put("vendor_id", usb.vendorId).put("product_id", usb.productId).put("product_name", usb.productName).put("endpoint_type", usb.endpointType)
         .put("selected_pixel_format", usb.selectedPixelFormat).put("selected_resolution_fps", usb.selectedResolutionFps)
         .put("selected_alt_setting", usb.selectedAltSetting).put("selected_max_packet_size", usb.selectedMaxPacketSize).put("sync_status", "preview_not_hardware_synchronized")
@@ -513,8 +516,8 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             try {
                 backend.stopRecording()
                 val snap = backend.snapshot()
-                lastRecordingFrameCount = (snap.framesReceived - recordingStartFrameCount).coerceAtLeast(0L)
-                if (file != null) append("recording file path=${file.absolutePath} size=${file.length()} cam1_frames=${lastRecordingFrameCount}")
+                lastRecordingFrameCount = snap.recordedFrames
+                if (file != null) append("recording file path=${file.absolutePath} size=${file.length()} cam1_recorded_frames=${lastRecordingFrameCount}")
             } finally {
                 done.countDown()
             }
