@@ -3030,12 +3030,14 @@ private fun StereoCaptureExperimentalScreen(
                     })
                     Column(modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.55f)).padding(8.dp)) {
                         Text("cam1", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                        Text(cam1Info.status.label(), color = Color.White, style = MaterialTheme.typography.bodySmall)
-                        Text(activeCam1, color = Color.White, style = MaterialTheme.typography.bodySmall)
-                        Text("input ${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1FpsEstimate)} fps", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                        Text("preview ${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1PreviewFpsEstimate)} fps", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                        Text("frames ${cam1Info.cam1FramesReceived}", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                        if (previewDroppingFrames) Text("Preview is dropping frames. Use 640x480 for smoother capture.", color = Color(0xFFFFD166), style = MaterialTheme.typography.bodySmall)
+                        if (showDiagnostics) {
+                            Text(cam1Info.status.label(), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text(activeCam1, color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text("input ${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1FpsEstimate)} fps", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text("preview ${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1PreviewFpsEstimate)} fps", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text("frames ${cam1Info.cam1FramesReceived}", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            if (previewDroppingFrames) Text("Preview is dropping frames. Use 640x480 for smoother capture.", color = Color(0xFFFFD166), style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
@@ -3059,15 +3061,14 @@ private fun StereoCaptureExperimentalScreen(
                     Text("cam1 desired mode: $desiredCam1")
                     Text("cam1 active mode: $activeCam1")
                     if (!baselineReady) Text("Set baseline in Stereo rig / Cameras settings.", color = Color(0xFFFFD166))
-                    if (!cam1Ready) Text("Refresh USB camera and wait for live cam1 preview before recording.", color = Color(0xFFFFD166))
+                    if (!cam1Ready) Text("Wait for live cam1 preview before recording.", color = Color(0xFFFFD166))
                     if (previewDroppingFrames) Text("Preview is dropping frames. Use 640x480 for smoother capture.", color = Color(0xFFFFD166))
-                    if (modeMismatch) Text("Selected mode is not active. It will be tried on next Refresh USB.", color = Color(0xFFFFD166))
+                    if (modeMismatch) Text("Selected mode is not active. It will be tried on the next automatic USB bind.", color = Color(0xFFFFD166))
                     Text("Status: $status · Validation: $validationText")
                 }
             }
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { refreshProfileAndUsb() }, enabled = !isRecording) { Text("Refresh USB") }
                 Button(onClick = { showCalibrationCapture = true }, enabled = !isRecording) { Text("Calibration") }
                 Button(onClick = {
                     val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
@@ -3078,16 +3079,23 @@ private fun StereoCaptureExperimentalScreen(
                             .onSuccess { isRecording = true; status = "recording to ${it.name}" }
                             .onFailure { status = "start failed: ${it.message}" }
                     }
-                }, enabled = canRecord) { Text("Record") }
+                }, enabled = canRecord) { Text("Record stereo video") }
                 Button(onClick = {
                     scope.launch {
                         val result = manager.stop()
                         isRecording = false
                         validationText = if (result.ok) "OK: ${result.bundleDir.name}" else "Failed: ${result.errors.joinToString()}"
                     }
-                }, enabled = isRecording) { Text("Stop") }
+                }, enabled = isRecording) { Text("Stop video") }
                 Button(onClick = { showRigSettings = true }, enabled = !isRecording) { Text("Open settings") }
             }
+            if (!canRecord && !isRecording) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (!baselineReady) Text("Set baseline in Stereo rig / Cameras settings.", color = Color(0xFFFFD166))
+                    if (!cam1Ready) Text("Wait for live cam1 preview before recording.", color = Color(0xFFFFD166))
+                }
+            }
+            Text("Stereo video records cam0.mp4, cam1.mp4, imu.jsonl, rig.json and manifests.", color = Color.White, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { showDiagnostics = !showDiagnostics }) { Text(if (showDiagnostics) "Hide diagnostics" else "Show diagnostics") }
                 Button(onClick = { cameraOptions = lensRepository.listBackCameras(); selectedCameraId = cameraOptions.firstOrNull()?.cameraId }, enabled = !isRecording) { Text("Refresh lenses") }
