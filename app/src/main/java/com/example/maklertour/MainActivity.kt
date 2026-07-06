@@ -132,6 +132,12 @@ import com.example.maklertour.network.ApiConfig
 import com.maklertour.data.repository.OrdersRepoResult
 import com.maklertour.data.repository.TakeOrderRepoResult
 import com.maklertour.data.repository.OrdersRepository
+import com.maklertour.data.rig.CalibrationSettings
+import com.maklertour.data.rig.CameraMode
+import com.maklertour.data.rig.CameraModeSelection
+import com.maklertour.data.rig.CameraModeSource
+import com.maklertour.data.rig.StereoRigProfile
+import com.maklertour.data.rig.StereoRigProfileStore
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import coil.compose.AsyncImage
@@ -1015,11 +1021,27 @@ private fun SettingsScreen(
     onDebugModeChanged: (Boolean) -> Unit,
     onLogout: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val store = remember(context) { StereoRigProfileStore(context) }
+    var activeProfile by remember { mutableStateOf(store.loadActiveProfile()) }
+    var dialog by remember { mutableStateOf<String?>(null) }
+    val refreshProfile: (StereoRigProfile) -> Unit = { profile ->
+        store.saveActiveProfile(profile)
+        activeProfile = profile
+    }
+
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(stringResource(R.string.settings))
+        StereoRigSettingsSection(
+            profile = activeProfile,
+            onEditProfile = { dialog = "edit" },
+            onCameraModes = { dialog = "modes" },
+            onCalibrationSetup = { dialog = "calibration" },
+        )
+        Text("System", style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.app_language))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Switch(checked = debugMode, onCheckedChange = onDebugModeChanged)
@@ -1042,6 +1064,130 @@ private fun SettingsScreen(
             Text("Выйти из аккаунта")
         }
     }
+
+    when (dialog) {
+        "edit" -> EditRigProfileDialog(activeProfile, onDismiss = { dialog = null }) { refreshProfile(it); dialog = null }
+        "modes" -> CameraModesDialog(activeProfile, onDismiss = { dialog = null }) { refreshProfile(it); dialog = null }
+        "calibration" -> CalibrationSetupDialog(activeProfile, store, onDismiss = { dialog = null }) { activeProfile = it; dialog = null }
+    }
+}
+
+@Composable
+private fun StereoRigSettingsSection(
+    profile: StereoRigProfile,
+    onEditProfile: () -> Unit,
+    onCameraModes: () -> Unit,
+    onCalibrationSetup: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Stereo rig / Cameras", style = MaterialTheme.typography.titleMedium)
+            StereoRigSummary(profile)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onEditProfile) { Text("Edit profile") }
+                Button(onClick = onCameraModes) { Text("Camera modes") }
+            }
+            Button(onClick = onCalibrationSetup) { Text("Calibration setup") }
+        }
+    }
+}
+
+@Composable
+private fun StereoRigSummary(profile: StereoRigProfile, textColor: Color = Color.Unspecified) {
+    Text("Active profile: ${profile.rigId}", color = textColor)
+    Text("Baseline: ${profile.baselineMm?.let { "${it} mm" } ?: "Not set"}", color = textColor)
+    Text("cam0: ${profile.cam0Mode.modeLabel()}", color = textColor)
+    Text("cam1: ${profile.cam1Mode.modeLabel()}", color = textColor)
+    Text("Calibration: ${profile.calibrationStatus.name}", color = textColor)
+}
+
+private fun CameraMode?.modeLabel(): String = this?.let { mode ->
+    val prefix = if (mode.selectedBy == CameraModeSelection.AUTO) "Auto " else ""
+    "$prefix${mode.format} ${mode.width}x${mode.height}@${mode.fps}"
+} ?: "Not set"
+
+@Composable
+private fun EditRigProfileDialog(profile: StereoRigProfile, onDismiss: () -> Unit, onSave: (StereoRigProfile) -> Unit) {
+    var rigId by remember(profile) { mutableStateOf(profile.rigId) }
+    var cam0Label by remember(profile) { mutableStateOf(profile.cam0Label) }
+    var cam1Label by remember(profile) { mutableStateOf(profile.cam1Label) }
+    var baseline by remember(profile) { mutableStateOf(profile.baselineMm?.toString().orEmpty()) }
+    val baselineValue = baseline.toDoubleOrNull()
+    val error = when {
+        rigId.isBlank() -> "rig_id cannot be blank"
+        baseline.isNotBlank() && (baselineValue == null || baselineValue <= 0.0) -> "baseline_mm must be positive if provided"
+        else -> null
+    }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Edit profile") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(rigId, { rigId = it }, label = { Text("rig_id") })
+            OutlinedTextField(cam0Label, { cam0Label = it }, label = { Text("cam0_label") })
+            OutlinedTextField(cam1Label, { cam1Label = it }, label = { Text("cam1_label") })
+            OutlinedTextField(baseline, { baseline = it }, label = { Text("baseline_mm") })
+            error?.let { Text(it, color = Color.Red) }
+        }
+    }, confirmButton = { TextButton(enabled = error == null, onClick = { onSave(profile.copy(rigId = rigId.trim(), cam0Label = cam0Label.trim(), cam1Label = cam1Label.trim(), baselineMm = baselineValue)) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+@Composable
+private fun CameraModesDialog(profile: StereoRigProfile, onDismiss: () -> Unit, onSave: (StereoRigProfile) -> Unit) {
+    val cam0Options = listOf(
+        CameraMode(CameraModeSource.PHONE_CAMERA, "Auto", 1920, 1080, 30, CameraModeSelection.AUTO),
+        CameraMode(CameraModeSource.PHONE_CAMERA, "Default", 1920, 1080, 30, CameraModeSelection.MANUAL),
+        CameraMode(CameraModeSource.PHONE_CAMERA, "Default", 1280, 720, 30, CameraModeSelection.MANUAL),
+    )
+    val cam1Options = listOf(
+        CameraMode(CameraModeSource.USB_UVC, "MJPEG", 640, 480, 30, CameraModeSelection.AUTO),
+        CameraMode(CameraModeSource.USB_UVC, "MJPEG", 1920, 1080, 30, CameraModeSelection.MANUAL),
+        CameraMode(CameraModeSource.USB_UVC, "MJPEG", 1280, 720, 30, CameraModeSelection.MANUAL),
+        CameraMode(CameraModeSource.USB_UVC, "MJPEG", 640, 480, 30, CameraModeSelection.MANUAL),
+        CameraMode(CameraModeSource.USB_UVC, "YUYV", 640, 480, 30, CameraModeSelection.MANUAL),
+    )
+    var cam0 by remember(profile) { mutableStateOf(profile.cam0Mode ?: cam0Options.first()) }
+    var cam1 by remember(profile) { mutableStateOf(profile.cam1Mode ?: cam1Options.first()) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Camera modes") }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Phone cam0 options")
+            cam0Options.forEach { Button(onClick = { cam0 = it }, modifier = Modifier.fillMaxWidth()) { Text((if (cam0 == it) "✓ " else "") + it.modeLabel()) } }
+            Text("USB UVC cam1 options")
+            cam1Options.forEach { Button(onClick = { cam1 = it }, modifier = Modifier.fillMaxWidth()) { Text((if (cam1 == it) "✓ " else "") + it.modeLabel()) } }
+            Text("Prefer stability")
+            Text("Prefer MJPEG for USB camera")
+            Text("Mode applies on next camera refresh", style = MaterialTheme.typography.bodySmall)
+        }
+    }, confirmButton = { TextButton(onClick = { onSave(profile.copy(cam0Mode = cam0, cam1Mode = cam1)) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+@Composable
+private fun CalibrationSetupDialog(profile: StereoRigProfile, store: StereoRigProfileStore, onDismiss: () -> Unit, onSaved: (StereoRigProfile) -> Unit) {
+    var cols by remember(profile) { mutableStateOf(profile.calibrationSettings.checkerboardInnerCols.toString()) }
+    var rows by remember(profile) { mutableStateOf(profile.calibrationSettings.checkerboardInnerRows.toString()) }
+    var square by remember(profile) { mutableStateOf(profile.calibrationSettings.squareSizeMm.toString()) }
+    var pairs by remember(profile) { mutableStateOf(profile.calibrationSettings.requiredPairs.toString()) }
+    var baseline by remember(profile) { mutableStateOf(profile.baselineMm?.toString().orEmpty()) }
+    var sessionMessage by remember { mutableStateOf<String?>(null) }
+    fun updatedProfile(): StereoRigProfile? {
+        val c = cols.toIntOrNull(); val r = rows.toIntOrNull(); val s = square.toDoubleOrNull(); val p = pairs.toIntOrNull(); val b = baseline.toDoubleOrNull()
+        if (c == null || c <= 0 || r == null || r <= 0 || s == null || s <= 0.0 || p == null || p <= 0) return null
+        if (baseline.isNotBlank() && (b == null || b <= 0.0)) return null
+        return profile.copy(calibrationSettings = CalibrationSettings(c, r, s, p), baselineMm = b)
+    }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Calibration setup") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(cols, { cols = it }, label = { Text("checkerboard inner columns") })
+            OutlinedTextField(rows, { rows = it }, label = { Text("checkerboard inner rows") })
+            OutlinedTextField(square, { square = it }, label = { Text("square size mm") })
+            OutlinedTextField(pairs, { pairs = it }, label = { Text("required pairs") })
+            OutlinedTextField(baseline, { baseline = it }, label = { Text("baseline mm") })
+            if (updatedProfile() == null) Text("All numeric values must be positive; baseline may be blank.", color = Color.Red)
+            sessionMessage?.let { Text(it, color = Color(0xFF2E7D32)) }
+        }
+    }, confirmButton = {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(enabled = updatedProfile() != null, onClick = { updatedProfile()?.let { store.saveActiveProfile(it); onSaved(it) } }) { Text("Save") }
+            TextButton(enabled = updatedProfile() != null, onClick = { updatedProfile()?.let { store.saveActiveProfile(it); val dir = store.createCalibrationSession(it); sessionMessage = "Session created: ${dir.name}"; onSaved(it) } }) { Text("Start calibration session") }
+        }
+    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable
@@ -2780,10 +2926,13 @@ private fun StereoCaptureExperimentalScreen(
     var requestedZoomRatio by remember { mutableStateOf(if (lensRepository.getSelectedZoomRatio() <= 0f) 0.5f else lensRepository.getSelectedZoomRatio()) }
     val cam1Info by manager.cam1State.collectAsState()
     var usbInfo by remember { mutableStateOf(manager.detectUsbUvcCamera()) }
-    var baselineMm by remember { mutableStateOf("120") }
-    var rigId by remember { mutableStateOf("phone_usb_v1") }
-    var cam0Label by remember { mutableStateOf(if (requestedZoomRatio <= 0.51f) "phone_back_0_5x" else "phone_back_1x") }
-    var cam1Label by remember { mutableStateOf("usb_uvc") }
+    val profileStore = remember(context) { StereoRigProfileStore(context) }
+    var activeProfile by remember { mutableStateOf(profileStore.loadActiveProfile()) }
+    var showRigSettings by remember { mutableStateOf(false) }
+    var baselineMm by remember(activeProfile) { mutableStateOf(activeProfile.baselineMm?.toString().orEmpty()) }
+    var rigId by remember(activeProfile) { mutableStateOf(activeProfile.rigId) }
+    var cam0Label by remember(activeProfile) { mutableStateOf(activeProfile.cam0Label) }
+    var cam1Label by remember(activeProfile) { mutableStateOf(activeProfile.cam1Label) }
     var status by remember { mutableStateOf("Ready") }
     var isRecording by remember { mutableStateOf(false) }
     var elapsedSec by remember { mutableStateOf(0L) }
@@ -2893,9 +3042,29 @@ private fun StereoCaptureExperimentalScreen(
                     }, enabled = isRecording) { Text("Stop") }
                     Button(onClick = { Toast.makeText(context, "Local export is stored under app files for backend upload integration.", Toast.LENGTH_LONG).show() }, enabled = !isRecording) { Text("Upload/export") }
                 }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Active stereo rig", style = MaterialTheme.typography.titleSmall)
+                        StereoRigSummary(activeProfile)
+                        TextButton(onClick = { showRigSettings = true }, enabled = !isRecording) { Text("Open rig settings") }
+                    }
+                }
                 Text("cam1 statuses: USB device found → permission granted → openDevice success → UVC stream starting → frames received/decoded/rendered → preview active, or native library missing / stream start failed / stalled with no frames. app_log.txt records device names, permissions, endpoints, selected native backend, selected format/resolution/fps after stream start, frame counters, recording path/size, and native errors.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
             }
         }
+    }
+    if (showRigSettings) {
+        AlertDialog(
+            onDismissRequest = { showRigSettings = false },
+            title = { Text("Stereo rig / Cameras") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StereoRigSummary(activeProfile)
+                    Text("Full settings are available on the Settings tab.")
+                }
+            },
+            confirmButton = { TextButton(onClick = { activeProfile = profileStore.loadActiveProfile(); showRigSettings = false }) { Text("Close") } },
+        )
     }
 }
 
