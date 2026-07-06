@@ -3172,6 +3172,21 @@ private fun CalibrationCaptureDialog(
     var cam1Detection by remember { mutableStateOf<CalibrationDetectionResult?>(null) }
     var autoCapture by remember { mutableStateOf(false) }
     var lastAutoCaptureMs by remember { mutableStateOf(0L) }
+    val requiredPairs = settings.requiredPairs
+    val remainingPairs = (requiredPairs - pairCount).coerceAtLeast(0)
+    val progressGuidance = if (pairCount >= requiredPairs) {
+        "Enough valid pairs captured. Save session or run calibration."
+    } else {
+        "Need $remainingPairs more valid pairs"
+    }
+    val movementGuidance = when (pairCount) {
+        in 0..3 -> "Place board in center."
+        in 4..6 -> "Move board to left/right edges."
+        in 7..9 -> "Move board to top/bottom edges."
+        in 10..12 -> "Tilt board left/right."
+        in 13..15 -> "Tilt board up/down."
+        else -> "Capture near/far distances and corners."
+    }
 
     fun ensureSessionDir(): File {
         val existing = sessionDir
@@ -3217,11 +3232,23 @@ private fun CalibrationCaptureDialog(
             saveJpeg(cam1, File(pairsDir, cam1Name))
             appendCalibrationPairManifest(dir, nextIndex, "pairs/$cam0Name", "pairs/$cam1Name", cam0Result, cam1Result, settings.checkerboardInnerCols * settings.checkerboardInnerRows)
             pairCount = nextIndex
-            message = "Captured pair $nextIndex to ${dir.name}"
+            if (autoCapture && nextIndex >= settings.requiredPairs) {
+                autoCapture = false
+                message = "Auto capture stopped: required pairs reached."
+            } else {
+                message = "Captured pair $nextIndex to ${dir.name}"
+            }
             true
         }.getOrElse {
             message = "Capture failed: ${it.message}"
             false
+        }
+    }
+
+    LaunchedEffect(pairCount, requiredPairs) {
+        if (autoCapture && pairCount >= requiredPairs) {
+            autoCapture = false
+            message = "Auto capture stopped: required pairs reached."
         }
     }
 
@@ -3235,6 +3262,10 @@ private fun CalibrationCaptureDialog(
                 }
                 cam0Detection = cam0Result
                 cam1Detection = cam1Result
+                if (autoCapture && pairCount >= settings.requiredPairs) {
+                    autoCapture = false
+                    message = "Auto capture stopped: required pairs reached."
+                }
                 if (autoCapture && pairCount < settings.requiredPairs && cam0Result.found && cam1Result.found) {
                     val now = System.currentTimeMillis()
                     if (now - lastAutoCaptureMs >= 1_200) {
@@ -3258,7 +3289,9 @@ private fun CalibrationCaptureDialog(
                         Text("Active profile: ${profile.rigId}")
                         Text("Checkerboard: ${settings.checkerboardInnerCols} x ${settings.checkerboardInnerRows} inner corners")
                         Text("Square size: ${settings.squareSizeMm} mm")
-                        Text("Captured pairs: $pairCount / ${settings.requiredPairs}")
+                        Text("Valid pairs: $pairCount / ${settings.requiredPairs}")
+                        Text(progressGuidance)
+                        Text(movementGuidance)
                         Text("Move checkerboard across the full frame: center, corners, tilted left/right/up/down, near/far.")
                         Text("Capture only when both cameras show FOUND.")
                         Text("Source: preview bitmap · not hardware synchronized")
@@ -3272,7 +3305,13 @@ private fun CalibrationCaptureDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = { capturePair(requireValidDetection = true) }, enabled = cam0Detection?.found == true && cam1Detection?.found == true) { Text("Capture valid pair") }
                     Button(onClick = { capturePair(requireValidDetection = false) }) { Text("Capture pair (manual fallback)") }
-                    Button(onClick = { autoCapture = !autoCapture }) { Text("Auto capture: ${if (autoCapture) "On" else "Off"}") }
+                    Button(onClick = {
+                        if (!autoCapture && pairCount >= settings.requiredPairs) {
+                            message = "Auto capture stopped: required pairs reached."
+                        } else {
+                            autoCapture = !autoCapture
+                        }
+                    }) { Text("Auto capture: ${if (autoCapture) "On" else "Off"}") }
                     Button(onClick = {
                         if (pairCount < 1) {
                             message = "Capture at least one pair before saving session."
@@ -3283,7 +3322,7 @@ private fun CalibrationCaptureDialog(
                             onSessionSaved(updated)
                             message = "Saved session and marked profile captured."
                         }
-                    }) { Text("Save session") }
+                    }) { Text("Save captured session") }
                     Button(onClick = onDismiss) { Text("Close") }
                 }
             }
