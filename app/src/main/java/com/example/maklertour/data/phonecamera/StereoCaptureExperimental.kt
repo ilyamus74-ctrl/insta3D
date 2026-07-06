@@ -129,15 +129,25 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
             usbAdapter.attachLogFile(logFile)
             usbAdapter.logUsbInventory()
             val cam1Target = File(bundleDir, "cam1.mp4")
-            usbAdapter.startRecording(cam1Target)
+            val cam1StartError = usbAdapter.startRecording(cam1Target)
+            log("cam1 recording started path=${cam1Target.absolutePath} error=${cam1StartError ?: "none"}")
             phoneRecorder.startRecording(captureSessionId, "../stereo_captures/$bundleId")
-            val generatedCam0 = File(bundleDir, "../stereo_captures/$bundleId/video.mp4").canonicalFile
+            val generatedCam0 = File(appContext.filesDir, "sessions/$captureSessionId/stereo_captures/$bundleId/video.mp4").canonicalFile
             val targetCam0 = File(bundleDir, "cam0.mp4")
-            active = ActiveStereoCapture(orderId, captureSessionId, sessionUuid, bundleDir, config, usbAdapter.currentInfo().copy(status = UsbUvcStatus.ACTIVE), startNs, generatedCam0, targetCam0, imuRecorder.start(bundleDir))
+            log("cam0 recording started path=${generatedCam0.absolutePath}")
+            active = ActiveStereoCapture(orderId, captureSessionId, sessionUuid, bundleDir, config, usbAdapter.currentInfo().copy(status = UsbUvcStatus.ACTIVE), startNs, generatedCam0, targetCam0, imuRecorder.start(bundleDir), listOfNotNull(cam1StartError))
             log("Stereo capture started; cam1 UVC adapter state=${usbAdapter.currentInfo().status}")
             return bundleDir
         } catch (t: Throwable) {
-            writeRigAndManifests(bundleDir, config, sessionUuid, usbInfo, startNs, SystemClock.elapsedRealtimeNanos(), "failed_camera_open", t.message)
+            val cleanupMessages = mutableListOf<String>()
+            runCatching { usbAdapter.stopRecording() }
+                .onSuccess { cleanupMessages += "cam1 cleanup stop result=${it ?: "ok"}" }
+                .onFailure { cleanupMessages += "cam1 cleanup stop failed: ${it.message}" }
+            runCatching { imuRecorder.stop() }
+                .onSuccess { cleanupMessages += "imu cleanup stop ok" }
+                .onFailure { cleanupMessages += "imu cleanup stop failed: ${it.message}" }
+            cleanupMessages.forEach { log("start cleanup: $it") }
+            writeRigAndManifests(bundleDir, config, sessionUuid, usbInfo, startNs, SystemClock.elapsedRealtimeNanos(), "failed_camera_open", (listOfNotNull(t.message) + cleanupMessages).joinToString())
             log("Failed to start stereo capture: ${t.stackTraceToString()}")
             throw t
         }
@@ -148,21 +158,41 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
         val stopNs = SystemClock.elapsedRealtimeNanos()
         active = null
         return try {
-            val cam0Result = phoneRecorder.stopRecording()
-            imuRecorder.stop()
-            usbAdapter.stopRecording()
-            val cam0File = File(cam0Result.path)
-            if (cam0File.exists()) cam0File.copyTo(current.cam0Target, overwrite = true)
-            writeEstimatedTimestamps(File(current.bundleDir, "cam0_timestamps.json"), "cam0", current.startNs, stopNs, 30, cam0Result.durationSec)
-            writeEstimatedTimestamps(File(current.bundleDir, "cam1_timestamps.json"), "cam1", current.startNs, stopNs, 30, cam0Result.durationSec)
-            writeRigAndManifests(current.bundleDir, current.config, current.sessionUuid, usbAdapter.currentInfo(), current.startNs, stopNs, "completed", null)
+            val stopErrors = current.startErrors.toMutableList()
+            val cam0Result = runCatching { phoneRecorder.stopRecording() }
+                .onFailure { stopErrors += "cam0 recording stop failed: ${it.message}" }
+                .getOrNull()
+            runCatching { imuRecorder.stop() }
+                .onFailure { stopErrors += "imu stop failed: ${it.message}" }
+            val cam1StopError = runCatching { usbAdapter.stopRecording() }
+                .getOrElse { "cam1 recording stop failed: ${it.message}" }
+            if (cam1StopError != null) stopErrors += cam1StopError
+            if (cam0Result == null) stopErrors += "cam0 result unavailable"
+
+            val cam0File = cam0Result?.let { File(it.path) }
+            if (cam0File?.exists() == true) cam0File.copyTo(current.cam0Target, overwrite = true)
+            val cam0Size = current.cam0Target.takeIf { it.exists() }?.length() ?: 0L
+            val cam1File = File(current.bundleDir, "cam1.mp4")
+            val cam1Size = cam1File.takeIf { it.exists() }?.length() ?: 0L
+            File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} cam0 recording finalized size=$cam0Size path=${current.cam0Target.absolutePath} source=${cam0File?.absolutePath ?: "unavailable"} source_size=${cam0File?.length() ?: 0L}\n")
+            File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} cam1 recording finalized size=$cam1Size path=${cam1File.absolutePath}\n")
+            if (cam0Size <= 0L) stopErrors += "cam0.mp4 missing or empty after finalize"
+            if (cam1Size <= 0L) stopErrors += "cam1.mp4 missing or empty after finalize"
+            val durationSec = cam0Result?.durationSec ?: ((stopNs - current.startNs) / 1_000_000_000L).coerceAtLeast(0L)
+            writeEstimatedTimestamps(File(current.bundleDir, "cam0_timestamps.json"), "cam0", current.startNs, stopNs, 30, durationSec)
+            writeEstimatedTimestamps(File(current.bundleDir, "cam1_timestamps.json"), "cam1", current.startNs, stopNs, 30, durationSec)
+            writeRigAndManifests(current.bundleDir, current.config, current.sessionUuid, usbAdapter.currentInfo(), current.startNs, stopNs, if (stopErrors.isEmpty()) "completed" else "failed_recording", stopErrors.joinToString().takeIf { it.isNotBlank() })
             val validation = validate(current.bundleDir, current.config)
-            if (!validation.ok) {
-                writeRigAndManifests(current.bundleDir, current.config, current.sessionUuid, usbAdapter.currentInfo(), current.startNs, stopNs, "failed_unknown", validation.errors.joinToString())
+            val allErrors = (stopErrors + validation.errors).distinct()
+            val finalValidation = if (allErrors.isEmpty()) validation else StereoCaptureValidation(false, allErrors, current.bundleDir)
+            if (!finalValidation.ok) {
+                writeRigAndManifests(current.bundleDir, current.config, current.sessionUuid, usbAdapter.currentInfo(), current.startNs, stopNs, "failed_recording", finalValidation.errors.joinToString())
             }
-            validation
+            File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} stereo capture complete ok=${finalValidation.ok} errors=${finalValidation.errors.joinToString()}\n")
+            finalValidation
         } catch (t: Throwable) {
-            imuRecorder.stop()
+            runCatching { imuRecorder.stop() }
+            runCatching { usbAdapter.stopRecording() }
             writeRigAndManifests(current.bundleDir, current.config, current.sessionUuid, usbAdapter.currentInfo(), current.startNs, stopNs, "failed_unknown", t.message)
             File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} Stop failed: ${t.stackTraceToString()}\n")
             validate(current.bundleDir, current.config)
@@ -184,14 +214,15 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
     private fun writeRigAndManifests(bundleDir: File, config: StereoRigConfig, sessionUuid: String, usb: UsbUvcCameraInfo, startNs: Long, stopNs: Long, status: String, failure: String?) {
         val cam1Width = usb.selectedWidth() ?: 1920
         val cam1Height = usb.selectedHeight() ?: 1080
-        writeCameraManifest(File(bundleDir, "cam0_manifest.json"), "cam0", "phone_back", "cam0.mp4", 1920, 1080, startNs, stopNs, "estimated", Build.MODEL)
-        writeCameraManifest(File(bundleDir, "cam1_manifest.json"), "cam1", "usb_uvc", "cam1.mp4", cam1Width, cam1Height, startNs, stopNs, "estimated", usb.deviceName, usb)
+        val errors = failure?.takeIf { it.isNotBlank() }?.split(", ") ?: emptyList()
+        writeCameraManifest(File(bundleDir, "cam0_manifest.json"), "cam0", "phone_back", "cam0.mp4", 1920, 1080, startNs, stopNs, "estimated", Build.MODEL, fileSizeBytes = File(bundleDir, "cam0.mp4").takeIf { it.exists() }?.length())
+        writeCameraManifest(File(bundleDir, "cam1_manifest.json"), "cam1", "usb_uvc", "cam1.mp4", cam1Width, cam1Height, startNs, stopNs, "estimated", usb.deviceName, usb, File(bundleDir, "cam1.mp4").takeIf { it.exists() }?.length())
         val cameras = JSONArray()
             .put(cameraJson("cam0", "phone_back", config.cam0Label, "cam0.mp4", "cam0_timestamps.json", 1920, 1080, null))
             .put(cameraJson("cam1", "usb_uvc", config.cam1Label, "cam1.mp4", "cam1_timestamps.json", cam1Width, cam1Height, usb))
         val rig = JSONObject()
             .put("capture_type", "stereo_rig").put("schema_version", 1).put("rig_id", config.rigId).put("session_uuid", sessionUuid)
-            .put("created_at_utc", Instant.now().toString()).put("timebase", "monotonic_ns").put("capture_status", status).put("failure_reason", failure)
+            .put("created_at_utc", Instant.now().toString()).put("timebase", "monotonic_ns").put("capture_status", status).put("failure_reason", failure).put("errors", JSONArray(errors))
             .put("app", JSONObject().put("name", "MaklerTour Capture").put("version", BuildConfig.VERSION_NAME))
             .put("device", JSONObject().put("manufacturer", Build.MANUFACTURER ?: "unknown").put("model", Build.MODEL ?: "unknown").put("android_version", Build.VERSION.RELEASE ?: "unknown"))
             .put("rig_geometry", JSONObject().put("baseline_mm", config.baselineMm).put("cam0_to_cam1_horizontal_offset_mm", config.horizontalOffsetMm).put("cam0_to_cam1_vertical_offset_mm", config.verticalOffsetMm).put("cam0_to_cam1_depth_offset_mm", config.depthOffsetMm).put("cam1_yaw_deg", config.cam1YawDeg).put("cam1_pitch_deg", config.cam1PitchDeg).put("cam1_roll_deg", config.cam1RollDeg).put("calibration_source", "manual_user_input"))
@@ -199,7 +230,7 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
         File(bundleDir, "rig.json").writeText(rig.toString(2))
     }
 
-    private data class ActiveStereoCapture(val orderId: String?, val captureSessionId: String, val sessionUuid: String, val bundleDir: File, val config: StereoRigConfig, val usbInfo: UsbUvcCameraInfo, val startNs: Long, val generatedCam0: File, val cam0Target: File, val imuFile: File)
+    private data class ActiveStereoCapture(val orderId: String?, val captureSessionId: String, val sessionUuid: String, val bundleDir: File, val config: StereoRigConfig, val usbInfo: UsbUvcCameraInfo, val startNs: Long, val generatedCam0: File, val cam0Target: File, val imuFile: File, val startErrors: List<String>)
 }
 
 
@@ -207,8 +238,8 @@ private fun writeEstimatedTimestamps(file: File, cameraId: String, startNs: Long
     file.writeText(JSONObject().put("camera_id", cameraId).put("timebase", "monotonic_ns").put("timestamp_quality", "estimated").put("recording_started_ns", startNs).put("recording_stopped_ns", stopNs).put("fps_target", fps).put("fps_actual_estimate", if (durationSec > 0) 30.0 else JSONObject.NULL).toString(2))
 }
 
-private fun writeCameraManifest(file: File, id: String, role: String, video: String, width: Int, height: Int, startNs: Long, stopNs: Long, quality: String, deviceInfo: String?, usb: UsbUvcCameraInfo? = null) {
-    val json = JSONObject().put("camera_id", id).put("camera_role", role).put("video", video).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual_estimated", JSONObject.NULL).put("codec", "H.264 MP4").put("rotation_metadata", JSONObject.NULL).put("start_timestamp_ns", startNs).put("stop_timestamp_ns", stopNs).put("timestamp_quality", quality).put("frame_count", JSONObject.NULL).put("device_lens_info", deviceInfo)
+private fun writeCameraManifest(file: File, id: String, role: String, video: String, width: Int, height: Int, startNs: Long, stopNs: Long, quality: String, deviceInfo: String?, usb: UsbUvcCameraInfo? = null, fileSizeBytes: Long? = null) {
+    val json = JSONObject().put("camera_id", id).put("camera_role", role).put("video", video).put("file_name", video).put("file_size_bytes", fileSizeBytes ?: JSONObject.NULL).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual_estimated", JSONObject.NULL).put("codec", "H.264 MP4").put("rotation_metadata", JSONObject.NULL).put("start_timestamp_ns", startNs).put("stop_timestamp_ns", stopNs).put("timestamp_quality", quality).put("frame_count", JSONObject.NULL).put("device_lens_info", deviceInfo)
     if (usb != null) json.put("vendor_id", usb.vendorId).put("product_id", usb.productId).put("product_name", usb.productName).put("endpoint_type", usb.endpointType)
         .put("selected_pixel_format", usb.selectedPixelFormat).put("selected_resolution_fps", usb.selectedResolutionFps)
         .put("selected_alt_setting", usb.selectedAltSetting).put("selected_max_packet_size", usb.selectedMaxPacketSize).put("sync_status", "preview_not_hardware_synchronized")
@@ -456,13 +487,26 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         }
     }
 
-    fun startRecording(file: File) {
+    fun startRecording(file: File): String? {
         recordingFile = file
         recordingStartFrameCount = _state.value.cam1FramesReceived
-        cam1Handler.post { backend.startRecording(file) }
+        val done = java.util.concurrent.CountDownLatch(1)
+        var error: String? = null
+        cam1Handler.post {
+            try {
+                backend.startRecording(file)
+                val snap = backend.snapshot()
+                if (!snap.recording) error = snap.error ?: "cam1 recording failed to start"
+                append("cam1 recording started path=${file.absolutePath} error=${error ?: "none"}")
+            } finally {
+                done.countDown()
+            }
+        }
+        if (!done.await(2, java.util.concurrent.TimeUnit.SECONDS)) error = "cam1 recording start timed out"
+        return error
     }
 
-    fun stopRecording() {
+    fun stopRecording(): String? {
         val file = recordingFile
         val done = java.util.concurrent.CountDownLatch(1)
         cam1Handler.post {
@@ -475,8 +519,13 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                 done.countDown()
             }
         }
-        done.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        val completed = done.await(2, java.util.concurrent.TimeUnit.SECONDS)
         recordingFile = null
+        if (!completed) return "cam1 recording stop timed out"
+        if (file == null) return "cam1 recording file was not set"
+        if (!file.exists() || file.length() <= 0L) return "cam1 recording finalized with missing or empty file path=${file.absolutePath}"
+        if (lastRecordingFrameCount <= 0L) return "cam1 recording finalized with no confirmed frames"
+        return null
     }
 
     private fun openAfterPermissionAsync(device: UsbDevice?): UsbUvcCameraInfo {

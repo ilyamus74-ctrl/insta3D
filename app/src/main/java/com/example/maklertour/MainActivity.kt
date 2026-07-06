@@ -3074,6 +3074,10 @@ private fun StereoCaptureExperimentalScreen(
                     if (previewDroppingFrames) Text("Preview is dropping frames. Use 640x480 for smoother capture.", color = Color(0xFFFFD166))
                     if (modeMismatch) Text("Selected mode is not active. It will be tried on the next automatic USB bind.", color = Color(0xFFFFD166))
                     Text("Status: $status · Validation: $validationText")
+                    if (isRecording) {
+                        Text("● REC stereo video · ${elapsedSec}s", color = Color(0xFFFF4D4D), style = MaterialTheme.typography.titleMedium)
+                        Text("Recording cam0.mp4 + cam1.mp4 + imu.jsonl", color = Color(0xFFFFD166))
+                    }
                 }
             }
 
