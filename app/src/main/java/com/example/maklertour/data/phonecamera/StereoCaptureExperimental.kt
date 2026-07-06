@@ -25,6 +25,8 @@ import android.view.TextureView
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.maklertour.BuildConfig
+import com.maklertour.data.rig.CameraMode
+import com.maklertour.data.rig.CameraModeSelection
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -99,9 +101,11 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
     private val usbAdapter = UsbUvcCameraAdapter(appContext)
     val cam1State: StateFlow<UsbUvcCameraInfo> = usbAdapter.state
 
-    fun detectUsbUvcCamera(): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(null)
+    fun detectUsbUvcCamera(): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(null, null)
 
-    fun bindCam1Preview(textureView: TextureView): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(textureView)
+    fun refreshCam1(preferredMode: CameraMode?, textureView: TextureView?): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(textureView, preferredMode)
+
+    fun bindCam1Preview(textureView: TextureView): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(textureView, null)
 
     fun onCam1PreviewFrameRendered() = usbAdapter.onPreviewFrameRendered()
 
@@ -177,11 +181,13 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
     }
 
     private fun writeRigAndManifests(bundleDir: File, config: StereoRigConfig, sessionUuid: String, usb: UsbUvcCameraInfo, startNs: Long, stopNs: Long, status: String, failure: String?) {
+        val cam1Width = usb.selectedWidth() ?: 1920
+        val cam1Height = usb.selectedHeight() ?: 1080
         writeCameraManifest(File(bundleDir, "cam0_manifest.json"), "cam0", "phone_back", "cam0.mp4", 1920, 1080, startNs, stopNs, "estimated", Build.MODEL)
-        writeCameraManifest(File(bundleDir, "cam1_manifest.json"), "cam1", "usb_uvc", "cam1.mp4", 1920, 1080, startNs, stopNs, "estimated", usb.deviceName, usb)
+        writeCameraManifest(File(bundleDir, "cam1_manifest.json"), "cam1", "usb_uvc", "cam1.mp4", cam1Width, cam1Height, startNs, stopNs, "estimated", usb.deviceName, usb)
         val cameras = JSONArray()
             .put(cameraJson("cam0", "phone_back", config.cam0Label, "cam0.mp4", "cam0_timestamps.json", 1920, 1080, null))
-            .put(cameraJson("cam1", "usb_uvc", config.cam1Label, "cam1.mp4", "cam1_timestamps.json", 1920, 1080, usb))
+            .put(cameraJson("cam1", "usb_uvc", config.cam1Label, "cam1.mp4", "cam1_timestamps.json", cam1Width, cam1Height, usb))
         val rig = JSONObject()
             .put("capture_type", "stereo_rig").put("schema_version", 1).put("rig_id", config.rigId).put("session_uuid", sessionUuid)
             .put("created_at_utc", Instant.now().toString()).put("timebase", "monotonic_ns").put("capture_status", status).put("failure_reason", failure)
@@ -204,7 +210,7 @@ private fun writeCameraManifest(file: File, id: String, role: String, video: Str
     val json = JSONObject().put("camera_id", id).put("camera_role", role).put("video", video).put("width", width).put("height", height).put("fps_target", 30).put("fps_actual_estimated", JSONObject.NULL).put("codec", "H.264 MP4").put("rotation_metadata", JSONObject.NULL).put("start_timestamp_ns", startNs).put("stop_timestamp_ns", stopNs).put("timestamp_quality", quality).put("frame_count", JSONObject.NULL).put("device_lens_info", deviceInfo)
     if (usb != null) json.put("vendor_id", usb.vendorId).put("product_id", usb.productId).put("product_name", usb.productName).put("endpoint_type", usb.endpointType)
         .put("selected_pixel_format", usb.selectedPixelFormat).put("selected_resolution_fps", usb.selectedResolutionFps)
-        .put("selected_alt_setting", usb.selectedAltSetting).put("selected_max_packet_size", usb.selectedMaxPacketSize)
+        .put("selected_alt_setting", usb.selectedAltSetting).put("selected_max_packet_size", usb.selectedMaxPacketSize).put("sync_status", "preview_not_hardware_synchronized")
         .put("packets_received", usb.cam1PacketsReceived).put("frames_assembled", usb.cam1FramesAssembled)
         .put("frames_decoded", usb.cam1FramesDecoded).put("frames_rendered", usb.cam1FramesRendered)
         .put("decode_errors", usb.cam1DecodeErrors).put("render_errors", usb.cam1RenderErrors)
@@ -229,6 +235,11 @@ private data class Cam1UvcDeviceInfo(
     val deviceName: String,
     val productName: String?,
     val fileDescriptor: Int,
+    val preferredFormat: String? = null,
+    val preferredWidth: Int? = null,
+    val preferredHeight: Int? = null,
+    val preferredFps: Int? = null,
+    val preferredSelection: CameraModeSelection = CameraModeSelection.AUTO,
 )
 
 private data class Cam1UvcBackendState(
@@ -273,7 +284,7 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
         }
         log("native UVC open requested vendor=${deviceInfo.vendorId} product=${deviceInfo.productId} name=${deviceInfo.productName} deviceName=${deviceInfo.deviceName} fd=${deviceInfo.fileDescriptor} usbfs=${usbPathInfo.usbfs} busNum=${usbPathInfo.busNum} devAddr=${usbPathInfo.devAddr} surface=${previewSurface != null}")
         val result = runCatching {
-            nativeOpen(deviceInfo.fileDescriptor, deviceInfo.vendorId, deviceInfo.productId, deviceInfo.deviceName, usbPathInfo.busNum, usbPathInfo.devAddr, usbPathInfo.usbfs, previewSurface)
+            nativeOpen(deviceInfo.fileDescriptor, deviceInfo.vendorId, deviceInfo.productId, deviceInfo.deviceName, usbPathInfo.busNum, usbPathInfo.devAddr, usbPathInfo.usbfs, previewSurface, deviceInfo.preferredFormat, deviceInfo.preferredWidth ?: 0, deviceInfo.preferredHeight ?: 0, deviceInfo.preferredFps ?: 0, deviceInfo.preferredSelection == CameraModeSelection.AUTO)
         }
         state = if (result.getOrDefault(false)) {
             state.copy(opened = true, previewRunning = false, error = null, selectedFormat = null, selectedResolution = null, selectedFps = null)
@@ -335,7 +346,7 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
         state
     }
 
-    private external fun nativeOpen(fd: Int, vendorId: Int, productId: Int, deviceName: String, busNum: Int, devAddr: Int, usbfs: String, surface: android.view.Surface?): Boolean
+    private external fun nativeOpen(fd: Int, vendorId: Int, productId: Int, deviceName: String, busNum: Int, devAddr: Int, usbfs: String, surface: android.view.Surface?, preferredFormat: String?, preferredWidth: Int, preferredHeight: Int, preferredFps: Int, preferredAuto: Boolean): Boolean
     private external fun nativeStartPreview(): Boolean
     private external fun nativeStopPreview()
     private external fun nativeStartRecording(path: String): Boolean
@@ -369,6 +380,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
     private var logFile: File? = File(context.filesDir, "app_log.txt")
     private var preview: TextureView? = null
     private var selectedDevice: UsbDevice? = null
+    private var preferredMode: CameraMode? = null
     private var activeConnection: UsbDeviceConnection? = null
     private var receiverRegistered = false
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -397,9 +409,10 @@ private class UsbUvcCameraAdapter(private val context: Context) {
     fun recordedFrameCount(): Long = lastRecordingFrameCount
     fun onPreviewFrameRendered() = Unit
 
-    fun refreshAndRequestPermission(textureView: TextureView?): UsbUvcCameraInfo {
+    fun refreshAndRequestPermission(textureView: TextureView?, preferredMode: CameraMode?): UsbUvcCameraInfo {
         append("Refresh USB pressed")
         preview = textureView ?: preview
+        this.preferredMode = preferredMode
         stopNativeBackend()
         _state.value = UsbUvcCameraInfo(UsbUvcStatus.NOT_CONNECTED)
         logUsbInventory()
@@ -479,7 +492,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             activeConnection = connection
             update(info(device, UsbUvcStatus.OPEN_DEVICE_SUCCESS))
             val surface = preview?.takeIf { it.isAvailable }?.surfaceTexture?.let { android.view.Surface(it) }
-            backend.open(Cam1UvcDeviceInfo(device.vendorId, device.productId, device.deviceName, device.productName, connection.fileDescriptor), surface)
+            backend.open(device.toCam1UvcDeviceInfo(connection, preferredMode), surface)
             backend.startPreview()
             val snap = backend.snapshot()
             append("selected UVC format/resolution/fps ${snap.selectedFormat ?: "none"}/${snap.selectedResolution ?: "none"}/${snap.selectedFps ?: "none"}")
@@ -592,9 +605,8 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                 return@post
             }
             activeConnection = connection
-            val freshFileDescriptor = connection.fileDescriptor
             val surface = preview?.takeIf { it.isAvailable }?.surfaceTexture?.let { android.view.Surface(it) }
-            backend.open(Cam1UvcDeviceInfo(freshDevice.vendorId, freshDevice.productId, freshDevice.deviceName, freshDevice.productName, freshFileDescriptor), surface)
+            backend.open(freshDevice.toCam1UvcDeviceInfo(connection, preferredMode), surface)
             backend.startPreview()
             val restartedSnap = backend.snapshot()
             mainHandler.post {
@@ -608,6 +620,19 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             }
         }
     }
+
+    private fun UsbDevice.toCam1UvcDeviceInfo(connection: UsbDeviceConnection, mode: CameraMode?): Cam1UvcDeviceInfo = Cam1UvcDeviceInfo(
+        vendorId = vendorId,
+        productId = productId,
+        deviceName = deviceName,
+        productName = productName,
+        fileDescriptor = connection.fileDescriptor,
+        preferredFormat = mode?.format,
+        preferredWidth = mode?.width,
+        preferredHeight = mode?.height,
+        preferredFps = mode?.fps,
+        preferredSelection = mode?.selectedBy ?: CameraModeSelection.AUTO,
+    )
 
     private fun stalledInfo(device: UsbDevice, snap: Cam1UvcBackendState, error: String) = info(device, UsbUvcStatus.UVC_STALLED_NO_NEW_FRAMES, error).copy(
         cam1FramesReceived = snap.framesReceived,
@@ -680,6 +705,8 @@ private fun UsbDevice.looksLikeVideoDevice(): Boolean = (0 until interfaceCount)
 private fun UsbDevice.findIsochronousInEndpoint(): UsbEndpoint? = (0 until interfaceCount).asSequence().map { getInterface(it) }.mapNotNull { it.findIsochronousInEndpoint() }.firstOrNull()
 private fun UsbInterface.findIsochronousInEndpoint(): UsbEndpoint? = (0 until endpointCount).map { getEndpoint(it) }.firstOrNull { it.direction == UsbConstants.USB_DIR_IN && it.type == UsbConstants.USB_ENDPOINT_XFER_ISOC }
 private fun UsbEndpoint.endpointTypeLabel(): String = when (type) { UsbConstants.USB_ENDPOINT_XFER_ISOC -> "isochronous"; UsbConstants.USB_ENDPOINT_XFER_BULK -> "bulk"; UsbConstants.USB_ENDPOINT_XFER_INT -> "interrupt"; UsbConstants.USB_ENDPOINT_XFER_CONTROL -> "control"; else -> "type_$type" }
+private fun UsbUvcCameraInfo.selectedWidth(): Int? = selectedResolutionFps?.substringBefore("@").orEmpty().substringBefore("x").toIntOrNull()
+private fun UsbUvcCameraInfo.selectedHeight(): Int? = selectedResolutionFps?.substringBefore("@").orEmpty().substringAfter("x", "").toIntOrNull()
 
 private data class UvcStreamingAlternate(val usbInterface: UsbInterface, val endpoint: UsbEndpoint)
 private data class UvcInterfaceSelection(val videoControl: UsbInterface?, val videoStreamingAlternates: List<UvcStreamingAlternate>)

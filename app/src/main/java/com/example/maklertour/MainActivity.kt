@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -70,6 +71,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -2911,6 +2913,7 @@ private fun StereoCaptureExperimentalScreen(
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val manager = remember(context, lifecycleOwner) { StereoCaptureExperimentalManager(context, lifecycleOwner) }
@@ -2929,14 +2932,33 @@ private fun StereoCaptureExperimentalScreen(
     val profileStore = remember(context) { StereoRigProfileStore(context) }
     var activeProfile by remember { mutableStateOf(profileStore.loadActiveProfile()) }
     var showRigSettings by remember { mutableStateOf(false) }
-    var baselineMm by remember(activeProfile) { mutableStateOf(activeProfile.baselineMm?.toString().orEmpty()) }
-    var rigId by remember(activeProfile) { mutableStateOf(activeProfile.rigId) }
-    var cam0Label by remember(activeProfile) { mutableStateOf(activeProfile.cam0Label) }
-    var cam1Label by remember(activeProfile) { mutableStateOf(activeProfile.cam1Label) }
+    var showDiagnostics by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Ready") }
     var isRecording by remember { mutableStateOf(false) }
     var elapsedSec by remember { mutableStateOf(0L) }
     var validationText by remember { mutableStateOf("Not recorded") }
+    val baseline = activeProfile.baselineMm
+    val baselineReady = baseline != null && baseline > 0.0
+    val cam1Fresh = (cam1Info.cam1LastFrameAgeMs ?: Long.MAX_VALUE) < 1_500L
+    val cam1Ready = cam1Info.error == null &&
+        cam1Info.cam1FramesRendered > 0L &&
+        cam1Fresh &&
+        cam1Info.status == UsbUvcStatus.UVC_PREVIEW_ACTIVE
+    val canRecord = !isRecording && baselineReady && cam1Ready
+    val desiredCam1 = activeProfile.cam1Mode.modeLabel()
+    val activeCam1 = listOfNotNull(cam1Info.selectedPixelFormat, cam1Info.selectedResolutionFps).joinToString(" ").ifBlank { "not active" }
+    val modeMismatch = activeProfile.cam1Mode?.let { mode ->
+        if (mode.selectedBy != CameraModeSelection.MANUAL) false
+        else {
+            val activeFormat = cam1Info.selectedPixelFormat
+            val activeRes = cam1Info.selectedResolutionFps
+            activeFormat != null && (
+                !mode.format.equals(activeFormat, ignoreCase = true) ||
+                    activeRes?.contains("${mode.width}x${mode.height}@${mode.fps}") != true
+            )
+        }
+    } == true
+    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
 
     LaunchedEffect(isRecording) {
         elapsedSec = 0L
@@ -2946,18 +2968,24 @@ private fun StereoCaptureExperimentalScreen(
         }
     }
 
+    fun refreshProfileAndUsb() {
+        activeProfile = profileStore.loadActiveProfile()
+        usbInfo = manager.refreshCam1(activeProfile.cam1Mode, null)
+    }
+
     Surface(modifier = Modifier.fillMaxSize().zIndex(20f), color = Color.Black) {
-        Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onClose, enabled = !isRecording) { Text("Close") }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Stereo Capture Experimental", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    Text("Timer: ${elapsedSec}s · USB: ${cam1Info.status.label()}", color = Color.White)
+                    Text("Stereo Capture", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text("${elapsedSec}s · USB ${cam1Info.status.label()} · cam0 ${if (status.contains("cam0 preview active")) "active" else "ready"}", color = Color.White, style = MaterialTheme.typography.bodySmall)
                 }
-                Button(onClick = { usbInfo = manager.detectUsbUvcCamera() }, enabled = !isRecording) { Text("Refresh USB") }
+                Button(onClick = { refreshProfileAndUsb() }, enabled = !isRecording) { Text("Refresh USB") }
             }
-            Row(modifier = Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(modifier = Modifier.weight(1f).fillMaxSize().background(Color.DarkGray), contentAlignment = Alignment.Center) {
+
+            val cam0Card: @Composable (Modifier) -> Unit = { modifier ->
+                Box(modifier = modifier.background(Color.DarkGray), contentAlignment = Alignment.Center) {
                     AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx ->
                         PreviewView(ctx).apply {
                             scaleType = PreviewView.ScaleType.FILL_CENTER
@@ -2971,85 +2999,93 @@ private fun StereoCaptureExperimentalScreen(
                     })
                     Text("cam0", color = Color.White, modifier = Modifier.align(Alignment.TopStart).padding(8.dp))
                 }
-                Box(modifier = Modifier.weight(1f).fillMaxSize().background(Color(0xFF202020)), contentAlignment = Alignment.Center) {
+            }
+            val cam1Card: @Composable (Modifier) -> Unit = { modifier ->
+                Box(modifier = modifier.background(Color(0xFF202020)), contentAlignment = Alignment.Center) {
                     AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx ->
                         TextureView(ctx).apply {
                             surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                                override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) { usbInfo = manager.bindCam1Preview(this@apply) }
+                                override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) { usbInfo = manager.refreshCam1(activeProfile.cam1Mode, this@apply) }
                                 override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
                                 override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
                                 override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) { manager.onCam1PreviewFrameRendered() }
                             }
                         }
                     })
-                    val cam1DisplayText = buildString {
-                        append("cam1 USB UVC preview\n")
-                        append(cam1Info.status.label())
-                        append('\n')
-                        append(
-                            cam1Info.productName
-                                ?: cam1Info.deviceName
-                                ?: if (cam1Info.status == UsbUvcStatus.PERMISSION_REQUESTED) "device selected; waiting for permission" else "no device"
-                        )
-                        append("\ncam1_frames_received=${cam1Info.cam1FramesReceived}")
-                        append("\ncam1_frames_decoded=${cam1Info.cam1FramesDecoded}")
-                        append("\ncam1_frames_rendered=${cam1Info.cam1FramesRendered}")
-                        append("\ncam1_last_frame_age_ms=${cam1Info.cam1LastFrameAgeMs ?: "none"}")
-                        append("\ncam1_decode_errors=${cam1Info.cam1DecodeErrors}")
-                        append("\ncam1_render_errors=${cam1Info.cam1RenderErrors}")
-                        append("\ncam1_fps_estimate=${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1FpsEstimate)}")
-                        cam1Info.selectedPixelFormat?.let { append("\ncam1_selected_format=$it") }
-                        cam1Info.selectedResolutionFps?.let { append("\ncam1_selected_resolution=$it") }
-                        cam1Info.selectedResolutionFps?.let { append("\ncam1_selected_fps=$it") }
-                        append("\ncam1_backend=native libuvc")
-                        cam1Info.error?.let { append("\n$it") }
+                    Column(modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.55f)).padding(8.dp)) {
+                        Text("cam1", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                        Text(cam1Info.status.label(), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                        Text(activeCam1, color = Color.White, style = MaterialTheme.typography.bodySmall)
+                        Text("fps ${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1FpsEstimate)} · frames ${cam1Info.cam1FramesReceived}", color = Color.White, style = MaterialTheme.typography.bodySmall)
                     }
-                    Text(
-                        cam1DisplayText,
-                        color = Color.White,
-                        modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
-                    )
                 }
             }
-            Column(modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.85f)), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { requestedZoomRatio = 0.5f; cam0Label = "phone_back_0_5x" }, enabled = !isRecording) { Text("0.5x / ultra-wide") }
-                    Button(onClick = { requestedZoomRatio = 1f; cam0Label = "phone_back_1x" }, enabled = !isRecording) { Text("1x / wide") }
-                    Button(onClick = { cameraOptions = lensRepository.listBackCameras(); selectedCameraId = cameraOptions.firstOrNull()?.cameraId }, enabled = !isRecording) { Text("Refresh lenses") }
+            if (isLandscape) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    cam0Card(Modifier.weight(1f).aspectRatio(16f / 9f))
+                    cam1Card(Modifier.weight(1f).aspectRatio(16f / 9f))
                 }
-                OutlinedTextField(value = rigId, onValueChange = { rigId = it }, label = { Text("rig_id") }, enabled = !isRecording, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = cam0Label, onValueChange = { cam0Label = it }, label = { Text("cam0_label") }, enabled = !isRecording, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = cam1Label, onValueChange = { cam1Label = it }, label = { Text("cam1_label") }, enabled = !isRecording, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = baselineMm, onValueChange = { baselineMm = it }, label = { Text("baseline_mm (required)") }, enabled = !isRecording, modifier = Modifier.fillMaxWidth())
-                Text("Status: $status · IMU: ${if (isRecording) "recording" else "idle"}", color = Color.White)
-                Text("Validation: $validationText", color = if (validationText.startsWith("OK")) Color(0xFFB7F7C1) else Color(0xFFFFD166))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        val baseline = baselineMm.toDoubleOrNull()
-                        if (baseline == null || baseline <= 0.0) { validationText = "baseline_mm must be > 0"; return@Button }
-                        scope.launch {
-                            runCatching { manager.start(orderId, captureSessionId, StereoRigConfig(rigId, cam0Label, cam1Label, baseline)) }
-                                .onSuccess { isRecording = true; status = "recording to ${it.name}" }
-                                .onFailure { status = "start failed: ${it.message}" }
-                        }
-                    }, enabled = !isRecording) { Text("Record") }
-                    Button(onClick = {
-                        scope.launch {
-                            val result = manager.stop()
-                            isRecording = false
-                            validationText = if (result.ok) "OK: ${result.bundleDir.name}" else "Failed: ${result.errors.joinToString()}"
-                        }
-                    }, enabled = isRecording) { Text("Stop") }
-                    Button(onClick = { Toast.makeText(context, "Local export is stored under app files for backend upload integration.", Toast.LENGTH_LONG).show() }, enabled = !isRecording) { Text("Upload/export") }
+            } else {
+                cam0Card(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                cam1Card(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Rig / status", style = MaterialTheme.typography.titleSmall)
+                    Text("Active profile: ${activeProfile.rigId}")
+                    Text("Baseline: ${baseline?.let { "${it} mm" } ?: "not set"}")
+                    Text("Calibration: ${activeProfile.calibrationStatus.name.lowercase().replace('_', ' ')}")
+                    Text("cam0 desired mode: ${activeProfile.cam0Mode.modeLabel()}")
+                    Text("cam1 desired mode: $desiredCam1")
+                    Text("cam1 active mode: $activeCam1")
+                    if (!baselineReady) Text("Set baseline in Stereo rig / Cameras settings.", color = Color(0xFFFFD166))
+                    if (!cam1Ready) Text("Refresh USB camera and wait for live cam1 preview before recording.", color = Color(0xFFFFD166))
+                    if (modeMismatch) Text("Selected mode is not active. It will be tried on next Refresh USB.", color = Color(0xFFFFD166))
+                    Text("Status: $status · Validation: $validationText")
                 }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { refreshProfileAndUsb() }, enabled = !isRecording) { Text("Refresh USB") }
+                Button(onClick = {
+                    val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
+                    val currentBaseline = currentProfile.baselineMm
+                    if (currentBaseline == null || currentBaseline <= 0.0) { validationText = "Set baseline in Stereo rig / Cameras settings."; return@Button }
+                    scope.launch {
+                        runCatching { manager.start(orderId, captureSessionId, StereoRigConfig(currentProfile.rigId, currentProfile.cam0Label, currentProfile.cam1Label, currentBaseline)) }
+                            .onSuccess { isRecording = true; status = "recording to ${it.name}" }
+                            .onFailure { status = "start failed: ${it.message}" }
+                    }
+                }, enabled = canRecord) { Text("Record") }
+                Button(onClick = {
+                    scope.launch {
+                        val result = manager.stop()
+                        isRecording = false
+                        validationText = if (result.ok) "OK: ${result.bundleDir.name}" else "Failed: ${result.errors.joinToString()}"
+                    }
+                }, enabled = isRecording) { Text("Stop") }
+                Button(onClick = { showRigSettings = true }, enabled = !isRecording) { Text("Open settings") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = { showDiagnostics = !showDiagnostics }) { Text(if (showDiagnostics) "Hide diagnostics" else "Show diagnostics") }
+                Button(onClick = { cameraOptions = lensRepository.listBackCameras(); selectedCameraId = cameraOptions.firstOrNull()?.cameraId }, enabled = !isRecording) { Text("Refresh lenses") }
+            }
+            if (showDiagnostics) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Active stereo rig", style = MaterialTheme.typography.titleSmall)
-                        StereoRigSummary(activeProfile)
-                        TextButton(onClick = { showRigSettings = true }, enabled = !isRecording) { Text("Open rig settings") }
+                        Text("Diagnostics", style = MaterialTheme.typography.titleSmall)
+                        Text("USB device: ${cam1Info.productName ?: cam1Info.deviceName ?: "no device"}")
+                        Text("cam1_frames_received=${cam1Info.cam1FramesReceived}")
+                        Text("cam1_frames_decoded=${cam1Info.cam1FramesDecoded}")
+                        Text("cam1_frames_rendered=${cam1Info.cam1FramesRendered}")
+                        Text("cam1_last_frame_age_ms=${cam1Info.cam1LastFrameAgeMs ?: "none"}")
+                        Text("cam1_decode_errors=${cam1Info.cam1DecodeErrors}")
+                        Text("cam1_render_errors=${cam1Info.cam1RenderErrors}")
+                        Text("cam1_backend=native libuvc")
+                        cam1Info.error?.let { Text(it, color = Color(0xFFFFD166)) }
                     }
                 }
-                Text("cam1 statuses: USB device found → permission granted → openDevice success → UVC stream starting → frames received/decoded/rendered → preview active, or native library missing / stream start failed / stalled with no frames. app_log.txt records device names, permissions, endpoints, selected native backend, selected format/resolution/fps after stream start, frame counters, recording path/size, and native errors.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -3057,12 +3093,7 @@ private fun StereoCaptureExperimentalScreen(
         AlertDialog(
             onDismissRequest = { showRigSettings = false },
             title = { Text("Stereo rig / Cameras") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StereoRigSummary(activeProfile)
-                    Text("Full settings are available on the Settings tab.")
-                }
-            },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { StereoRigSummary(activeProfile); Text("Open Settings tab -> Stereo rig / Cameras") } },
             confirmButton = { TextButton(onClick = { activeProfile = profileStore.loadActiveProfile(); showRigSettings = false }) { Text("Close") } },
         )
     }

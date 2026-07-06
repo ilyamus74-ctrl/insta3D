@@ -80,6 +80,9 @@ int g_bus_num=-1, g_dev_addr=-1;
 std::string g_device_name;
 std::string g_usbfs;
 std::string g_selected_format_name;
+std::string g_preferred_format_name;
+int g_preferred_width=0, g_preferred_height=0, g_preferred_fps=0;
+bool g_preferred_auto=true;
 std::vector<uint8_t> g_latest_frame;
 uint32_t g_latest_width=0, g_latest_height=0;
 int g_latest_format=UVC_FRAME_FORMAT_UNKNOWN;
@@ -390,7 +393,23 @@ void streamingThread(int64_t generation,int fd,int vendor,int product,std::strin
  int selectedFormat=UVC_FRAME_FORMAT_UNKNOWN, selectedWidth=0, selectedHeight=0, selectedFps=0;
  struct Request { int fmt; const char* name; int w; int h; int fps; };
  const bool mjpegAvailable = ensureTurboJpeg();
- const Request requests[] = {{UVC_FRAME_FORMAT_MJPEG, "MJPEG", 640, 480, 30},{UVC_FRAME_FORMAT_MJPEG, "MJPEG", 1280, 720, 30},{UVC_FRAME_FORMAT_MJPEG, "MJPEG", 1920, 1080, 30},{UVC_FRAME_FORMAT_YUYV, "YUYV", 640, 480, 30},{UVC_FRAME_FORMAT_UNCOMPRESSED, "UNCOMPRESSED", 640, 480, 30}};
+ std::vector<Request> requests;
+ {
+  std::lock_guard<std::mutex> lk(g_state_lock);
+  ALOGI("preferred cam1 mode format=%s width=%d height=%d fps=%d auto=%s", g_preferred_format_name.c_str(), g_preferred_width, g_preferred_height, g_preferred_fps, g_preferred_auto ? "true" : "false");
+  if(!g_preferred_auto && !g_preferred_format_name.empty() && g_preferred_width > 0 && g_preferred_height > 0 && g_preferred_fps > 0){
+   int fmt = UVC_FRAME_FORMAT_UNKNOWN;
+   if(g_preferred_format_name == "MJPEG") fmt = UVC_FRAME_FORMAT_MJPEG;
+   else if(g_preferred_format_name == "YUYV") fmt = UVC_FRAME_FORMAT_YUYV;
+   else if(g_preferred_format_name == "UNCOMPRESSED") fmt = UVC_FRAME_FORMAT_UNCOMPRESSED;
+   if(fmt != UVC_FRAME_FORMAT_UNKNOWN) requests.push_back({fmt, g_preferred_format_name.c_str(), g_preferred_width, g_preferred_height, g_preferred_fps});
+  }
+ }
+ requests.push_back({UVC_FRAME_FORMAT_MJPEG, "MJPEG", 1280, 720, 30});
+ requests.push_back({UVC_FRAME_FORMAT_MJPEG, "MJPEG", 640, 480, 30});
+ requests.push_back({UVC_FRAME_FORMAT_MJPEG, "MJPEG", 1920, 1080, 30});
+ requests.push_back({UVC_FRAME_FORMAT_YUYV, "YUYV", 640, 480, 30});
+ requests.push_back({UVC_FRAME_FORMAT_UNCOMPRESSED, "UNCOMPRESSED", 640, 480, 30});
  bool surfacePresent=false;
  {
   std::lock_guard<std::mutex> lk(g_window_lock);
@@ -414,7 +433,7 @@ void streamingThread(int64_t generation,int fd,int vendor,int product,std::strin
   if((req.fmt == UVC_FRAME_FORMAT_MJPEG || req.fmt == UVC_FRAME_FORMAT_COMPRESSED) && !mjpegAvailable){ ALOGI("skipping format=%s width=%d height=%d fps=%d reason=turbojpeg unavailable", req.name, req.w, req.h, req.fps); continue; }
   r=libs.uvc_get_stream_ctrl_format_size(handle,ctrl,req.fmt,req.w,req.h,req.fps);
   ALOGI("requested format=%s width=%d height=%d fps=%d get_ctrl result=%d", req.name, req.w, req.h, req.fps, r);
-  if(r>=0){ selectedFormat=req.fmt; selectedWidth=req.w; selectedHeight=req.h; selectedFps=req.fps; ALOGI("selected format=%s", req.name); break; }
+  if(r>=0){ selectedFormat=req.fmt; selectedWidth=req.w; selectedHeight=req.h; selectedFps=req.fps; ALOGI("selected format=%s width=%d height=%d fps=%d", req.name, req.w, req.h, req.fps); break; }
  }
  if(r<0){ setError("NATIVE_UVC_STREAM_START_FAILED: uvc_get_stream_ctrl_format_size " + libs.err(r)); goto done; }
  setSelectedMode(selectedFormat, selectedWidth, selectedHeight, selectedFps);
@@ -466,21 +485,22 @@ done:
 }
 }
 
-extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeOpen(JNIEnv* env,jobject,jint fd,jint vendorId,jint productId,jstring deviceName,jint busNum,jint devAddr,jstring usbfs,jobject surface){
+extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeOpen(JNIEnv* env,jobject,jint fd,jint vendorId,jint productId,jstring deviceName,jint busNum,jint devAddr,jstring usbfs,jobject surface,jstring preferredFormat,jint preferredWidth,jint preferredHeight,jint preferredFps,jboolean preferredAuto){
  std::lock_guard<std::mutex> lifecycle(g_lifecycle_lock);
  clearError();
  if(g_thread.joinable()){ ALOGI("stopping previous stream generation=%lld", (long long)g_session_generation.load()); requestStreamStopLocked(); g_thread.join(); ALOGI("previous stream joined"); }
  const char* n=env->GetStringUTFChars(deviceName,nullptr); std::string name=n?n:""; env->ReleaseStringUTFChars(deviceName,n);
  const char* u=env->GetStringUTFChars(usbfs,nullptr); std::string usbfsPath=u?u:""; env->ReleaseStringUTFChars(usbfs,u);
+ const char* pf=preferredFormat ? env->GetStringUTFChars(preferredFormat,nullptr) : nullptr; std::string preferred=pf?pf:""; if(preferredFormat) env->ReleaseStringUTFChars(preferredFormat,pf);
  stopRenderThreadLocked();
  { std::lock_guard<std::mutex> lk(g_window_lock); releaseWindowLocked(); if(surface) { g_window=ANativeWindow_fromSurface(env,surface); if(g_window) ANativeWindow_setBuffersGeometry(g_window, 0, 0, WINDOW_FORMAT_RGBA_8888); } }
  { std::lock_guard<std::mutex> lk(g_frame_lock); g_latest_frame.clear(); g_frame_dirty=false; }
  ensureRenderThreadLocked();
  g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_render_errors=0; g_window_lock_failures=0; g_surface_null_count=0; g_callback_dropped_after_stop=0;
  setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN,0,0,0);
- g_fd=fd; g_vendor=vendorId; g_product=productId; g_device_name=name; g_bus_num=busNum; g_dev_addr=devAddr; g_usbfs=usbfsPath; g_opened=true; g_start_ns=nowNs();
+ g_fd=fd; g_vendor=vendorId; g_product=productId; g_device_name=name; g_bus_num=busNum; g_dev_addr=devAddr; g_usbfs=usbfsPath; { std::lock_guard<std::mutex> lk(g_state_lock); g_preferred_format_name=preferred; g_preferred_width=preferredWidth; g_preferred_height=preferredHeight; g_preferred_fps=preferredFps; g_preferred_auto=preferredAuto; } g_opened=true; g_start_ns=nowNs();
  g_stop=false; g_accept_frames=false; g_render_stop=false;
- ALOGI("native UVC opened, waiting for frames fd=%d vendor=%d product=%d current_device=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s",fd,vendorId,productId,name.c_str(),usbfsPath.c_str(),busNum,devAddr,surface ? "true" : "false");
+ ALOGI("native UVC opened, waiting for frames fd=%d vendor=%d product=%d current_device=%s usbfs=%s busNum=%d devAddr=%d surfacePresent=%s preferredFormat=%s preferredWidth=%d preferredHeight=%d preferredFps=%d preferredAuto=%s",fd,vendorId,productId,name.c_str(),usbfsPath.c_str(),busNum,devAddr,surface ? "true" : "false", preferred.c_str(), preferredWidth, preferredHeight, preferredFps, preferredAuto ? "true" : "false");
  return JNI_TRUE;
 }
 
