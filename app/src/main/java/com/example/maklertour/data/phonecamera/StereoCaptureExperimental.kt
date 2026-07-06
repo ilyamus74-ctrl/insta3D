@@ -73,6 +73,7 @@ data class UsbUvcCameraInfo(
     val cam1DecodeErrors: Long = 0L,
     val cam1RenderErrors: Long = 0L,
     val cam1FpsEstimate: Double = 0.0,
+    val cam1PreviewFpsEstimate: Double = 0.0,
     val selectedPixelFormat: String? = null,
     val selectedResolutionFps: String? = null,
     val selectedAltSetting: Int? = null,
@@ -496,7 +497,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             backend.startPreview()
             val snap = backend.snapshot()
             append("selected UVC format/resolution/fps ${snap.selectedFormat ?: "none"}/${snap.selectedResolution ?: "none"}/${snap.selectedFps ?: "none"}")
-            updateFromBackend(device, snap)
+            updateFromBackend(device, snap, 0.0)
             startBackendPolling(device, generation)
         }
         return _state.value
@@ -510,22 +511,38 @@ private class UsbUvcCameraAdapter(private val context: Context) {
             private var restartAttempts = 0
             private var lastRestartMs = 0L
             private var restartInFlight = false
+            private var lastRenderedForFps = -1L
+            private var lastPreviewFpsPollMs = 0L
+            private var previewFpsEstimate = 0.0
 
             override fun run() {
                 if (generation != cam1Generation || thisPoll != pollGeneration) return
                 val snap = backend.snapshot()
+                val nowMs = SystemClock.elapsedRealtime()
+                val rendered = snap.framesRendered
+                if (rendered < lastRenderedForFps) {
+                    previewFpsEstimate = 0.0
+                } else if (lastRenderedForFps >= 0L && lastPreviewFpsPollMs > 0L) {
+                    val deltaFrames = rendered - lastRenderedForFps
+                    val deltaMs = nowMs - lastPreviewFpsPollMs
+                    if (deltaMs > 0L) {
+                        previewFpsEstimate = deltaFrames * 1000.0 / deltaMs
+                    }
+                }
+                lastRenderedForFps = rendered
+                lastPreviewFpsPollMs = nowMs
                 val framesAdvanced = snap.framesRendered > lastRendered
                 if (framesAdvanced) {
                     stalledPolls = 0
                     restartInFlight = false
-                    updateFromBackend(device, snap)
+                    updateFromBackend(device, snap, previewFpsEstimate)
                 } else {
                     if (snap.framesReceived > 0L && snap.framesRendered > 0L && snap.framesRendered == lastRendered) stalledPolls++ else stalledPolls = 0
                     val lastFrameAgeMs = snap.lastFrameAgeMs ?: 0L
                     val nativeStall = snap.error?.contains("NATIVE_UVC_STREAM_STALLED") == true
                     val realStall = nativeStall || (snap.framesReceived > 0L && snap.framesRendered > 0L && (stalledPolls >= 5 || lastFrameAgeMs > 2_000L))
                     if (realStall) {
-                        update(stalledInfo(device, snap, if (restartAttempts >= MAX_STALL_RESTART_ATTEMPTS) "UVC stalled after restart attempts" else "UVC stalled: no new frames"))
+                        update(stalledInfo(device, snap, previewFpsEstimate, if (restartAttempts >= MAX_STALL_RESTART_ATTEMPTS) "UVC stalled after restart attempts" else "UVC stalled: no new frames"))
                         maybeRestartStalledPreview(
                             device,
                             generation,
@@ -534,6 +551,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                             restartAttempts,
                             lastRestartMs,
                             restartInFlight,
+                            previewFpsEstimate,
                             onRestartPosted = { attempted, startedAtMs ->
                                 restartInFlight = attempted
                                 if (attempted) {
@@ -544,7 +562,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                             onRestartCompleted = { restartInFlight = false },
                         )
                     } else {
-                        updateFromBackend(device, snap)
+                        updateFromBackend(device, snap, previewFpsEstimate)
                     }
                 }
                 lastRendered = snap.framesRendered
@@ -561,6 +579,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         restartAttempts: Int,
         lastRestartMs: Long,
         restartInFlight: Boolean,
+        previewFpsEstimate: Double,
         onRestartPosted: (Boolean, Long) -> Unit,
         onRestartCompleted: () -> Unit,
     ) {
@@ -613,9 +632,9 @@ private class UsbUvcCameraAdapter(private val context: Context) {
                 if (generation != cam1Generation || poll != pollGeneration) return@post
                 onRestartCompleted()
                 if (restartedSnap.error != null || !restartedSnap.opened) {
-                    updateFromBackend(freshDevice, restartedSnap.copy(error = restartedSnap.error ?: "UVC_PREVIEW_FAILED: stalled UVC reopen failed"))
+                    updateFromBackend(freshDevice, restartedSnap.copy(error = restartedSnap.error ?: "UVC_PREVIEW_FAILED: stalled UVC reopen failed"), previewFpsEstimate)
                 } else {
-                    updateFromBackend(freshDevice, restartedSnap)
+                    updateFromBackend(freshDevice, restartedSnap, previewFpsEstimate)
                 }
             }
         }
@@ -634,18 +653,19 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         preferredSelection = mode?.selectedBy ?: CameraModeSelection.AUTO,
     )
 
-    private fun stalledInfo(device: UsbDevice, snap: Cam1UvcBackendState, error: String) = info(device, UsbUvcStatus.UVC_STALLED_NO_NEW_FRAMES, error).copy(
+    private fun stalledInfo(device: UsbDevice, snap: Cam1UvcBackendState, previewFpsEstimate: Double, error: String) = info(device, UsbUvcStatus.UVC_STALLED_NO_NEW_FRAMES, error).copy(
         cam1FramesReceived = snap.framesReceived,
         cam1FramesAssembled = snap.framesReceived,
         cam1FramesDecoded = snap.framesDecoded,
         cam1FramesRendered = snap.framesRendered,
         cam1FpsEstimate = snap.fpsEstimate,
+        cam1PreviewFpsEstimate = previewFpsEstimate,
         cam1LastFrameAgeMs = snap.lastFrameAgeMs,
         selectedPixelFormat = snap.selectedFormat,
         selectedResolutionFps = snap.selectedResolution?.let { "$it@${snap.selectedFps ?: 30}fps" },
     )
 
-    private fun updateFromBackend(device: UsbDevice, snap: Cam1UvcBackendState) {
+    private fun updateFromBackend(device: UsbDevice, snap: Cam1UvcBackendState, previewFpsEstimate: Double = _state.value.cam1PreviewFpsEstimate) {
         val status = when {
             snap.error?.contains("NATIVE_LIB_MISSING") == true -> UsbUvcStatus.NATIVE_LIB_MISSING
             snap.error?.contains("NATIVE_UVC_INIT_FAILED") == true -> UsbUvcStatus.NATIVE_UVC_INIT_FAILED
@@ -661,7 +681,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         update(info(device, status, when { snap.error != null -> snap.error; snap.framesRendered > 0L -> null; snap.framesReceived > 0L -> "native UVC first frame received"; snap.opened && snap.previewRunning && snap.framesReceived == 0L -> "real libuvc stream opened, waiting for frames"; snap.opened -> "native UVC stream starting"; else -> null }).copy(
             cam1FramesReceived = snap.framesReceived, cam1FramesAssembled = snap.framesReceived,
             cam1FramesDecoded = snap.framesDecoded, cam1FramesRendered = snap.framesRendered,
-            cam1FpsEstimate = snap.fpsEstimate, cam1LastFrameAgeMs = snap.lastFrameAgeMs,
+            cam1FpsEstimate = snap.fpsEstimate, cam1PreviewFpsEstimate = previewFpsEstimate, cam1LastFrameAgeMs = snap.lastFrameAgeMs,
             selectedPixelFormat = snap.selectedFormat, selectedResolutionFps = snap.selectedResolution?.let { "$it@${snap.selectedFps ?: 30}fps" },
         ))
     }
@@ -675,10 +695,11 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         cam1Generation++
         pollGeneration++
         cam1Handler.post { backend.stopRecording(); backend.stopPreview(); backend.close(); runCatching { activeConnection?.close() }; activeConnection = null }
+        _state.value = _state.value.copy(status = UsbUvcStatus.NOT_CONNECTED, receiveLoopRunning = false, cam1PreviewFpsEstimate = 0.0)
         append("native UVC stop requested generation=$cam1Generation debug_java_uvc_backend=$DEBUG_JAVA_UVC_BACKEND")
     }
 
-    private fun update(info: UsbUvcCameraInfo): UsbUvcCameraInfo { _state.value = info; append("cam1 state status=${info.status} error=${info.error} frames_received=${info.cam1FramesReceived} frames_decoded=${info.cam1FramesDecoded} frames_rendered=${info.cam1FramesRendered} fps=${info.cam1FpsEstimate}"); return info }
+    private fun update(info: UsbUvcCameraInfo): UsbUvcCameraInfo { _state.value = info; append("cam1 state status=${info.status} error=${info.error} frames_received=${info.cam1FramesReceived} frames_decoded=${info.cam1FramesDecoded} frames_rendered=${info.cam1FramesRendered} input_fps=${info.cam1FpsEstimate} preview_fps=${info.cam1PreviewFpsEstimate}"); return info }
     private fun info(device: UsbDevice?, status: UsbUvcStatus, error: String? = null) = UsbUvcCameraInfo(status, device?.vendorId, device?.productId, device?.deviceName, device?.productName, device?.findIsochronousInEndpoint()?.endpointTypeLabel(), error)
     private fun findSelectedDeviceWithRetry(timeoutMs: Long = 1_500L): UsbDevice? {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs

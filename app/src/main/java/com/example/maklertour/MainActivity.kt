@@ -2947,6 +2947,7 @@ private fun StereoCaptureExperimentalScreen(
     val canRecord = !isRecording && baselineReady && cam1Ready
     val desiredCam1 = activeProfile.cam1Mode.modeLabel()
     val activeCam1 = listOfNotNull(cam1Info.selectedPixelFormat, cam1Info.selectedResolutionFps).joinToString(" ").ifBlank { "not active" }
+    val previewDroppingFrames = cam1Info.status == UsbUvcStatus.UVC_PREVIEW_ACTIVE && cam1Info.cam1PreviewFpsEstimate > 0.0 && cam1Info.cam1PreviewFpsEstimate < 20.0
     val modeMismatch = activeProfile.cam1Mode?.let { mode ->
         if (mode.selectedBy != CameraModeSelection.MANUAL) false
         else {
@@ -3016,7 +3017,10 @@ private fun StereoCaptureExperimentalScreen(
                         Text("cam1", color = Color.White, style = MaterialTheme.typography.labelLarge)
                         Text(cam1Info.status.label(), color = Color.White, style = MaterialTheme.typography.bodySmall)
                         Text(activeCam1, color = Color.White, style = MaterialTheme.typography.bodySmall)
-                        Text("fps ${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1FpsEstimate)} · frames ${cam1Info.cam1FramesReceived}", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                        Text("input ${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1FpsEstimate)} fps", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                        Text("preview ${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1PreviewFpsEstimate)} fps", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                        Text("frames ${cam1Info.cam1FramesReceived}", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                        if (previewDroppingFrames) Text("Preview is dropping frames. Use 640x480 for smoother capture.", color = Color(0xFFFFD166), style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -3041,6 +3045,7 @@ private fun StereoCaptureExperimentalScreen(
                     Text("cam1 active mode: $activeCam1")
                     if (!baselineReady) Text("Set baseline in Stereo rig / Cameras settings.", color = Color(0xFFFFD166))
                     if (!cam1Ready) Text("Refresh USB camera and wait for live cam1 preview before recording.", color = Color(0xFFFFD166))
+                    if (previewDroppingFrames) Text("Preview is dropping frames. Use 640x480 for smoother capture.", color = Color(0xFFFFD166))
                     if (modeMismatch) Text("Selected mode is not active. It will be tried on next Refresh USB.", color = Color(0xFFFFD166))
                     Text("Status: $status · Validation: $validationText")
                 }
@@ -3076,6 +3081,8 @@ private fun StereoCaptureExperimentalScreen(
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Diagnostics", style = MaterialTheme.typography.titleSmall)
                         Text("USB device: ${cam1Info.productName ?: cam1Info.deviceName ?: "no device"}")
+                        Text("cam1_input_fps_estimate=${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1FpsEstimate)}")
+                        Text("cam1_preview_fps_estimate=${String.format(java.util.Locale.US, "%.1f", cam1Info.cam1PreviewFpsEstimate)}")
                         Text("cam1_frames_received=${cam1Info.cam1FramesReceived}")
                         Text("cam1_frames_decoded=${cam1Info.cam1FramesDecoded}")
                         Text("cam1_frames_rendered=${cam1Info.cam1FramesRendered}")
