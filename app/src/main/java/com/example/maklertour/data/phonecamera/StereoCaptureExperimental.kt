@@ -152,6 +152,7 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
             cleanupMessages.forEach { log("start cleanup: $it") }
             writeRigAndManifests(bundleDir, config, sessionUuid, usbInfo, startNs, SystemClock.elapsedRealtimeNanos(), "failed_camera_open", (listOfNotNull(t.message) + cleanupMessages).joinToString())
             log("Failed to start stereo capture: ${t.stackTraceToString()}")
+            usbAdapter.detachLogFile()
             throw t
         }
     }
@@ -192,12 +193,14 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
                 writeRigAndManifests(current.bundleDir, current.config, current.sessionUuid, usbAdapter.currentInfo(), current.startNs, stopNs, "failed_recording", finalValidation.errors.joinToString())
             }
             File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} stereo capture complete ok=${finalValidation.ok} errors=${finalValidation.errors.joinToString()}\n")
+            usbAdapter.detachLogFile()
             finalValidation
         } catch (t: Throwable) {
             runCatching { imuRecorder.stop() }
             runCatching { usbAdapter.stopRecording() }
             writeRigAndManifests(current.bundleDir, current.config, current.sessionUuid, usbAdapter.currentInfo(), current.startNs, stopNs, "failed_unknown", t.message)
             File(current.bundleDir, "app_log.txt").appendText("${Instant.now()} Stop failed: ${t.stackTraceToString()}\n")
+            usbAdapter.detachLogFile()
             validate(current.bundleDir, current.config)
         }
     }
@@ -215,13 +218,16 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
     }
 
     private fun writeRigAndManifests(bundleDir: File, config: StereoRigConfig, sessionUuid: String, usb: UsbUvcCameraInfo, startNs: Long, stopNs: Long, status: String, failure: String?) {
+        val cam0VideoInfo = phoneRecorder.getSelectedVideoInfo()
+        val cam0Width = cam0VideoInfo?.width ?: 1280
+        val cam0Height = cam0VideoInfo?.height ?: 720
         val cam1Width = usb.selectedWidth() ?: 1920
         val cam1Height = usb.selectedHeight() ?: 1080
         val errors = failure?.takeIf { it.isNotBlank() }?.split(", ") ?: emptyList()
-        writeCameraManifest(File(bundleDir, "cam0_manifest.json"), "cam0", "phone_back", "cam0.mp4", 1920, 1080, startNs, stopNs, "estimated", Build.MODEL, fileSizeBytes = File(bundleDir, "cam0.mp4").takeIf { it.exists() }?.length())
+        writeCameraManifest(File(bundleDir, "cam0_manifest.json"), "cam0", "phone_back", "cam0.mp4", cam0Width, cam0Height, startNs, stopNs, "estimated", Build.MODEL, fileSizeBytes = File(bundleDir, "cam0.mp4").takeIf { it.exists() }?.length())
         writeCameraManifest(File(bundleDir, "cam1_manifest.json"), "cam1", "usb_uvc", "cam1.mjpeg", cam1Width, cam1Height, startNs, stopNs, "estimated", usb.deviceName, usb, File(bundleDir, "cam1.mjpeg").takeIf { it.exists() }?.length(), codec = "MJPEG elementary stream", frameCount = usbAdapter.recordedFrameCount().takeIf { it > 0L })
         val cameras = JSONArray()
-            .put(cameraJson("cam0", "phone_back", config.cam0Label, "cam0.mp4", "cam0_timestamps.json", 1920, 1080, null))
+            .put(cameraJson("cam0", "phone_back", config.cam0Label, "cam0.mp4", "cam0_timestamps.json", cam0Width, cam0Height, null))
             .put(cameraJson("cam1", "usb_uvc", config.cam1Label, "cam1.mjpeg", "cam1_timestamps.json", cam1Width, cam1Height, usb))
         val rig = JSONObject()
             .put("capture_type", "stereo_rig").put("schema_version", 1).put("rig_id", config.rigId).put("session_uuid", sessionUuid)
@@ -438,7 +444,8 @@ private class UsbUvcCameraAdapter(private val context: Context) {
         }
     }
 
-    fun attachLogFile(file: File) { logFile = file }
+    fun attachLogFile(file: File?) { logFile = file }
+    fun detachLogFile() { attachLogFile(null) }
     fun close() { stopNativeBackend(); unregisterPermissionReceiver(); cam1Thread.quitSafely() }
     fun currentInfo(): UsbUvcCameraInfo = _state.value
     fun recordedFrameCount(): Long = lastRecordingFrameCount
