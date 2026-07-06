@@ -19,6 +19,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -79,7 +80,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -134,6 +138,9 @@ import com.example.maklertour.network.ApiConfig
 import com.maklertour.data.repository.OrdersRepoResult
 import com.maklertour.data.repository.TakeOrderRepoResult
 import com.maklertour.data.repository.OrdersRepository
+import com.maklertour.data.calibration.CalibrationBoardDetector
+import com.maklertour.data.calibration.CalibrationDetectionResult
+import com.maklertour.data.calibration.OpenCvCalibrationBoardDetector
 import com.maklertour.data.rig.CalibrationSettings
 import com.maklertour.data.rig.CalibrationStatus
 import com.maklertour.data.rig.CameraMode
@@ -144,6 +151,8 @@ import com.maklertour.data.rig.StereoRigProfileStore
 import com.maklertour.data.rig.toJson
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
 import coil.compose.AsyncImage
@@ -3151,9 +3160,14 @@ private fun CalibrationCaptureDialog(
     val context = LocalContext.current
     val profileStore = remember(context) { StereoRigProfileStore(context) }
     val settings = profile.calibrationSettings
+    val detector: CalibrationBoardDetector = remember { OpenCvCalibrationBoardDetector() }
     var sessionDir by remember { mutableStateOf<File?>(null) }
     var pairCount by remember { mutableStateOf(0) }
-    var message by remember { mutableStateOf("Ready for manual checkerboard captures") }
+    var message by remember { mutableStateOf("Ready for assisted checkerboard captures") }
+    var cam0Detection by remember { mutableStateOf<CalibrationDetectionResult?>(null) }
+    var cam1Detection by remember { mutableStateOf<CalibrationDetectionResult?>(null) }
+    var autoCapture by remember { mutableStateOf(false) }
+    var lastAutoCaptureMs by remember { mutableStateOf(0L) }
 
     fun ensureSessionDir(): File {
         val existing = sessionDir
@@ -3176,6 +3190,58 @@ private fun CalibrationCaptureDialog(
         return dir
     }
 
+    fun capturePair(requireValidDetection: Boolean): Boolean {
+        val cam0 = cam0BitmapProvider()
+        val cam1 = cam1BitmapProvider()
+        val cam0Result = cam0Detection
+        val cam1Result = cam1Detection
+        if (cam0 == null || cam1 == null) {
+            message = "Preview bitmap unavailable for ${if (cam0 == null) "cam0" else "cam1"}; wait for live previews."
+            return false
+        }
+        if (requireValidDetection && (cam0Result?.found != true || cam1Result?.found != true)) {
+            message = "Both cameras must show FOUND before assisted capture."
+            return false
+        }
+        return runCatching {
+            val dir = ensureSessionDir()
+            val nextIndex = pairCount + 1
+            val pairsDir = File(dir, "pairs").apply { mkdirs() }
+            val cam0Name = "pair_${nextIndex.toString().padStart(4, '0')}_cam0.jpg"
+            val cam1Name = "pair_${nextIndex.toString().padStart(4, '0')}_cam1.jpg"
+            saveJpeg(cam0, File(pairsDir, cam0Name))
+            saveJpeg(cam1, File(pairsDir, cam1Name))
+            appendCalibrationPairManifest(dir, nextIndex, "pairs/$cam0Name", "pairs/$cam1Name", cam0Result, cam1Result, settings.checkerboardInnerCols * settings.checkerboardInnerRows)
+            pairCount = nextIndex
+            message = "Captured pair $nextIndex to ${dir.name}"
+            true
+        }.getOrElse {
+            message = "Capture failed: ${it.message}"
+            false
+        }
+    }
+
+    LaunchedEffect(detector, settings, autoCapture, pairCount) {
+        while (true) {
+            val cam0 = cam0BitmapProvider()
+            val cam1 = cam1BitmapProvider()
+            if (cam0 != null && cam1 != null) {
+                val (cam0Result, cam1Result) = withContext(Dispatchers.Default) {
+                    detector.detect(cam0, settings) to detector.detect(cam1, settings)
+                }
+                cam0Detection = cam0Result
+                cam1Detection = cam1Result
+                if (autoCapture && pairCount < settings.requiredPairs && cam0Result.found && cam1Result.found) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastAutoCaptureMs >= 1_200) {
+                        if (capturePair(requireValidDetection = true)) lastAutoCaptureMs = now
+                    }
+                }
+            }
+            delay(500)
+        }
+    }
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(modifier = Modifier.fillMaxSize().padding(12.dp), color = Color(0xFF101010)) {
             Column(modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -3189,35 +3255,20 @@ private fun CalibrationCaptureDialog(
                         Text("Checkerboard: ${settings.checkerboardInnerCols} x ${settings.checkerboardInnerRows} inner corners")
                         Text("Square size: ${settings.squareSizeMm} mm")
                         Text("Captured pairs: $pairCount / ${settings.requiredPairs}")
+                        Text("Move checkerboard across the full frame: center, corners, tilted left/right/up/down, near/far.")
+                        Text("Capture only when both cameras show FOUND.")
                         Text("Source: preview bitmap · not hardware synchronized")
                         Text(message)
                     }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PreviewBitmapPanel("cam0", cam0BitmapProvider, Modifier.weight(1f).aspectRatio(16f / 9f))
-                    PreviewBitmapPanel("cam1", cam1BitmapProvider, Modifier.weight(1f).aspectRatio(16f / 9f))
+                    PreviewBitmapPanel("cam0", cam0BitmapProvider, cam0Detection, Modifier.weight(1f).aspectRatio(16f / 9f))
+                    PreviewBitmapPanel("cam1", cam1BitmapProvider, cam1Detection, Modifier.weight(1f).aspectRatio(16f / 9f))
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        val cam0 = cam0BitmapProvider()
-                        val cam1 = cam1BitmapProvider()
-                        if (cam0 == null || cam1 == null) {
-                            message = "Preview bitmap unavailable for ${if (cam0 == null) "cam0" else "cam1"}; wait for live previews."
-                            return@Button
-                        }
-                        runCatching {
-                            val dir = ensureSessionDir()
-                            val nextIndex = pairCount + 1
-                            val pairsDir = File(dir, "pairs").apply { mkdirs() }
-                            val cam0Name = "pair_${nextIndex.toString().padStart(4, '0')}_cam0.jpg"
-                            val cam1Name = "pair_${nextIndex.toString().padStart(4, '0')}_cam1.jpg"
-                            saveJpeg(cam0, File(pairsDir, cam0Name))
-                            saveJpeg(cam1, File(pairsDir, cam1Name))
-                            appendCalibrationPairManifest(dir, nextIndex, "pairs/$cam0Name", "pairs/$cam1Name")
-                            pairCount = nextIndex
-                            message = "Captured pair $nextIndex to ${dir.name}"
-                        }.onFailure { message = "Capture failed: ${it.message}" }
-                    }) { Text("Capture pair") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = { capturePair(requireValidDetection = true) }, enabled = cam0Detection?.found == true && cam1Detection?.found == true) { Text("Capture valid pair") }
+                    Button(onClick = { capturePair(requireValidDetection = false) }) { Text("Capture pair (manual fallback)") }
+                    Button(onClick = { autoCapture = !autoCapture }) { Text("Auto capture: ${if (autoCapture) "On" else "Off"}") }
                     Button(onClick = {
                         if (pairCount < 1) {
                             message = "Capture at least one pair before saving session."
@@ -3237,15 +3288,62 @@ private fun CalibrationCaptureDialog(
 }
 
 @Composable
-private fun PreviewBitmapPanel(label: String, bitmapProvider: () -> Bitmap?, modifier: Modifier = Modifier) {
+private fun PreviewBitmapPanel(label: String, bitmapProvider: () -> Bitmap?, detection: CalibrationDetectionResult?, modifier: Modifier = Modifier) {
     Box(modifier = modifier.background(Color.DarkGray), contentAlignment = Alignment.Center) {
         val bitmap = bitmapProvider()
         if (bitmap != null) {
-            AsyncImage(model = bitmap, contentDescription = label, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            AsyncImage(model = bitmap, contentDescription = label, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         } else {
             Text("Waiting for $label preview", color = Color.White)
         }
-        Text(label, color = Color.White, modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.55f)).padding(8.dp))
+        val status = detection?.let { if (it.found) "board found" else "board not found" } ?: "detecting"
+        val count = detection?.let { " ${it.cornersFound}/${it.expectedCorners}" }.orEmpty()
+        val statusColor = when (detection?.found) {
+            true -> Color(0xFF00E676)
+            false -> Color(0xFFFFD54F)
+            null -> Color.White
+        }
+        val detectionResult = detection
+        if (detectionResult != null && detectionResult.normalizedCornerPoints.isNotEmpty()) {
+            val points = detectionResult.normalizedCornerPoints
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val imageAspect =
+                    detectionResult.imageWidth.toFloat() /
+                        detectionResult.imageHeight.toFloat().coerceAtLeast(1f)
+                val boxAspect = size.width / size.height.coerceAtLeast(1f)
+                val drawWidth: Float
+                val drawHeight: Float
+                val offsetX: Float
+                val offsetY: Float
+                if (imageAspect > boxAspect) {
+                    drawWidth = size.width
+                    drawHeight = size.width / imageAspect
+                    offsetX = 0f
+                    offsetY = (size.height - drawHeight) / 2f
+                } else {
+                    drawHeight = size.height
+                    drawWidth = size.height * imageAspect
+                    offsetX = (size.width - drawWidth) / 2f
+                    offsetY = 0f
+                }
+                val offsets = points.map {
+                    Offset(offsetX + it.x * drawWidth, offsetY + it.y * drawHeight)
+                }
+                offsets.forEach {
+                    drawCircle(Color(0xFF00E676), radius = 4.dp.toPx(), center = it)
+                }
+                drawRect(
+                    Color(0xFF00E676),
+                    topLeft = Offset(offsetX, offsetY),
+                    size = ComposeSize(drawWidth, drawHeight),
+                    style = Stroke(width = 1.dp.toPx()),
+                )
+            }
+        }
+        Column(modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.65f)).padding(8.dp)) {
+            Text("$label $status$count", color = statusColor)
+            detection?.qualityMessage?.let { Text(it, color = Color.White) }
+        }
     }
 }
 
@@ -3253,7 +3351,15 @@ private fun saveJpeg(bitmap: Bitmap, file: File) {
     FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out) }
 }
 
-private fun appendCalibrationPairManifest(sessionDir: File, pairIndex: Int, cam0File: String, cam1File: String) {
+private fun appendCalibrationPairManifest(
+    sessionDir: File,
+    pairIndex: Int,
+    cam0File: String,
+    cam1File: String,
+    cam0Detection: CalibrationDetectionResult?,
+    cam1Detection: CalibrationDetectionResult?,
+    expectedCorners: Int,
+) {
     val manifestFile = File(sessionDir, "pairs_manifest.json")
     val manifest = if (manifestFile.exists()) JSONObject(manifestFile.readText()) else JSONObject().put("pairs", JSONArray())
     val pairs = manifest.optJSONArray("pairs") ?: JSONArray().also { manifest.put("pairs", it) }
@@ -3265,6 +3371,13 @@ private fun appendCalibrationPairManifest(sessionDir: File, pairIndex: Int, cam0
             .put("captured_at_utc", utcNowIso8601())
             .put("cam0_source", "preview_bitmap")
             .put("cam1_source", "preview_bitmap")
+            .put("cam0_checkerboard_found", cam0Detection?.found == true)
+            .put("cam1_checkerboard_found", cam1Detection?.found == true)
+            .put("cam0_corners_found", cam0Detection?.cornersFound ?: 0)
+            .put("cam1_corners_found", cam1Detection?.cornersFound ?: 0)
+            .put("expected_corners", expectedCorners)
+            .put("capture_source", "preview_bitmap")
+            .put("sync_status", "not_hardware_synchronized")
     )
     manifestFile.writeText(manifest.toString(2))
 }
