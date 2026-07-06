@@ -3299,50 +3299,31 @@ private fun CalibrationCaptureDialog(
         if (calibrationRunning) return
         calibrationRunning = true
         message = runningMessage
-
         coroutineScope.launch {
-            val runResult = runCatching {
-                withContext(Dispatchers.Default) { StereoCalibrationProcessor().run(dir) }
-            }
-
+            val result = withContext(Dispatchers.Default) { StereoCalibrationProcessor().run(dir) }
             calibrationRunning = false
-
-            runResult
-                .onSuccess { result ->
-                    val updated = if (result.status == "success") {
-                        profile.copy(
-                            calibrationStatus = CalibrationStatus.CALIBRATED,
-                            lastCalibrationSessionPath = dir.absolutePath,
-                            calibrationResultPath = result.resultPath,
-                            calibrationResult = result.toJson(),
-                        )
-                    } else {
-                        profile.copy(
-                            calibrationStatus = CalibrationStatus.CAPTURED,
-                            lastCalibrationSessionPath = dir.absolutePath,
-                            calibrationResultPath = result.resultPath,
-                            calibrationResult = result.toJson(),
-                        )
-                    }
-
-                    profileStore.saveActiveProfile(updated)
-                    onSessionSaved(updated)
-
-                    message = if (result.status == "success") {
-                        "Calibration successful. RMS: ${String.format(Locale.US, "%.3f", result.stereoRms ?: 0.0)}. Profile saved as CALIBRATED."
-                    } else {
-                        "Calibration failed: ${result.errors.lastOrNull() ?: "unknown error"}. Capture more varied pairs and run again."
-                    }
-                }
-                .onFailure { error ->
-                    val updated = profile.copy(
-                        calibrationStatus = CalibrationStatus.CAPTURED,
-                        lastCalibrationSessionPath = dir.absolutePath,
-                    )
-                    profileStore.saveActiveProfile(updated)
-                    onSessionSaved(updated)
-                    message = "Calibration failed: ${error.message ?: error.javaClass.simpleName}. Capture more varied pairs and run again."
-                }
+            val updated = if (result.status == "success") {
+                profile.copy(
+                    calibrationStatus = CalibrationStatus.CALIBRATED,
+                    lastCalibrationSessionPath = dir.absolutePath,
+                    calibrationResultPath = result.resultPath,
+                    calibrationResult = result.toJson(),
+                )
+            } else {
+                profile.copy(
+                    calibrationStatus = CalibrationStatus.CAPTURED,
+                    lastCalibrationSessionPath = dir.absolutePath,
+                    calibrationResultPath = result.resultPath,
+                    calibrationResult = result.toJson(),
+                )
+            }
+            profileStore.saveActiveProfile(updated)
+            onSessionSaved(updated)
+            message = if (result.status == "success") {
+                "Calibration successful. RMS: ${String.format(Locale.US, "%.3f", result.stereoRms ?: 0.0)}. Profile saved as CALIBRATED."
+            } else {
+                "Calibration failed: ${result.errors.lastOrNull() ?: "unknown error"}. Capture more varied pairs and run again."
+            }
         }
     }
 
@@ -3351,14 +3332,12 @@ private fun CalibrationCaptureDialog(
         runCalibrationForSession(dir, runningMessage)
     }
 
-    fun maybeAutoRunCalibration(dir: File, nextIndex: Int): Boolean {
+    fun maybeAutoRunCalibration(dir: File, nextIndex: Int) {
         if (nextIndex >= settings.requiredPairs && !calibrationAutoStarted) {
             calibrationAutoStarted = true
             autoCapture = false
             saveCapturedAndRunCalibration(dir, "Required pairs captured. Running calibration...")
-            return true
         }
-        return false
     }
 
     LaunchedEffect(Unit) {
@@ -3392,18 +3371,11 @@ private fun CalibrationCaptureDialog(
             val cam1Name = "pair_${nextIndex.toString().padStart(4, '0')}_cam1.jpg"
             saveJpeg(cam0, File(pairsDir, cam0Name))
             saveJpeg(cam1, File(pairsDir, cam1Name))
-
-            File(dir, StereoCalibrationProcessor.RESULT_FILE).takeIf { it.exists() }?.delete()
-            calibrationAutoStarted = false
-
             appendCalibrationPairManifest(dir, nextIndex, "pairs/$cam0Name", "pairs/$cam1Name", cam0Result, cam1Result, settings.checkerboardInnerCols * settings.checkerboardInnerRows)
             pairCount = nextValidCount
             if (nextValidCount >= settings.requiredPairs) {
-                val started = maybeAutoRunCalibration(dir, nextValidCount)
-                if (!started) {
-                    autoCapture = false
-                    message = "Required pairs captured. Press Finish calibration."
-                }
+                message = "Required pairs captured. Running calibration..."
+                maybeAutoRunCalibration(dir, nextValidCount)
             } else {
                 message = "Captured valid pair $nextValidCount to ${dir.name}"
             }
