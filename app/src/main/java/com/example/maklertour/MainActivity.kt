@@ -3037,7 +3037,19 @@ private fun StereoCaptureExperimentalScreen(
                             scaleType = PreviewView.ScaleType.FILL_CENTER
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                             scope.launch {
-                                runCatching { manager.bindCam0Preview(this@apply, selectedCameraId, requestedZoomRatio) }
+                                runCatching {
+                                    val cam0Mode = activeProfile.cam0Mode
+                                    manager.bindCam0Preview(
+                                        previewView = this@apply,
+                                        cameraId = selectedCameraId,
+                                        zoomRatio = requestedZoomRatio,
+                                        calibrationWidth = cam0Mode?.width,
+                                        calibrationHeight = cam0Mode?.height,
+                                        videoWidth = cam0Mode?.width,
+                                        videoHeight = cam0Mode?.height,
+                                        videoFps = cam0Mode?.fps,
+                                    )
+                                }
                                     .onSuccess { status = if (it.success) "cam0 preview active" else "cam0 preview error: ${it.error}" }
                                     .onFailure { status = "cam0 preview error: ${it.message}" }
                             }

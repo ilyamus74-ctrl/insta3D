@@ -7,6 +7,7 @@ import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
+import android.util.Size
 import androidx.camera.core.Camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -55,10 +56,30 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     }
     private var minZoomRatio: Float? = null
     private var maxZoomRatio: Float? = null
+    private var requestedCalibrationWidth: Int? = null
+    private var requestedCalibrationHeight: Int? = null
+    private var actualCalibrationWidth: Int? = null
+    private var actualCalibrationHeight: Int? = null
+    private var loggedFirstCalibrationFrame = false
 
-    suspend fun bindPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float = lensRepository.getSelectedZoomRatio()): PhoneCameraBindResult {
+    suspend fun bindPreview(
+        previewView: PreviewView,
+        cameraId: String?,
+        zoomRatio: Float = lensRepository.getSelectedZoomRatio(),
+        calibrationWidth: Int? = null,
+        calibrationHeight: Int? = null,
+        videoWidth: Int? = calibrationWidth,
+        videoHeight: Int? = calibrationHeight,
+        videoFps: Int? = null,
+    ): PhoneCameraBindResult {
         requestedZoomRatio = zoomRatio
-        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio")
+        val requestedSize = requestedSize(calibrationWidth, calibrationHeight)
+        requestedCalibrationWidth = requestedSize?.width
+        requestedCalibrationHeight = requestedSize?.height
+        actualCalibrationWidth = null
+        actualCalibrationHeight = null
+        loggedFirstCalibrationFrame = false
+        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio requested_calibration=${requestedSize?.width}x${requestedSize?.height}")
         val cameraProvider = getCameraProvider()
         val preview = Preview.Builder().build()
         val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
@@ -68,19 +89,18 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         val lens = requestedLens ?: fallbackLens
         val selector = lensRepository.cameraSelectorFor(lens.cameraId)
         Log.d(TAG, "Phone camera bind: selected_camera_id=${lens.cameraId} lens=${lens.lensLabel}")
-        selectedVideoInfo = SelectedPhoneVideoInfo(width = 1280, height = 720, fps = null)
+        selectedVideoInfo = SelectedPhoneVideoInfo(width = videoWidth ?: requestedSize?.width ?: 1280, height = videoHeight ?: requestedSize?.height ?: 720, fps = videoFps)
         val preparedVideoCapture = VideoCapture.withOutput(recorder)
-        val analysis = buildCalibrationAnalysis()
         preview.setSurfaceProvider(previewView.surfaceProvider)
         val previousLens = selectedLensOption
         try {
             cameraProvider.unbindAll()
-            val camera = cameraProvider.bindToLifecycle(
-                lifecycleOwner,
-                selector,
-                preview,
-                preparedVideoCapture,
-                analysis,
+            val camera = bindWithCalibrationFallbacks(
+                cameraProvider = cameraProvider,
+                selector = selector,
+                preview = preview,
+                videoCapture = preparedVideoCapture,
+                requestedSize = requestedSize,
             )
             boundCamera = camera
             videoCapture = preparedVideoCapture
@@ -94,14 +114,13 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     val previousPreview = Preview.Builder().build()
                     val previousRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
                     val previousVideoCapture = VideoCapture.withOutput(previousRecorder)
-                    val previousAnalysis = buildCalibrationAnalysis()
                     previousPreview.setSurfaceProvider(previewView.surfaceProvider)
-                    val camera = cameraProvider.bindToLifecycle(
-                        lifecycleOwner,
-                        lensRepository.cameraSelectorFor(previousLens.cameraId),
-                        previousPreview,
-                        previousVideoCapture,
-                        previousAnalysis,
+                    val camera = bindWithCalibrationFallbacks(
+                        cameraProvider = cameraProvider,
+                        selector = lensRepository.cameraSelectorFor(previousLens.cameraId),
+                        preview = previousPreview,
+                        videoCapture = previousVideoCapture,
+                        requestedSize = requestedSize,
                     )
                     boundCamera = camera
                     videoCapture = previousVideoCapture
@@ -114,14 +133,13 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     val fallbackPreview = Preview.Builder().build()
                     val fallbackRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
                     val fallbackVideoCapture = VideoCapture.withOutput(fallbackRecorder)
-                    val fallbackAnalysis = buildCalibrationAnalysis()
                     fallbackPreview.setSurfaceProvider(previewView.surfaceProvider)
-                    val camera = cameraProvider.bindToLifecycle(
-                        lifecycleOwner,
-                        lensRepository.cameraSelectorFor(recoveryLens.cameraId),
-                        fallbackPreview,
-                        fallbackVideoCapture,
-                        fallbackAnalysis,
+                    val camera = bindWithCalibrationFallbacks(
+                        cameraProvider = cameraProvider,
+                        selector = lensRepository.cameraSelectorFor(recoveryLens.cameraId),
+                        preview = fallbackPreview,
+                        videoCapture = fallbackVideoCapture,
+                        requestedSize = requestedSize,
                     )
                     boundCamera = camera
                     videoCapture = fallbackVideoCapture
@@ -140,17 +158,63 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     fun getRecentCalibrationFrames(): List<CalibrationFrame> = recentCalibrationFrames.snapshot()
 
-    private fun buildCalibrationAnalysis(): ImageAnalysis = ImageAnalysis.Builder()
-        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-        .build()
-        .also { analyzer ->
-            analyzer.setAnalyzer(analysisExecutor) { imageProxy ->
-                updateLatestCalibrationFrame(imageProxy)
+    private fun bindWithCalibrationFallbacks(
+        cameraProvider: ProcessCameraProvider,
+        selector: androidx.camera.core.CameraSelector,
+        preview: Preview,
+        videoCapture: VideoCapture<Recorder>,
+        requestedSize: Size?,
+    ): Camera {
+        val sizes = buildList {
+            requestedSize?.let { add(it) }
+            add(Size(1280, 720))
+            add(Size(640, 480))
+        }.distinctBy { it.width to it.height }
+        var lastError: Throwable? = null
+        for (size in sizes) {
+            val analysis = buildCalibrationAnalysis(size.width, size.height)
+            try {
+                val camera = cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, videoCapture, analysis)
+                if (requestedSize != null && (size.width != requestedSize.width || size.height != requestedSize.height)) {
+                    Log.w(TAG, "cam0 calibration resolution fallback requested=${requestedSize.width}x${requestedSize.height} selected=${size.width}x${size.height}")
+                }
+                return camera
+            } catch (t: Throwable) {
+                lastError = t
+                runCatching { cameraProvider.unbindAll() }
+                if (requestedSize != null) {
+                    Log.w(TAG, "cam0 calibration bind failed requested=${requestedSize.width}x${requestedSize.height} selected=${size.width}x${size.height}: ${t.message}")
+                }
             }
         }
+        throw lastError ?: IllegalStateException("cam0 calibration bind failed")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun buildCalibrationAnalysis(width: Int?, height: Int?): ImageAnalysis {
+        val builder = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        if (width != null && height != null && width > 0 && height > 0) {
+            builder.setTargetResolution(Size(width, height))
+        }
+        return builder.build()
+            .also { analyzer ->
+                analyzer.setAnalyzer(analysisExecutor) { imageProxy ->
+                    updateLatestCalibrationFrame(imageProxy)
+                }
+            }
+    }
+
+    private fun requestedSize(width: Int?, height: Int?): Size? = if (width != null && height != null && width > 0 && height > 0) Size(width, height) else null
 
     private fun updateLatestCalibrationFrame(imageProxy: ImageProxy) {
         try {
+            if (!loggedFirstCalibrationFrame) {
+                loggedFirstCalibrationFrame = true
+                actualCalibrationWidth = imageProxy.width
+                actualCalibrationHeight = imageProxy.height
+                Log.d(TAG, "cam0 calibration analysis frame ${imageProxy.width}x${imageProxy.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight}")
+            }
             val bitmap = imageProxy.toNv21Bitmap() ?: return
             val timestampNs = imageProxy.imageInfo.timestamp
             synchronized(latestFrameLock) {
@@ -201,6 +265,13 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     }
 
     fun getSelectedVideoInfo(): SelectedPhoneVideoInfo? = selectedVideoInfo
+
+    fun getCalibrationResolutionInfo(): PhoneCalibrationResolutionInfo = PhoneCalibrationResolutionInfo(
+        requestedWidth = requestedCalibrationWidth,
+        requestedHeight = requestedCalibrationHeight,
+        actualWidth = actualCalibrationWidth,
+        actualHeight = actualCalibrationHeight,
+    )
 
     fun getSelectedLensOption(): PhoneCameraLensOption? = selectedLensOption
 

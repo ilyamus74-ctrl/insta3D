@@ -179,7 +179,7 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
 
     fun close() = usbAdapter.close()
 
-    suspend fun bindCam0Preview(previewView: PreviewView, cameraId: String?, zoomRatio: Float): PhoneCameraBindResult = phoneRecorder.bindPreview(previewView, cameraId, zoomRatio)
+    suspend fun bindCam0Preview(previewView: PreviewView, cameraId: String?, zoomRatio: Float, calibrationWidth: Int? = null, calibrationHeight: Int? = null, videoWidth: Int? = calibrationWidth, videoHeight: Int? = calibrationHeight, videoFps: Int? = null): PhoneCameraBindResult = phoneRecorder.bindPreview(previewView, cameraId, zoomRatio, calibrationWidth, calibrationHeight, videoWidth, videoHeight, videoFps)
 
     suspend fun start(orderId: String?, captureSessionId: String, config: StereoRigConfig): File {
         require(config.baselineMm > 0.0) { "baseline_mm must be > 0" }

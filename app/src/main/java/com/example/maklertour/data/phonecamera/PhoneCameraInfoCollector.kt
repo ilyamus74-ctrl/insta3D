@@ -12,7 +12,7 @@ import java.time.Instant
 class PhoneCameraInfoCollector(private val context: Context) {
     private val lensRepository = PhoneCameraLensRepository(context)
 
-    fun writeCameraInfo(baseDir: File, selectedVideoInfo: SelectedPhoneVideoInfo? = null, selectedLens: PhoneCameraLensOption? = null, requestedZoomRatio: Float = 1.0f, effectiveZoomRatio: Float = requestedZoomRatio, minZoomRatio: Float? = null, maxZoomRatio: Float? = null): File {
+    fun writeCameraInfo(baseDir: File, selectedVideoInfo: SelectedPhoneVideoInfo? = null, selectedLens: PhoneCameraLensOption? = null, requestedZoomRatio: Float = 1.0f, effectiveZoomRatio: Float = requestedZoomRatio, minZoomRatio: Float? = null, maxZoomRatio: Float? = null, calibrationResolutionInfo: PhoneCalibrationResolutionInfo? = null): File {
         val lens = selectedLens ?: lensRepository.selectedOrDefault().first
         val manager = context.getSystemService(CameraManager::class.java)
         val chars = manager.getCameraCharacteristics(lens.cameraId)
@@ -38,7 +38,7 @@ class PhoneCameraInfoCollector(private val context: Context) {
             .put("fps", selectedVideoInfo?.fps ?: JSONObject.NULL)
             .put("stabilization_mode", JSONObject.NULL)
             .put("zoom_warning", if (kotlin.math.abs(requestedZoomRatio - effectiveZoomRatio) > 0.01f) "requested ${zoomPresetLabel(requestedZoomRatio)} but CameraX applied ${zoomPresetLabel(effectiveZoomRatio)}" else JSONObject.NULL)
-            .put("camera", lens.toJson(selectedVideoInfo, requestedZoomRatio = requestedZoomRatio, effectiveZoomRatio = effectiveZoomRatio, minZoomRatioOverride = minZoomRatio, maxZoomRatioOverride = maxZoomRatio))
+            .put("camera", lens.toJson(selectedVideoInfo, requestedZoomRatio = requestedZoomRatio, effectiveZoomRatio = effectiveZoomRatio, minZoomRatioOverride = minZoomRatio, maxZoomRatioOverride = maxZoomRatio, calibrationResolutionInfo = calibrationResolutionInfo))
             .put("camera_id", lens.cameraId)
             .put("lens_facing", lens.lensFacing)
             .put("focal_lengths_mm", JSONArray(lens.focalLengthsMm))
@@ -47,6 +47,10 @@ class PhoneCameraInfoCollector(private val context: Context) {
             .put("selected_video_width", selectedVideoInfo?.width ?: JSONObject.NULL)
             .put("selected_video_height", selectedVideoInfo?.height ?: JSONObject.NULL)
             .put("selected_fps", selectedVideoInfo?.fps ?: JSONObject.NULL)
+            .put("requested_calibration_width", calibrationResolutionInfo?.requestedWidth ?: JSONObject.NULL)
+            .put("requested_calibration_height", calibrationResolutionInfo?.requestedHeight ?: JSONObject.NULL)
+            .put("actual_calibration_width", calibrationResolutionInfo?.actualWidth ?: JSONObject.NULL)
+            .put("actual_calibration_height", calibrationResolutionInfo?.actualHeight ?: JSONObject.NULL)
             .put("supported_resolutions", JSONArray(lens.supportedVideoSizes.map { JSONObject().put("width", it.width).put("height", it.height) }))
             .put("supported_fps", JSONArray(lens.supportedFpsRanges.map { JSONObject().put("lower", it.lower).put("upper", it.upper) }))
             .put("available_target_fps_ranges", JSONArray(lens.supportedFpsRanges.map { JSONObject().put("lower", it.lower).put("upper", it.upper) }))

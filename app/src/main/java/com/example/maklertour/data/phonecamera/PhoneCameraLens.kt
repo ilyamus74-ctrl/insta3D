@@ -26,6 +26,13 @@ data class SelectedPhoneVideoInfo(
     val fps: Int?,
 )
 
+data class PhoneCalibrationResolutionInfo(
+    val requestedWidth: Int?,
+    val requestedHeight: Int?,
+    val actualWidth: Int?,
+    val actualHeight: Int?,
+)
+
 data class PhoneCameraLensOption(
     val cameraId: String,
     val lensFacing: String,
@@ -179,7 +186,7 @@ class PhoneCameraLensRepository(private val context: Context) {
 }
 
 
-fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = null, stabilizationMode: String? = null, requestedZoomRatio: Float = 1.0f, effectiveZoomRatio: Float = requestedZoomRatio, minZoomRatioOverride: Float? = null, maxZoomRatioOverride: Float? = null): JSONObject = JSONObject()
+fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = null, stabilizationMode: String? = null, requestedZoomRatio: Float = 1.0f, effectiveZoomRatio: Float = requestedZoomRatio, minZoomRatioOverride: Float? = null, maxZoomRatioOverride: Float? = null, calibrationResolutionInfo: PhoneCalibrationResolutionInfo? = null): JSONObject = JSONObject()
     .put("selected_camera_id", cameraId)
     .put("camera_id", cameraId)
     .put("lens_label", lensLabel)
@@ -200,6 +207,10 @@ fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = nu
     .put("approximate_fov_deg", approximateFovDeg?.let { JSONObject().put("horizontal", it.horizontal).put("vertical", it.vertical) } ?: JSONObject.NULL)
     .put("resolution", JSONObject().put("width", selectedVideoInfo?.width ?: JSONObject.NULL).put("height", selectedVideoInfo?.height ?: JSONObject.NULL))
     .put("fps", selectedVideoInfo?.fps ?: JSONObject.NULL)
+    .put("requested_calibration_width", calibrationResolutionInfo?.requestedWidth ?: JSONObject.NULL)
+    .put("requested_calibration_height", calibrationResolutionInfo?.requestedHeight ?: JSONObject.NULL)
+    .put("actual_calibration_width", calibrationResolutionInfo?.actualWidth ?: JSONObject.NULL)
+    .put("actual_calibration_height", calibrationResolutionInfo?.actualHeight ?: JSONObject.NULL)
     .put("stabilization_mode", stabilizationMode ?: JSONObject.NULL)
     .put("timestamp", Instant.now().toString())
 
