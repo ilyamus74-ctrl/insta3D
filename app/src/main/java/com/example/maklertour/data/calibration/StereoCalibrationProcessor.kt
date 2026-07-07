@@ -23,9 +23,13 @@ import kotlin.math.max
 
 class StereoCalibrationProcessor(
     private val minPairs: Int = 10,
-    private val defaultStereoRmsThresholdPx: Double = 2.0,
-    private val defaultIntrinsicsRmsThresholdPx: Double = 3.0,
+    private val defaultStereoRmsThresholdPx: Double = DEFAULT_STEREO_RMS_THRESHOLD_PX,
+    private val defaultIntrinsicsRmsThresholdPx: Double = DEFAULT_INTRINSICS_RMS_THRESHOLD_PX,
 ) {
+    companion object {
+        const val DEFAULT_STEREO_RMS_THRESHOLD_PX: Double = 2.0
+        const val DEFAULT_INTRINSICS_RMS_THRESHOLD_PX: Double = 3.0
+    }
     fun run(sessionDir: File, stereoRmsThresholdPx: Double = defaultStereoRmsThresholdPx): StereoCalibrationResult = runStereoExtrinsics(sessionDir, stereoRmsThresholdPx)
 
     fun runCam0Intrinsics(sessionDir: File, intrinsicsRmsThresholdPx: Double = defaultIntrinsicsRmsThresholdPx): StereoCalibrationResult =

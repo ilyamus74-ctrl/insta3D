@@ -3181,8 +3181,11 @@ private enum class CalibrationWizardState {
     PROCESSING_CAM0,
     CAPTURING_CAM1,
     PROCESSING_CAM1,
+    CAM0_RESULT,
+    CAM1_RESULT,
     CAPTURING_STEREO,
     PROCESSING_STEREO,
+    STEREO_RESULT,
     SUCCESS,
     FAILED,
 }
@@ -3211,6 +3214,10 @@ private fun CalibrationCaptureDialog(
     var workflowMode by remember { mutableStateOf(CalibrationWorkflowMode.CAM0_INTRINSICS) }
     var wizardState by remember { mutableStateOf(CalibrationWizardState.IDLE) }
     var failedStep by remember { mutableStateOf<CalibrationWorkflowMode?>(null) }
+    var lastStepResultMode by remember { mutableStateOf<CalibrationWorkflowMode?>(null) }
+    var lastStepPassed by remember { mutableStateOf<Boolean?>(null) }
+    var lastStepRms by remember { mutableStateOf<Double?>(null) }
+    var continueCountdownSeconds by remember { mutableStateOf<Int?>(null) }
     var lastCalibrationResult by remember { mutableStateOf<StereoCalibrationResult?>(null) }
     var lastCam0PreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var lastCam1PreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -3225,9 +3232,9 @@ private fun CalibrationCaptureDialog(
         wizardState == CalibrationWizardState.CAPTURING_CAM1 ||
         wizardState == CalibrationWizardState.CAPTURING_STEREO
     val stepTitle = when (wizardState) {
-        CalibrationWizardState.CAPTURING_CAM0, CalibrationWizardState.PROCESSING_CAM0 -> "Step 1 / 3: Calibrating phone camera"
-        CalibrationWizardState.CAPTURING_CAM1, CalibrationWizardState.PROCESSING_CAM1 -> "Step 2 / 3: Calibrating USB camera"
-        CalibrationWizardState.CAPTURING_STEREO, CalibrationWizardState.PROCESSING_STEREO -> "Step 3 / 3: Calibrating stereo rig"
+        CalibrationWizardState.CAPTURING_CAM0, CalibrationWizardState.PROCESSING_CAM0, CalibrationWizardState.CAM0_RESULT -> "Step 1 / 3: Phone camera result"
+        CalibrationWizardState.CAPTURING_CAM1, CalibrationWizardState.PROCESSING_CAM1, CalibrationWizardState.CAM1_RESULT -> "Step 2 / 3: USB camera result"
+        CalibrationWizardState.CAPTURING_STEREO, CalibrationWizardState.PROCESSING_STEREO, CalibrationWizardState.STEREO_RESULT -> "Step 3 / 3: Stereo calibration result"
         CalibrationWizardState.SUCCESS -> "Calibration successful"
         CalibrationWizardState.FAILED -> "Calibration failed"
         CalibrationWizardState.IDLE -> "Camera calibration"
@@ -3239,6 +3246,7 @@ private fun CalibrationCaptureDialog(
         CalibrationWizardState.PROCESSING_CAM0 -> "Processing cam0 intrinsics... Please wait."
         CalibrationWizardState.PROCESSING_CAM1 -> "Processing cam1 intrinsics... Please wait."
         CalibrationWizardState.PROCESSING_STEREO -> "Processing stereo calibration... Please wait."
+        CalibrationWizardState.CAM0_RESULT, CalibrationWizardState.CAM1_RESULT, CalibrationWizardState.STEREO_RESULT -> message
         CalibrationWizardState.IDLE -> "This will calibrate phone camera, USB camera, then stereo rig."
         CalibrationWizardState.SUCCESS -> "Profile saved."
         CalibrationWizardState.FAILED -> message
@@ -3249,6 +3257,21 @@ private fun CalibrationCaptureDialog(
         CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Capture stereo pair"
     }
     val calibrationFinished = wizardState == CalibrationWizardState.SUCCESS
+    val intrinsicsThresholdPx = StereoCalibrationProcessor.DEFAULT_INTRINSICS_RMS_THRESHOLD_PX
+    val stereoThresholdPx = StereoCalibrationProcessor.DEFAULT_STEREO_RMS_THRESHOLD_PX
+
+    fun rmsFor(result: StereoCalibrationResult?, mode: CalibrationWorkflowMode?): Double? = when (mode) {
+        CalibrationWorkflowMode.CAM0_INTRINSICS -> result?.cam0Rms
+        CalibrationWorkflowMode.CAM1_INTRINSICS -> result?.cam1Rms
+        CalibrationWorkflowMode.STEREO_EXTRINSICS -> result?.stereoRms
+        null -> null
+    }
+
+    fun thresholdFor(mode: CalibrationWorkflowMode?): Double? = when (mode) {
+        CalibrationWorkflowMode.CAM0_INTRINSICS, CalibrationWorkflowMode.CAM1_INTRINSICS -> intrinsicsThresholdPx
+        CalibrationWorkflowMode.STEREO_EXTRINSICS -> stereoThresholdPx
+        null -> null
+    }
 
     fun readManifestPairs(dir: File): JSONArray? = runCatching {
         val manifest = File(dir, "pairs_manifest.json")
@@ -3432,11 +3455,12 @@ private fun CalibrationCaptureDialog(
     }
 
     fun saveCapturedSession(dir: File): StereoRigProfile {
+        val keepActiveCalibration = profile.calibrationStatus == CalibrationStatus.CALIBRATED
         val updated = profile.copy(
-            calibrationStatus = CalibrationStatus.CAPTURED,
+            calibrationStatus = if (keepActiveCalibration) CalibrationStatus.CALIBRATED else CalibrationStatus.CAPTURED,
             lastCalibrationSessionPath = dir.absolutePath,
-            calibrationResultPath = null,
-            calibrationResult = null,
+            calibrationResultPath = if (keepActiveCalibration) profile.calibrationResultPath else null,
+            calibrationResult = if (keepActiveCalibration) profile.calibrationResult else null,
         )
         profileStore.saveActiveProfile(updated)
         onSessionSaved(updated)
@@ -3497,6 +3521,22 @@ private fun CalibrationCaptureDialog(
 
     fun resultError(result: StereoCalibrationResult?): String = result?.errors?.lastOrNull()?.takeIf { it.isNotBlank() } ?: "Unknown error"
 
+    fun resultStateFor(mode: CalibrationWorkflowMode): CalibrationWizardState = when (mode) {
+        CalibrationWorkflowMode.CAM0_INTRINSICS -> CalibrationWizardState.CAM0_RESULT
+        CalibrationWorkflowMode.CAM1_INTRINSICS -> CalibrationWizardState.CAM1_RESULT
+        CalibrationWorkflowMode.STEREO_EXTRINSICS -> CalibrationWizardState.STEREO_RESULT
+    }
+
+    fun continueTo(mode: CalibrationWorkflowMode) {
+        workflowMode = mode
+        pairCount = 0
+        wizardState = capturingStateFor(mode)
+        message = startMessageFor(mode)
+        continueCountdownSeconds = null
+        lastStepPassed = null
+        lastStepRms = null
+    }
+
     fun runCalibrationForSession(dir: File, modeAtStart: CalibrationWorkflowMode = workflowMode) {
         if (calibrationRunning) return
         calibrationRunning = true
@@ -3519,20 +3559,22 @@ private fun CalibrationCaptureDialog(
             runResult
                 .onSuccess { result ->
                     lastCalibrationResult = result
-                    if (result.status == "success") {
+                    val passed = result.status == "success"
+                    lastStepResultMode = modeAtStart
+                    lastStepPassed = passed
+                    lastStepRms = rmsFor(result, modeAtStart)
+                    continueCountdownSeconds = null
+                    if (passed) {
                         failedStep = null
+                        wizardState = resultStateFor(modeAtStart)
                         when (modeAtStart) {
                             CalibrationWorkflowMode.CAM0_INTRINSICS -> {
-                                workflowMode = CalibrationWorkflowMode.CAM1_INTRINSICS
-                                pairCount = 0
-                                wizardState = CalibrationWizardState.CAPTURING_CAM1
-                                message = startMessageFor(CalibrationWorkflowMode.CAM1_INTRINSICS)
+                                message = "Phone camera calibration passed"
+                                continueCountdownSeconds = 3
                             }
                             CalibrationWorkflowMode.CAM1_INTRINSICS -> {
-                                workflowMode = CalibrationWorkflowMode.STEREO_EXTRINSICS
-                                pairCount = 0
-                                wizardState = CalibrationWizardState.CAPTURING_STEREO
-                                message = startMessageFor(CalibrationWorkflowMode.STEREO_EXTRINSICS)
+                                message = "USB camera calibration passed"
+                                continueCountdownSeconds = 3
                             }
                             CalibrationWorkflowMode.STEREO_EXTRINSICS -> {
                                 val updated = profile.copy(
@@ -3543,14 +3585,18 @@ private fun CalibrationCaptureDialog(
                                 )
                                 profileStore.saveActiveProfile(updated)
                                 onSessionSaved(updated)
-                                wizardState = CalibrationWizardState.SUCCESS
-                                message = "Profile saved."
+                                wizardState = CalibrationWizardState.STEREO_RESULT
+                                message = "Stereo calibration passed"
                             }
                         }
                     } else {
                         failedStep = modeAtStart
-                        wizardState = CalibrationWizardState.FAILED
-                        message = "${modeAtStart.label} failed: ${resultError(result)}"
+                        wizardState = resultStateFor(modeAtStart)
+                        message = when (modeAtStart) {
+                            CalibrationWorkflowMode.CAM0_INTRINSICS -> "Phone camera calibration failed"
+                            CalibrationWorkflowMode.CAM1_INTRINSICS -> "USB camera calibration failed"
+                            CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Stereo calibration failed"
+                        }
                     }
                     calibrationAutoStarted = false
                     cam0Detection = null
@@ -3559,10 +3605,18 @@ private fun CalibrationCaptureDialog(
                 .onFailure { error ->
                     lastCalibrationResult = null
                     failedStep = modeAtStart
-                    wizardState = CalibrationWizardState.FAILED
-                    message = "${modeAtStart.label} failed: ${error.message ?: error.javaClass.simpleName}"
+                    lastStepResultMode = modeAtStart
+                    lastStepPassed = false
+                    lastStepRms = null
+                    continueCountdownSeconds = null
+                    wizardState = resultStateFor(modeAtStart)
+                    message = when (modeAtStart) {
+                        CalibrationWorkflowMode.CAM0_INTRINSICS -> "Phone camera calibration failed"
+                        CalibrationWorkflowMode.CAM1_INTRINSICS -> "USB camera calibration failed"
+                        CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Stereo calibration failed"
+                    }
                     val updated = profile.copy(
-                        calibrationStatus = CalibrationStatus.CAPTURED,
+                        calibrationStatus = if (profile.calibrationStatus == CalibrationStatus.CALIBRATED) CalibrationStatus.CALIBRATED else CalibrationStatus.CAPTURED,
                         lastCalibrationSessionPath = dir.absolutePath,
                     )
                     profileStore.saveActiveProfile(updated)
@@ -3585,6 +3639,10 @@ private fun CalibrationCaptureDialog(
         calibrationAutoStarted = false
         failedStep = null
         lastCalibrationResult = null
+        lastStepResultMode = null
+        lastStepPassed = null
+        lastStepRms = null
+        continueCountdownSeconds = null
         cam0Detection = null
         cam1Detection = null
         workflowMode = CalibrationWorkflowMode.CAM0_INTRINSICS
@@ -3600,6 +3658,10 @@ private fun CalibrationCaptureDialog(
         calibrationAutoStarted = false
         failedStep = null
         lastCalibrationResult = null
+        lastStepResultMode = null
+        lastStepPassed = null
+        lastStepRms = null
+        continueCountdownSeconds = null
         sessionDir?.let { dir ->
             when (step) {
                 CalibrationWorkflowMode.CAM0_INTRINSICS -> {
@@ -3700,6 +3762,26 @@ private fun CalibrationCaptureDialog(
         }
     }
 
+
+    LaunchedEffect(wizardState, continueCountdownSeconds) {
+        val mode = lastStepResultMode
+        if (lastStepPassed == true && continueCountdownSeconds != null && mode != null) {
+            var remaining = continueCountdownSeconds ?: 0
+            while (remaining > 0 && lastStepPassed == true && lastStepResultMode == mode) {
+                delay(1_000)
+                remaining -= 1
+                continueCountdownSeconds = remaining
+            }
+            if (lastStepPassed == true && lastStepResultMode == mode && remaining <= 0) {
+                when (mode) {
+                    CalibrationWorkflowMode.CAM0_INTRINSICS -> continueTo(CalibrationWorkflowMode.CAM1_INTRINSICS)
+                    CalibrationWorkflowMode.CAM1_INTRINSICS -> continueTo(CalibrationWorkflowMode.STEREO_EXTRINSICS)
+                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> Unit
+                }
+            }
+        }
+    }
+
     LaunchedEffect(workflowMode) {
         while (true) {
             val needsCam0 = workflowMode != CalibrationWorkflowMode.CAM1_INTRINSICS
@@ -3765,16 +3847,33 @@ private fun CalibrationCaptureDialog(
                             Text(detectionText, color = Color.White)
                             if (message.isNotBlank()) Text(message, color = Color.White)
                         }
-                        if (wizardState == CalibrationWizardState.FAILED) {
-                            val result = lastCalibrationResult
-                            Text("Failed step: ${failedStep?.label ?: workflowMode.label}", color = Color.White)
-                            result?.stereoRms?.let { Text("RMS: ${String.format(Locale.US, "%.3f", it)} px", color = Color.White) }
-                            Text("Reason: ${resultError(result)}", color = Color.White)
-                        }
-                        if (wizardState == CalibrationWizardState.SUCCESS) {
-                            val rms = lastCalibrationResult?.stereoRms ?: profile.calibrationResult?.optDouble("stereo_rms", Double.NaN)
-                            if (rms != null && !rms.isNaN()) Text("Stereo RMS: ${String.format(Locale.US, "%.3f", rms)} px", color = Color.White)
-                            Text("Profile saved.", color = Color.White)
+                        if (wizardState == CalibrationWizardState.CAM0_RESULT || wizardState == CalibrationWizardState.CAM1_RESULT || wizardState == CalibrationWizardState.STEREO_RESULT) {
+                            val resultMode = lastStepResultMode
+                            val passed = lastStepPassed == true
+                            val rms = lastStepRms
+                            Text(if (passed) "PASSED" else "FAILED", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                            Text(message, color = Color.White)
+                            rms?.let { Text("RMS: ${String.format(Locale.US, "%.3f", it)} px", color = Color.White) }
+                            if (!passed) thresholdFor(resultMode)?.let { Text("Required: <= ${String.format(Locale.US, "%.1f", it)} px", color = Color.White) }
+                            if (passed && resultMode == CalibrationWorkflowMode.CAM0_INTRINSICS) {
+                                Text("Continuing to USB camera in ${continueCountdownSeconds ?: 0} seconds...", color = Color.White)
+                            }
+                            if (passed && resultMode == CalibrationWorkflowMode.CAM1_INTRINSICS) {
+                                Text("Continuing to stereo calibration in ${continueCountdownSeconds ?: 0} seconds...", color = Color.White)
+                            }
+                            if (resultMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+                                if (passed) {
+                                    Text("Calibration applied to profile.", color = Color.White)
+                                    Text("Profile status: CALIBRATED.", color = Color.White)
+                                } else {
+                                    Text("This calibration was NOT applied to profile.", color = Color.White)
+                                    if (profile.calibrationStatus == CalibrationStatus.CALIBRATED) {
+                                        Text("Previous successful calibration remains active.", color = Color.White)
+                                    } else {
+                                        Text("No valid stereo calibration is active.", color = Color.White)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -3794,10 +3893,34 @@ private fun CalibrationCaptureDialog(
                     when (wizardState) {
                         CalibrationWizardState.IDLE -> Button(onClick = { startNewCalibrationSession() }, modifier = Modifier.fillMaxWidth()) { Text("Start calibration") }
                         CalibrationWizardState.SUCCESS -> Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
-                        CalibrationWizardState.FAILED -> {
-                            Button(onClick = { retryCurrentStep() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Retry current step") }
-                            Button(onClick = { startNewCalibrationSession() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Start new calibration") }
-                            Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+                        CalibrationWizardState.FAILED -> Unit
+                        CalibrationWizardState.CAM0_RESULT, CalibrationWizardState.CAM1_RESULT, CalibrationWizardState.STEREO_RESULT -> {
+                            val resultMode = lastStepResultMode ?: workflowMode
+                            val retryLabel = when (resultMode) {
+                                CalibrationWorkflowMode.CAM0_INTRINSICS -> "Retry phone camera"
+                                CalibrationWorkflowMode.CAM1_INTRINSICS -> "Retry USB camera"
+                                CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Retry stereo calibration"
+                            }
+                            if (lastStepPassed == true && resultMode != CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+                                Button(onClick = { retryCurrentStep() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text(retryLabel) }
+                                Button(
+                                    onClick = {
+                                        when (resultMode) {
+                                            CalibrationWorkflowMode.CAM0_INTRINSICS -> continueTo(CalibrationWorkflowMode.CAM1_INTRINSICS)
+                                            CalibrationWorkflowMode.CAM1_INTRINSICS -> continueTo(CalibrationWorkflowMode.STEREO_EXTRINSICS)
+                                            CalibrationWorkflowMode.STEREO_EXTRINSICS -> Unit
+                                        }
+                                    },
+                                    enabled = !calibrationRunning,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) { Text("Continue now") }
+                            } else if (lastStepPassed == true && resultMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+                                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+                            } else {
+                                Button(onClick = { retryCurrentStep() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text(retryLabel) }
+                                Button(onClick = { startNewCalibrationSession() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Start new calibration") }
+                                Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+                            }
                         }
                         CalibrationWizardState.CAPTURING_CAM0, CalibrationWizardState.CAPTURING_CAM1, CalibrationWizardState.CAPTURING_STEREO -> {
                             Button(
