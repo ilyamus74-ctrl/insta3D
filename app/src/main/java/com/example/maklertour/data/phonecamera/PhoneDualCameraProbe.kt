@@ -131,7 +131,7 @@ class PhoneDualCameraProbe(private val context: Context) {
         var deviceA: CameraDevice? = null; var deviceB: CameraDevice? = null
         var sessionA: CameraCaptureSession? = null; var sessionB: CameraCaptureSession? = null
         val json = JSONObject().put("attempted", true).put("cameraIds", JSONArray(listOf(a, b)))
-        return try {
+        try {
             deviceA = openCamera(a, handler); deviceB = openCamera(b, handler)
             sessionA = createSession(deviceA, readerA, executor, handler); sessionB = createSession(deviceB, readerB, executor, handler)
             startRepeating(deviceA, sessionA, readerA); startRepeating(deviceB, sessionB, readerB)
