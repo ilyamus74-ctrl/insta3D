@@ -3304,6 +3304,39 @@ private fun CalibrationCaptureDialog(
             )
     }
 
+    fun existingCalibrationResultMessage(dir: File): String? = runCatching {
+        val resultFile = File(dir, StereoCalibrationProcessor.RESULT_FILE).takeIf { it.exists() }
+            ?: File(dir, StereoCalibrationProcessor.STEREO_EXTRINSICS_FILE).takeIf { it.exists() }
+            ?: return@runCatching null
+        val result = JSONObject(resultFile.readText())
+        when (result.optString("status")) {
+            "success" -> {
+                val hasAllStages = intrinsicsStatus(dir, StereoCalibrationProcessor.CAM0_INTRINSICS_FILE) == "success" &&
+                    intrinsicsStatus(dir, StereoCalibrationProcessor.CAM1_INTRINSICS_FILE) == "success" &&
+                    result.optString("status") == "success"
+                if (hasAllStages) {
+                    val updated = profile.copy(
+                        calibrationStatus = CalibrationStatus.CALIBRATED,
+                        lastCalibrationSessionPath = dir.absolutePath,
+                        calibrationResultPath = resultFile.absolutePath,
+                        calibrationResult = result,
+                    )
+                    profileStore.saveActiveProfile(updated)
+                    onSessionSaved(updated)
+                    "Calibration already successful. RMS: ${String.format(Locale.US, "%.3f", result.optDouble("stereo_rms", 0.0))}. Profile saved as CALIBRATED."
+                } else {
+                    "Stereo calibration result is successful. Complete cam0 and cam1 intrinsics before profile becomes CALIBRATED."
+                }
+            }
+            "failed" -> {
+                val errors = result.optJSONArray("errors")
+                val lastError = errors?.optString((errors.length() - 1).coerceAtLeast(0))?.takeIf { it.isNotBlank() } ?: "unknown error"
+                "Previous calibration failed: $lastError."
+            }
+            else -> null
+        }
+    }.getOrNull()
+
     fun intrinsicsStatus(dir: File, fileName: String): String = runCatching {
         val file = File(dir, fileName)
         if (!file.exists()) return@runCatching "missing"
@@ -3340,39 +3373,6 @@ private fun CalibrationCaptureDialog(
     fun stereoInputsReady(dir: File?): Boolean = dir != null &&
         intrinsicsStatus(dir, StereoCalibrationProcessor.CAM0_INTRINSICS_FILE) == "success" &&
         intrinsicsStatus(dir, StereoCalibrationProcessor.CAM1_INTRINSICS_FILE) == "success"
-
-    fun existingCalibrationResultMessage(dir: File): String? = runCatching {
-        val resultFile = File(dir, StereoCalibrationProcessor.RESULT_FILE).takeIf { it.exists() }
-            ?: File(dir, StereoCalibrationProcessor.STEREO_EXTRINSICS_FILE).takeIf { it.exists() }
-            ?: return@runCatching null
-        val result = JSONObject(resultFile.readText())
-        when (result.optString("status")) {
-            "success" -> {
-                val hasAllStages = intrinsicsStatus(dir, StereoCalibrationProcessor.CAM0_INTRINSICS_FILE) == "success" &&
-                    intrinsicsStatus(dir, StereoCalibrationProcessor.CAM1_INTRINSICS_FILE) == "success" &&
-                    result.optString("status") == "success"
-                if (hasAllStages) {
-                    val updated = profile.copy(
-                        calibrationStatus = CalibrationStatus.CALIBRATED,
-                        lastCalibrationSessionPath = dir.absolutePath,
-                        calibrationResultPath = resultFile.absolutePath,
-                        calibrationResult = result,
-                    )
-                    profileStore.saveActiveProfile(updated)
-                    onSessionSaved(updated)
-                    "Calibration already successful. RMS: ${String.format(Locale.US, "%.3f", result.optDouble("stereo_rms", 0.0))}. Profile saved as CALIBRATED."
-                } else {
-                    "Stereo calibration result is successful. Complete cam0 and cam1 intrinsics before profile becomes CALIBRATED."
-                }
-            }
-            "failed" -> {
-                val errors = result.optJSONArray("errors")
-                val lastError = errors?.optString((errors.length() - 1).coerceAtLeast(0))?.takeIf { it.isNotBlank() } ?: "unknown error"
-                "Previous calibration failed: $lastError."
-            }
-            else -> null
-        }
-    }.getOrNull()
 
     fun createNewSessionDir(): File {
         val createdAt = utcNowIso8601()
