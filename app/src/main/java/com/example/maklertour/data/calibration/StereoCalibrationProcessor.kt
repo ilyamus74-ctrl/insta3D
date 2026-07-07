@@ -279,8 +279,8 @@ class StereoCalibrationProcessor(
 
     private fun cornerOrderVariants(rows: Int, cols: Int): List<String> = listOf("normal", "reverse_all", "flip_rows", "flip_columns", "rotate_180")
 
-    private fun transformCornerOrder(points: MatOfPoint2f, rows: Int, cols: Int, variant: String): MatOfPoint2f {
-        val source = points.toArray().toList()
+    private fun transformCornerOrder(points: Mat, rows: Int, cols: Int, variant: String): Mat {
+        val source = MatOfPoint2f(points).toArray().toList()
         val transformed = when (variant) {
             "normal" -> source
             "reverse_all" -> source.asReversed()
