@@ -94,6 +94,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import com.maklertour.data.phonecamera.CalibrationFrame
+import com.maklertour.data.phonecamera.StereoCalibrationFramePair
 import com.maklertour.data.phonecamera.PhoneCameraBindResult
 import com.maklertour.data.phonecamera.PhoneCameraLensOption
 import com.maklertour.data.phonecamera.PhoneCameraLensRepository
@@ -3190,6 +3191,7 @@ private fun StereoCaptureExperimentalScreen(
             cam1BitmapProvider = { cam1TextureView?.bitmap },
             cam0LatestFrameProvider = { manager.getLatestCam0CalibrationFrame() },
             cam1LatestFrameProvider = { manager.getLatestCam1CalibrationFrame() },
+            stereoFramePairProvider = { manager.getNearestStereoCalibrationFrames(30) },
             onDismiss = { showCalibrationCapture = false },
             onSessionSaved = { updatedProfile -> activeProfile = updatedProfile },
             cam1CalibrationModeWarning = if ((activeProfile.cam1Mode?.width ?: 0) >= 1280 || (activeProfile.cam1Mode?.height ?: 0) >= 720) "For calibration prefer MJPEG 640x480@30; current cam1 mode may drop preview frames." else null,
@@ -3234,6 +3236,7 @@ private fun CalibrationCaptureDialog(
     cam1BitmapProvider: () -> Bitmap?,
     cam0LatestFrameProvider: () -> CalibrationFrame?,
     cam1LatestFrameProvider: () -> CalibrationFrame?,
+    stereoFramePairProvider: () -> StereoCalibrationFramePair?,
     onDismiss: () -> Unit,
     onSessionSaved: (StereoRigProfile) -> Unit,
     cam1CalibrationModeWarning: String? = null,
@@ -3779,8 +3782,25 @@ private fun CalibrationCaptureDialog(
         val needsCam1 = workflowMode != CalibrationWorkflowMode.CAM0_INTRINSICS
 
         val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
-        val cam0Latest = if (needsCam0) cam0LatestFrameProvider() else null
-        val cam1Latest = if (needsCam1) cam1LatestFrameProvider() else null
+        val stereoPair = if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) stereoFramePairProvider() else null
+        if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS && stereoPair == null) {
+            Log.i("CalibrationCapture", "rejected stereo capture: no nearest pair <=30ms")
+            message = "No synchronized stereo frame pair <=30ms; hold board still and repeat capture."
+            return false
+        }
+        if (stereoPair != null) {
+            Log.i("CalibrationCapture", "selected nearest pair seq0=${stereoPair.cam0.sequence} seq1=${stereoPair.cam1.sequence} deltaMs=${stereoPair.deltaMs} age0=${stereoPair.cam0.ageMs(nowNs)} age1=${stereoPair.cam1.ageMs(nowNs)}")
+        }
+        val cam0Latest = when {
+            workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS -> stereoPair?.cam0
+            needsCam0 -> cam0LatestFrameProvider()
+            else -> null
+        }
+        val cam1Latest = when {
+            workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS -> stereoPair?.cam1
+            needsCam1 -> cam1LatestFrameProvider()
+            else -> null
+        }
         val cam0 = cam0Latest?.bitmap
         val cam1 = cam1Latest?.bitmap
 
@@ -3794,14 +3814,6 @@ private fun CalibrationCaptureDialog(
             message = "Latest frame is stale (cam0_age=${cam0AgeMs ?: "n/a"}ms, cam1_age=${cam1AgeMs ?: "n/a"}ms). Repeat capture."
             return false
         }
-        if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS && cam0Latest != null && cam1Latest != null) {
-            val deltaMs = kotlin.math.abs(cam0Latest.timestampNs - cam1Latest.timestampNs) / 1_000_000L
-            if (deltaMs > 100L) {
-                message = "Stereo frames are unsynced (cam0_age=${cam0AgeMs}ms, cam1_age=${cam1AgeMs}ms, delta=${deltaMs}ms). Repeat capture."
-                return false
-            }
-        }
-
         val cam0Result = if (needsCam0 && cam0 != null) detector.detect(cam0, settings) else null
         val cam1Result = if (needsCam1 && cam1 != null) detector.detect(cam1, settings) else null
         cam0Detection = cam0Result
@@ -3865,6 +3877,8 @@ private fun CalibrationCaptureDialog(
                 captureSource = "latest_frame_buffer",
                 cam0Frame = cam0Latest,
                 cam1Frame = cam1Latest,
+                stereoPairSelection = if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) "nearest_ring_buffer" else null,
+                stereoMaxDeltaMs = if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) 30L else null,
             )
             pairCount = nextValidCount
             if (nextValidCount >= settings.requiredPairs) {
@@ -4249,6 +4263,8 @@ private fun appendCalibrationPairManifest(
     captureSource: String = "preview_bitmap",
     cam0Frame: CalibrationFrame? = null,
     cam1Frame: CalibrationFrame? = null,
+    stereoPairSelection: String? = null,
+    stereoMaxDeltaMs: Long? = null,
 ) {
     val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
     val stereoCaptureDeltaMs = if (cam0Frame != null && cam1Frame != null) kotlin.math.abs(cam0Frame.timestampNs - cam1Frame.timestampNs) / 1_000_000.0 else JSONObject.NULL
@@ -4281,6 +4297,8 @@ private fun appendCalibrationPairManifest(
             .put("cam0_frame_sequence", cam0Frame?.sequence ?: JSONObject.NULL)
             .put("cam1_frame_sequence", cam1Frame?.sequence ?: JSONObject.NULL)
             .put("stereo_capture_delta_ms", stereoCaptureDeltaMs)
+            .put("stereo_pair_selection", stereoPairSelection ?: JSONObject.NULL)
+            .put("stereo_max_delta_ms", stereoMaxDeltaMs ?: JSONObject.NULL)
             .put("cam0_frame_age_ms", cam0Frame?.ageMs(nowNs) ?: JSONObject.NULL)
             .put("cam1_frame_age_ms", cam1Frame?.ageMs(nowNs) ?: JSONObject.NULL)
             .put("sync_status", "not_hardware_synchronized")

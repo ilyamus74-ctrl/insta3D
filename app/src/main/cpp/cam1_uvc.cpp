@@ -14,6 +14,7 @@
 #include <vector>
 #include <string>
 #include <thread>
+#include <utility>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -90,6 +91,16 @@ uint32_t g_latest_width=0, g_latest_height=0;
 int g_latest_format=UVC_FRAME_FORMAT_UNKNOWN;
 int64_t g_latest_timestamp_ns=0;
 int64_t g_latest_frame_sequence=0;
+struct FrameSnapshot {
+ std::vector<uint8_t> bytes;
+ int64_t timestamp_ns=0;
+ int64_t sequence=0;
+ uint32_t width=0;
+ uint32_t height=0;
+ int format=UVC_FRAME_FORMAT_UNKNOWN;
+};
+std::vector<FrameSnapshot> g_frame_ring;
+constexpr size_t kFrameRingCapacity = 20;
 FILE* g_record_file=nullptr;
 
 const char* frameFormatName(int fmt);
@@ -387,6 +398,17 @@ void cb(uvc_frame_t* frame, void* user){
   std::lock_guard<std::mutex> lk(g_frame_lock);
   g_latest_frame.assign((const uint8_t*)frame->data, (const uint8_t*)frame->data + copyBytes);
   g_latest_width=m.width; g_latest_height=m.height; g_latest_format=m.format; g_latest_timestamp_ns=t; g_latest_frame_sequence=frame->sequence > 0 ? (int64_t)frame->sequence : c; g_latest_sequence=g_latest_frame_sequence; g_frame_dirty=true;
+  FrameSnapshot snapshot;
+  snapshot.bytes = g_latest_frame;
+  snapshot.timestamp_ns = g_latest_timestamp_ns;
+  snapshot.sequence = g_latest_frame_sequence;
+  snapshot.width = g_latest_width;
+  snapshot.height = g_latest_height;
+  snapshot.format = g_latest_format;
+  if(g_frame_ring.empty() || g_frame_ring.back().sequence != snapshot.sequence) {
+   g_frame_ring.push_back(std::move(snapshot));
+   while(g_frame_ring.size() > kFrameRingCapacity) g_frame_ring.erase(g_frame_ring.begin());
+  }
  }
  g_frame_cv.notify_one();
  char hex[16*3+1]{};
@@ -508,7 +530,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_Nativ
  const char* pf=preferredFormat ? env->GetStringUTFChars(preferredFormat,nullptr) : nullptr; std::string preferred=pf?pf:""; if(preferredFormat) env->ReleaseStringUTFChars(preferredFormat,pf);
  stopRenderThreadLocked();
  { std::lock_guard<std::mutex> lk(g_window_lock); releaseWindowLocked(); if(surface) { g_window=ANativeWindow_fromSurface(env,surface); if(g_window) ANativeWindow_setBuffersGeometry(g_window, 0, 0, WINDOW_FORMAT_RGBA_8888); } }
- { std::lock_guard<std::mutex> lk(g_frame_lock); g_latest_frame.clear(); g_frame_dirty=false; }
+ { std::lock_guard<std::mutex> lk(g_frame_lock); g_latest_frame.clear(); g_frame_ring.clear(); g_frame_dirty=false; }
  ensureRenderThreadLocked();
  g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_latest_sequence=0; g_render_errors=0; g_window_lock_failures=0; g_surface_null_count=0; g_callback_dropped_after_stop=0;
  setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN,0,0,0);
@@ -536,6 +558,7 @@ static jboolean startPreviewLocked(){
   g_latest_timestamp_ns=0;
   g_latest_frame_sequence=0;
   g_latest_sequence=0;
+  g_frame_ring.clear();
   g_frame_dirty=false;
  }
  int64_t generation=++g_session_generation;
@@ -620,4 +643,41 @@ extern "C" JNIEXPORT jobjectArray JNICALL Java_com_maklertour_data_phonecamera_N
  env->DeleteLocalRef(metadata);
  env->DeleteLocalRef(objectClass);
  return out;
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeLatestFrameSnapshots(JNIEnv* env,jobject){
+ std::vector<FrameSnapshot> snapshots;
+ {
+  std::lock_guard<std::mutex> lk(g_frame_lock);
+  snapshots = g_frame_ring;
+ }
+ if(snapshots.empty()) return nullptr;
+ jclass objectClass=env->FindClass("java/lang/Object");
+ if(!objectClass) return nullptr;
+ jobjectArray outer=env->NewObjectArray((jsize)snapshots.size(), objectClass, nullptr);
+ if(!outer) { env->DeleteLocalRef(objectClass); return nullptr; }
+ for(jsize i=0; i<(jsize)snapshots.size(); ++i){
+  const auto& snapshot = snapshots[(size_t)i];
+  jobjectArray entry=env->NewObjectArray(2, objectClass, nullptr);
+  if(!entry) continue;
+  jbyteArray bytes=env->NewByteArray((jsize)snapshot.bytes.size());
+  if(bytes){
+   env->SetByteArrayRegion(bytes,0,(jsize)snapshot.bytes.size(),reinterpret_cast<const jbyte*>(snapshot.bytes.data()));
+   env->SetObjectArrayElement(entry,0,bytes);
+   env->DeleteLocalRef(bytes);
+  }
+  jlong values[5]={snapshot.timestamp_ns,snapshot.sequence,(jlong)snapshot.width,(jlong)snapshot.height,(jlong)snapshot.format};
+  jlongArray metadata=env->NewLongArray(5);
+  if(metadata){
+   env->SetLongArrayRegion(metadata,0,5,values);
+   env->SetObjectArrayElement(entry,1,metadata);
+   env->DeleteLocalRef(metadata);
+  }
+  env->SetObjectArrayElement(outer,i,entry);
+  env->DeleteLocalRef(entry);
+ }
+ env->DeleteLocalRef(objectClass);
+ return outer;
+}
+
 }

@@ -97,6 +97,32 @@ data class CalibrationFrame(
     fun ageMs(nowNs: Long = SystemClock.elapsedRealtimeNanos()): Long = (nowNs - timestampNs) / 1_000_000L
 }
 
+data class StereoCalibrationFramePair(
+    val cam0: CalibrationFrame,
+    val cam1: CalibrationFrame,
+    val deltaMs: Double,
+)
+
+class CalibrationFrameRingBuffer(private val capacity: Int = 20) {
+    private val lock = Any()
+    private val frames = ArrayDeque<CalibrationFrame>()
+    private var lastSequence: Long? = null
+
+    fun add(frame: CalibrationFrame?) {
+        if (frame == null) return
+        synchronized(lock) {
+            if (lastSequence == frame.sequence) return
+            frames.addLast(frame)
+            lastSequence = frame.sequence
+            while (frames.size > capacity) frames.removeFirst()
+        }
+    }
+
+    fun latest(): CalibrationFrame? = synchronized(lock) { frames.lastOrNull() }
+
+    fun snapshot(): List<CalibrationFrame> = synchronized(lock) { frames.toList() }
+}
+
 interface StereoCaptureUploader {
     suspend fun exportOrUpload(orderId: String?, captureSessionId: String, bundleDir: File): Result<File>
 }
@@ -124,6 +150,32 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
     fun getLatestCam1CalibrationFrame(): CalibrationFrame? = usbAdapter.getLatestCalibrationFrame()
 
     fun getLatestCam0CalibrationFrame(): CalibrationFrame? = phoneRecorder.getLatestCalibrationFrame()
+
+    fun getNearestStereoCalibrationFrames(maxDeltaMs: Long = 30): StereoCalibrationFramePair? {
+        val nowNs = SystemClock.elapsedRealtimeNanos()
+        val cam0Frames = phoneRecorder.getRecentCalibrationFrames()
+        val cam1Frames = usbAdapter.getRecentCalibrationFrames()
+        val freshCam0 = cam0Frames.filter { it.ageMs(nowNs) <= 300L }
+        val freshCam1 = cam1Frames.filter { it.ageMs(nowNs) <= 300L }
+        var best: StereoCalibrationFramePair? = null
+        for (cam0 in freshCam0) {
+            for (cam1 in freshCam1) {
+                val deltaMs = kotlin.math.abs(cam0.timestampNs - cam1.timestampNs) / 1_000_000.0
+                if (best == null || deltaMs < best.deltaMs) best = StereoCalibrationFramePair(cam0, cam1, deltaMs)
+            }
+        }
+        val bestLog = best
+        if (bestLog == null) {
+            Log.i("CalibrationCapture", "nearest_pair rejected=no_fresh_frames cam0_recent_count=${cam0Frames.size} cam1_recent_count=${cam1Frames.size} cam0_fresh_count=${freshCam0.size} cam1_fresh_count=${freshCam1.size}")
+            return null
+        }
+        Log.i("CalibrationCapture", "nearest_pair cam0_recent_count=${cam0Frames.size} cam1_recent_count=${cam1Frames.size} best_delta_ms=${bestLog.deltaMs} best_seq0=${bestLog.cam0.sequence} best_seq1=${bestLog.cam1.sequence} age0=${bestLog.cam0.ageMs(nowNs)} age1=${bestLog.cam1.ageMs(nowNs)}")
+        if (bestLog.deltaMs > maxDeltaMs.toDouble()) {
+            Log.i("CalibrationCapture", "nearest_pair rejected=delta_exceeds_${maxDeltaMs}ms best_delta_ms=${bestLog.deltaMs} best_seq0=${bestLog.cam0.sequence} best_seq1=${bestLog.cam1.sequence}")
+            return null
+        }
+        return bestLog
+    }
 
     fun close() = usbAdapter.close()
 
@@ -284,6 +336,7 @@ private interface Cam1UvcBackend {
     fun close()
     fun snapshot(): Cam1UvcBackendState
     fun latestCalibrationFrame(): CalibrationFrame?
+    fun recentCalibrationFrames(): List<CalibrationFrame>
 }
 
 private data class Cam1UvcDeviceInfo(
@@ -383,11 +436,22 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
     override fun close() = synchronized(lock) { runCatching { nativeClose() }; state = Cam1UvcBackendState() }
 
     override fun latestCalibrationFrame(): CalibrationFrame? = synchronized(lock) {
-        val snapshot = runCatching { nativeLatestFrameSnapshot() }.getOrNull() ?: return@synchronized null
-        if (snapshot.size < 2) return@synchronized null
-        val bytes = snapshot[0] as? ByteArray ?: return@synchronized null
-        val metadata = snapshot[1] as? LongArray ?: return@synchronized null
-        if (metadata.size < 5 || metadata[0] <= 0L || metadata[1] <= 0L) return@synchronized null
+        decodeCalibrationFrameSnapshot(nativeLatestFrameSnapshot())
+    }
+
+    override fun recentCalibrationFrames(): List<CalibrationFrame> = synchronized(lock) {
+        val snapshots = runCatching { nativeLatestFrameSnapshots() }.getOrNull() ?: return@synchronized emptyList()
+        val seenSequences = mutableSetOf<Long>()
+        snapshots.mapNotNull { snapshot ->
+            decodeCalibrationFrameSnapshot(snapshot as? Array<*>)?.takeIf { seenSequences.add(it.sequence) }
+        }
+    }
+
+    private fun decodeCalibrationFrameSnapshot(snapshot: Array<*>?): CalibrationFrame? {
+        if (snapshot == null || snapshot.size < 2) return null
+        val bytes = snapshot[0] as? ByteArray ?: return null
+        val metadata = snapshot[1] as? LongArray ?: return null
+        if (metadata.size < 5 || metadata[0] <= 0L || metadata[1] <= 0L) return null
         val width = metadata[2].toInt()
         val height = metadata[3].toInt()
         val format = metadata[4].toInt()
@@ -396,8 +460,8 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
             UVC_FRAME_FORMAT_YUYV, UVC_FRAME_FORMAT_UNCOMPRESSED -> yuyvToBitmap(bytes, width, height)
             UVC_FRAME_FORMAT_UYVY -> uyvyToBitmap(bytes, width, height)
             else -> null
-        } ?: return@synchronized null
-        CalibrationFrame(bitmap = bitmap, timestampNs = metadata[0], sequence = metadata[1])
+        } ?: return null
+        return CalibrationFrame(bitmap = bitmap, timestampNs = metadata[0], sequence = metadata[1])
     }
 
     override fun snapshot(): Cam1UvcBackendState = synchronized(lock) {
@@ -429,6 +493,7 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
     private external fun nativeClose()
     private external fun nativeSnapshot(): LongArray
     private external fun nativeLatestFrameSnapshot(): Array<Any>?
+    private external fun nativeLatestFrameSnapshots(): Array<Any>?
     private external fun nativeSelectedFormatName(): String
     private external fun nativeLastError(): String
 
@@ -536,6 +601,8 @@ private class UsbUvcCameraAdapter(private val context: Context) {
     fun recordedFrameCount(): Long = lastRecordingFrameCount
     fun onPreviewFrameRendered() = Unit
     fun getLatestCalibrationFrame(): CalibrationFrame? = backend.latestCalibrationFrame()
+
+    fun getRecentCalibrationFrames(): List<CalibrationFrame> = backend.recentCalibrationFrames()
 
     fun refreshAndRequestPermission(textureView: TextureView?, preferredMode: CameraMode?): UsbUvcCameraInfo {
         append("Refresh USB pressed")

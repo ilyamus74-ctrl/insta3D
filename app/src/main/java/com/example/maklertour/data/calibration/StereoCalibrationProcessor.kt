@@ -1,6 +1,7 @@
 package com.maklertour.data.calibration
 
 import android.graphics.BitmapFactory
+import android.util.Log
 import com.maklertour.data.rig.CalibrationSettings
 import org.json.JSONArray
 import org.json.JSONObject
@@ -99,12 +100,29 @@ class StereoCalibrationProcessor(
             val cam1Matrix = matFromNestedJson(cam1IntrinsicsJson.getJSONArray("camera_matrix"))
             val cam0Dist = matFromFlatJson(cam0IntrinsicsJson.getJSONArray("dist_coeffs"))
             val cam1Dist = matFromFlatJson(cam1IntrinsicsJson.getJSONArray("dist_coeffs"))
-            val r = Mat(); val t = Mat(); val e = Mat(); val f = Mat()
-            val stereoRms = Calib3d.stereoCalibrate(
-                objectPoints, cam0Points, cam1Points, cam0Matrix, cam0Dist, cam1Matrix, cam1Dist,
-                cam0Size, r, t, e, f, Calib3d.CALIB_FIX_INTRINSIC,
-                TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 100, 1e-5),
-            )
+            val trials = cornerOrderVariants(settings.checkerboardInnerRows, settings.checkerboardInnerCols).map { variant ->
+                val trialR = Mat(); val trialT = Mat(); val trialE = Mat(); val trialF = Mat()
+                val trialCam1Points = cam1Points.map { transformCornerOrder(it, settings.checkerboardInnerRows, settings.checkerboardInnerCols, variant) }
+                val trialCam0Matrix = cam0Matrix.clone()
+                val trialCam1Matrix = cam1Matrix.clone()
+                val trialCam0Dist = cam0Dist.clone()
+                val trialCam1Dist = cam1Dist.clone()
+                val rms = runCatching {
+                    Calib3d.stereoCalibrate(
+                        objectPoints, cam0Points, trialCam1Points, trialCam0Matrix, trialCam0Dist, trialCam1Matrix, trialCam1Dist,
+                        cam0Size, trialR, trialT, trialE, trialF, Calib3d.CALIB_FIX_INTRINSIC,
+                        TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 100, 1e-5),
+                    )
+                }.getOrDefault(Double.POSITIVE_INFINITY)
+                CornerOrderTrial(variant, rms, trialR, trialT, trialE, trialF)
+            }
+            val bestTrial = trials.minByOrNull { it.rms } ?: error("No corner order trials")
+            Log.i("StereoCalibrationProcessor", "corner_order_trials ${trials.joinToString(" ") { "${it.variant}=${it.rms}" }} selected=${bestTrial.variant}")
+            val r = bestTrial.r
+            val t = bestTrial.t
+            val e = bestTrial.e
+            val f = bestTrial.f
+            val stereoRms = bestTrial.rms
             val success = stereoRms.isFinite() && stereoRms <= stereoRmsThresholdPx
             finish(
                 StereoCalibrationResult(
@@ -114,6 +132,9 @@ class StereoCalibrationProcessor(
                     cam0ImageWidth = cam0Size.width.toInt(), cam0ImageHeight = cam0Size.height.toInt(), cam1ImageWidth = cam1Size.width.toInt(), cam1ImageHeight = cam1Size.height.toInt(),
                     cam0CameraMatrix = cam0Matrix.toNestedList(), cam0DistCoeffs = cam0Dist.toFlatList(), cam1CameraMatrix = cam1Matrix.toNestedList(), cam1DistCoeffs = cam1Dist.toFlatList(),
                     stereoR = r.toNestedList(), stereoT = t.toFlatList(), stereoE = e.toNestedList(), stereoF = f.toNestedList(),
+                    cornerOrderTrials = trials.map { CornerOrderTrialResult(it.variant, it.rms) },
+                    selectedCornerOrderVariant = bestTrial.variant,
+                    selectedCornerOrderRms = stereoRms,
                     errors = if (success) errors else errors + "Stereo RMS $stereoRms exceeds threshold $stereoRmsThresholdPx px",
                 )
             )
@@ -256,7 +277,23 @@ class StereoCalibrationProcessor(
         return MatOfPoint3f(*points.toTypedArray())
     }
 
+    private fun cornerOrderVariants(rows: Int, cols: Int): List<String> = listOf("normal", "reverse_all", "flip_rows", "flip_columns", "rotate_180")
+
+    private fun transformCornerOrder(points: MatOfPoint2f, rows: Int, cols: Int, variant: String): MatOfPoint2f {
+        val source = points.toArray().toList()
+        val transformed = when (variant) {
+            "normal" -> source
+            "reverse_all" -> source.asReversed()
+            "flip_rows" -> (0 until rows).flatMap { row -> source.subList(row * cols, row * cols + cols).asReversed() }
+            "flip_columns" -> (rows - 1 downTo 0).flatMap { row -> source.subList(row * cols, row * cols + cols) }
+            "rotate_180" -> (rows - 1 downTo 0).flatMap { row -> source.subList(row * cols, row * cols + cols).asReversed() }
+            else -> source
+        }
+        return MatOfPoint2f(*transformed.toTypedArray())
+    }
+
     private data class CornerDetection(val corners: MatOfPoint2f?, val size: Size?, val error: String?)
+    private data class CornerOrderTrial(val variant: String, val rms: Double, val r: Mat, val t: Mat, val e: Mat, val f: Mat)
 
     companion object {
         const val DEFAULT_STEREO_RMS_THRESHOLD_PX: Double = 2.0
@@ -271,6 +308,8 @@ class StereoCalibrationProcessor(
         private const val STEREO_EXTRINSICS_MODE = "STEREO_EXTRINSICS"
     }
 }
+
+data class CornerOrderTrialResult(val variant: String, val rms: Double)
 
 data class StereoCalibrationResult(
     val status: String,
@@ -296,6 +335,9 @@ data class StereoCalibrationResult(
     val stereoT: List<Double> = emptyList(),
     val stereoE: List<List<Double>> = emptyList(),
     val stereoF: List<List<Double>> = emptyList(),
+    val cornerOrderTrials: List<CornerOrderTrialResult> = emptyList(),
+    val selectedCornerOrderVariant: String? = null,
+    val selectedCornerOrderRms: Double? = null,
     val errors: List<String> = emptyList(),
 ) {
     val resultPath: String get() = File(sessionPath, StereoCalibrationProcessor.RESULT_FILE).absolutePath
@@ -332,6 +374,9 @@ fun StereoCalibrationResult.toJson(): JSONObject = JSONObject()
     .put("cam0_camera_matrix", cam0CameraMatrix.toDoubleJsonArray2()).put("cam0_dist_coeffs", cam0DistCoeffs.toDoubleJsonArray())
     .put("cam1_camera_matrix", cam1CameraMatrix.toDoubleJsonArray2()).put("cam1_dist_coeffs", cam1DistCoeffs.toDoubleJsonArray())
     .put("stereo_R", stereoR.toDoubleJsonArray2()).put("stereo_T", stereoT.toDoubleJsonArray()).put("stereo_E", stereoE.toDoubleJsonArray2()).put("stereo_F", stereoF.toDoubleJsonArray2())
+    .put("corner_order_trials", cornerOrderTrials.toJsonArray())
+    .put("selected_corner_order_variant", selectedCornerOrderVariant ?: JSONObject.NULL)
+    .put("selected_corner_order_rms", selectedCornerOrderRms ?: JSONObject.NULL)
     .put("errors", errors.toStringJsonArray())
 
 private fun utcNow(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date())
@@ -339,6 +384,7 @@ private fun Mat.toFlatList(): List<Double> = (0 until rows()).flatMap { r -> (0 
 private fun Mat.toNestedList(): List<List<Double>> = (0 until rows()).map { r -> (0 until cols()).map { c -> get(r, c)[0] } }
 private fun List<Double>.toDoubleJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
 private fun List<String>.toStringJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
+private fun List<CornerOrderTrialResult>.toJsonArray() = JSONArray().also { arr -> forEach { arr.put(JSONObject().put("variant", it.variant).put("rms", it.rms)) } }
 private fun List<List<Double>>.toDoubleJsonArray2() = JSONArray().also { outer -> forEach { outer.put(it.toDoubleJsonArray()) } }
 private fun matFromNestedJson(json: JSONArray): Mat {
     val rows = json.length()

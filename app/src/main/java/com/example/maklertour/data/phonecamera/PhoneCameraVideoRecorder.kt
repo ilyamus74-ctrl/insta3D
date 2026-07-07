@@ -48,6 +48,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var boundCamera: Camera? = null
     private val latestFrameLock = Any()
     private var latestCalibrationFrame: CalibrationFrame? = null
+    private val recentCalibrationFrames = CalibrationFrameRingBuffer(20)
     private var latestCalibrationSequence = 0L
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "Cam0CalibrationAnalysis").apply { isDaemon = true }
@@ -137,6 +138,8 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     fun getLatestCalibrationFrame(): CalibrationFrame? = synchronized(latestFrameLock) { latestCalibrationFrame }
 
+    fun getRecentCalibrationFrames(): List<CalibrationFrame> = recentCalibrationFrames.snapshot()
+
     private fun buildCalibrationAnalysis(): ImageAnalysis = ImageAnalysis.Builder()
         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
         .build()
@@ -152,7 +155,9 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             val timestampNs = imageProxy.imageInfo.timestamp
             synchronized(latestFrameLock) {
                 latestCalibrationSequence += 1L
-                latestCalibrationFrame = CalibrationFrame(bitmap, timestampNs, latestCalibrationSequence)
+                val frame = CalibrationFrame(bitmap, timestampNs, latestCalibrationSequence)
+                latestCalibrationFrame = frame
+                recentCalibrationFrames.add(frame)
             }
         } finally {
             imageProxy.close()
