@@ -26,6 +26,10 @@ class StereoCalibrationProcessor(
     private val defaultStereoRmsThresholdPx: Double = DEFAULT_STEREO_RMS_THRESHOLD_PX,
     private val defaultIntrinsicsRmsThresholdPx: Double = DEFAULT_INTRINSICS_RMS_THRESHOLD_PX,
 ) {
+    companion object {
+        const val DEFAULT_STEREO_RMS_THRESHOLD_PX: Double = 2.0
+        const val DEFAULT_INTRINSICS_RMS_THRESHOLD_PX: Double = 3.0
+    }
     fun run(sessionDir: File, stereoRmsThresholdPx: Double = defaultStereoRmsThresholdPx): StereoCalibrationResult = runStereoExtrinsics(sessionDir, stereoRmsThresholdPx)
 
     fun runCam0Intrinsics(sessionDir: File, intrinsicsRmsThresholdPx: Double = defaultIntrinsicsRmsThresholdPx): StereoCalibrationResult =
@@ -259,9 +263,6 @@ class StereoCalibrationProcessor(
     private data class CornerDetection(val corners: MatOfPoint2f?, val size: Size?, val error: String?)
 
     companion object {
-        const val DEFAULT_STEREO_RMS_THRESHOLD_PX: Double = 2.0
-        const val DEFAULT_INTRINSICS_RMS_THRESHOLD_PX: Double = 3.0
-
         const val RESULT_FILE = "calibration_result.json"
         const val CAM0_INTRINSICS_FILE = "cam0_intrinsics.json"
         const val CAM1_INTRINSICS_FILE = "cam1_intrinsics.json"

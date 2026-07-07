@@ -3232,18 +3232,9 @@ private fun CalibrationCaptureDialog(
         wizardState == CalibrationWizardState.CAPTURING_CAM1 ||
         wizardState == CalibrationWizardState.CAPTURING_STEREO
     val stepTitle = when (wizardState) {
-        CalibrationWizardState.CAPTURING_CAM0 -> "Step 1 / 3: Calibrating phone camera"
-        CalibrationWizardState.PROCESSING_CAM0 -> "Step 1 / 3: Processing phone camera"
-        CalibrationWizardState.CAM0_RESULT -> "Step 1 / 3: Phone camera result"
-
-        CalibrationWizardState.CAPTURING_CAM1 -> "Step 2 / 3: Calibrating USB camera"
-        CalibrationWizardState.PROCESSING_CAM1 -> "Step 2 / 3: Processing USB camera"
-        CalibrationWizardState.CAM1_RESULT -> "Step 2 / 3: USB camera result"
-
-        CalibrationWizardState.CAPTURING_STEREO -> "Step 3 / 3: Calibrating stereo rig"
-        CalibrationWizardState.PROCESSING_STEREO -> "Step 3 / 3: Processing stereo calibration"
-        CalibrationWizardState.STEREO_RESULT -> "Step 3 / 3: Stereo calibration result"
-
+        CalibrationWizardState.CAPTURING_CAM0, CalibrationWizardState.PROCESSING_CAM0, CalibrationWizardState.CAM0_RESULT -> "Step 1 / 3: Phone camera result"
+        CalibrationWizardState.CAPTURING_CAM1, CalibrationWizardState.PROCESSING_CAM1, CalibrationWizardState.CAM1_RESULT -> "Step 2 / 3: USB camera result"
+        CalibrationWizardState.CAPTURING_STEREO, CalibrationWizardState.PROCESSING_STEREO, CalibrationWizardState.STEREO_RESULT -> "Step 3 / 3: Stereo calibration result"
         CalibrationWizardState.SUCCESS -> "Calibration successful"
         CalibrationWizardState.FAILED -> "Calibration failed"
         CalibrationWizardState.IDLE -> "Camera calibration"
@@ -3467,7 +3458,7 @@ private fun CalibrationCaptureDialog(
         val keepActiveCalibration = profile.calibrationStatus == CalibrationStatus.CALIBRATED
         val updated = profile.copy(
             calibrationStatus = if (keepActiveCalibration) CalibrationStatus.CALIBRATED else CalibrationStatus.CAPTURED,
-            lastCalibrationSessionPath = if (keepActiveCalibration) profile.lastCalibrationSessionPath else dir.absolutePath,
+            lastCalibrationSessionPath = dir.absolutePath,
             calibrationResultPath = if (keepActiveCalibration) profile.calibrationResultPath else null,
             calibrationResult = if (keepActiveCalibration) profile.calibrationResult else null,
         )
@@ -3624,14 +3615,10 @@ private fun CalibrationCaptureDialog(
                         CalibrationWorkflowMode.CAM1_INTRINSICS -> "USB camera calibration failed"
                         CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Stereo calibration failed"
                     }
-                    val updated = if (profile.calibrationStatus == CalibrationStatus.CALIBRATED) {
-                        profile
-                    } else {
-                        profile.copy(
-                            calibrationStatus = CalibrationStatus.CAPTURED,
-                            lastCalibrationSessionPath = dir.absolutePath,
-                        )
-                    }
+                    val updated = profile.copy(
+                        calibrationStatus = if (profile.calibrationStatus == CalibrationStatus.CALIBRATED) CalibrationStatus.CALIBRATED else CalibrationStatus.CAPTURED,
+                        lastCalibrationSessionPath = dir.absolutePath,
+                    )
                     profileStore.saveActiveProfile(updated)
                     onSessionSaved(updated)
                     calibrationAutoStarted = false
