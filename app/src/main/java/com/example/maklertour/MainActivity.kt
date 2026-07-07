@@ -98,6 +98,7 @@ import com.maklertour.data.phonecamera.StereoCalibrationFramePair
 import com.maklertour.data.phonecamera.PhoneCameraBindResult
 import com.maklertour.data.phonecamera.PhoneCameraLensOption
 import com.maklertour.data.phonecamera.PhoneCameraLensRepository
+import com.maklertour.data.phonecamera.PhoneCalibrationResolutionInfo
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -3204,9 +3205,10 @@ private fun StereoCaptureExperimentalScreen(
             cam0LatestFrameProvider = { manager.getLatestCam0CalibrationFrame() },
             cam1LatestFrameProvider = { manager.getLatestCam1CalibrationFrame() },
             stereoFramePairProvider = { manager.getNearestStereoCalibrationFrames(30) },
+            cam0CalibrationResolutionProvider = { manager.getCam0CalibrationResolutionInfo() },
             onDismiss = { showCalibrationCapture = false },
             onSessionSaved = { updatedProfile -> activeProfile = updatedProfile },
-            cam1CalibrationModeWarning = if ((activeProfile.cam1Mode?.width ?: 0) >= 1280 || (activeProfile.cam1Mode?.height ?: 0) >= 720) "For calibration prefer MJPEG 640x480@30; current cam1 mode may drop preview frames." else null,
+            cam1CalibrationModeWarning = if ((activeProfile.cam1Mode?.width ?: 0) >= 1280 || (activeProfile.cam1Mode?.height ?: 0) >= 720) "cam1 UVC mode: ${activeProfile.cam1Mode.modeLabel()}; 640x480@30 may reduce USB preview drops during calibration." else null,
         )
     }
     if (showRigSettings) {
@@ -3249,6 +3251,7 @@ private fun CalibrationCaptureDialog(
     cam0LatestFrameProvider: () -> CalibrationFrame?,
     cam1LatestFrameProvider: () -> CalibrationFrame?,
     stereoFramePairProvider: () -> StereoCalibrationFramePair?,
+    cam0CalibrationResolutionProvider: () -> PhoneCalibrationResolutionInfo,
     onDismiss: () -> Unit,
     onSessionSaved: (StereoRigProfile) -> Unit,
     cam1CalibrationModeWarning: String? = null,
@@ -3987,6 +3990,9 @@ private fun CalibrationCaptureDialog(
                         Text(instructionText, color = Color.White)
                         if (isCapturing) {
                             Text("Captured: $pairCount / $requiredPairs", color = Color.White)
+                            val cam0ResolutionInfo = cam0CalibrationResolutionProvider()
+                            Text("cam0 analysis actual=${cam0ResolutionInfo.actualWidth ?: "pending"}x${cam0ResolutionInfo.actualHeight ?: "pending"} requested=${cam0ResolutionInfo.requestedWidth ?: "auto"}x${cam0ResolutionInfo.requestedHeight ?: "auto"} profile=${cam0ResolutionInfo.requestedProfileWidth ?: "auto"}x${cam0ResolutionInfo.requestedProfileHeight ?: "auto"}", color = Color.White)
+                            cam0ResolutionInfo.reason?.let { Text("cam0 analysis reason: $it", color = Color(0xFFFFD166)) }
                             cam1CalibrationModeWarning?.let { Text(it, color = Color(0xFFFFD166)) }
                             val detectionText = when (workflowMode) {
                                 CalibrationWorkflowMode.CAM0_INTRINSICS -> if (cam0Detection?.found == true) "Checkerboard found" else "Looking for checkerboard"

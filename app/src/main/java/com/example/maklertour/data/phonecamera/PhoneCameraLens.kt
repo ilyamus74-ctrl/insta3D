@@ -31,6 +31,9 @@ data class PhoneCalibrationResolutionInfo(
     val requestedHeight: Int?,
     val actualWidth: Int?,
     val actualHeight: Int?,
+    val requestedProfileWidth: Int? = requestedWidth,
+    val requestedProfileHeight: Int? = requestedHeight,
+    val reason: String? = null,
 )
 
 data class PhoneCameraLensOption(
@@ -207,10 +210,13 @@ fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = nu
     .put("approximate_fov_deg", approximateFovDeg?.let { JSONObject().put("horizontal", it.horizontal).put("vertical", it.vertical) } ?: JSONObject.NULL)
     .put("resolution", JSONObject().put("width", selectedVideoInfo?.width ?: JSONObject.NULL).put("height", selectedVideoInfo?.height ?: JSONObject.NULL))
     .put("fps", selectedVideoInfo?.fps ?: JSONObject.NULL)
+    .put("requested_profile_width", calibrationResolutionInfo?.requestedProfileWidth ?: JSONObject.NULL)
+    .put("requested_profile_height", calibrationResolutionInfo?.requestedProfileHeight ?: JSONObject.NULL)
     .put("requested_calibration_width", calibrationResolutionInfo?.requestedWidth ?: JSONObject.NULL)
     .put("requested_calibration_height", calibrationResolutionInfo?.requestedHeight ?: JSONObject.NULL)
     .put("actual_calibration_width", calibrationResolutionInfo?.actualWidth ?: JSONObject.NULL)
     .put("actual_calibration_height", calibrationResolutionInfo?.actualHeight ?: JSONObject.NULL)
+    .put("calibration_resolution_reason", calibrationResolutionInfo?.reason ?: JSONObject.NULL)
     .put("stabilization_mode", stabilizationMode ?: JSONObject.NULL)
     .put("timestamp", Instant.now().toString())
 

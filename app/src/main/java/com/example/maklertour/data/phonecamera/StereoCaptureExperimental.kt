@@ -151,6 +151,8 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
 
     fun getLatestCam0CalibrationFrame(): CalibrationFrame? = phoneRecorder.getLatestCalibrationFrame()
 
+    fun getCam0CalibrationResolutionInfo(): PhoneCalibrationResolutionInfo = phoneRecorder.getCalibrationResolutionInfo()
+
     fun getNearestStereoCalibrationFrames(maxDeltaMs: Long = 30): StereoCalibrationFramePair? {
         val nowNs = SystemClock.elapsedRealtimeNanos()
         val cam0Frames = phoneRecorder.getRecentCalibrationFrames()

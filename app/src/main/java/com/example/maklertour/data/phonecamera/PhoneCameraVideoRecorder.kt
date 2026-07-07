@@ -31,6 +31,7 @@ import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
+import kotlin.math.roundToLong
 
 data class PhoneVideoRecordingResult(val path: String, val durationSec: Long, val fileSizeBytes: Long)
 
@@ -56,11 +57,15 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     }
     private var minZoomRatio: Float? = null
     private var maxZoomRatio: Float? = null
+    private var requestedProfileWidth: Int? = null
+    private var requestedProfileHeight: Int? = null
     private var requestedCalibrationWidth: Int? = null
     private var requestedCalibrationHeight: Int? = null
+    private var calibrationResolutionReason: String? = null
     private var actualCalibrationWidth: Int? = null
     private var actualCalibrationHeight: Int? = null
-    private var loggedFirstCalibrationFrame = false
+    private var loggedCalibrationAnalysisFrames = 0L
+    private var lastAcceptedCalibrationAnalysisNs = 0L
 
     suspend fun bindPreview(
         previewView: PreviewView,
@@ -73,13 +78,18 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         videoFps: Int? = null,
     ): PhoneCameraBindResult {
         requestedZoomRatio = zoomRatio
-        val requestedSize = requestedSize(calibrationWidth, calibrationHeight)
+        requestedProfileWidth = calibrationWidth
+        requestedProfileHeight = calibrationHeight
+        val profileRequestedSize = requestedSize(calibrationWidth, calibrationHeight)
+        val requestedSize = cappedCalibrationAnalysisSize(profileRequestedSize)
         requestedCalibrationWidth = requestedSize?.width
         requestedCalibrationHeight = requestedSize?.height
+        calibrationResolutionReason = if (profileRequestedSize != null && requestedSize != null && (requestedSize.width != profileRequestedSize.width || requestedSize.height != profileRequestedSize.height)) CALIBRATION_CAP_REASON else null
         actualCalibrationWidth = null
         actualCalibrationHeight = null
-        loggedFirstCalibrationFrame = false
-        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio requested_calibration=${requestedSize?.width}x${requestedSize?.height}")
+        loggedCalibrationAnalysisFrames = 0L
+        lastAcceptedCalibrationAnalysisNs = 0L
+        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio requested_profile=${profileRequestedSize?.width}x${profileRequestedSize?.height} requested_calibration=${requestedSize?.width}x${requestedSize?.height} reason=${calibrationResolutionReason ?: "none"}")
         val cameraProvider = getCameraProvider()
         val preview = Preview.Builder().build()
         val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
@@ -207,16 +217,28 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     private fun requestedSize(width: Int?, height: Int?): Size? = if (width != null && height != null && width > 0 && height > 0) Size(width, height) else null
 
+    private fun cappedCalibrationAnalysisSize(size: Size?): Size? {
+        if (size == null) return null
+        if (size.width <= CALIBRATION_ANALYSIS_MAX_WIDTH && size.height <= CALIBRATION_ANALYSIS_MAX_HEIGHT) return size
+        return Size(CALIBRATION_ANALYSIS_MAX_WIDTH, CALIBRATION_ANALYSIS_MAX_HEIGHT)
+    }
+
     private fun updateLatestCalibrationFrame(imageProxy: ImageProxy) {
         try {
-            if (!loggedFirstCalibrationFrame) {
-                loggedFirstCalibrationFrame = true
-                actualCalibrationWidth = imageProxy.width
-                actualCalibrationHeight = imageProxy.height
-                Log.d(TAG, "cam0 calibration analysis frame ${imageProxy.width}x${imageProxy.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight}")
-            }
+            val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
+            if (lastAcceptedCalibrationAnalysisNs != 0L && nowNs - lastAcceptedCalibrationAnalysisNs < CALIBRATION_ANALYSIS_MIN_INTERVAL_NS) return
+            lastAcceptedCalibrationAnalysisNs = nowNs
+            actualCalibrationWidth = imageProxy.width
+            actualCalibrationHeight = imageProxy.height
+            val conversionStartNs = android.os.SystemClock.elapsedRealtimeNanos()
             val bitmap = imageProxy.toNv21Bitmap() ?: return
+            val conversionMs = ((android.os.SystemClock.elapsedRealtimeNanos() - conversionStartNs) / 1_000_000.0).roundToLong()
             val timestampNs = imageProxy.imageInfo.timestamp
+            val ageMs = (android.os.SystemClock.elapsedRealtimeNanos() - timestampNs) / 1_000_000L
+            loggedCalibrationAnalysisFrames += 1L
+            if (loggedCalibrationAnalysisFrames <= 10L || loggedCalibrationAnalysisFrames % 30L == 0L) {
+                Log.d(TAG, "cam0 calibration analysis frame actual=${imageProxy.width}x${imageProxy.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight} age=${ageMs}ms conversion_ms=$conversionMs")
+            }
             synchronized(latestFrameLock) {
                 latestCalibrationSequence += 1L
                 val frame = CalibrationFrame(bitmap, timestampNs, latestCalibrationSequence)
@@ -271,6 +293,9 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         requestedHeight = requestedCalibrationHeight,
         actualWidth = actualCalibrationWidth,
         actualHeight = actualCalibrationHeight,
+        requestedProfileWidth = requestedProfileWidth,
+        requestedProfileHeight = requestedProfileHeight,
+        reason = calibrationResolutionReason,
     )
 
     fun getSelectedLensOption(): PhoneCameraLensOption? = selectedLensOption
@@ -410,5 +435,10 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     private companion object {
         const val TAG = "PhoneCameraVideoRecorder"
+        private const val CALIBRATION_ANALYSIS_MAX_WIDTH = 1280
+        private const val CALIBRATION_ANALYSIS_MAX_HEIGHT = 720
+        private const val CALIBRATION_ANALYSIS_MAX_FPS = 8L
+        private const val CALIBRATION_ANALYSIS_MIN_INTERVAL_NS = 1_000_000_000L / CALIBRATION_ANALYSIS_MAX_FPS
+        private const val CALIBRATION_CAP_REASON = "calibration_analysis_capped_for_latency"
     }
 }
