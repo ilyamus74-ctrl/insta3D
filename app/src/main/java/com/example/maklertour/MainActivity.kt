@@ -3245,6 +3245,8 @@ private fun CalibrationCaptureDialog(
         var valid = 0
         for (i in 0 until pairs.length()) {
             val pair = pairs.optJSONObject(i) ?: continue
+            val entryWorkflowMode = pair.optString("calibration_workflow_mode", "")
+            if (entryWorkflowMode.isNotBlank() && entryWorkflowMode != mode.name) continue
             val cam0Valid = pair.optString("cam0_file").isNotBlank() && pair.optBoolean("cam0_checkerboard_found", false)
             val cam1Valid = pair.optString("cam1_file").isNotBlank() && pair.optBoolean("cam1_checkerboard_found", false)
             if (when (mode) {
@@ -3431,8 +3433,7 @@ private fun CalibrationCaptureDialog(
                 .onSuccess { result ->
                     val stereoComplete = modeAtStart == CalibrationWorkflowMode.STEREO_EXTRINSICS &&
                         result.status == "success" &&
-                        File(dir, StereoCalibrationProcessor.CAM0_INTRINSICS_FILE).exists() &&
-                        File(dir, StereoCalibrationProcessor.CAM1_INTRINSICS_FILE).exists()
+                        stereoInputsReady(dir)
                     val updated = profile.copy(
                         calibrationStatus = if (stereoComplete) CalibrationStatus.CALIBRATED else CalibrationStatus.CAPTURED,
                         lastCalibrationSessionPath = dir.absolutePath,
@@ -3557,11 +3558,25 @@ private fun CalibrationCaptureDialog(
             if (cam0Path.isNotBlank() && cam0 != null) saveJpeg(cam0, File(pairsDir, cam0Name))
             if (cam1Path.isNotBlank() && cam1 != null) saveJpeg(cam1, File(pairsDir, cam1Name))
 
-            File(dir, StereoCalibrationProcessor.RESULT_FILE).takeIf { it.exists() }?.delete()
-            File(dir, StereoCalibrationProcessor.STEREO_EXTRINSICS_FILE).takeIf { it.exists() }?.delete()
+            when (workflowMode) {
+                CalibrationWorkflowMode.CAM0_INTRINSICS -> {
+                    File(dir, StereoCalibrationProcessor.CAM0_INTRINSICS_FILE).takeIf { it.exists() }?.delete()
+                    File(dir, StereoCalibrationProcessor.RESULT_FILE).takeIf { it.exists() }?.delete()
+                    File(dir, StereoCalibrationProcessor.STEREO_EXTRINSICS_FILE).takeIf { it.exists() }?.delete()
+                }
+                CalibrationWorkflowMode.CAM1_INTRINSICS -> {
+                    File(dir, StereoCalibrationProcessor.CAM1_INTRINSICS_FILE).takeIf { it.exists() }?.delete()
+                    File(dir, StereoCalibrationProcessor.RESULT_FILE).takeIf { it.exists() }?.delete()
+                    File(dir, StereoCalibrationProcessor.STEREO_EXTRINSICS_FILE).takeIf { it.exists() }?.delete()
+                }
+                CalibrationWorkflowMode.STEREO_EXTRINSICS -> {
+                    File(dir, StereoCalibrationProcessor.RESULT_FILE).takeIf { it.exists() }?.delete()
+                    File(dir, StereoCalibrationProcessor.STEREO_EXTRINSICS_FILE).takeIf { it.exists() }?.delete()
+                }
+            }
             calibrationAutoStarted = false
 
-            appendCalibrationPairManifest(dir, nextIndex, cam0Path, cam1Path, cam0Result, cam1Result, settings.checkerboardInnerCols * settings.checkerboardInnerRows)
+            appendCalibrationPairManifest(dir, nextIndex, cam0Path, cam1Path, cam0Result, cam1Result, settings.checkerboardInnerCols * settings.checkerboardInnerRows, workflowMode.name)
             pairCount = nextValidCount
             if (nextValidCount >= settings.requiredPairs) {
                 val started = maybeAutoRunCalibration(dir, nextValidCount)
@@ -3583,16 +3598,18 @@ private fun CalibrationCaptureDialog(
         while (true) {
             val cam0 = cam0BitmapProvider()
             val cam1 = cam1BitmapProvider()
-            if (cam0 != null && cam1 != null) {
+            if (cam0 != null || cam1 != null) {
                 val (cam0Result, cam1Result) = withContext(Dispatchers.Default) {
-                    detector.detect(cam0, settings) to detector.detect(cam1, settings)
+                    val detectedCam0 = cam0?.let { detector.detect(it, settings) }
+                    val detectedCam1 = cam1?.let { detector.detect(it, settings) }
+                    detectedCam0 to detectedCam1
                 }
                 cam0Detection = cam0Result
                 cam1Detection = cam1Result
                 val autoCaptureReady = when (workflowMode) {
-                    CalibrationWorkflowMode.CAM0_INTRINSICS -> cam0Result.found
-                    CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result.found
-                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result.found && cam1Result.found && stereoInputsReady(sessionDir)
+                    CalibrationWorkflowMode.CAM0_INTRINSICS -> cam0Result?.found == true
+                    CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result?.found == true
+                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true && stereoInputsReady(sessionDir)
                 }
                 if (autoCapture && pairCount < settings.requiredPairs && autoCaptureReady) {
                     val now = System.currentTimeMillis()
@@ -3655,8 +3672,8 @@ private fun CalibrationCaptureDialog(
                     PreviewBitmapPanel("cam0", cam0BitmapProvider, cam0Detection, Modifier.weight(1f).aspectRatio(16f / 9f))
                     PreviewBitmapPanel("cam1", cam1BitmapProvider, cam1Detection, Modifier.weight(1f).aspectRatio(16f / 9f))
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { startNewCalibrationSession() }, enabled = !calibrationRunning) { Text("New session") }
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Button(onClick = { startNewCalibrationSession() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("New session") }
                     Button(
                         onClick = { capturePair(requireValidDetection = true) },
                         enabled = when (workflowMode) {
@@ -3664,6 +3681,7 @@ private fun CalibrationCaptureDialog(
                             CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Detection?.found == true
                             CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Detection?.found == true && cam1Detection?.found == true && stereoInputsReady(sessionDir)
                         } && !calibrationRunning,
+                        modifier = Modifier.fillMaxWidth(),
                     ) { Text("Capture valid") }
                     Button(onClick = {
                         if (!autoCapture && pairCount >= settings.requiredPairs) {
@@ -3671,15 +3689,16 @@ private fun CalibrationCaptureDialog(
                         } else {
                             autoCapture = !autoCapture
                         }
-                    }, enabled = !calibrationRunning) { Text("Auto capture: ${if (autoCapture) "On" else "Off"}") }
+                    }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Auto capture: ${if (autoCapture) "On" else "Off"}") }
                     Button(
                         onClick = {
                             val dir = sessionDir ?: ensureSessionDir()
                             saveCapturedAndRunCalibration(dir, "Running ${workflowMode.label}...")
                         },
                         enabled = pairCount >= settings.requiredPairs && sessionDir != null && !calibrationRunning && (workflowMode != CalibrationWorkflowMode.STEREO_EXTRINSICS || stereoInputsReady(sessionDir)),
+                        modifier = Modifier.fillMaxWidth(),
                     ) { Text(if (calibrationRunning) "Calibrating..." else "Finish ${workflowMode.label}") }
-                    Button(onClick = onDismiss, enabled = !calibrationRunning) { Text("Close") }
+                    Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Close") }
                 }
             }
         }
@@ -3758,6 +3777,7 @@ private fun appendCalibrationPairManifest(
     cam0Detection: CalibrationDetectionResult?,
     cam1Detection: CalibrationDetectionResult?,
     expectedCorners: Int,
+    workflowMode: String,
 ) {
     val manifestFile = File(sessionDir, "pairs_manifest.json")
     val manifest = if (manifestFile.exists()) JSONObject(manifestFile.readText()) else JSONObject().put("pairs", JSONArray())
@@ -3768,6 +3788,7 @@ private fun appendCalibrationPairManifest(
             .put("cam0_file", cam0File)
             .put("cam1_file", cam1File)
             .put("captured_at_utc", utcNowIso8601())
+            .put("calibration_workflow_mode", workflowMode)
             .put("cam0_source", "preview_bitmap")
             .put("cam1_source", "preview_bitmap")
             .put("cam0_checkerboard_found", cam0Detection?.found == true)

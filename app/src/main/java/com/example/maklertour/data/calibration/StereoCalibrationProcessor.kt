@@ -59,7 +59,7 @@ class StereoCalibrationProcessor(
         val cam1IntrinsicsJson = cam1Intrinsics.json ?: return finish(failed(sessionDir, errors + "cam1 intrinsics not successful"))
         val input = JSONObject(inputFile.readText())
         val settings = readSettings(input)
-        val pairs = JSONObject(manifestFile.readText()).optJSONArray("pairs") ?: JSONArray()
+        val pairs = filteredPairsForWorkflow(JSONObject(manifestFile.readText()).optJSONArray("pairs") ?: JSONArray(), STEREO_EXTRINSICS_MODE)
         val boardSize = Size(settings.checkerboardInnerCols.toDouble(), settings.checkerboardInnerRows.toDouble())
         val expectedCorners = settings.checkerboardInnerCols * settings.checkerboardInnerRows
         val objectTemplate = buildObjectPoints(settings)
@@ -136,7 +136,8 @@ class StereoCalibrationProcessor(
         if (!inputFile.exists()) return finish(failed(sessionDir, errors + "Missing calibration_input.json"))
         if (!manifestFile.exists()) return finish(failed(sessionDir, errors + "Missing pairs_manifest.json"))
         val settings = readSettings(JSONObject(inputFile.readText()))
-        val frames = JSONObject(manifestFile.readText()).optJSONArray("pairs") ?: JSONArray()
+        val workflowMode = if (camera == "cam0") CAM0_INTRINSICS_MODE else CAM1_INTRINSICS_MODE
+        val frames = filteredPairsForWorkflow(JSONObject(manifestFile.readText()).optJSONArray("pairs") ?: JSONArray(), workflowMode)
         val boardSize = Size(settings.checkerboardInnerCols.toDouble(), settings.checkerboardInnerRows.toDouble())
         val expectedCorners = settings.checkerboardInnerCols * settings.checkerboardInnerRows
         val objectTemplate = buildObjectPoints(settings)
@@ -187,6 +188,18 @@ class StereoCalibrationProcessor(
         } catch (t: Throwable) {
             finish(failed(sessionDir, errors + "$camera intrinsics calibration failed: ${t.message ?: t.javaClass.simpleName}", settings, frames.length(), framesUsed, imageSize, imageSize))
         }
+    }
+
+    private fun filteredPairsForWorkflow(pairs: JSONArray, workflowMode: String): JSONArray {
+        val filtered = JSONArray()
+        for (i in 0 until pairs.length()) {
+            val pair = pairs.optJSONObject(i) ?: continue
+            val entryWorkflowMode = pair.optString("calibration_workflow_mode", "")
+            if (entryWorkflowMode.isBlank() || entryWorkflowMode == workflowMode) {
+                filtered.put(pair)
+            }
+        }
+        return filtered
     }
 
     private data class IntrinsicsValidation(val json: JSONObject?, val error: String?)
@@ -250,6 +263,9 @@ class StereoCalibrationProcessor(
         const val CAM0_INTRINSICS_FILE = "cam0_intrinsics.json"
         const val CAM1_INTRINSICS_FILE = "cam1_intrinsics.json"
         const val STEREO_EXTRINSICS_FILE = "stereo_extrinsics.json"
+        private const val CAM0_INTRINSICS_MODE = "CAM0_INTRINSICS"
+        private const val CAM1_INTRINSICS_MODE = "CAM1_INTRINSICS"
+        private const val STEREO_EXTRINSICS_MODE = "STEREO_EXTRINSICS"
     }
 }
 
