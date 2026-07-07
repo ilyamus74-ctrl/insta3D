@@ -1,6 +1,7 @@
 package com.maklertour.data.rig
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
@@ -72,6 +73,8 @@ class StereoRigProfileStore(private val context: Context) {
             .put("created_timestamp", timestamp)
             .put("created_epoch_ms", System.currentTimeMillis())
         File(dir, "calibration_input.json").writeText(input.toString(2))
+        File(dir, "pairs_manifest.json").writeText(JSONObject().put("pairs", JSONArray()).toString(2))
+        File(dir, "pairs").mkdirs()
         return dir
     }
 
