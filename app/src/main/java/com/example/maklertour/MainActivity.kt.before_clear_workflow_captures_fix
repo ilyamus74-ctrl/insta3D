@@ -143,7 +143,6 @@ import com.maklertour.data.calibration.CalibrationBoardDetector
 import com.maklertour.data.calibration.CalibrationDetectionResult
 import com.maklertour.data.calibration.OpenCvCalibrationBoardDetector
 import com.maklertour.data.calibration.StereoCalibrationProcessor
-import com.maklertour.data.calibration.StereoCalibrationResult
 import com.maklertour.data.calibration.toJson
 import com.maklertour.data.rig.CalibrationSettings
 import com.maklertour.data.rig.CalibrationStatus
@@ -3443,34 +3442,6 @@ private fun CalibrationCaptureDialog(
         return updated
     }
 
-    fun clearWorkflowCaptures(dir: File, mode: CalibrationWorkflowMode) {
-        val manifestFile = File(dir, "pairs_manifest.json")
-        if (!manifestFile.exists()) return
-
-        val manifest = runCatching { JSONObject(manifestFile.readText()) }.getOrNull() ?: return
-        val pairs = manifest.optJSONArray("pairs") ?: return
-        val kept = JSONArray()
-
-        for (i in 0 until pairs.length()) {
-            val pair = pairs.optJSONObject(i) ?: continue
-            val pairMode = pair.optString("calibration_workflow_mode", "")
-
-            if (pairMode == mode.name) {
-                pair.optString("cam0_file").takeIf { it.isNotBlank() }?.let { relativePath ->
-                    File(dir, relativePath).takeIf { it.exists() }?.delete()
-                }
-                pair.optString("cam1_file").takeIf { it.isNotBlank() }?.let { relativePath ->
-                    File(dir, relativePath).takeIf { it.exists() }?.delete()
-                }
-            } else {
-                kept.put(pair)
-            }
-        }
-
-        manifest.put("pairs", kept)
-        manifestFile.writeText(manifest.toString(2))
-    }
-
     fun processingStateFor(mode: CalibrationWorkflowMode): CalibrationWizardState = when (mode) {
         CalibrationWorkflowMode.CAM0_INTRINSICS -> CalibrationWizardState.PROCESSING_CAM0
         CalibrationWorkflowMode.CAM1_INTRINSICS -> CalibrationWizardState.PROCESSING_CAM1
@@ -3617,7 +3588,6 @@ private fun CalibrationCaptureDialog(
                     File(dir, StereoCalibrationProcessor.STEREO_EXTRINSICS_FILE).takeIf { it.exists() }?.delete()
                 }
             }
-            clearWorkflowCaptures(dir, step)
         }
         wizardState = capturingStateFor(step)
         message = startMessageFor(step)
