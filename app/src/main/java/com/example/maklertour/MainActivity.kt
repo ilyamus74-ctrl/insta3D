@@ -110,6 +110,7 @@ import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
+import com.maklertour.data.phonecamera.PhoneDualCameraProbe
 import com.maklertour.data.phonecamera.StereoCaptureExperimentalManager
 import com.maklertour.data.phonecamera.StereoRigConfig
 import com.maklertour.data.phonecamera.UsbUvcStatus
@@ -2973,6 +2974,8 @@ private fun StereoCaptureExperimentalScreen(
     var cam0PreviewView by remember { mutableStateOf<PreviewView?>(null) }
     var cam1TextureView by remember { mutableStateOf<TextureView?>(null) }
     var status by remember { mutableStateOf("Ready") }
+    var probePath by remember { mutableStateOf<String?>(null) }
+    var probeRunning by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
     var elapsedSec by remember { mutableStateOf(0L) }
     var validationText by remember { mutableStateOf("Not recorded") }
@@ -3119,6 +3122,35 @@ private fun StereoCaptureExperimentalScreen(
                 }, enabled = isRecording) { Text("Stop video") }
                 Button(onClick = { showRigSettings = true }, enabled = !isRecording) { Text("Open settings") }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = {
+                    scope.launch {
+                        probeRunning = true
+                        status = "phone dual camera probe running"
+                        manager.close()
+                        try {
+                            runCatching { withContext(Dispatchers.IO) { PhoneDualCameraProbe(context).run() } }
+                                .onSuccess { file ->
+                                    probePath = file.absolutePath
+                                    status = "phone dual camera probe written: ${file.absolutePath}"
+                                    Toast.makeText(context, file.absolutePath, Toast.LENGTH_LONG).show()
+                                }
+                                .onFailure { error ->
+                                    status = "phone dual camera probe failed: ${error.message}"
+                                    Toast.makeText(context, "Phone dual camera probe failed: ${error.message}", Toast.LENGTH_LONG).show()
+                                }
+                        } finally {
+                            probeRunning = false
+                        }
+                    }
+                }, enabled = !isRecording && !probeRunning) { Text(if (probeRunning) "Probe running…" else "Probe phone dual camera") }
+                Button(onClick = {
+                    val path = File(context.filesDir, PhoneDualCameraProbe.OUTPUT_FILE_NAME).absolutePath
+                    probePath = path
+                    Toast.makeText(context, path, Toast.LENGTH_LONG).show()
+                }, enabled = !probeRunning) { Text("Show phone dual camera probe JSON path") }
+            }
+            probePath?.let { Text("Probe JSON: $it", color = Color.White, style = MaterialTheme.typography.bodySmall) }
             if (!canRecord && !isRecording) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (!baselineReady) Text("Set baseline in Stereo rig / Cameras settings.", color = Color(0xFFFFD166))
