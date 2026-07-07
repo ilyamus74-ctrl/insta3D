@@ -2,6 +2,7 @@ package com.maklertour
 
 import android.Manifest
 import android.content.Intent
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
@@ -3156,6 +3157,7 @@ private fun StereoCaptureExperimentalScreen(
             cam1BitmapProvider = { cam1TextureView?.bitmap },
             onDismiss = { showCalibrationCapture = false },
             onSessionSaved = { updatedProfile -> activeProfile = updatedProfile },
+            cam1CalibrationModeWarning = if ((activeProfile.cam1Mode?.width ?: 0) >= 1280 || (activeProfile.cam1Mode?.height ?: 0) >= 720) "For calibration prefer MJPEG 640x480@30; current cam1 mode may drop preview frames." else null,
         )
     }
     if (showRigSettings) {
@@ -3197,6 +3199,7 @@ private fun CalibrationCaptureDialog(
     cam1BitmapProvider: () -> Bitmap?,
     onDismiss: () -> Unit,
     onSessionSaved: (StereoRigProfile) -> Unit,
+    cam1CalibrationModeWarning: String? = null,
 ) {
     val context = LocalContext.current
     val profileStore = remember(context) { StereoRigProfileStore(context) }
@@ -3537,6 +3540,7 @@ private fun CalibrationCaptureDialog(
     }
 
     fun continueTo(mode: CalibrationWorkflowMode) {
+        if (mode == CalibrationWorkflowMode.STEREO_EXTRINSICS) autoCapture = false
         workflowMode = mode
         pairCount = 0
         wizardState = capturingStateFor(mode)
@@ -3572,6 +3576,7 @@ private fun CalibrationCaptureDialog(
                     lastStepResultMode = modeAtStart
                     lastStepPassed = passed
                     lastStepRms = rmsFor(result, modeAtStart)
+                    Log.i("CalibrationResult", "mode=${modeAtStart.name} status=${result.status} rms=${rmsFor(result, modeAtStart)} pairs_used=${result.pairsUsed} pairs_total=${result.pairsTotal} session=${dir.absolutePath}")
                     continueCountdownSeconds = null
                     if (passed) {
                         failedStep = null
@@ -3612,6 +3617,7 @@ private fun CalibrationCaptureDialog(
                     cam1Detection = null
                 }
                 .onFailure { error ->
+                    Log.i("CalibrationResult", "mode=${modeAtStart.name} status=failed rms=null pairs_used=0 pairs_total=0 session=${dir.absolutePath}")
                     lastCalibrationResult = null
                     failedStep = modeAtStart
                     lastStepResultMode = modeAtStart
@@ -3645,6 +3651,7 @@ private fun CalibrationCaptureDialog(
     }
 
     fun startNewCalibrationSession() {
+        cleanupCalibrationSessions(context)
         val dir = createNewSessionDir()
         sessionDir = dir
         pairCount = 0
@@ -3661,6 +3668,38 @@ private fun CalibrationCaptureDialog(
         workflowMode = CalibrationWorkflowMode.CAM0_INTRINSICS
         wizardState = CalibrationWizardState.CAPTURING_CAM0
         message = startMessageFor(CalibrationWorkflowMode.CAM0_INTRINSICS)
+    }
+
+
+    fun clearOldCalibrationSessions() {
+        cleanupCalibrationSessions(context)
+        sessionDir = null
+        pairCount = 0
+        cam0Detection = null
+        cam1Detection = null
+        lastCalibrationResult = null
+        lastStepResultMode = null
+        lastStepPassed = null
+        lastStepRms = null
+        continueCountdownSeconds = null
+        calibrationAutoStarted = false
+        autoCapture = false
+        workflowMode = CalibrationWorkflowMode.CAM0_INTRINSICS
+        wizardState = CalibrationWizardState.IDLE
+        failedStep = null
+        message = "Old calibration sessions cleared. Active profile unchanged. Start a new calibration."
+    }
+
+    fun writeDiagnostics() {
+        runCatching { writeCalibrationDiagnosticsJson(context, profileStore) }
+            .onSuccess { file ->
+                message = "Diagnostics JSON written: ${file.absolutePath}"
+                Toast.makeText(context, file.absolutePath, Toast.LENGTH_LONG).show()
+            }
+            .onFailure { error ->
+                message = "Diagnostics export failed: ${error.message}"
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            }
     }
 
     fun retryCurrentStep() {
@@ -3756,7 +3795,7 @@ private fun CalibrationCaptureDialog(
             }
             calibrationAutoStarted = false
 
-            appendCalibrationPairManifest(dir, nextIndex, cam0Path, cam1Path, cam0Result, cam1Result, settings.checkerboardInnerCols * settings.checkerboardInnerRows, workflowMode.name)
+            appendCalibrationPairManifest(dir, nextIndex, cam0Path, cam1Path, cam0Result, cam1Result, settings.checkerboardInnerCols * settings.checkerboardInnerRows, workflowMode.name, cam0?.width, cam0?.height, cam1?.width, cam1?.height)
             pairCount = nextValidCount
             if (nextValidCount >= settings.requiredPairs) {
                 autoCapture = false
@@ -3824,7 +3863,7 @@ private fun CalibrationCaptureDialog(
                     CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result?.found == true
                     CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true && stereoInputsReady(sessionDir)
                 }
-                if (autoCapture && pairCount < settings.requiredPairs && autoCaptureReady) {
+                if (autoCapture && workflowMode != CalibrationWorkflowMode.STEREO_EXTRINSICS && pairCount < settings.requiredPairs && autoCaptureReady) {
                     val now = System.currentTimeMillis()
                     if (now - lastAutoCaptureMs >= 1_200) {
                         if (capturePair(requireValidDetection = true)) lastAutoCaptureMs = now
@@ -3852,6 +3891,7 @@ private fun CalibrationCaptureDialog(
                         Text(instructionText, color = Color.White)
                         if (isCapturing) {
                             Text("Captured: $pairCount / $requiredPairs", color = Color.White)
+                            cam1CalibrationModeWarning?.let { Text(it, color = Color(0xFFFFD166)) }
                             val detectionText = when (workflowMode) {
                                 CalibrationWorkflowMode.CAM0_INTRINSICS -> if (cam0Detection?.found == true) "Checkerboard found" else "Looking for checkerboard"
                                 CalibrationWorkflowMode.CAM1_INTRINSICS -> if (cam1Detection?.found == true) "Checkerboard found" else "Looking for checkerboard"
@@ -3903,6 +3943,8 @@ private fun CalibrationCaptureDialog(
                 }
 
                 Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Button(onClick = { clearOldCalibrationSessions() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Clear old calibration sessions") }
+                    Button(onClick = { writeDiagnostics() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Write diagnostics JSON") }
                     when (wizardState) {
                         CalibrationWizardState.IDLE -> Button(onClick = { startNewCalibrationSession() }, modifier = Modifier.fillMaxWidth()) { Text("Start calibration") }
                         CalibrationWizardState.SUCCESS -> Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
@@ -3945,7 +3987,11 @@ private fun CalibrationCaptureDialog(
                                 } && !calibrationRunning,
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text(captureButtonText) }
-                            Button(onClick = { autoCapture = !autoCapture }, enabled = !calibrationRunning && pairCount < requiredPairs, modifier = Modifier.fillMaxWidth()) { Text("Auto capture: ${if (autoCapture) "On" else "Off"}") }
+                            if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+                                Text("Auto capture disabled for stereo. Hold the board still 1–2 seconds, then capture manually.", color = Color(0xFFFFD166))
+                            } else {
+                                Button(onClick = { autoCapture = !autoCapture }, enabled = !calibrationRunning && pairCount < requiredPairs, modifier = Modifier.fillMaxWidth()) { Text("Auto capture: ${if (autoCapture) "On" else "Off"}") }
+                            }
                             Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
                         }
                         CalibrationWizardState.PROCESSING_CAM0, CalibrationWizardState.PROCESSING_CAM1, CalibrationWizardState.PROCESSING_STEREO -> {
@@ -4018,6 +4064,101 @@ private fun PreviewBitmapPanel(label: String, bitmap: Bitmap?, detection: Calibr
     }
 }
 
+private fun cleanupCalibrationSessions(context: Context) {
+    val root = File(context.filesDir, "calibration_sessions")
+    if (!root.exists()) {
+        Log.d("CalibrationCleanup", "calibration_sessions does not exist; nothing to delete")
+        return
+    }
+    var deleted = 0
+    var failed = 0
+    root.listFiles { file -> file.isDirectory }?.forEach { dir ->
+        if (dir.deleteRecursively()) deleted += 1 else failed += 1
+    }
+    Log.d("CalibrationCleanup", "deleted=$deleted failed=$failed root=${root.absolutePath}")
+}
+
+private fun writeCalibrationDiagnosticsJson(context: Context, profileStore: StereoRigProfileStore): File {
+    fun readJson(file: File): JSONObject? = runCatching { if (file.exists()) JSONObject(file.readText()) else null }.getOrNull()
+    fun lastErrors(vararg jsons: JSONObject?): JSONArray {
+        val allErrors = mutableListOf<String>()
+        jsons.filterNotNull().forEach { json ->
+            val errors = json.optJSONArray("errors") ?: return@forEach
+            for (i in 0 until errors.length()) {
+                errors.optString(i).takeIf { it.isNotBlank() }?.let { allErrors += it }
+            }
+        }
+        return JSONArray().also { out -> allErrors.distinct().takeLast(10).forEach { out.put(it) } }
+    }
+    fun manifestCounts(pairs: JSONArray, validOnly: Boolean): JSONObject {
+        val counts = JSONObject()
+        for (i in 0 until pairs.length()) {
+            val pair = pairs.optJSONObject(i) ?: continue
+            val mode = pair.optString("calibration_workflow_mode", pair.optString("workflow_mode", "UNKNOWN")).ifBlank { "UNKNOWN" }
+            if (validOnly) {
+                val cam0Valid = pair.optString("cam0_file").isNotBlank() && pair.optBoolean("cam0_checkerboard_found", false)
+                val cam1Valid = pair.optString("cam1_file").isNotBlank() && pair.optBoolean("cam1_checkerboard_found", false)
+                val valid = when (mode) {
+                    CalibrationWorkflowMode.CAM0_INTRINSICS.name -> cam0Valid
+                    CalibrationWorkflowMode.CAM1_INTRINSICS.name -> cam1Valid
+                    CalibrationWorkflowMode.STEREO_EXTRINSICS.name -> cam0Valid && cam1Valid
+                    else -> cam0Valid || cam1Valid
+                }
+                if (!valid) continue
+            }
+            counts.put(mode, counts.optInt(mode, 0) + 1)
+        }
+        return counts
+    }
+    fun intrinsicsSummary(file: File): JSONObject {
+        val json = readJson(file)
+        return JSONObject()
+            .put("exists", file.exists())
+            .put("status", json?.optString("status"))
+            .put("rms", json?.opt("rms"))
+            .put("frames_used", json?.opt("frames_used"))
+            .put("image_width", json?.opt("image_width"))
+            .put("image_height", json?.opt("image_height"))
+    }
+    val sessions = JSONArray()
+    File(context.filesDir, "calibration_sessions").listFiles { f -> f.isDirectory }?.sortedBy { it.name }?.forEach { dir ->
+        val cam0 = File(dir, StereoCalibrationProcessor.CAM0_INTRINSICS_FILE)
+        val cam1 = File(dir, StereoCalibrationProcessor.CAM1_INTRINSICS_FILE)
+        val stereo = File(dir, StereoCalibrationProcessor.STEREO_EXTRINSICS_FILE)
+        val result = File(dir, StereoCalibrationProcessor.RESULT_FILE)
+        val stereoJson = readJson(stereo)
+        val resultJson = readJson(result)
+        val manifestPairs = readJson(File(dir, "pairs_manifest.json"))?.optJSONArray("pairs") ?: JSONArray()
+        val pairsBytes = File(dir, "pairs").listFiles { f -> f.isFile && f.extension.equals("jpg", true) }?.sumOf { it.length() } ?: 0L
+        sessions.put(JSONObject()
+            .put("session_name", dir.name)
+            .put("path", dir.absolutePath)
+            .put("cam0_intrinsics", intrinsicsSummary(cam0))
+            .put("cam1_intrinsics", intrinsicsSummary(cam1))
+            .put("stereo_extrinsics", JSONObject()
+                .put("exists", stereo.exists())
+                .put("status", stereoJson?.optString("status") ?: resultJson?.optString("status"))
+                .put("stereo_rms", stereoJson?.opt("stereo_rms") ?: resultJson?.opt("stereo_rms"))
+                .put("pairs_used", stereoJson?.opt("pairs_used") ?: resultJson?.opt("pairs_used"))
+                .put("pairs_total", stereoJson?.opt("pairs_total") ?: resultJson?.opt("pairs_total"))
+                .put("cam0_image_width", stereoJson?.opt("cam0_image_width") ?: resultJson?.opt("cam0_image_width"))
+                .put("cam0_image_height", stereoJson?.opt("cam0_image_height") ?: resultJson?.opt("cam0_image_height"))
+                .put("cam1_image_width", stereoJson?.opt("cam1_image_width") ?: resultJson?.opt("cam1_image_width"))
+                .put("cam1_image_height", stereoJson?.opt("cam1_image_height") ?: resultJson?.opt("cam1_image_height")))
+            .put("manifest_counts_by_calibration_workflow_mode", manifestCounts(manifestPairs, false))
+            .put("valid_counts_by_mode", manifestCounts(manifestPairs, true))
+            .put("last_10_errors", lastErrors(resultJson, stereoJson))
+            .put("pairs_jpg_total_bytes", pairsBytes))
+    }
+    val out = File(context.filesDir, "calibration_diagnostics.json")
+    out.writeText(JSONObject()
+        .put("created_at_utc", utcNowIso8601())
+        .put("active_profile", profileStore.loadActiveProfile().toJson())
+        .put("calibration_sessions", sessions)
+        .toString(2))
+    return out
+}
+
 private fun saveJpeg(bitmap: Bitmap, file: File) {
     FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out) }
 }
@@ -4031,6 +4172,10 @@ private fun appendCalibrationPairManifest(
     cam1Detection: CalibrationDetectionResult?,
     expectedCorners: Int,
     workflowMode: String,
+    cam0BitmapWidth: Int? = null,
+    cam0BitmapHeight: Int? = null,
+    cam1BitmapWidth: Int? = null,
+    cam1BitmapHeight: Int? = null,
 ) {
     val manifestFile = File(sessionDir, "pairs_manifest.json")
     val manifest = if (manifestFile.exists()) JSONObject(manifestFile.readText()) else JSONObject().put("pairs", JSONArray())
@@ -4042,6 +4187,12 @@ private fun appendCalibrationPairManifest(
             .put("cam1_file", cam1File)
             .put("captured_at_utc", utcNowIso8601())
             .put("calibration_workflow_mode", workflowMode)
+            .put("workflow_mode", workflowMode)
+            .put("app_capture_elapsed_ms", System.currentTimeMillis())
+            .put("cam0_bitmap_width", cam0BitmapWidth ?: 0)
+            .put("cam0_bitmap_height", cam0BitmapHeight ?: 0)
+            .put("cam1_bitmap_width", cam1BitmapWidth ?: 0)
+            .put("cam1_bitmap_height", cam1BitmapHeight ?: 0)
             .put("cam0_source", "preview_bitmap")
             .put("cam1_source", "preview_bitmap")
             .put("cam0_checkerboard_found", cam0Detection?.found == true)
