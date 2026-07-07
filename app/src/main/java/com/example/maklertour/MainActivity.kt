@@ -3019,6 +3019,61 @@ private fun StereoCaptureExperimentalScreen(
         usbInfo = manager.refreshCam1(activeProfile.cam1Mode, null)
     }
 
+    fun bindCam0NormalPreview() {
+        val previewView = cam0PreviewView ?: return
+        scope.launch {
+            runCatching {
+                val cam0Mode = activeProfile.cam0Mode
+                manager.bindCam0Preview(
+                    previewView = previewView,
+                    cameraId = selectedCameraId,
+                    zoomRatio = requestedZoomRatio,
+                    calibrationWidth = cam0Mode?.width,
+                    calibrationHeight = cam0Mode?.height,
+                    videoWidth = cam0Mode?.width,
+                    videoHeight = cam0Mode?.height,
+                    videoFps = cam0Mode?.fps,
+                )
+            }
+                .onSuccess { status = if (it.success) "cam0 preview active" else "cam0 preview error: ${it.error}" }
+                .onFailure { status = "cam0 preview error: ${it.message}" }
+        }
+    }
+
+    fun openCalibrationCapture() {
+        val previewView = cam0PreviewView
+        if (previewView == null) {
+            showCalibrationCapture = true
+            return
+        }
+        scope.launch {
+            status = "cam0 calibration preview binding"
+            runCatching {
+                val cam0Mode = activeProfile.cam0Mode
+                manager.bindCam0CalibrationPreview(
+                    previewView = previewView,
+                    cameraId = selectedCameraId,
+                    zoomRatio = requestedZoomRatio,
+                    calibrationWidth = cam0Mode?.width,
+                    calibrationHeight = cam0Mode?.height,
+                )
+            }
+                .onSuccess {
+                    status = if (it.success) "cam0 calibration preview active" else "cam0 calibration preview error: ${it.error}"
+                    showCalibrationCapture = true
+                }
+                .onFailure {
+                    status = "cam0 calibration preview error: ${it.message}"
+                    showCalibrationCapture = true
+                }
+        }
+    }
+
+    fun closeCalibrationCapture() {
+        showCalibrationCapture = false
+        bindCam0NormalPreview()
+    }
+
     Surface(modifier = Modifier.fillMaxSize().zIndex(20f), color = Color.Black) {
         Column(modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -3117,7 +3172,7 @@ private fun StereoCaptureExperimentalScreen(
             }
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { showCalibrationCapture = true }, enabled = !isRecording) { Text("Calibration") }
+                Button(onClick = { openCalibrationCapture() }, enabled = !isRecording) { Text("Calibration") }
                 Button(onClick = {
                     val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
                     val currentBaseline = currentProfile.baselineMm
@@ -3206,7 +3261,7 @@ private fun StereoCaptureExperimentalScreen(
             cam1LatestFrameProvider = { manager.getLatestCam1CalibrationFrame() },
             stereoFramePairProvider = { manager.getNearestStereoCalibrationFrames(30) },
             cam0CalibrationResolutionProvider = { manager.getCam0CalibrationResolutionInfo() },
-            onDismiss = { showCalibrationCapture = false },
+            onDismiss = { closeCalibrationCapture() },
             onSessionSaved = { updatedProfile -> activeProfile = updatedProfile },
             cam1CalibrationModeWarning = if ((activeProfile.cam1Mode?.width ?: 0) >= 1280 || (activeProfile.cam1Mode?.height ?: 0) >= 720) "cam1 UVC mode: ${activeProfile.cam1Mode.modeLabel()}; 640x480@30 may reduce USB preview drops during calibration." else null,
         )

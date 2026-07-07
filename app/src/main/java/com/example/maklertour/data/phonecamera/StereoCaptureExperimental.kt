@@ -181,7 +181,19 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
 
     fun close() = usbAdapter.close()
 
-    suspend fun bindCam0Preview(previewView: PreviewView, cameraId: String?, zoomRatio: Float, calibrationWidth: Int? = null, calibrationHeight: Int? = null, videoWidth: Int? = calibrationWidth, videoHeight: Int? = calibrationHeight, videoFps: Int? = null): PhoneCameraBindResult = phoneRecorder.bindPreview(previewView, cameraId, zoomRatio, calibrationWidth, calibrationHeight, videoWidth, videoHeight, videoFps)
+    suspend fun bindCam0Preview(previewView: PreviewView, cameraId: String?, zoomRatio: Float, calibrationWidth: Int? = null, calibrationHeight: Int? = null, videoWidth: Int? = calibrationWidth, videoHeight: Int? = calibrationHeight, videoFps: Int? = null): PhoneCameraBindResult = phoneRecorder.bindPreview(previewView, cameraId, zoomRatio, calibrationWidth, calibrationHeight, videoWidth, videoHeight, videoFps, enableVideoCapture = true)
+
+    suspend fun bindCam0CalibrationPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float, calibrationWidth: Int? = null, calibrationHeight: Int? = null): PhoneCameraBindResult = phoneRecorder.bindPreview(
+        previewView = previewView,
+        cameraId = cameraId,
+        zoomRatio = zoomRatio,
+        calibrationWidth = calibrationWidth,
+        calibrationHeight = calibrationHeight,
+        videoWidth = calibrationWidth,
+        videoHeight = calibrationHeight,
+        videoFps = null,
+        enableVideoCapture = false,
+    )
 
     suspend fun start(orderId: String?, captureSessionId: String, config: StereoRigConfig): File {
         require(config.baselineMm > 0.0) { "baseline_mm must be > 0" }

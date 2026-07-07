@@ -12,6 +12,9 @@ import androidx.camera.core.Camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Quality
@@ -66,6 +69,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var actualCalibrationHeight: Int? = null
     private var loggedCalibrationAnalysisFrames = 0L
     private var lastAcceptedCalibrationAnalysisNs = 0L
+    private var loggedOversizedCalibrationFrameWarning = false
 
     suspend fun bindPreview(
         previewView: PreviewView,
@@ -76,6 +80,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         videoWidth: Int? = calibrationWidth,
         videoHeight: Int? = calibrationHeight,
         videoFps: Int? = null,
+        enableVideoCapture: Boolean = true,
     ): PhoneCameraBindResult {
         requestedZoomRatio = zoomRatio
         requestedProfileWidth = calibrationWidth
@@ -89,10 +94,10 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         actualCalibrationHeight = null
         loggedCalibrationAnalysisFrames = 0L
         lastAcceptedCalibrationAnalysisNs = 0L
-        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio requested_profile=${profileRequestedSize?.width}x${profileRequestedSize?.height} requested_calibration=${requestedSize?.width}x${requestedSize?.height} reason=${calibrationResolutionReason ?: "none"}")
+        loggedOversizedCalibrationFrameWarning = false
+        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio video_capture=$enableVideoCapture requested_profile=${profileRequestedSize?.width}x${profileRequestedSize?.height} requested_calibration=${requestedSize?.width}x${requestedSize?.height} reason=${calibrationResolutionReason ?: "none"}")
         val cameraProvider = getCameraProvider()
         val preview = Preview.Builder().build()
-        val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
         val options = lensRepository.listBackCameras()
         val requestedLens = cameraId?.let { id -> options.firstOrNull { it.cameraId == id } }
         val fallbackLens = lensRepository.selectedOrDefault().first
@@ -100,7 +105,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         val selector = lensRepository.cameraSelectorFor(lens.cameraId)
         Log.d(TAG, "Phone camera bind: selected_camera_id=${lens.cameraId} lens=${lens.lensLabel}")
         selectedVideoInfo = SelectedPhoneVideoInfo(width = videoWidth ?: requestedSize?.width ?: 1280, height = videoHeight ?: requestedSize?.height ?: 720, fps = videoFps)
-        val preparedVideoCapture = VideoCapture.withOutput(recorder)
+        val preparedVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()) else null
         preview.setSurfaceProvider(previewView.surfaceProvider)
         val previousLens = selectedLensOption
         try {
@@ -122,8 +127,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             if (previousLens != null && previousLens.cameraId != lens.cameraId) {
                 runCatching {
                     val previousPreview = Preview.Builder().build()
-                    val previousRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
-                    val previousVideoCapture = VideoCapture.withOutput(previousRecorder)
+                    val previousVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()) else null
                     previousPreview.setSurfaceProvider(previewView.surfaceProvider)
                     val camera = bindWithCalibrationFallbacks(
                         cameraProvider = cameraProvider,
@@ -141,8 +145,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             } else if (recoveryLens != null) {
                 runCatching {
                     val fallbackPreview = Preview.Builder().build()
-                    val fallbackRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
-                    val fallbackVideoCapture = VideoCapture.withOutput(fallbackRecorder)
+                    val fallbackVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()) else null
                     fallbackPreview.setSurfaceProvider(previewView.surfaceProvider)
                     val camera = bindWithCalibrationFallbacks(
                         cameraProvider = cameraProvider,
@@ -172,7 +175,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         cameraProvider: ProcessCameraProvider,
         selector: androidx.camera.core.CameraSelector,
         preview: Preview,
-        videoCapture: VideoCapture<Recorder>,
+        videoCapture: VideoCapture<Recorder>?,
         requestedSize: Size?,
     ): Camera {
         val sizes = buildList {
@@ -184,7 +187,11 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         for (size in sizes) {
             val analysis = buildCalibrationAnalysis(size.width, size.height)
             try {
-                val camera = cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, videoCapture, analysis)
+                val camera = if (videoCapture != null) {
+                    cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, videoCapture, analysis)
+                } else {
+                    cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, analysis)
+                }
                 if (requestedSize != null && (size.width != requestedSize.width || size.height != requestedSize.height)) {
                     Log.w(TAG, "cam0 calibration resolution fallback requested=${requestedSize.width}x${requestedSize.height} selected=${size.width}x${size.height}")
                 }
@@ -205,7 +212,12 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         val builder = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
         if (width != null && height != null && width > 0 && height > 0) {
-            builder.setTargetResolution(Size(width, height))
+            builder.setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(ResolutionStrategy(Size(width, height), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
+                    .build()
+            )
         }
         return builder.build()
             .also { analyzer ->
@@ -230,6 +242,13 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             lastAcceptedCalibrationAnalysisNs = nowNs
             actualCalibrationWidth = imageProxy.width
             actualCalibrationHeight = imageProxy.height
+            if (imageProxy.width * imageProxy.height > CALIBRATION_ANALYSIS_MAX_PIXELS_FOR_CONVERSION) {
+                if (!loggedOversizedCalibrationFrameWarning) {
+                    loggedOversizedCalibrationFrameWarning = true
+                    Log.w(TAG, "cam0 calibration frame skipped: actual resolution too large actual=${imageProxy.width}x${imageProxy.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight}")
+                }
+                return
+            }
             val conversionStartNs = android.os.SystemClock.elapsedRealtimeNanos()
             val bitmap = imageProxy.toNv21Bitmap() ?: return
             val conversionMs = ((android.os.SystemClock.elapsedRealtimeNanos() - conversionStartNs) / 1_000_000.0).roundToLong()
@@ -438,6 +457,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         private const val CALIBRATION_ANALYSIS_MAX_WIDTH = 1280
         private const val CALIBRATION_ANALYSIS_MAX_HEIGHT = 720
         private const val CALIBRATION_ANALYSIS_MAX_FPS = 8L
+        private const val CALIBRATION_ANALYSIS_MAX_PIXELS_FOR_CONVERSION = CALIBRATION_ANALYSIS_MAX_WIDTH * CALIBRATION_ANALYSIS_MAX_HEIGHT * 2
         private const val CALIBRATION_ANALYSIS_MIN_INTERVAL_NS = 1_000_000_000L / CALIBRATION_ANALYSIS_MAX_FPS
         private const val CALIBRATION_CAP_REASON = "calibration_analysis_capped_for_latency"
     }
