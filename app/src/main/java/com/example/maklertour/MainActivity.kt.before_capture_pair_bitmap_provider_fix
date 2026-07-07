@@ -3540,12 +3540,10 @@ private fun CalibrationCaptureDialog(
     }
 
     fun capturePair(requireValidDetection: Boolean): Boolean {
+        val cam0 = cam0BitmapProvider()
+        val cam1 = cam1BitmapProvider()
         val needsCam0 = workflowMode != CalibrationWorkflowMode.CAM1_INTRINSICS
         val needsCam1 = workflowMode != CalibrationWorkflowMode.CAM0_INTRINSICS
-
-        val cam0 = if (needsCam0) cam0BitmapProvider() else null
-        val cam1 = if (needsCam1) cam1BitmapProvider() else null
-
         val cam0Result = if (needsCam0) cam0Detection else null
         val cam1Result = if (needsCam1) cam1Detection else null
         if ((needsCam0 && cam0 == null) || (needsCam1 && cam1 == null)) {
