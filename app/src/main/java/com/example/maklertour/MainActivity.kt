@@ -93,6 +93,7 @@ import androidx.core.app.ActivityCompat
 import androidx.camera.view.PreviewView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
+import com.maklertour.data.phonecamera.CalibrationFrame
 import com.maklertour.data.phonecamera.PhoneCameraBindResult
 import com.maklertour.data.phonecamera.PhoneCameraLensOption
 import com.maklertour.data.phonecamera.PhoneCameraLensRepository
@@ -3187,6 +3188,8 @@ private fun StereoCaptureExperimentalScreen(
             profile = activeProfile,
             cam0BitmapProvider = { cam0PreviewView?.bitmap },
             cam1BitmapProvider = { cam1TextureView?.bitmap },
+            cam0LatestFrameProvider = { manager.getLatestCam0CalibrationFrame() },
+            cam1LatestFrameProvider = { manager.getLatestCam1CalibrationFrame() },
             onDismiss = { showCalibrationCapture = false },
             onSessionSaved = { updatedProfile -> activeProfile = updatedProfile },
             cam1CalibrationModeWarning = if ((activeProfile.cam1Mode?.width ?: 0) >= 1280 || (activeProfile.cam1Mode?.height ?: 0) >= 720) "For calibration prefer MJPEG 640x480@30; current cam1 mode may drop preview frames." else null,
@@ -3229,6 +3232,8 @@ private fun CalibrationCaptureDialog(
     profile: StereoRigProfile,
     cam0BitmapProvider: () -> Bitmap?,
     cam1BitmapProvider: () -> Bitmap?,
+    cam0LatestFrameProvider: () -> CalibrationFrame?,
+    cam1LatestFrameProvider: () -> CalibrationFrame?,
     onDismiss: () -> Unit,
     onSessionSaved: (StereoRigProfile) -> Unit,
     cam1CalibrationModeWarning: String? = null,
@@ -3485,7 +3490,7 @@ private fun CalibrationCaptureDialog(
             .put("checkerboard_inner_rows", settings.checkerboardInnerRows)
             .put("square_size_mm", settings.squareSizeMm)
             .put("required_pairs", settings.requiredPairs)
-            .put("capture_source", "preview_bitmap")
+            .put("capture_source", "latest_frame_buffer")
             .put("note", "not hardware synchronized")
         File(dir, "calibration_input.json").writeText(input.toString(2))
         File(dir, "pairs_manifest.json").writeText(JSONObject().put("pairs", JSONArray()).toString(2))
@@ -3773,29 +3778,46 @@ private fun CalibrationCaptureDialog(
         val needsCam0 = workflowMode != CalibrationWorkflowMode.CAM1_INTRINSICS
         val needsCam1 = workflowMode != CalibrationWorkflowMode.CAM0_INTRINSICS
 
-        val cam0 = if (needsCam0) lastCam0PreviewBitmap ?: cam0BitmapProvider() else null
-        val cam1 = if (needsCam1) lastCam1PreviewBitmap ?: cam1BitmapProvider() else null
+        val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
+        val cam0Latest = if (needsCam0) cam0LatestFrameProvider() else null
+        val cam1Latest = if (needsCam1) cam1LatestFrameProvider() else null
+        val cam0 = cam0Latest?.bitmap
+        val cam1 = cam1Latest?.bitmap
 
-        val cam0Result = if (needsCam0) cam0Detection else null
-        val cam1Result = if (needsCam1) cam1Detection else null
-        if ((needsCam0 && cam0 == null) || (needsCam1 && cam1 == null)) {
-            message = "Preview bitmap unavailable; wait for required live previews."
+        if ((needsCam0 && cam0Latest == null) || (needsCam1 && cam1Latest == null)) {
+            message = "Latest frame buffer unavailable; wait for fresh camera frames and repeat capture."
             return false
         }
-        if (requireValidDetection) {
-            val valid = when (workflowMode) {
-                CalibrationWorkflowMode.CAM0_INTRINSICS -> cam0Result?.found == true
-                CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result?.found == true
-                CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true
-            }
-            if (!valid) {
-                message = when (workflowMode) {
-                    CalibrationWorkflowMode.CAM0_INTRINSICS -> "cam0 must show FOUND before capture."
-                    CalibrationWorkflowMode.CAM1_INTRINSICS -> "cam1 must show FOUND before capture."
-                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Both cameras must show FOUND in the shared overlap area before capture."
-                }
+        val cam0AgeMs = cam0Latest?.ageMs(nowNs)
+        val cam1AgeMs = cam1Latest?.ageMs(nowNs)
+        if ((cam0AgeMs != null && cam0AgeMs > 300L) || (cam1AgeMs != null && cam1AgeMs > 300L)) {
+            message = "Latest frame is stale (cam0_age=${cam0AgeMs ?: "n/a"}ms, cam1_age=${cam1AgeMs ?: "n/a"}ms). Repeat capture."
+            return false
+        }
+        if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS && cam0Latest != null && cam1Latest != null) {
+            val deltaMs = kotlin.math.abs(cam0Latest.timestampNs - cam1Latest.timestampNs) / 1_000_000L
+            if (deltaMs > 100L) {
+                message = "Stereo frames are unsynced (cam0_age=${cam0AgeMs}ms, cam1_age=${cam1AgeMs}ms, delta=${deltaMs}ms). Repeat capture."
                 return false
             }
+        }
+
+        val cam0Result = if (needsCam0 && cam0 != null) detector.detect(cam0, settings) else null
+        val cam1Result = if (needsCam1 && cam1 != null) detector.detect(cam1, settings) else null
+        cam0Detection = cam0Result
+        cam1Detection = cam1Result
+        val latestFrameDetectionValid = when (workflowMode) {
+            CalibrationWorkflowMode.CAM0_INTRINSICS -> cam0Result?.found == true
+            CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result?.found == true
+            CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true
+        }
+        if (!latestFrameDetectionValid) {
+            message = when (workflowMode) {
+                CalibrationWorkflowMode.CAM0_INTRINSICS -> "Checkerboard not found on latest cam0 frame; frame was not saved. Repeat capture."
+                CalibrationWorkflowMode.CAM1_INTRINSICS -> "Checkerboard not found on latest cam1 frame; frame was not saved. Repeat capture."
+                CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Checkerboard not found on latest stereo frame buffers; pair was not saved. Repeat capture."
+            }
+            return false
         }
         return runCatching {
             val dir = ensureSessionDir()
@@ -3827,7 +3849,23 @@ private fun CalibrationCaptureDialog(
             }
             calibrationAutoStarted = false
 
-            appendCalibrationPairManifest(dir, nextIndex, cam0Path, cam1Path, cam0Result, cam1Result, settings.checkerboardInnerCols * settings.checkerboardInnerRows, workflowMode.name, cam0?.width, cam0?.height, cam1?.width, cam1?.height)
+            appendCalibrationPairManifest(
+                dir,
+                nextIndex,
+                cam0Path,
+                cam1Path,
+                cam0Result,
+                cam1Result,
+                settings.checkerboardInnerCols * settings.checkerboardInnerRows,
+                workflowMode.name,
+                cam0?.width,
+                cam0?.height,
+                cam1?.width,
+                cam1?.height,
+                captureSource = "latest_frame_buffer",
+                cam0Frame = cam0Latest,
+                cam1Frame = cam1Latest,
+            )
             pairCount = nextValidCount
             if (nextValidCount >= settings.requiredPairs) {
                 autoCapture = false
@@ -4208,7 +4246,12 @@ private fun appendCalibrationPairManifest(
     cam0BitmapHeight: Int? = null,
     cam1BitmapWidth: Int? = null,
     cam1BitmapHeight: Int? = null,
+    captureSource: String = "preview_bitmap",
+    cam0Frame: CalibrationFrame? = null,
+    cam1Frame: CalibrationFrame? = null,
 ) {
+    val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
+    val stereoCaptureDeltaMs = if (cam0Frame != null && cam1Frame != null) kotlin.math.abs(cam0Frame.timestampNs - cam1Frame.timestampNs) / 1_000_000.0 else JSONObject.NULL
     val manifestFile = File(sessionDir, "pairs_manifest.json")
     val manifest = if (manifestFile.exists()) JSONObject(manifestFile.readText()) else JSONObject().put("pairs", JSONArray())
     val pairs = manifest.optJSONArray("pairs") ?: JSONArray().also { manifest.put("pairs", it) }
@@ -4225,14 +4268,21 @@ private fun appendCalibrationPairManifest(
             .put("cam0_bitmap_height", cam0BitmapHeight ?: 0)
             .put("cam1_bitmap_width", cam1BitmapWidth ?: 0)
             .put("cam1_bitmap_height", cam1BitmapHeight ?: 0)
-            .put("cam0_source", "preview_bitmap")
-            .put("cam1_source", "preview_bitmap")
+            .put("cam0_source", captureSource)
+            .put("cam1_source", captureSource)
             .put("cam0_checkerboard_found", cam0Detection?.found == true)
             .put("cam1_checkerboard_found", cam1Detection?.found == true)
             .put("cam0_corners_found", cam0Detection?.cornersFound ?: 0)
             .put("cam1_corners_found", cam1Detection?.cornersFound ?: 0)
             .put("expected_corners", expectedCorners)
-            .put("capture_source", "preview_bitmap")
+            .put("capture_source", captureSource)
+            .put("cam0_frame_timestamp_ns", cam0Frame?.timestampNs ?: JSONObject.NULL)
+            .put("cam1_frame_timestamp_ns", cam1Frame?.timestampNs ?: JSONObject.NULL)
+            .put("cam0_frame_sequence", cam0Frame?.sequence ?: JSONObject.NULL)
+            .put("cam1_frame_sequence", cam1Frame?.sequence ?: JSONObject.NULL)
+            .put("stereo_capture_delta_ms", stereoCaptureDeltaMs)
+            .put("cam0_frame_age_ms", cam0Frame?.ageMs(nowNs) ?: JSONObject.NULL)
+            .put("cam1_frame_age_ms", cam1Frame?.ageMs(nowNs) ?: JSONObject.NULL)
             .put("sync_status", "not_hardware_synchronized")
     )
     manifestFile.writeText(manifest.toString(2))

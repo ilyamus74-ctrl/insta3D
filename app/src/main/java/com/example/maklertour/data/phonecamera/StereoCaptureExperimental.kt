@@ -19,6 +19,9 @@ import android.os.Build
 import android.os.SystemClock
 import android.os.Handler
 import android.os.HandlerThread
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.os.Looper
 import android.util.Log
 import android.view.TextureView
@@ -86,6 +89,14 @@ data class UsbUvcCameraInfo(
 
 data class StereoCaptureValidation(val ok: Boolean, val errors: List<String>, val bundleDir: File)
 
+data class CalibrationFrame(
+    val bitmap: Bitmap,
+    val timestampNs: Long,
+    val sequence: Long,
+) {
+    fun ageMs(nowNs: Long = SystemClock.elapsedRealtimeNanos()): Long = (nowNs - timestampNs) / 1_000_000L
+}
+
 interface StereoCaptureUploader {
     suspend fun exportOrUpload(orderId: String?, captureSessionId: String, bundleDir: File): Result<File>
 }
@@ -108,7 +119,11 @@ class StereoCaptureExperimentalManager(context: Context, lifecycleOwner: Lifecyc
 
     fun bindCam1Preview(textureView: TextureView): UsbUvcCameraInfo = usbAdapter.refreshAndRequestPermission(textureView, null)
 
-    fun onCam1PreviewFrameRendered() = usbAdapter.onPreviewFrameRendered()
+    fun onCam1PreviewFrameRendered() = Unit
+
+    fun getLatestCam1CalibrationFrame(): CalibrationFrame? = usbAdapter.getLatestCalibrationFrame()
+
+    fun getLatestCam0CalibrationFrame(): CalibrationFrame? = phoneRecorder.getLatestCalibrationFrame()
 
     fun close() = usbAdapter.close()
 
@@ -268,6 +283,7 @@ private interface Cam1UvcBackend {
     fun stopRecording()
     fun close()
     fun snapshot(): Cam1UvcBackendState
+    fun latestCalibrationFrame(): CalibrationFrame?
 }
 
 private data class Cam1UvcDeviceInfo(
@@ -366,6 +382,24 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
 
     override fun close() = synchronized(lock) { runCatching { nativeClose() }; state = Cam1UvcBackendState() }
 
+    override fun latestCalibrationFrame(): CalibrationFrame? = synchronized(lock) {
+        val snapshot = runCatching { nativeLatestFrameSnapshot() }.getOrNull() ?: return@synchronized null
+        if (snapshot.size < 2) return@synchronized null
+        val bytes = snapshot[0] as? ByteArray ?: return@synchronized null
+        val metadata = snapshot[1] as? LongArray ?: return@synchronized null
+        if (metadata.size < 5 || metadata[0] <= 0L || metadata[1] <= 0L) return@synchronized null
+        val width = metadata[2].toInt()
+        val height = metadata[3].toInt()
+        val format = metadata[4].toInt()
+        val bitmap = when (format) {
+            UVC_FRAME_FORMAT_MJPEG, UVC_FRAME_FORMAT_COMPRESSED -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            UVC_FRAME_FORMAT_YUYV, UVC_FRAME_FORMAT_UNCOMPRESSED -> yuyvToBitmap(bytes, width, height)
+            UVC_FRAME_FORMAT_UYVY -> uyvyToBitmap(bytes, width, height)
+            else -> null
+        } ?: return@synchronized null
+        CalibrationFrame(bitmap = bitmap, timestampNs = metadata[0], sequence = metadata[1])
+    }
+
     override fun snapshot(): Cam1UvcBackendState = synchronized(lock) {
         val counters = runCatching { nativeSnapshot() }.getOrNull()
         if (counters != null && counters.size >= 8) {
@@ -394,10 +428,61 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
     private external fun nativeStopRecording()
     private external fun nativeClose()
     private external fun nativeSnapshot(): LongArray
+    private external fun nativeLatestFrameSnapshot(): Array<Any>?
     private external fun nativeSelectedFormatName(): String
     private external fun nativeLastError(): String
 
+    private fun yuyvToBitmap(bytes: ByteArray, width: Int, height: Int): Bitmap? {
+        if (width <= 0 || height <= 0 || bytes.size < width * height * 2) return null
+        val pixels = IntArray(width * height)
+        var out = 0
+        var i = 0
+        while (out < pixels.size && i + 3 < bytes.size) {
+            val y0 = bytes[i].toInt() and 0xff
+            val u = bytes[i + 1].toInt() and 0xff
+            val y1 = bytes[i + 2].toInt() and 0xff
+            val v = bytes[i + 3].toInt() and 0xff
+            pixels[out++] = yuvToArgb(y0, u, v)
+            if (out < pixels.size) pixels[out++] = yuvToArgb(y1, u, v)
+            i += 4
+        }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun uyvyToBitmap(bytes: ByteArray, width: Int, height: Int): Bitmap? {
+        if (width <= 0 || height <= 0 || bytes.size < width * height * 2) return null
+        val pixels = IntArray(width * height)
+        var out = 0
+        var i = 0
+        while (out < pixels.size && i + 3 < bytes.size) {
+            val u = bytes[i].toInt() and 0xff
+            val y0 = bytes[i + 1].toInt() and 0xff
+            val v = bytes[i + 2].toInt() and 0xff
+            val y1 = bytes[i + 3].toInt() and 0xff
+            pixels[out++] = yuvToArgb(y0, u, v)
+            if (out < pixels.size) pixels[out++] = yuvToArgb(y1, u, v)
+            i += 4
+        }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun yuvToArgb(y: Int, u: Int, v: Int): Int {
+        val c = y - 16
+        val d = u - 128
+        val e = v - 128
+        val r = ((298 * c + 409 * e + 128) shr 8).coerceIn(0, 255)
+        val g = ((298 * c - 100 * d - 208 * e + 128) shr 8).coerceIn(0, 255)
+        val b = ((298 * c + 516 * d + 128) shr 8).coerceIn(0, 255)
+        return Color.argb(255, r, g, b)
+    }
+
     companion object {
+        private const val UVC_FRAME_FORMAT_COMPRESSED = 2
+        private const val UVC_FRAME_FORMAT_YUYV = 3
+        private const val UVC_FRAME_FORMAT_UYVY = 4
+        private const val UVC_FRAME_FORMAT_MJPEG = 9
+        private const val UVC_FRAME_FORMAT_UNCOMPRESSED = 1
+
         private const val LOAD_TAG = "NativeLibuvcCam1Backend"
 
         init {
@@ -450,6 +535,7 @@ private class UsbUvcCameraAdapter(private val context: Context) {
     fun currentInfo(): UsbUvcCameraInfo = _state.value
     fun recordedFrameCount(): Long = lastRecordingFrameCount
     fun onPreviewFrameRendered() = Unit
+    fun getLatestCalibrationFrame(): CalibrationFrame? = backend.latestCalibrationFrame()
 
     fun refreshAndRequestPermission(textureView: TextureView?, preferredMode: CameraMode?): UsbUvcCameraInfo {
         append("Refresh USB pressed")

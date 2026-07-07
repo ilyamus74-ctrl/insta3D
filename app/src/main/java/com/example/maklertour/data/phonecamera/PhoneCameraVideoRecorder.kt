@@ -1,8 +1,15 @@
 package com.maklertour.data.phonecamera
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.util.Log
 import androidx.camera.core.Camera
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FileOutputOptions
@@ -18,7 +25,10 @@ import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 
 data class PhoneVideoRecordingResult(val path: String, val durationSec: Long, val fileSizeBytes: Long)
@@ -36,6 +46,12 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var effectiveZoomRatio: Float = requestedZoomRatio
     private var lastZoomApplyResult: String? = null
     private var boundCamera: Camera? = null
+    private val latestFrameLock = Any()
+    private var latestCalibrationFrame: CalibrationFrame? = null
+    private var latestCalibrationSequence = 0L
+    private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "Cam0CalibrationAnalysis").apply { isDaemon = true }
+    }
     private var minZoomRatio: Float? = null
     private var maxZoomRatio: Float? = null
 
@@ -53,6 +69,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         Log.d(TAG, "Phone camera bind: selected_camera_id=${lens.cameraId} lens=${lens.lensLabel}")
         selectedVideoInfo = SelectedPhoneVideoInfo(width = 1280, height = 720, fps = null)
         val preparedVideoCapture = VideoCapture.withOutput(recorder)
+        val analysis = buildCalibrationAnalysis()
         preview.setSurfaceProvider(previewView.surfaceProvider)
         val previousLens = selectedLensOption
         try {
@@ -62,6 +79,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 selector,
                 preview,
                 preparedVideoCapture,
+                analysis,
             )
             boundCamera = camera
             videoCapture = preparedVideoCapture
@@ -75,12 +93,14 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     val previousPreview = Preview.Builder().build()
                     val previousRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
                     val previousVideoCapture = VideoCapture.withOutput(previousRecorder)
+                    val previousAnalysis = buildCalibrationAnalysis()
                     previousPreview.setSurfaceProvider(previewView.surfaceProvider)
                     val camera = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         lensRepository.cameraSelectorFor(previousLens.cameraId),
                         previousPreview,
                         previousVideoCapture,
+                        previousAnalysis,
                     )
                     boundCamera = camera
                     videoCapture = previousVideoCapture
@@ -93,12 +113,14 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     val fallbackPreview = Preview.Builder().build()
                     val fallbackRecorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
                     val fallbackVideoCapture = VideoCapture.withOutput(fallbackRecorder)
+                    val fallbackAnalysis = buildCalibrationAnalysis()
                     fallbackPreview.setSurfaceProvider(previewView.surfaceProvider)
                     val camera = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         lensRepository.cameraSelectorFor(recoveryLens.cameraId),
                         fallbackPreview,
                         fallbackVideoCapture,
+                        fallbackAnalysis,
                     )
                     boundCamera = camera
                     videoCapture = fallbackVideoCapture
@@ -111,6 +133,66 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         }
         Log.d(TAG, "bindPreview(): success")
         return getBindResult(success = true)
+    }
+
+    fun getLatestCalibrationFrame(): CalibrationFrame? = synchronized(latestFrameLock) { latestCalibrationFrame }
+
+    private fun buildCalibrationAnalysis(): ImageAnalysis = ImageAnalysis.Builder()
+        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        .build()
+        .also { analyzer ->
+            analyzer.setAnalyzer(analysisExecutor) { imageProxy ->
+                updateLatestCalibrationFrame(imageProxy)
+            }
+        }
+
+    private fun updateLatestCalibrationFrame(imageProxy: ImageProxy) {
+        try {
+            val bitmap = imageProxy.toNv21Bitmap() ?: return
+            val timestampNs = imageProxy.imageInfo.timestamp
+            synchronized(latestFrameLock) {
+                latestCalibrationSequence += 1L
+                latestCalibrationFrame = CalibrationFrame(bitmap, timestampNs, latestCalibrationSequence)
+            }
+        } finally {
+            imageProxy.close()
+        }
+    }
+
+    private fun ImageProxy.toNv21Bitmap(): Bitmap? {
+        if (format != ImageFormat.YUV_420_888) return null
+        val nv21 = yuv420888ToNv21(this)
+        val yuv = YuvImage(nv21, ImageFormat.NV21, width, height, null)
+        val out = ByteArrayOutputStream()
+        yuv.compressToJpeg(Rect(0, 0, width, height), 92, out)
+        return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+    }
+
+    private fun yuv420888ToNv21(image: ImageProxy): ByteArray {
+        val ySize = image.width * image.height
+        val uvSize = image.width * image.height / 4
+        val nv21 = ByteArray(ySize + uvSize * 2)
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+        var offset = 0
+        for (row in 0 until image.height) {
+            yPlane.buffer.position(row * yPlane.rowStride)
+            yPlane.buffer.get(nv21, offset, image.width)
+            offset += image.width
+        }
+        val chromaHeight = image.height / 2
+        val chromaWidth = image.width / 2
+        for (row in 0 until chromaHeight) {
+            for (col in 0 until chromaWidth) {
+                val vuIndex = ySize + row * image.width + col * 2
+                vPlane.buffer.position(row * vPlane.rowStride + col * vPlane.pixelStride)
+                nv21[vuIndex] = vPlane.buffer.get()
+                uPlane.buffer.position(row * uPlane.rowStride + col * uPlane.pixelStride)
+                nv21[vuIndex + 1] = uPlane.buffer.get()
+            }
+        }
+        return nv21
     }
 
     fun getSelectedVideoInfo(): SelectedPhoneVideoInfo? = selectedVideoInfo

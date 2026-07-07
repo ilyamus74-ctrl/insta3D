@@ -61,7 +61,7 @@ using frame_cb_t = void (*)(uvc_frame_t*, void*);
 std::atomic<bool> g_opened{false}, g_preview{false}, g_recording{false}, g_stop{false};
 std::atomic<bool> g_accept_frames{false}, g_render_stop{false}, g_frame_dirty{false};
 std::atomic<int64_t> g_received{0}, g_decoded{0}, g_rendered{0}, g_last_frame_ns{0}, g_first_frame_ns{0}, g_recorded{0};
-std::atomic<int64_t> g_start_ns{0}, g_session_generation{0};
+std::atomic<int64_t> g_start_ns{0}, g_session_generation{0}, g_latest_sequence{0};
 std::atomic<int> g_selected_format{UVC_FRAME_FORMAT_UNKNOWN}, g_selected_width{0}, g_selected_height{0}, g_selected_fps{0};
 std::atomic<int> g_callbacks_in_flight{0};
 struct CallbackState;
@@ -89,6 +89,7 @@ std::vector<uint8_t> g_latest_frame;
 uint32_t g_latest_width=0, g_latest_height=0;
 int g_latest_format=UVC_FRAME_FORMAT_UNKNOWN;
 int64_t g_latest_timestamp_ns=0;
+int64_t g_latest_frame_sequence=0;
 FILE* g_record_file=nullptr;
 
 const char* frameFormatName(int fmt);
@@ -385,7 +386,7 @@ void cb(uvc_frame_t* frame, void* user){
  {
   std::lock_guard<std::mutex> lk(g_frame_lock);
   g_latest_frame.assign((const uint8_t*)frame->data, (const uint8_t*)frame->data + copyBytes);
-  g_latest_width=m.width; g_latest_height=m.height; g_latest_format=m.format; g_latest_timestamp_ns=t; g_frame_dirty=true;
+  g_latest_width=m.width; g_latest_height=m.height; g_latest_format=m.format; g_latest_timestamp_ns=t; g_latest_frame_sequence=frame->sequence > 0 ? (int64_t)frame->sequence : c; g_latest_sequence=g_latest_frame_sequence; g_frame_dirty=true;
  }
  g_frame_cv.notify_one();
  char hex[16*3+1]{};
@@ -509,7 +510,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_maklertour_data_phonecamera_Nativ
  { std::lock_guard<std::mutex> lk(g_window_lock); releaseWindowLocked(); if(surface) { g_window=ANativeWindow_fromSurface(env,surface); if(g_window) ANativeWindow_setBuffersGeometry(g_window, 0, 0, WINDOW_FORMAT_RGBA_8888); } }
  { std::lock_guard<std::mutex> lk(g_frame_lock); g_latest_frame.clear(); g_frame_dirty=false; }
  ensureRenderThreadLocked();
- g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_render_errors=0; g_window_lock_failures=0; g_surface_null_count=0; g_callback_dropped_after_stop=0;
+ g_received=0; g_decoded=0; g_rendered=0; g_last_frame_ns=0; g_first_frame_ns=0; g_recorded=0; g_latest_sequence=0; g_render_errors=0; g_window_lock_failures=0; g_surface_null_count=0; g_callback_dropped_after_stop=0;
  setSelectedMode(UVC_FRAME_FORMAT_UNKNOWN,0,0,0);
  g_fd=fd; g_vendor=vendorId; g_product=productId; g_device_name=name; g_bus_num=busNum; g_dev_addr=devAddr; g_usbfs=usbfsPath; { std::lock_guard<std::mutex> lk(g_state_lock); g_preferred_format_name=preferred; g_preferred_width=preferredWidth; g_preferred_height=preferredHeight; g_preferred_fps=preferredFps; g_preferred_auto=preferredAuto; } g_opened=true; g_start_ns=nowNs();
  g_stop=false; g_accept_frames=false; g_render_stop=false;
@@ -533,6 +534,8 @@ static jboolean startPreviewLocked(){
   g_latest_height=0;
   g_latest_format=UVC_FRAME_FORMAT_UNKNOWN;
   g_latest_timestamp_ns=0;
+  g_latest_frame_sequence=0;
+  g_latest_sequence=0;
   g_frame_dirty=false;
  }
  int64_t generation=++g_session_generation;
@@ -596,3 +599,25 @@ extern "C" JNIEXPORT void JNICALL Java_com_maklertour_data_phonecamera_NativeLib
 extern "C" JNIEXPORT jlongArray JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeSnapshot(JNIEnv* env,jobject){ double fps=0.0; auto last=g_last_frame_ns.load(); auto first=g_first_frame_ns.load(); auto rec=g_received.load(); if(first>0&&last>first) fps=(double)(rec-1)*1e9/(double)(last-first); int64_t fpsBits; memcpy(&fpsBits,&fps,8); jlong values[12]={g_received.load(),g_decoded.load(),g_rendered.load(),fpsBits,last,first,g_recorded.load(),g_preview.load()?1:0,g_selected_format.load(),g_selected_width.load(),g_selected_height.load(),g_selected_fps.load()}; jlongArray out=env->NewLongArray(12); env->SetLongArrayRegion(out,0,12,values); return out; }
 extern "C" JNIEXPORT jstring JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeSelectedFormatName(JNIEnv* env,jobject){ std::lock_guard<std::mutex> lk(g_state_lock); return env->NewStringUTF(g_selected_format_name.c_str()); }
 extern "C" JNIEXPORT jstring JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeLastError(JNIEnv* env,jobject){ std::lock_guard<std::mutex> lk(g_state_lock); return env->NewStringUTF(g_error.c_str()); }
+
+extern "C" JNIEXPORT jobjectArray JNICALL Java_com_maklertour_data_phonecamera_NativeLibuvcCam1Backend_nativeLatestFrameSnapshot(JNIEnv* env,jobject){
+ std::lock_guard<std::mutex> lk(g_frame_lock);
+ if(g_latest_frame.empty() || g_latest_timestamp_ns <= 0 || g_latest_frame_sequence <= 0) return nullptr;
+ jclass objectClass=env->FindClass("java/lang/Object");
+ if(!objectClass) return nullptr;
+ jobjectArray out=env->NewObjectArray(2, objectClass, nullptr);
+ if(!out) return nullptr;
+ jbyteArray bytes=env->NewByteArray((jsize)g_latest_frame.size());
+ if(!bytes) return nullptr;
+ env->SetByteArrayRegion(bytes,0,(jsize)g_latest_frame.size(),reinterpret_cast<const jbyte*>(g_latest_frame.data()));
+ jlong values[5]={g_latest_timestamp_ns,g_latest_frame_sequence,(jlong)g_latest_width,(jlong)g_latest_height,(jlong)g_latest_format};
+ jlongArray metadata=env->NewLongArray(5);
+ if(!metadata) return nullptr;
+ env->SetLongArrayRegion(metadata,0,5,values);
+ env->SetObjectArrayElement(out,0,bytes);
+ env->SetObjectArrayElement(out,1,metadata);
+ env->DeleteLocalRef(bytes);
+ env->DeleteLocalRef(metadata);
+ env->DeleteLocalRef(objectClass);
+ return out;
+}
