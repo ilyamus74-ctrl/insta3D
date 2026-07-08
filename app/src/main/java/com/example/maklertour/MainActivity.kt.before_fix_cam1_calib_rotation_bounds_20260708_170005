@@ -82,7 +82,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
@@ -177,7 +176,6 @@ import java.util.Date
 import java.text.SimpleDateFormat
 import java.io.FileOutputStream
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.app.Activity
 import android.content.pm.ActivityInfo
 
@@ -4430,25 +4428,6 @@ private fun CalibrationCaptureDialog(
 
 }
 
-private fun rotateBitmapForCalibrationDisplayOnly(bitmap: Bitmap, rotationDegrees: Float): Bitmap {
-    val normalized = (((rotationDegrees % 360f) + 360f) % 360f).toInt()
-    if (normalized == 0) return bitmap
-
-    val matrix = Matrix().apply {
-        postRotate(normalized.toFloat())
-    }
-
-    return Bitmap.createBitmap(
-        bitmap,
-        0,
-        0,
-        bitmap.width,
-        bitmap.height,
-        matrix,
-        true,
-    )
-}
-
 @Composable
 private fun PreviewBitmapPanel(
     label: String,
@@ -4457,16 +4436,12 @@ private fun PreviewBitmapPanel(
     modifier: Modifier = Modifier,
     rotationDegrees: Float = 0f,
 ) {
-    Box(modifier = modifier.background(Color.DarkGray).clipToBounds(), contentAlignment = Alignment.Center) {
+    Box(modifier = modifier.background(Color.DarkGray), contentAlignment = Alignment.Center) {
         if (bitmap != null) {
-            val displayBitmap = remember(bitmap, rotationDegrees) {
-                rotateBitmapForCalibrationDisplayOnly(bitmap, rotationDegrees)
-            }
-
             AsyncImage(
-                model = displayBitmap,
+                model = bitmap,
                 contentDescription = label,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotationDegrees },
                 contentScale = ContentScale.Fit,
             )
         } else {
@@ -4482,7 +4457,7 @@ private fun PreviewBitmapPanel(
         val detectionResult = detection
         if (detectionResult != null && detectionResult.normalizedCornerPoints.isNotEmpty()) {
             val points = detectionResult.normalizedCornerPoints
-            Canvas(modifier = Modifier.fillMaxSize()) {
+            Canvas(modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotationDegrees }) {
                 val imageAspect =
                     detectionResult.imageWidth.toFloat() /
                         detectionResult.imageHeight.toFloat().coerceAtLeast(1f)

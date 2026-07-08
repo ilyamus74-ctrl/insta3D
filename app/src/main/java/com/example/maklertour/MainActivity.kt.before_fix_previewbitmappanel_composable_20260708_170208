@@ -4430,6 +4430,7 @@ private fun CalibrationCaptureDialog(
 
 }
 
+@Composable
 private fun rotateBitmapForCalibrationDisplayOnly(bitmap: Bitmap, rotationDegrees: Float): Bitmap {
     val normalized = (((rotationDegrees % 360f) + 360f) % 360f).toInt()
     if (normalized == 0) return bitmap
@@ -4449,7 +4450,6 @@ private fun rotateBitmapForCalibrationDisplayOnly(bitmap: Bitmap, rotationDegree
     )
 }
 
-@Composable
 private fun PreviewBitmapPanel(
     label: String,
     bitmap: Bitmap?,
