@@ -255,20 +255,14 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             }
             val conversionStartNs = android.os.SystemClock.elapsedRealtimeNanos()
             val rawBitmap = imageProxy.toNv21Bitmap() ?: return
-            val imageProxyRotationDegrees = imageProxy.imageInfo.rotationDegrees
-
-            // IMPORTANT:
-            // Do not apply CameraX display rotation to saved calibration/depth frames.
-            // Preview orientation is a UI concern. Saved stereo frames must preserve the
-            // requested camera analysis size, e.g. 1280x720, to match cam1 UVC frames.
-            val rotationDegrees = 0
-            val bitmap = rawBitmap
+            val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+            val bitmap = rotateBitmapForDisplay(rawBitmap, rotationDegrees)
             val conversionMs = ((android.os.SystemClock.elapsedRealtimeNanos() - conversionStartNs) / 1_000_000.0).roundToLong()
             val timestampNs = imageProxy.imageInfo.timestamp
             val ageMs = (android.os.SystemClock.elapsedRealtimeNanos() - timestampNs) / 1_000_000L
             loggedCalibrationAnalysisFrames += 1L
             if (loggedCalibrationAnalysisFrames <= 10L || loggedCalibrationAnalysisFrames % 30L == 0L) {
-                Log.d(TAG, "cam0 analysis actual=${imageProxy.width}x${imageProxy.height} imageProxyRotationDegrees=$imageProxyRotationDegrees targetRotation=$currentTargetRotation before=${rawBitmap.width}x${rawBitmap.height} after=${bitmap.width}x${bitmap.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight} age=${ageMs}ms conversion_ms=$conversionMs saved frame cam0=${bitmap.width}x${bitmap.height} rotationApplied=$rotationDegrees")
+                Log.d(TAG, "cam0 analysis actual=${imageProxy.width}x${imageProxy.height} rotationDegrees=$rotationDegrees targetRotation=$currentTargetRotation before=${rawBitmap.width}x${rawBitmap.height} after=${bitmap.width}x${bitmap.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight} age=${ageMs}ms conversion_ms=$conversionMs saved frame cam0=${bitmap.width}x${bitmap.height} rotationApplied=$rotationDegrees")
             }
             synchronized(latestFrameLock) {
                 latestCalibrationSequence += 1L

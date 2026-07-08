@@ -101,7 +101,6 @@ import com.maklertour.data.phonecamera.PhoneCameraLensRepository
 import com.maklertour.data.phonecamera.PhoneCalibrationResolutionInfo
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -176,8 +175,6 @@ import java.util.Date
 import java.text.SimpleDateFormat
 import java.io.FileOutputStream
 import android.graphics.Bitmap
-import android.app.Activity
-import android.content.pm.ActivityInfo
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -188,8 +185,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-
-private const val CAM1_PREVIEW_ROTATION_DEGREES = 90f
 
 private enum class AppTab(val route: String, val titleRes: Int) {
     Sessions("sessions", R.string.tab_sessions),
@@ -2971,15 +2966,6 @@ private fun StereoCaptureExperimentalScreen(
             (context as? ComponentActivity)?.let { ActivityCompat.requestPermissions(it, arrayOf(Manifest.permission.RECORD_AUDIO), 13031) }
         }
     }
-
-    DisposableEffect(Unit) {
-        val activity = context as? Activity
-        val previousOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        onDispose {
-            activity?.requestedOrientation = previousOrientation
-        }
-    }
     val lensRepository = remember(context) { PhoneCameraLensRepository(context) }
     var cameraOptions by remember { mutableStateOf(lensRepository.listBackCameras()) }
     var selectedCameraId by remember { mutableStateOf(lensRepository.getSelectedCameraId() ?: cameraOptions.firstOrNull()?.cameraId) }
@@ -3141,7 +3127,7 @@ private fun StereoCaptureExperimentalScreen(
             }
             val cam1Card: @Composable (Modifier) -> Unit = { modifier ->
                 Box(modifier = modifier.background(Color(0xFF202020)), contentAlignment = Alignment.Center) {
-                    AndroidView(modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = CAM1_PREVIEW_ROTATION_DEGREES }, factory = { ctx ->
+                    AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx ->
                         TextureView(ctx).apply {
                             cam1TextureView = this
                             surfaceTextureListener = object : TextureView.SurfaceTextureListener {
