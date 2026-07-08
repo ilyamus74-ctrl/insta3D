@@ -165,6 +165,56 @@ def audit_calibration_ui(main: str, audit: Audit) -> None:
     audit.require("graphicsLayer { rotationZ = rotationDegrees }" not in panel, "PreviewBitmapPanel does not rotate via graphicsLayer")
 
 
+
+def audit_calibration_capture_ux(main: str, audit: Audit) -> None:
+    dialog = balanced_block(main, "private fun CalibrationCaptureDialog(")
+    if not dialog:
+        audit.fail("CalibrationCaptureDialog not found")
+        return
+
+    audit.require("fun CalibrationInfoCard" in dialog, "Calibration dialog has collapsible CalibrationInfoCard")
+    audit.require("fun CapturePreview" in dialog, "Calibration dialog has CapturePreview helper")
+    audit.require("fun CaptureControls" in dialog, "Calibration dialog has CaptureControls helper")
+
+    audit.require("if (isCapturing)" in dialog, "Calibration dialog has dedicated active capture layout")
+    audit.require("Box(modifier = Modifier.fillMaxSize().background(Color.Black))" in dialog.replace("\n", " "), "Active capture layout is full-screen black Box")
+    audit.require("overlay = true" in dialog, "Capture mode uses translucent info overlay")
+    audit.require("Color.Black.copy(alpha = 0.65f)" in dialog, "Capture controls use translucent black overlay")
+    audit.require("Color(0xFF1E2A3A).copy(alpha = 0.70f)" in dialog, "Capture info uses translucent blue overlay")
+
+    audit.require(".clickable { calibrationInfoExpanded = !calibrationInfoExpanded }" in dialog, "Calibration info card is clickable/collapsible")
+    audit.require("showFullCalibrationInfo" in dialog, "Calibration dialog forces full info for result states")
+
+    controls = balanced_block(dialog, "fun CaptureControls")
+    audit.require(bool(controls), "CaptureControls block exists")
+    if controls:
+        audit.require("autoCapture = !autoCapture" in controls, "CaptureControls has Auto toggle")
+        audit.require("capturePair(requireValidDetection = true)" in controls, "CaptureControls has manual capture button")
+        audit.require("Auto stereo" in controls, "CaptureControls labels stereo auto mode")
+        audit.require("modifier = Modifier.weight(1f)" in controls, "Auto and Capture buttons are placed side-by-side")
+        audit.require("onDismiss" in controls and 'Text("Cancel")' in controls, "CaptureControls has Cancel button")
+
+    # Service/debug buttons should be guarded by IDLE branch, not shown during capture overlay.
+    idle_idx = dialog.find("wizardState == CalibrationWizardState.IDLE")
+    clear_idx = dialog.find("Clear old calibration sessions")
+    diag_idx = dialog.find("Write diagnostics JSON")
+    audit.require(clear_idx >= 0, "Calibration dialog still has Clear old calibration sessions button")
+    audit.require(diag_idx >= 0, "Calibration dialog still has Write diagnostics JSON button")
+    if clear_idx >= 0 and idle_idx >= 0:
+        audit.require(clear_idx > idle_idx, "Clear old calibration sessions appears under IDLE branch")
+    if diag_idx >= 0 and idle_idx >= 0:
+        audit.require(diag_idx > idle_idx, "Write diagnostics JSON appears under IDLE branch")
+
+    preview = balanced_block(main, "private fun PreviewBitmapPanel(")
+    audit.require("Image(" in preview, "PreviewBitmapPanel uses Image for in-memory bitmaps")
+    audit.require(".asImageBitmap()" in preview, "PreviewBitmapPanel uses asImageBitmap")
+    audit.require("AsyncImage(" not in preview, "PreviewBitmapPanel does not use AsyncImage")
+    audit.require("ContentScale.Crop" not in preview, "PreviewBitmapPanel does not use ContentScale.Crop")
+    audit.require("ContentScale.FillBounds" not in preview, "PreviewBitmapPanel does not use ContentScale.FillBounds")
+    audit.require("contentScale = ContentScale.Fit" in preview or "contentScale: ContentScale = ContentScale.Fit" in preview, "PreviewBitmapPanel default contentScale is Fit")
+
+    audit.require("aspectRatio(4f / 3f)" not in dialog, "Calibration dialog no longer forces 4:3 preview aspect")
+
 def audit_stereo(main: str, processor: str, capture: str, audit: Audit) -> None:
     audit.require("getNearestStereoCalibrationFrames(30)" in main, "Step 3 uses nearest ring-buffer stereo pair with 30 ms")
     audit.require("nearest_ring_buffer" in main, "manifest records nearest_ring_buffer")
@@ -220,6 +270,7 @@ def main() -> int:
         audit_imports(main_text, audit)
         audit_main(main_text, audit)
         audit_calibration_ui(main_text, audit)
+        audit_calibration_capture_ux(main_text, audit)
 
     if main_text and processor_text and capture_text:
         audit_stereo(main_text, processor_text, capture_text, audit)
