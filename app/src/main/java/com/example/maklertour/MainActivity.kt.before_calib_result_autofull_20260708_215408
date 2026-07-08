@@ -3630,12 +3630,6 @@ private fun CalibrationCaptureDialog(
     val isProcessing = wizardState == CalibrationWizardState.PROCESSING_CAM0 ||
         wizardState == CalibrationWizardState.PROCESSING_CAM1 ||
         wizardState == CalibrationWizardState.PROCESSING_STEREO
-    val isResultState = wizardState == CalibrationWizardState.CAM0_RESULT ||
-        wizardState == CalibrationWizardState.CAM1_RESULT ||
-        wizardState == CalibrationWizardState.STEREO_RESULT ||
-        wizardState == CalibrationWizardState.SUCCESS ||
-        wizardState == CalibrationWizardState.FAILED
-    val showFullCalibrationInfo = calibrationInfoExpanded || isResultState
     val isCapturing = wizardState == CalibrationWizardState.CAPTURING_CAM0 ||
         wizardState == CalibrationWizardState.CAPTURING_CAM1 ||
         wizardState == CalibrationWizardState.CAPTURING_STEREO
@@ -4390,7 +4384,7 @@ private fun CalibrationCaptureDialog(
                             Text(if (calibrationInfoExpanded) "▲ Tap to collapse" else "▼ Tap to expand", color = Color(0xFFB7C7DD), style = MaterialTheme.typography.bodySmall)
                         }
 
-                        if (!showFullCalibrationInfo) {
+                        if (!calibrationInfoExpanded) {
                             Text("Captured: $pairCount / $requiredPairs", color = Color.White)
                             when (workflowMode) {
                                 CalibrationWorkflowMode.CAM0_INTRINSICS -> {
