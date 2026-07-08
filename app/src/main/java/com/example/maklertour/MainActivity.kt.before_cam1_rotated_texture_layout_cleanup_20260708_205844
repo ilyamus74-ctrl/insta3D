@@ -3184,8 +3184,8 @@ private fun StereoCaptureExperimentalScreen(
                         factory = { ctx ->
                             object : FrameLayout(ctx) {
                                 override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+                                    layoutCam1Preview(this)
                                     super.onLayout(changed, left, top, right, bottom)
-                                    if (changed) post { layoutCam1Preview(this) }
                                 }
                             }.apply {
                                 clipChildren = true
@@ -3196,14 +3196,15 @@ private fun StereoCaptureExperimentalScreen(
                                         rotation = CAM1_PREVIEW_ROTATION_DEGREES
                                         surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                                             override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                                                (parent as? FrameLayout)?.let { layoutCam1Preview(it) }
+                                                layoutCam1Preview(parent as FrameLayout)
                                                 usbInfo = manager.refreshCam1(activeProfile.cam1Mode, this@apply)
                                             }
                                             override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                                                (parent as? FrameLayout)?.let { layoutCam1Preview(it) }
+                                                layoutCam1Preview(parent as FrameLayout)
                                             }
                                             override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
                                             override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) {
+                                                layoutCam1Preview(parent as FrameLayout)
                                                 manager.onCam1PreviewFrameRendered()
                                             }
                                         }
