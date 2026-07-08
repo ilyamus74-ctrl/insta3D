@@ -4332,11 +4332,35 @@ private fun CalibrationCaptureDialog(
 
                 if (isCapturing || isProcessing) {
                     when (workflowMode) {
-                        CalibrationWorkflowMode.CAM0_INTRINSICS -> PreviewBitmapPanel("cam0", lastCam0PreviewBitmap, cam0Detection, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-                        CalibrationWorkflowMode.CAM1_INTRINSICS -> PreviewBitmapPanel("cam1", lastCam1PreviewBitmap, cam1Detection, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                        CalibrationWorkflowMode.CAM0_INTRINSICS -> PreviewBitmapPanel(
+                            "cam0",
+                            lastCam0PreviewBitmap,
+                            cam0Detection,
+                            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                            rotationDegrees = 0f,
+                        )
+                        CalibrationWorkflowMode.CAM1_INTRINSICS -> PreviewBitmapPanel(
+                            "cam1",
+                            lastCam1PreviewBitmap,
+                            cam1Detection,
+                            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                            rotationDegrees = CAM1_PREVIEW_ROTATION_DEGREES,
+                        )
                         CalibrationWorkflowMode.STEREO_EXTRINSICS -> Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PreviewBitmapPanel("cam0", lastCam0PreviewBitmap, cam0Detection, Modifier.weight(1f).aspectRatio(16f / 9f))
-                            PreviewBitmapPanel("cam1", lastCam1PreviewBitmap, cam1Detection, Modifier.weight(1f).aspectRatio(16f / 9f))
+                            PreviewBitmapPanel(
+                                "cam0",
+                                lastCam0PreviewBitmap,
+                                cam0Detection,
+                                Modifier.weight(1f).aspectRatio(16f / 9f),
+                                rotationDegrees = 0f,
+                            )
+                            PreviewBitmapPanel(
+                                "cam1",
+                                lastCam1PreviewBitmap,
+                                cam1Detection,
+                                Modifier.weight(1f).aspectRatio(16f / 9f),
+                                rotationDegrees = CAM1_PREVIEW_ROTATION_DEGREES,
+                            )
                         }
                     }
                 }
@@ -4405,10 +4429,21 @@ private fun CalibrationCaptureDialog(
 }
 
 @Composable
-private fun PreviewBitmapPanel(label: String, bitmap: Bitmap?, detection: CalibrationDetectionResult?, modifier: Modifier = Modifier) {
+private fun PreviewBitmapPanel(
+    label: String,
+    bitmap: Bitmap?,
+    detection: CalibrationDetectionResult?,
+    modifier: Modifier = Modifier,
+    rotationDegrees: Float = 0f,
+) {
     Box(modifier = modifier.background(Color.DarkGray), contentAlignment = Alignment.Center) {
         if (bitmap != null) {
-            AsyncImage(model = bitmap, contentDescription = label, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            AsyncImage(
+                model = bitmap,
+                contentDescription = label,
+                modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotationDegrees },
+                contentScale = ContentScale.Fit,
+            )
         } else {
             Text("Waiting for preview", color = Color.White)
         }
