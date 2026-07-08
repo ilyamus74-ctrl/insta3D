@@ -14,6 +14,7 @@ import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
+import android.widget.FrameLayout
 import android.util.Log
 import android.view.TextureView
 import androidx.activity.ComponentActivity
@@ -103,7 +104,6 @@ import com.maklertour.data.phonecamera.PhoneCameraLensRepository
 import com.maklertour.data.phonecamera.PhoneCalibrationResolutionInfo
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -3161,22 +3161,36 @@ private fun StereoCaptureExperimentalScreen(
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
-                            TextureView(ctx).apply {
-                                cam1TextureView = this
-                                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                                    override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                                        applyCam1PreviewTransform(this@apply, width, height)
-                                        usbInfo = manager.refreshCam1(activeProfile.cam1Mode, this@apply)
-                                    }
-                                    override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                                        applyCam1PreviewTransform(this@apply, width, height)
-                                    }
-                                    override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
-                                    override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) { manager.onCam1PreviewFrameRendered() }
-                                }
+                            FrameLayout(ctx).apply {
+                                clipChildren = true
+                                clipToPadding = true
+                                addView(
+                                    TextureView(ctx).apply {
+                                        cam1TextureView = this
+                                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                                            override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                                applyCam1PreviewTransform(this@apply, width, height)
+                                                usbInfo = manager.refreshCam1(activeProfile.cam1Mode, this@apply)
+                                            }
+                                            override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                                applyCam1PreviewTransform(this@apply, width, height)
+                                            }
+                                            override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
+                                            override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) { manager.onCam1PreviewFrameRendered() }
+                                        }
+                                    },
+                                    FrameLayout.LayoutParams(
+                                        FrameLayout.LayoutParams.MATCH_PARENT,
+                                        FrameLayout.LayoutParams.MATCH_PARENT,
+                                    ),
+                                )
                             }
                         },
-                        update = { textureView -> applyCam1PreviewTransform(textureView) },
+                        update = { frameLayout ->
+                            (frameLayout.getChildAt(0) as? TextureView)?.let { textureView ->
+                                applyCam1PreviewTransform(textureView)
+                            }
+                        },
                     )
                     Column(modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.55f)).padding(8.dp)) {
                         Text("cam1", color = Color.White, style = MaterialTheme.typography.labelLarge)
