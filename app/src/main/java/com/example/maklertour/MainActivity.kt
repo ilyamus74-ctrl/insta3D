@@ -22,6 +22,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
@@ -90,6 +91,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -4348,29 +4350,32 @@ private fun CalibrationCaptureDialog(
                             "cam0",
                             lastCam0PreviewBitmap,
                             cam0Detection,
-                            Modifier.fillMaxWidth().aspectRatio(4f / 3f),
+                            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
                             rotationDegrees = 0f,
                         )
                         CalibrationWorkflowMode.CAM1_INTRINSICS -> PreviewBitmapPanel(
                             "cam1",
                             lastCam1PreviewBitmap,
                             cam1Detection,
-                            Modifier.fillMaxWidth().aspectRatio(4f / 3f),
+                            Modifier.fillMaxWidth().aspectRatio(9f / 16f),
                             rotationDegrees = 90f,
                         )
-                        CalibrationWorkflowMode.STEREO_EXTRINSICS -> Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CalibrationWorkflowMode.STEREO_EXTRINSICS -> Row(
+                            modifier = Modifier.fillMaxWidth().height(320.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             PreviewBitmapPanel(
                                 "cam0",
                                 lastCam0PreviewBitmap,
                                 cam0Detection,
-                                Modifier.weight(1f).aspectRatio(4f / 3f),
+                                Modifier.weight(1f).fillMaxHeight(),
                                 rotationDegrees = 0f,
                             )
                             PreviewBitmapPanel(
                                 "cam1",
                                 lastCam1PreviewBitmap,
                                 cam1Detection,
-                                Modifier.weight(1f).aspectRatio(4f / 3f),
+                                Modifier.weight(1f).fillMaxHeight(),
                                 rotationDegrees = CAM1_PREVIEW_ROTATION_DEGREES,
                             )
                         }
@@ -4634,16 +4639,16 @@ private fun PreviewBitmapPanel(
                 )
             }
 
-            AsyncImage(
-                model = displayBitmap,
+            Image(
+                bitmap = displayBitmap.asImageBitmap(),
                 contentDescription = label,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
             )
 
             if (overlayBitmap != null) {
-                AsyncImage(
-                    model = overlayBitmap,
+                Image(
+                    bitmap = overlayBitmap.asImageBitmap(),
                     contentDescription = "$label overlay",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Fit,
