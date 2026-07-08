@@ -4026,7 +4026,7 @@ private fun CalibrationCaptureDialog(
                     CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result?.found == true
                     CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true && stereoInputsReady(sessionDir)
                 }
-                if (autoCapture && pairCount < settings.requiredPairs && autoCaptureReady) {
+                if (autoCapture && workflowMode != CalibrationWorkflowMode.STEREO_EXTRINSICS && pairCount < settings.requiredPairs && autoCaptureReady) {
                     val now = System.currentTimeMillis()
                     if (now - lastAutoCaptureMs >= 1_200) {
                         if (capturePair(requireValidDetection = true)) lastAutoCaptureMs = now
