@@ -3185,7 +3185,7 @@ private fun StereoCaptureExperimentalScreen(
                 }
             }
 
-            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { openCalibrationCapture() }, enabled = !isRecording && !syncedDepthRecording) { Text("Calibration") }
                 Button(onClick = {
                     val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
@@ -3196,7 +3196,7 @@ private fun StereoCaptureExperimentalScreen(
                             .onSuccess { isRecording = true; status = "recording to ${it.name}" }
                             .onFailure { status = "start failed: ${it.message}" }
                     }
-                }, enabled = canRecord) { Text("Record stereo video (legacy)") }
+                }, enabled = canRecord) { Text("Record stereo video") }
                 Button(onClick = {
                     scope.launch {
                         val result = manager.stop()
