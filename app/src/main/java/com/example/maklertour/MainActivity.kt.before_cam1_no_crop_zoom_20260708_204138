@@ -3147,10 +3147,12 @@ private fun StereoCaptureExperimentalScreen(
                 val centerY = height / 2f
                 val normalizedRotation = ((CAM1_PREVIEW_ROTATION_DEGREES % 360f) + 360f) % 360f
                 val swapsBounds = normalizedRotation == 90f || normalizedRotation == 270f
+                val rotatedWidth = if (swapsBounds) height.toFloat() else width.toFloat()
+                val rotatedHeight = if (swapsBounds) width.toFloat() else height.toFloat()
+                val cropScale = maxOf(width / rotatedWidth, height / rotatedHeight)
                 val matrix = android.graphics.Matrix().apply {
-                    // Display-only rotation. Do not crop/zoom cam1 here:
-                    // cam0 uses FIT_CENTER, so cam1 must not be enlarged with maxOf(...).
                     postRotate(CAM1_PREVIEW_ROTATION_DEGREES, centerX, centerY)
+                    postScale(cropScale, cropScale, centerX, centerY)
                 }
                 textureView.setTransform(matrix)
             }
