@@ -3165,14 +3165,9 @@ private fun StereoCaptureExperimentalScreen(
                     }
                 }
             }
-            if (isLandscape) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    cam0Card(Modifier.weight(1f).aspectRatio(16f / 9f))
-                    cam1Card(Modifier.weight(1f).aspectRatio(16f / 9f))
-                }
-            } else {
-                cam0Card(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-                cam1Card(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                cam0Card(Modifier.weight(1f).aspectRatio(16f / 9f))
+                cam1Card(Modifier.weight(1f).aspectRatio(16f / 9f))
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {
