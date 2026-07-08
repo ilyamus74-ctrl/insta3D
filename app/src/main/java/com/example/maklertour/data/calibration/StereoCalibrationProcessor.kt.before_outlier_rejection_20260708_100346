@@ -177,102 +177,24 @@ class StereoCalibrationProcessor(
                 selectedVariant = bestTrial.variant
                 bestCam1Points = cam1Points.map { transformCornerOrder(it, settings.checkerboardInnerRows, settings.checkerboardInnerCols, bestTrial.variant) }
             }
-            val initialPerPairErrors = if (stereoRms.isFinite()) computePerPairEpipolarErrors(cam0Points, bestCam1Points, f, usablePairIndexes) else emptyList()
-            val candidateRejectedPairIndexes = selectOutlierPairIndexes(initialPerPairErrors, requiredForSuccess)
-            val candidateRejectedSet = candidateRejectedPairIndexes.toSet()
-            val acceptedPositions = usablePairIndexes.mapIndexedNotNull { index, pairIndex ->
-                if (pairIndex in candidateRejectedSet) null else index
-            }
-
-            var finalR = r
-            var finalT = t
-            var finalE = e
-            var finalF = f
-            var finalStereoRms = stereoRms
-            var finalCam1Points = bestCam1Points
-            var finalPerPairErrors = initialPerPairErrors
-            var finalPairsUsed = pairsUsed
-            var finalRejectedPairIndexes = emptyList<Int>()
-            var finalOutlierMode: String? = null
-
-            if (
-                stereoRms.isFinite() &&
-                candidateRejectedPairIndexes.isNotEmpty() &&
-                acceptedPositions.size >= requiredForSuccess &&
-                acceptedPositions.size < pairsUsed
-            ) {
-                val refitR = Mat()
-                val refitT = Mat()
-                val refitE = Mat()
-                val refitF = Mat()
-
-                val refitObjectPoints = acceptedPositions.map { objectPoints[it] }
-                val refitCam0Points = acceptedPositions.map { cam0Points[it] }
-                val refitCam1Points = acceptedPositions.map { bestCam1Points[it] }
-                val refitPairIndexes = acceptedPositions.map { usablePairIndexes[it] }
-
-                val refitRms = runCatching {
-                    Calib3d.stereoCalibrate(
-                        refitObjectPoints,
-                        refitCam0Points,
-                        refitCam1Points,
-                        cam0Matrix.clone(),
-                        cam0Dist.clone(),
-                        cam1Matrix.clone(),
-                        cam1Dist.clone(),
-                        cam0Size,
-                        refitR,
-                        refitT,
-                        refitE,
-                        refitF,
-                        Calib3d.CALIB_FIX_INTRINSIC,
-                        TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 100, 1e-5),
-                    )
-                }.getOrDefault(Double.POSITIVE_INFINITY)
-
-                if (refitRms.isFinite() && refitRms < stereoRms) {
-                    finalR = refitR
-                    finalT = refitT
-                    finalE = refitE
-                    finalF = refitF
-                    finalStereoRms = refitRms
-                    finalCam1Points = refitCam1Points
-                    finalPerPairErrors = computePerPairEpipolarErrors(refitCam0Points, refitCam1Points, refitF, refitPairIndexes)
-                    finalPairsUsed = acceptedPositions.size
-                    finalRejectedPairIndexes = candidateRejectedPairIndexes
-                    finalOutlierMode = "epipolar_error_refit_max30pct_min4px_median2_5x"
-                    Log.i(
-                        "StereoCalibrationProcessor",
-                        "outlier_refit accepted initial_rms=$stereoRms refined_rms=$refitRms rejected=${candidateRejectedPairIndexes.joinToString(",")}",
-                    )
-                } else {
-                    Log.i(
-                        "StereoCalibrationProcessor",
-                        "outlier_refit skipped initial_rms=$stereoRms refit_rms=$refitRms candidate_rejected=${candidateRejectedPairIndexes.joinToString(",")}",
-                    )
-                }
-            }
-
-            val worstPairIndexes = finalPerPairErrors.sortedByDescending { it.error }.take(5).map { it.pairIndex }
-            val success = finalStereoRms.isFinite() && finalStereoRms <= stereoRmsThresholdPx
+            val perPairErrors = if (stereoRms.isFinite()) computePerPairEpipolarErrors(cam0Points, bestCam1Points, f, usablePairIndexes) else emptyList()
+            val worstPairIndexes = perPairErrors.sortedByDescending { it.error }.take(5).map { it.pairIndex }
+            val success = stereoRms.isFinite() && stereoRms <= stereoRmsThresholdPx
             finish(
                 StereoCalibrationResult(
                     status = if (success) "success" else "failed", createdAtUtc = utcNow(), sessionPath = sessionDir.absolutePath,
                     checkerboardInnerCols = settings.checkerboardInnerCols, checkerboardInnerRows = settings.checkerboardInnerRows, squareSizeMm = settings.squareSizeMm,
                     boardType = settings.boardType.name, charucoSquaresX = settings.charucoSquaresX, charucoSquaresY = settings.charucoSquaresY, charucoSquareLengthMm = settings.charucoSquareLengthMm, charucoMarkerLengthMm = settings.charucoMarkerLengthMm, charucoDictionary = settings.charucoDictionary, minCharucoCorners = settings.minCharucoCorners, charucoLegacyPattern = settings.charucoLegacyPattern, charucoCommonIdsPerPair = charucoCommonIdsPerPair,
-                    pairsTotal = pairs.length(), pairsUsed = finalPairsUsed, stereoRms = finalStereoRms,
-                    initialStereoRms = if (finalRejectedPairIndexes.isNotEmpty()) stereoRms else null,
-                    rejectedPairIndexes = finalRejectedPairIndexes,
-                    outlierRejectionMode = finalOutlierMode,
+                    pairsTotal = pairs.length(), pairsUsed = pairsUsed, stereoRms = stereoRms,
                     cam0ImageWidth = cam0Size.width.toInt(), cam0ImageHeight = cam0Size.height.toInt(), cam1ImageWidth = cam1Size.width.toInt(), cam1ImageHeight = cam1Size.height.toInt(),
                     cam0CameraMatrix = cam0Matrix.toNestedList(), cam0DistCoeffs = cam0Dist.toFlatList(), cam1CameraMatrix = cam1Matrix.toNestedList(), cam1DistCoeffs = cam1Dist.toFlatList(),
-                    stereoR = finalR.toNestedList(), stereoT = finalT.toFlatList(), stereoE = finalE.toNestedList(), stereoF = finalF.toNestedList(),
+                    stereoR = r.toNestedList(), stereoT = t.toFlatList(), stereoE = e.toNestedList(), stereoF = f.toNestedList(),
                     cornerOrderTrials = trials,
                     selectedCornerOrderVariant = selectedVariant,
-                    selectedCornerOrderRms = finalStereoRms,
-                    perPairErrors = finalPerPairErrors,
+                    selectedCornerOrderRms = stereoRms,
+                    perPairErrors = perPairErrors,
                     worstPairIndexes = worstPairIndexes,
-                    errors = if (success) errors else errors + "Stereo RMS $finalStereoRms exceeds threshold $stereoRmsThresholdPx px",
+                    errors = if (success) errors else errors + "Stereo RMS $stereoRms exceeds threshold $stereoRmsThresholdPx px",
                 )
             )
         } catch (t: Throwable) {
@@ -534,28 +456,6 @@ class StereoCalibrationProcessor(
         return MatOfPoint2f(*transformed.toTypedArray())
     }
 
-    private fun selectOutlierPairIndexes(errors: List<PairCalibrationError>, requiredForSuccess: Int): List<Int> {
-        val finite = errors.filter { it.error.isFinite() }
-        if (finite.size <= requiredForSuccess) return emptyList()
-
-        val sorted = finite.sortedBy { it.error }
-        val median = sorted[sorted.size / 2].error
-        val threshold = max(4.0, median * 2.5)
-
-        val maxReject = minOf(
-            (finite.size * 0.30).toInt().coerceAtLeast(1),
-            finite.size - requiredForSuccess,
-        ).coerceAtLeast(0)
-
-        if (maxReject <= 0) return emptyList()
-
-        return finite
-            .filter { it.error > threshold }
-            .sortedByDescending { it.error }
-            .take(maxReject)
-            .map { it.pairIndex }
-    }
-
     private fun computePerPairEpipolarErrors(cam0Points: List<Mat>, cam1Points: List<Mat>, fundamental: Mat, pairIndexes: List<Int>): List<PairCalibrationError> {
         return cam0Points.zip(cam1Points).mapIndexed { index, (leftMat, rightMat) ->
             val left = MatOfPoint2f(leftMat).toArray()
@@ -622,9 +522,6 @@ data class StereoCalibrationResult(
     val cam0Rms: Double? = null,
     val cam1Rms: Double? = null,
     val stereoRms: Double? = null,
-    val initialStereoRms: Double? = null,
-    val rejectedPairIndexes: List<Int> = emptyList(),
-    val outlierRejectionMode: String? = null,
     val cam0ImageWidth: Int = 0,
     val cam0ImageHeight: Int = 0,
     val cam1ImageWidth: Int = 0,
@@ -691,9 +588,6 @@ fun StereoCalibrationResult.toJson(): JSONObject = JSONObject()
     .put("min_charuco_corners", minCharucoCorners).put("charuco_legacy_pattern", charucoLegacyPattern)
     .put("charuco_corners_used_per_frame", charucoCornersUsedPerFrame.toIntJsonArray()).put("charuco_common_ids_per_pair", charucoCommonIdsPerPair.toIntListJsonArray())
     .put("pairs_total", pairsTotal).put("pairs_used", pairsUsed).put("cam0_rms", cam0Rms).put("cam1_rms", cam1Rms).put("stereo_rms", stereoRms)
-    .put("initial_stereo_rms", initialStereoRms ?: JSONObject.NULL)
-    .put("rejected_pair_indexes", rejectedPairIndexes.toIntJsonArray())
-    .put("outlier_rejection_mode", outlierRejectionMode ?: JSONObject.NULL)
     .put("cam0_image_width", cam0ImageWidth).put("cam0_image_height", cam0ImageHeight).put("cam1_image_width", cam1ImageWidth).put("cam1_image_height", cam1ImageHeight)
     .put("cam0_camera_matrix", cam0CameraMatrix.toDoubleJsonArray2()).put("cam0_dist_coeffs", cam0DistCoeffs.toDoubleJsonArray())
     .put("cam1_camera_matrix", cam1CameraMatrix.toDoubleJsonArray2()).put("cam1_dist_coeffs", cam1DistCoeffs.toDoubleJsonArray())
