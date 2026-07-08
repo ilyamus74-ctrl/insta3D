@@ -11,6 +11,7 @@ import java.util.Locale
 enum class CameraModeSource { PHONE_CAMERA, USB_UVC }
 enum class CameraModeSelection { AUTO, MANUAL }
 enum class CalibrationStatus { NOT_CALIBRATED, CAPTURED, CALIBRATED }
+enum class CalibrationBoardType { CHESSBOARD_LEGACY, CHARUCO }
 
 data class CameraMode(
     val source: CameraModeSource,
@@ -26,6 +27,14 @@ data class CalibrationSettings(
     val checkerboardInnerRows: Int,
     val squareSizeMm: Double,
     val requiredPairs: Int,
+    val boardType: CalibrationBoardType = CalibrationBoardType.CHARUCO,
+    val charucoSquaresX: Int = 9,
+    val charucoSquaresY: Int = 6,
+    val charucoSquareLengthMm: Double = 22.0,
+    val charucoMarkerLengthMm: Double = 16.0,
+    val charucoDictionary: String = "DICT_4X4_50",
+    val minCharucoCorners: Int = 12,
+    val charucoLegacyPattern: Boolean = true,
 )
 
 data class StereoRigProfile(
@@ -125,6 +134,14 @@ fun CalibrationSettings.toJson(): JSONObject = JSONObject()
     .put("checkerboardInnerRows", checkerboardInnerRows)
     .put("squareSizeMm", squareSizeMm)
     .put("requiredPairs", requiredPairs)
+    .put("boardType", boardType.name)
+    .put("charucoSquaresX", charucoSquaresX)
+    .put("charucoSquaresY", charucoSquaresY)
+    .put("charucoSquareLengthMm", charucoSquareLengthMm)
+    .put("charucoMarkerLengthMm", charucoMarkerLengthMm)
+    .put("charucoDictionary", charucoDictionary)
+    .put("minCharucoCorners", minCharucoCorners)
+    .put("charucoLegacyPattern", charucoLegacyPattern)
 
 private fun StereoRigProfile.Companion.fromJson(json: JSONObject): StereoRigProfile = StereoRigProfile(
     rigId = json.optString("rigId"),
@@ -154,4 +171,12 @@ private fun JSONObject.toCalibrationSettings(): CalibrationSettings = Calibratio
     checkerboardInnerRows = optInt("checkerboardInnerRows", 6),
     squareSizeMm = optDouble("squareSizeMm", 25.0),
     requiredPairs = optInt("requiredPairs", 20),
+    boardType = runCatching { CalibrationBoardType.valueOf(optString("boardType", CalibrationBoardType.CHARUCO.name)) }.getOrDefault(CalibrationBoardType.CHARUCO),
+    charucoSquaresX = optInt("charucoSquaresX", 9),
+    charucoSquaresY = optInt("charucoSquaresY", 6),
+    charucoSquareLengthMm = optDouble("charucoSquareLengthMm", 22.0),
+    charucoMarkerLengthMm = optDouble("charucoMarkerLengthMm", 16.0),
+    charucoDictionary = optString("charucoDictionary", "DICT_4X4_50"),
+    minCharucoCorners = optInt("minCharucoCorners", 12),
+    charucoLegacyPattern = optBoolean("charucoLegacyPattern", true),
 )

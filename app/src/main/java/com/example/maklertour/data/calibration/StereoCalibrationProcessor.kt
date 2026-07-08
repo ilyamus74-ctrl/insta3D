@@ -2,6 +2,7 @@ package com.maklertour.data.calibration
 
 import android.graphics.BitmapFactory
 import android.util.Log
+import com.maklertour.data.rig.CalibrationBoardType
 import com.maklertour.data.rig.CalibrationSettings
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11,10 +12,17 @@ import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.MatOfPoint2f
 import org.opencv.core.MatOfPoint3f
+import org.opencv.core.Point
 import org.opencv.core.Point3
 import org.opencv.core.Size
 import org.opencv.core.TermCriteria
 import org.opencv.imgproc.Imgproc
+import org.opencv.objdetect.CharucoBoard
+import org.opencv.objdetect.CharucoDetector
+import org.opencv.objdetect.CharucoParameters
+import org.opencv.objdetect.DetectorParameters
+import org.opencv.objdetect.Objdetect
+import org.opencv.objdetect.RefineParameters
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -62,6 +70,10 @@ class StereoCalibrationProcessor(
         val cam1IntrinsicsJson = cam1Intrinsics.json ?: return finish(failed(sessionDir, errors + "cam1 intrinsics not successful"))
         val input = JSONObject(inputFile.readText())
         val settings = readSettings(input)
+        val cam0BoardError = validateIntrinsicsBoardType(cam0IntrinsicsJson, settings, "cam0")
+        if (cam0BoardError != null) return finish(failed(sessionDir, errors + cam0BoardError, settings))
+        val cam1BoardError = validateIntrinsicsBoardType(cam1IntrinsicsJson, settings, "cam1")
+        if (cam1BoardError != null) return finish(failed(sessionDir, errors + cam1BoardError, settings))
         val pairs = filteredPairsForWorkflow(JSONObject(manifestFile.readText()).optJSONArray("pairs") ?: JSONArray(), STEREO_EXTRINSICS_MODE)
         val boardSize = Size(settings.checkerboardInnerCols.toDouble(), settings.checkerboardInnerRows.toDouble())
         val expectedCorners = settings.checkerboardInnerCols * settings.checkerboardInnerRows
@@ -72,23 +84,41 @@ class StereoCalibrationProcessor(
         val usablePairIndexes = mutableListOf<Int>()
         var cam0ImageSize: Size? = null
         var cam1ImageSize: Size? = null
+        val charucoCommonIdsPerPair = mutableListOf<List<Int>>()
 
         for (i in 0 until pairs.length()) {
             val pair = pairs.optJSONObject(i) ?: continue
             val cam0Path = pair.optString("cam0_file")
             val cam1Path = pair.optString("cam1_file")
             if (cam0Path.isBlank() || cam1Path.isBlank()) continue
-            val cam0 = detectCorners(File(sessionDir, cam0Path), boardSize, expectedCorners)
-            val cam1 = detectCorners(File(sessionDir, cam1Path), boardSize, expectedCorners)
-            if (cam0.corners != null && cam1.corners != null) {
-                objectPoints += objectTemplate.clone()
-                cam0Points += cam0.corners
-                cam1Points += cam1.corners
-                usablePairIndexes += pair.optInt("pair_index", i + 1)
-                cam0ImageSize = cam0.size
-                cam1ImageSize = cam1.size
+            if (settings.boardType == CalibrationBoardType.CHARUCO) {
+                val cam0 = detectCharucoCorners(File(sessionDir, cam0Path), settings)
+                val cam1 = detectCharucoCorners(File(sessionDir, cam1Path), settings)
+                val commonIds = cam0.ids.intersect(cam1.ids.toSet()).sorted()
+                if (cam0.error == null && cam1.error == null && commonIds.size >= settings.minCharucoCorners) {
+                    objectPoints += MatOfPoint3f(*commonIds.mapNotNull { cam0.objectPointsById[it] }.toTypedArray())
+                    cam0Points += MatOfPoint2f(*commonIds.mapNotNull { cam0.imagePointsById[it] }.toTypedArray())
+                    cam1Points += MatOfPoint2f(*commonIds.mapNotNull { cam1.imagePointsById[it] }.toTypedArray())
+                    charucoCommonIdsPerPair += commonIds
+                    usablePairIndexes += pair.optInt("pair_index", i + 1)
+                    cam0ImageSize = cam0.size
+                    cam1ImageSize = cam1.size
+                } else {
+                    errors += "Skipped pair ${pair.optInt("pair_index", i + 1)}: common ChArUco ids=${commonIds.size}, cam0=${cam0.error ?: "ok"}, cam1=${cam1.error ?: "ok"}"
+                }
             } else {
-                errors += "Skipped pair ${pair.optInt("pair_index", i + 1)}: cam0=${cam0.error ?: "ok"}, cam1=${cam1.error ?: "ok"}"
+                val cam0 = detectCorners(File(sessionDir, cam0Path), boardSize, expectedCorners)
+                val cam1 = detectCorners(File(sessionDir, cam1Path), boardSize, expectedCorners)
+                if (cam0.corners != null && cam1.corners != null) {
+                    objectPoints += objectTemplate.clone()
+                    cam0Points += cam0.corners
+                    cam1Points += cam1.corners
+                    usablePairIndexes += pair.optInt("pair_index", i + 1)
+                    cam0ImageSize = cam0.size
+                    cam1ImageSize = cam1.size
+                } else {
+                    errors += "Skipped pair ${pair.optInt("pair_index", i + 1)}: cam0=${cam0.error ?: "ok"}, cam1=${cam1.error ?: "ok"}"
+                }
             }
         }
 
@@ -104,30 +134,49 @@ class StereoCalibrationProcessor(
             val cam1Matrix = matFromNestedJson(cam1IntrinsicsJson.getJSONArray("camera_matrix"))
             val cam0Dist = matFromFlatJson(cam0IntrinsicsJson.getJSONArray("dist_coeffs"))
             val cam1Dist = matFromFlatJson(cam1IntrinsicsJson.getJSONArray("dist_coeffs"))
-            val trials = cornerOrderVariants(settings.checkerboardInnerRows, settings.checkerboardInnerCols).map { variant ->
-                val trialR = Mat(); val trialT = Mat(); val trialE = Mat(); val trialF = Mat()
-                val trialCam1Points = cam1Points.map { transformCornerOrder(it, settings.checkerboardInnerRows, settings.checkerboardInnerCols, variant) }
-                val trialCam0Matrix = cam0Matrix.clone()
-                val trialCam1Matrix = cam1Matrix.clone()
-                val trialCam0Dist = cam0Dist.clone()
-                val trialCam1Dist = cam1Dist.clone()
-                val rms = runCatching {
-                    Calib3d.stereoCalibrate(
-                        objectPoints, cam0Points, trialCam1Points, trialCam0Matrix, trialCam0Dist, trialCam1Matrix, trialCam1Dist,
-                        cam0Size, trialR, trialT, trialE, trialF, Calib3d.CALIB_FIX_INTRINSIC,
-                        TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 100, 1e-5),
-                    )
-                }.getOrDefault(Double.POSITIVE_INFINITY)
-                CornerOrderTrial(variant, rms, trialR, trialT, trialE, trialF)
+            val r: Mat
+            val t: Mat
+            val e: Mat
+            val f: Mat
+            val stereoRms: Double
+            val trials: List<CornerOrderTrialResult>
+            val selectedVariant: String
+            val bestCam1Points: List<Mat>
+            if (settings.boardType == CalibrationBoardType.CHARUCO) {
+                r = Mat(); t = Mat(); e = Mat(); f = Mat()
+                stereoRms = Calib3d.stereoCalibrate(
+                    objectPoints, cam0Points, cam1Points, cam0Matrix, cam0Dist, cam1Matrix, cam1Dist,
+                    cam0Size, r, t, e, f, Calib3d.CALIB_FIX_INTRINSIC,
+                    TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 100, 1e-5),
+                )
+                trials = emptyList()
+                selectedVariant = "charuco_ids"
+                bestCam1Points = cam1Points
+            } else {
+                val trialModels = cornerOrderVariants(settings.checkerboardInnerRows, settings.checkerboardInnerCols).map { variant ->
+                    val trialR = Mat(); val trialT = Mat(); val trialE = Mat(); val trialF = Mat()
+                    val trialCam1Points = cam1Points.map { transformCornerOrder(it, settings.checkerboardInnerRows, settings.checkerboardInnerCols, variant) }
+                    val trialCam0Matrix = cam0Matrix.clone()
+                    val trialCam1Matrix = cam1Matrix.clone()
+                    val trialCam0Dist = cam0Dist.clone()
+                    val trialCam1Dist = cam1Dist.clone()
+                    val rms = runCatching {
+                        Calib3d.stereoCalibrate(
+                            objectPoints, cam0Points, trialCam1Points, trialCam0Matrix, trialCam0Dist, trialCam1Matrix, trialCam1Dist,
+                            cam0Size, trialR, trialT, trialE, trialF, Calib3d.CALIB_FIX_INTRINSIC,
+                            TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 100, 1e-5),
+                        )
+                    }.getOrDefault(Double.POSITIVE_INFINITY)
+                    CornerOrderTrial(variant, rms, trialR, trialT, trialE, trialF)
+                }
+                val bestTrial = trialModels.minByOrNull { it.rms } ?: error("No corner order trials")
+                Log.i("StereoCalibrationProcessor", "corner_order_trials ${trialModels.joinToString(" ") { "${it.variant}=${it.rms}" }} selected=${bestTrial.variant}")
+                r = bestTrial.r; t = bestTrial.t; e = bestTrial.e; f = bestTrial.f
+                stereoRms = bestTrial.rms
+                trials = trialModels.map { CornerOrderTrialResult(it.variant, it.rms) }
+                selectedVariant = bestTrial.variant
+                bestCam1Points = cam1Points.map { transformCornerOrder(it, settings.checkerboardInnerRows, settings.checkerboardInnerCols, bestTrial.variant) }
             }
-            val bestTrial = trials.minByOrNull { it.rms } ?: error("No corner order trials")
-            Log.i("StereoCalibrationProcessor", "corner_order_trials ${trials.joinToString(" ") { "${it.variant}=${it.rms}" }} selected=${bestTrial.variant}")
-            val r = bestTrial.r
-            val t = bestTrial.t
-            val e = bestTrial.e
-            val f = bestTrial.f
-            val stereoRms = bestTrial.rms
-            val bestCam1Points = cam1Points.map { transformCornerOrder(it, settings.checkerboardInnerRows, settings.checkerboardInnerCols, bestTrial.variant) }
             val perPairErrors = if (stereoRms.isFinite()) computePerPairEpipolarErrors(cam0Points, bestCam1Points, f, usablePairIndexes) else emptyList()
             val worstPairIndexes = perPairErrors.sortedByDescending { it.error }.take(5).map { it.pairIndex }
             val success = stereoRms.isFinite() && stereoRms <= stereoRmsThresholdPx
@@ -135,12 +184,13 @@ class StereoCalibrationProcessor(
                 StereoCalibrationResult(
                     status = if (success) "success" else "failed", createdAtUtc = utcNow(), sessionPath = sessionDir.absolutePath,
                     checkerboardInnerCols = settings.checkerboardInnerCols, checkerboardInnerRows = settings.checkerboardInnerRows, squareSizeMm = settings.squareSizeMm,
+                    boardType = settings.boardType.name, charucoSquaresX = settings.charucoSquaresX, charucoSquaresY = settings.charucoSquaresY, charucoSquareLengthMm = settings.charucoSquareLengthMm, charucoMarkerLengthMm = settings.charucoMarkerLengthMm, charucoDictionary = settings.charucoDictionary, minCharucoCorners = settings.minCharucoCorners, charucoLegacyPattern = settings.charucoLegacyPattern, charucoCommonIdsPerPair = charucoCommonIdsPerPair,
                     pairsTotal = pairs.length(), pairsUsed = pairsUsed, stereoRms = stereoRms,
                     cam0ImageWidth = cam0Size.width.toInt(), cam0ImageHeight = cam0Size.height.toInt(), cam1ImageWidth = cam1Size.width.toInt(), cam1ImageHeight = cam1Size.height.toInt(),
                     cam0CameraMatrix = cam0Matrix.toNestedList(), cam0DistCoeffs = cam0Dist.toFlatList(), cam1CameraMatrix = cam1Matrix.toNestedList(), cam1DistCoeffs = cam1Dist.toFlatList(),
                     stereoR = r.toNestedList(), stereoT = t.toFlatList(), stereoE = e.toNestedList(), stereoF = f.toNestedList(),
-                    cornerOrderTrials = trials.map { CornerOrderTrialResult(it.variant, it.rms) },
-                    selectedCornerOrderVariant = bestTrial.variant,
+                    cornerOrderTrials = trials,
+                    selectedCornerOrderVariant = selectedVariant,
                     selectedCornerOrderRms = stereoRms,
                     perPairErrors = perPairErrors,
                     worstPairIndexes = worstPairIndexes,
@@ -174,17 +224,31 @@ class StereoCalibrationProcessor(
         val objectPoints = mutableListOf<Mat>()
         val imagePoints = mutableListOf<Mat>()
         var imageSize: Size? = null
+        val charucoCornersUsedPerFrame = mutableListOf<Int>()
         for (i in 0 until frames.length()) {
             val frame = frames.optJSONObject(i) ?: continue
             val imagePath = frame.optString("${camera}_file")
             if (imagePath.isBlank()) continue
-            val detection = detectCorners(File(sessionDir, imagePath), boardSize, expectedCorners)
-            if (detection.corners != null) {
-                objectPoints += objectTemplate.clone()
-                imagePoints += detection.corners
-                imageSize = detection.size
+            if (settings.boardType == CalibrationBoardType.CHARUCO) {
+                val detection = detectCharucoCorners(File(sessionDir, imagePath), settings)
+                if (detection.error == null && detection.ids.size >= settings.minCharucoCorners) {
+                    val sortedIds = detection.ids.sorted()
+                    objectPoints += MatOfPoint3f(*sortedIds.mapNotNull { detection.objectPointsById[it] }.toTypedArray())
+                    imagePoints += MatOfPoint2f(*sortedIds.mapNotNull { detection.imagePointsById[it] }.toTypedArray())
+                    charucoCornersUsedPerFrame += sortedIds.size
+                    imageSize = detection.size
+                } else {
+                    errors += "Skipped ${camera} frame ${frame.optInt("pair_index", i + 1)}: ${detection.error ?: "only ${detection.ids.size} ChArUco corners"}"
+                }
             } else {
-                errors += "Skipped ${camera} frame ${frame.optInt("pair_index", i + 1)}: ${detection.error ?: "unknown error"}"
+                val detection = detectCorners(File(sessionDir, imagePath), boardSize, expectedCorners)
+                if (detection.corners != null) {
+                    objectPoints += objectTemplate.clone()
+                    imagePoints += detection.corners
+                    imageSize = detection.size
+                } else {
+                    errors += "Skipped ${camera} frame ${frame.optInt("pair_index", i + 1)}: ${detection.error ?: "unknown error"}"
+                }
             }
         }
         val framesUsed = imagePoints.size
@@ -207,6 +271,7 @@ class StereoCalibrationProcessor(
                 StereoCalibrationResult(
                     status = if (success) "success" else "failed", createdAtUtc = utcNow(), sessionPath = sessionDir.absolutePath,
                     checkerboardInnerCols = settings.checkerboardInnerCols, checkerboardInnerRows = settings.checkerboardInnerRows, squareSizeMm = settings.squareSizeMm,
+                    boardType = settings.boardType.name, charucoSquaresX = settings.charucoSquaresX, charucoSquaresY = settings.charucoSquaresY, charucoSquareLengthMm = settings.charucoSquareLengthMm, charucoMarkerLengthMm = settings.charucoMarkerLengthMm, charucoDictionary = settings.charucoDictionary, minCharucoCorners = settings.minCharucoCorners, charucoLegacyPattern = settings.charucoLegacyPattern, charucoCornersUsedPerFrame = charucoCornersUsedPerFrame,
                     pairsTotal = frames.length(), pairsUsed = framesUsed,
                     cam0Rms = if (camera == "cam0") rms else null, cam1Rms = if (camera == "cam1") rms else null,
                     cam0ImageWidth = if (camera == "cam0") size.width.toInt() else 0, cam0ImageHeight = if (camera == "cam0") size.height.toInt() else 0,
@@ -260,19 +325,92 @@ class StereoCalibrationProcessor(
         }.getOrElse { IntrinsicsValidation(null, "$camera intrinsics read failed: ${it.message}") }
     }
 
-    private fun readSettings(input: JSONObject) = CalibrationSettings(
-        checkerboardInnerCols = input.optInt("checkerboard_inner_cols", input.optJSONObject("checkerboard_settings")?.optInt("checkerboardInnerCols", 9) ?: 9),
-        checkerboardInnerRows = input.optInt("checkerboard_inner_rows", input.optJSONObject("checkerboard_settings")?.optInt("checkerboardInnerRows", 6) ?: 6),
-        squareSizeMm = input.optDouble("square_size_mm", input.optJSONObject("checkerboard_settings")?.optDouble("squareSizeMm", 25.0) ?: 25.0),
-        requiredPairs = input.optInt("required_pairs", input.optJSONObject("checkerboard_settings")?.optInt("requiredPairs", 20) ?: 20),
-    )
+    private fun validateIntrinsicsBoardType(json: JSONObject, settings: CalibrationSettings, camera: String): String? {
+        val intrinsicsBoardType = json.optString("board_type", CalibrationBoardType.CHESSBOARD_LEGACY.name)
+        return if (intrinsicsBoardType != settings.boardType.name) "$camera intrinsics board_type=$intrinsicsBoardType does not match current board_type=${settings.boardType.name}; rerun intrinsics" else null
+    }
+
+    private fun readSettings(input: JSONObject): CalibrationSettings {
+        val nested = input.optJSONObject("checkerboard_settings")
+        val boardTypeName = input.optString("board_type", nested?.optString("boardType", CalibrationBoardType.CHARUCO.name) ?: CalibrationBoardType.CHARUCO.name)
+        return CalibrationSettings(
+            checkerboardInnerCols = input.optInt("checkerboard_inner_cols", nested?.optInt("checkerboardInnerCols", 9) ?: 9),
+            checkerboardInnerRows = input.optInt("checkerboard_inner_rows", nested?.optInt("checkerboardInnerRows", 6) ?: 6),
+            squareSizeMm = input.optDouble("square_size_mm", nested?.optDouble("squareSizeMm", 25.0) ?: 25.0),
+            requiredPairs = input.optInt("required_pairs", nested?.optInt("requiredPairs", 20) ?: 20),
+            boardType = runCatching { CalibrationBoardType.valueOf(boardTypeName) }.getOrDefault(CalibrationBoardType.CHARUCO),
+            charucoSquaresX = input.optInt("charuco_squares_x", nested?.optInt("charucoSquaresX", 9) ?: 9),
+            charucoSquaresY = input.optInt("charuco_squares_y", nested?.optInt("charucoSquaresY", 6) ?: 6),
+            charucoSquareLengthMm = input.optDouble("charuco_square_length_mm", nested?.optDouble("charucoSquareLengthMm", 22.0) ?: 22.0),
+            charucoMarkerLengthMm = input.optDouble("charuco_marker_length_mm", nested?.optDouble("charucoMarkerLengthMm", 16.0) ?: 16.0),
+            charucoDictionary = input.optString("charuco_dictionary", nested?.optString("charucoDictionary", "DICT_4X4_50") ?: "DICT_4X4_50"),
+            minCharucoCorners = input.optInt("min_charuco_corners", nested?.optInt("minCharucoCorners", 12) ?: 12),
+            charucoLegacyPattern = input.optBoolean("charuco_legacy_pattern", nested?.optBoolean("charucoLegacyPattern", true) ?: true),
+        )
+    }
 
     private fun failed(sessionDir: File, errors: List<String>, settings: CalibrationSettings = CalibrationSettings(0, 0, 0.0, 0), pairsTotal: Int = 0, pairsUsed: Int = 0, cam0Size: Size? = null, cam1Size: Size? = null) = StereoCalibrationResult(
         status = "failed", createdAtUtc = utcNow(), sessionPath = sessionDir.absolutePath,
         checkerboardInnerCols = settings.checkerboardInnerCols, checkerboardInnerRows = settings.checkerboardInnerRows, squareSizeMm = settings.squareSizeMm,
+                    boardType = settings.boardType.name, charucoSquaresX = settings.charucoSquaresX, charucoSquaresY = settings.charucoSquaresY, charucoSquareLengthMm = settings.charucoSquareLengthMm, charucoMarkerLengthMm = settings.charucoMarkerLengthMm, charucoDictionary = settings.charucoDictionary, minCharucoCorners = settings.minCharucoCorners, charucoLegacyPattern = settings.charucoLegacyPattern,
         pairsTotal = pairsTotal, pairsUsed = pairsUsed, cam0ImageWidth = cam0Size?.width?.toInt() ?: 0, cam0ImageHeight = cam0Size?.height?.toInt() ?: 0,
         cam1ImageWidth = cam1Size?.width?.toInt() ?: 0, cam1ImageHeight = cam1Size?.height?.toInt() ?: 0, errors = errors,
     )
+
+    private fun detectCharucoCorners(file: File, settings: CalibrationSettings): CharucoDetection {
+        if (!file.exists()) return CharucoDetection(null, emptyList(), emptyMap(), emptyMap(), "missing file")
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return CharucoDetection(null, emptyList(), emptyMap(), emptyMap(), "decode failed")
+        val rgba = Mat(); val gray = Mat(); val charucoCorners = Mat(); val charucoIds = Mat()
+        return try {
+            org.opencv.android.Utils.bitmapToMat(bitmap, rgba)
+            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+            createCharucoDetector(settings).detectBoard(gray, charucoCorners, charucoIds)
+            val imagePoints = mutableMapOf<Int, Point>()
+            val objectPoints = mutableMapOf<Int, Point3>()
+            for (row in 0 until charucoIds.rows()) {
+                val id = charucoIds.get(row, 0)?.getOrNull(0)?.toInt() ?: continue
+                val p = charucoCorners.get(row, 0) ?: continue
+                val objectPoint = charucoObjectPoint(id, settings) ?: continue
+                imagePoints[id] = Point(p[0], p[1])
+                objectPoints[id] = objectPoint
+            }
+            val ids = imagePoints.keys.sorted()
+            val error = if (ids.isEmpty()) "ChArUco not found" else null
+            CharucoDetection(Size(bitmap.width.toDouble(), bitmap.height.toDouble()), ids, imagePoints, objectPoints, error)
+        } finally { rgba.release(); gray.release(); charucoCorners.release(); charucoIds.release(); bitmap.recycle() }
+    }
+
+    private fun charucoObjectPoint(id: Int, settings: CalibrationSettings): Point3? {
+        val totalCorners = ((settings.charucoSquaresX - 1) * (settings.charucoSquaresY - 1)).coerceAtLeast(0)
+        if (id < 0 || id >= totalCorners) return null
+
+        val boardCorners = createCharucoBoard(settings).getChessboardCorners().toArray()
+        return boardCorners.getOrNull(id)
+    }
+
+    private fun createCharucoBoard(settings: CalibrationSettings): CharucoBoard {
+        val dictionary = Objdetect.getPredefinedDictionary(dictionaryId(settings.charucoDictionary))
+        return CharucoBoard(
+            Size(settings.charucoSquaresX.toDouble(), settings.charucoSquaresY.toDouble()),
+            settings.charucoSquareLengthMm.toFloat(),
+            settings.charucoMarkerLengthMm.toFloat(),
+            dictionary,
+        ).apply {
+            setLegacyPattern(settings.charucoLegacyPattern)
+        }
+    }
+
+    private fun createCharucoDetector(settings: CalibrationSettings): CharucoDetector {
+        val board = createCharucoBoard(settings)
+        val charucoParams = CharucoParameters().apply { set_minMarkers(1); set_tryRefineMarkers(true) }
+        val detectorParams = DetectorParameters().apply { set_cornerRefinementMethod(Objdetect.CORNER_REFINE_SUBPIX) }
+        return CharucoDetector(board, charucoParams, detectorParams, RefineParameters())
+    }
+
+    private fun dictionaryId(name: String): Int = when (name) {
+        "DICT_4X4_50" -> Objdetect.DICT_4X4_50
+        else -> Objdetect.DICT_4X4_50
+    }
 
     private fun detectCorners(file: File, boardSize: Size, expectedCorners: Int): CornerDetection {
         if (!file.exists()) return CornerDetection(null, null, "missing file")
@@ -341,6 +479,7 @@ class StereoCalibrationProcessor(
     }
 
     private data class CornerDetection(val corners: MatOfPoint2f?, val size: Size?, val error: String?)
+    private data class CharucoDetection(val size: Size?, val ids: List<Int>, val imagePointsById: Map<Int, Point>, val objectPointsById: Map<Int, Point3>, val error: String?)
     private data class CornerOrderTrial(val variant: String, val rms: Double, val r: Mat, val t: Mat, val e: Mat, val f: Mat)
 
     companion object {
@@ -368,15 +507,25 @@ data class StereoCalibrationResult(
     val checkerboardInnerCols: Int,
     val checkerboardInnerRows: Int,
     val squareSizeMm: Double,
-    val pairsTotal: Int,
-    val pairsUsed: Int,
+    val boardType: String = CalibrationBoardType.CHESSBOARD_LEGACY.name,
+    val charucoSquaresX: Int = 9,
+    val charucoSquaresY: Int = 6,
+    val charucoSquareLengthMm: Double = 22.0,
+    val charucoMarkerLengthMm: Double = 16.0,
+    val charucoDictionary: String = "DICT_4X4_50",
+    val minCharucoCorners: Int = 12,
+    val charucoLegacyPattern: Boolean = true,
+    val charucoCornersUsedPerFrame: List<Int> = emptyList(),
+    val charucoCommonIdsPerPair: List<List<Int>> = emptyList(),
+    val pairsTotal: Int = 0,
+    val pairsUsed: Int = 0,
     val cam0Rms: Double? = null,
     val cam1Rms: Double? = null,
     val stereoRms: Double? = null,
-    val cam0ImageWidth: Int,
-    val cam0ImageHeight: Int,
-    val cam1ImageWidth: Int,
-    val cam1ImageHeight: Int,
+    val cam0ImageWidth: Int = 0,
+    val cam0ImageHeight: Int = 0,
+    val cam1ImageWidth: Int = 0,
+    val cam1ImageHeight: Int = 0,
     val cam0CameraMatrix: List<List<Double>> = emptyList(),
     val cam0DistCoeffs: List<Double> = emptyList(),
     val cam1CameraMatrix: List<List<Double>> = emptyList(),
@@ -417,6 +566,15 @@ fun StereoCalibrationResult.toIntrinsicsJson(camera: String): JSONObject {
         .put("checkerboard_inner_cols", checkerboardInnerCols)
         .put("checkerboard_inner_rows", checkerboardInnerRows)
         .put("square_size_mm", squareSizeMm)
+        .put("board_type", boardType)
+        .put("charuco_squares_x", charucoSquaresX)
+        .put("charuco_squares_y", charucoSquaresY)
+        .put("charuco_square_length_mm", charucoSquareLengthMm)
+        .put("charuco_marker_length_mm", charucoMarkerLengthMm)
+        .put("charuco_dictionary", charucoDictionary)
+        .put("min_charuco_corners", minCharucoCorners)
+        .put("charuco_legacy_pattern", charucoLegacyPattern)
+        .put("charuco_corners_used_per_frame", charucoCornersUsedPerFrame.toIntJsonArray())
         .put("calibration_flags", calibrationFlags ?: JSONObject.NULL)
         .put("distortion_model", distortionModel ?: JSONObject.NULL)
         .put("errors", errors.toStringJsonArray())
@@ -425,6 +583,10 @@ fun StereoCalibrationResult.toIntrinsicsJson(camera: String): JSONObject {
 fun StereoCalibrationResult.toJson(): JSONObject = JSONObject()
     .put("status", status).put("created_at_utc", createdAtUtc).put("session_path", sessionPath)
     .put("checkerboard_inner_cols", checkerboardInnerCols).put("checkerboard_inner_rows", checkerboardInnerRows).put("square_size_mm", squareSizeMm)
+    .put("board_type", boardType).put("charuco_squares_x", charucoSquaresX).put("charuco_squares_y", charucoSquaresY)
+    .put("charuco_square_length_mm", charucoSquareLengthMm).put("charuco_marker_length_mm", charucoMarkerLengthMm).put("charuco_dictionary", charucoDictionary)
+    .put("min_charuco_corners", minCharucoCorners).put("charuco_legacy_pattern", charucoLegacyPattern)
+    .put("charuco_corners_used_per_frame", charucoCornersUsedPerFrame.toIntJsonArray()).put("charuco_common_ids_per_pair", charucoCommonIdsPerPair.toIntListJsonArray())
     .put("pairs_total", pairsTotal).put("pairs_used", pairsUsed).put("cam0_rms", cam0Rms).put("cam1_rms", cam1Rms).put("stereo_rms", stereoRms)
     .put("cam0_image_width", cam0ImageWidth).put("cam0_image_height", cam0ImageHeight).put("cam1_image_width", cam1ImageWidth).put("cam1_image_height", cam1ImageHeight)
     .put("cam0_camera_matrix", cam0CameraMatrix.toDoubleJsonArray2()).put("cam0_dist_coeffs", cam0DistCoeffs.toDoubleJsonArray())
@@ -445,6 +607,7 @@ private fun Mat.toNestedList(): List<List<Double>> = (0 until rows()).map { r ->
 private fun List<Double>.toDoubleJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
 private fun List<String>.toStringJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
 private fun List<Int>.toIntJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
+private fun List<List<Int>>.toIntListJsonArray() = JSONArray().also { outer -> forEach { outer.put(it.toIntJsonArray()) } }
 private fun List<CornerOrderTrialResult>.toCornerOrderTrialJsonArray() = JSONArray().also { arr -> forEach { arr.put(JSONObject().put("variant", it.variant).put("rms", it.rms)) } }
 private fun List<PairCalibrationError>.toPairCalibrationErrorJsonArray() = JSONArray().also { arr -> forEach { arr.put(JSONObject().put("pair_index", it.pairIndex).put("epipolar_error_px", it.error)) } }
 private fun List<List<Double>>.toDoubleJsonArray2() = JSONArray().also { outer -> forEach { outer.put(it.toDoubleJsonArray()) } }

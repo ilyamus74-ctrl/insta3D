@@ -150,6 +150,7 @@ import com.maklertour.data.calibration.OpenCvCalibrationBoardDetector
 import com.maklertour.data.calibration.StereoCalibrationProcessor
 import com.maklertour.data.calibration.StereoCalibrationResult
 import com.maklertour.data.calibration.toJson
+import com.maklertour.data.rig.CalibrationBoardType
 import com.maklertour.data.rig.CalibrationSettings
 import com.maklertour.data.rig.CalibrationStatus
 import com.maklertour.data.rig.CameraMode
@@ -3563,6 +3564,14 @@ private fun CalibrationCaptureDialog(
             .put("checkerboard_inner_rows", settings.checkerboardInnerRows)
             .put("square_size_mm", settings.squareSizeMm)
             .put("required_pairs", settings.requiredPairs)
+            .put("board_type", settings.boardType.name)
+            .put("charuco_squares_x", settings.charucoSquaresX)
+            .put("charuco_squares_y", settings.charucoSquaresY)
+            .put("charuco_square_length_mm", settings.charucoSquareLengthMm)
+            .put("charuco_marker_length_mm", settings.charucoMarkerLengthMm)
+            .put("charuco_dictionary", settings.charucoDictionary)
+            .put("min_charuco_corners", settings.minCharucoCorners)
+            .put("charuco_legacy_pattern", settings.charucoLegacyPattern)
             .put("capture_source", "latest_frame_buffer")
             .put("note", "not hardware synchronized")
         File(dir, "calibration_input.json").writeText(input.toString(2))
@@ -3895,9 +3904,9 @@ private fun CalibrationCaptureDialog(
         }
         if (!latestFrameDetectionValid) {
             message = when (workflowMode) {
-                CalibrationWorkflowMode.CAM0_INTRINSICS -> "Checkerboard not found on latest cam0 frame; frame was not saved. Repeat capture."
-                CalibrationWorkflowMode.CAM1_INTRINSICS -> "Checkerboard not found on latest cam1 frame; frame was not saved. Repeat capture."
-                CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Checkerboard not found on latest stereo frame buffers; pair was not saved. Repeat capture."
+                CalibrationWorkflowMode.CAM0_INTRINSICS -> "${boardDisplayName(settings)} not found on latest cam0 frame; frame was not saved. Repeat capture."
+                CalibrationWorkflowMode.CAM1_INTRINSICS -> "${boardDisplayName(settings)} not found on latest cam1 frame; frame was not saved. Repeat capture."
+                CalibrationWorkflowMode.STEREO_EXTRINSICS -> "${boardDisplayName(settings)} not found on latest stereo frame buffers; pair was not saved. Repeat capture."
             }
             return false
         }
@@ -3938,7 +3947,7 @@ private fun CalibrationCaptureDialog(
                 cam1Path,
                 cam0Result,
                 cam1Result,
-                settings.checkerboardInnerCols * settings.checkerboardInnerRows,
+                expectedCalibrationCorners(settings),
                 workflowMode.name,
                 cam0?.width,
                 cam0?.height,
@@ -4050,9 +4059,9 @@ private fun CalibrationCaptureDialog(
                             cam0ResolutionInfo.reason?.let { Text("cam0 analysis reason: $it", color = Color(0xFFFFD166)) }
                             cam1CalibrationModeWarning?.let { Text(it, color = Color(0xFFFFD166)) }
                             val detectionText = when (workflowMode) {
-                                CalibrationWorkflowMode.CAM0_INTRINSICS -> if (cam0Detection?.found == true) "Checkerboard found" else "Looking for checkerboard"
-                                CalibrationWorkflowMode.CAM1_INTRINSICS -> if (cam1Detection?.found == true) "Checkerboard found" else "Looking for checkerboard"
-                                CalibrationWorkflowMode.STEREO_EXTRINSICS -> if (cam0Detection?.found == true && cam1Detection?.found == true) "Checkerboard found in both cameras" else "Looking for checkerboard in both cameras"
+                                CalibrationWorkflowMode.CAM0_INTRINSICS -> if (cam0Detection?.found == true) "${boardDisplayName(settings)} found" else "Looking for ${boardDisplayName(settings)}"
+                                CalibrationWorkflowMode.CAM1_INTRINSICS -> if (cam1Detection?.found == true) "${boardDisplayName(settings)} found" else "Looking for ${boardDisplayName(settings)}"
+                                CalibrationWorkflowMode.STEREO_EXTRINSICS -> if (cam0Detection?.found == true && cam1Detection?.found == true) "${boardDisplayName(settings)} found in both cameras" else "Looking for ${boardDisplayName(settings)} in both cameras"
                             }
                             Text(detectionText, color = Color.White)
                             if (message.isNotBlank()) Text(message, color = Color.White)
@@ -4318,6 +4327,16 @@ private fun writeCalibrationDiagnosticsJson(context: Context, profileStore: Ster
 
 private fun saveJpeg(bitmap: Bitmap, file: File) {
     FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out) }
+}
+
+private fun expectedCalibrationCorners(settings: CalibrationSettings): Int = when (settings.boardType) {
+    CalibrationBoardType.CHARUCO -> (settings.charucoSquaresX - 1) * (settings.charucoSquaresY - 1)
+    CalibrationBoardType.CHESSBOARD_LEGACY -> settings.checkerboardInnerCols * settings.checkerboardInnerRows
+}
+
+private fun boardDisplayName(settings: CalibrationSettings): String = when (settings.boardType) {
+    CalibrationBoardType.CHARUCO -> "ChArUco"
+    CalibrationBoardType.CHESSBOARD_LEGACY -> "Checkerboard"
 }
 
 private fun appendCalibrationPairManifest(
