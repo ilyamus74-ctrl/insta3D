@@ -128,7 +128,7 @@ class StereoCalibrationProcessor(
             val f = bestTrial.f
             val stereoRms = bestTrial.rms
             val bestCam1Points = cam1Points.map { transformCornerOrder(it, settings.checkerboardInnerRows, settings.checkerboardInnerCols, bestTrial.variant) }
-            val perPairErrors = if (stereoRms.isFinite() && stereoRms > DEFAULT_STEREO_RMS_THRESHOLD_PX) computePerPairEpipolarErrors(cam0Points, bestCam1Points, f, usablePairIndexes) else emptyList()
+            val perPairErrors = if (stereoRms.isFinite()) computePerPairEpipolarErrors(cam0Points, bestCam1Points, f, usablePairIndexes) else emptyList()
             val worstPairIndexes = perPairErrors.sortedByDescending { it.error }.take(5).map { it.pairIndex }
             val success = stereoRms.isFinite() && stereoRms <= stereoRmsThresholdPx
             finish(
@@ -241,21 +241,23 @@ class StereoCalibrationProcessor(
 
     private data class IntrinsicsValidation(val json: JSONObject?, val error: String?)
 
+
     private fun validateIntrinsicsFile(file: File, camera: String): IntrinsicsValidation {
         val invalid = "$camera intrinsics not successful"
         if (!file.exists()) return IntrinsicsValidation(null, invalid)
-        val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return IntrinsicsValidation(null, invalid)
-        if (json.optString("status") != "success") return IntrinsicsValidation(null, invalid)
-        val cameraMatrix = json.optJSONArray("camera_matrix") ?: return IntrinsicsValidation(null, invalid)
-        if (cameraMatrix.length() != 3) return IntrinsicsValidation(null, invalid)
-        for (rowIndex in 0 until 3) {
-            val row = cameraMatrix.optJSONArray(rowIndex) ?: return IntrinsicsValidation(null, invalid)
-            if (row.length() != 3) return IntrinsicsValidation(null, invalid)
-        }
-        val distCoeffs = json.optJSONArray("dist_coeffs") ?: return IntrinsicsValidation(null, invalid)
-        if (distCoeffs.length() == 0) return IntrinsicsValidation(null, invalid)
-        if (json.optInt("image_width", 0) <= 0 || json.optInt("image_height", 0) <= 0) return IntrinsicsValidation(null, invalid)
-        return IntrinsicsValidation(json, null)
+        return runCatching {
+            val json = JSONObject(file.readText())
+            if (json.optString("status") != "success") {
+                IntrinsicsValidation(null, invalid)
+            } else {
+                val model = json.optString("distortion_model", "")
+                if (model != DISTORTION_MODEL) {
+                    IntrinsicsValidation(null, "$camera intrinsics use outdated distortion_model=$model; rerun full calibration")
+                } else {
+                    IntrinsicsValidation(json, null)
+                }
+            }
+        }.getOrElse { IntrinsicsValidation(null, "$camera intrinsics read failed: ${it.message}") }
     }
 
     private fun readSettings(input: JSONObject) = CalibrationSettings(
@@ -428,12 +430,12 @@ fun StereoCalibrationResult.toJson(): JSONObject = JSONObject()
     .put("cam0_camera_matrix", cam0CameraMatrix.toDoubleJsonArray2()).put("cam0_dist_coeffs", cam0DistCoeffs.toDoubleJsonArray())
     .put("cam1_camera_matrix", cam1CameraMatrix.toDoubleJsonArray2()).put("cam1_dist_coeffs", cam1DistCoeffs.toDoubleJsonArray())
     .put("stereo_R", stereoR.toDoubleJsonArray2()).put("stereo_T", stereoT.toDoubleJsonArray()).put("stereo_E", stereoE.toDoubleJsonArray2()).put("stereo_F", stereoF.toDoubleJsonArray2())
-    .put("corner_order_trials", cornerOrderTrials.toJsonArray())
+    .put("corner_order_trials", cornerOrderTrials.toCornerOrderTrialJsonArray())
     .put("selected_corner_order_variant", selectedCornerOrderVariant ?: JSONObject.NULL)
     .put("selected_corner_order_rms", selectedCornerOrderRms ?: JSONObject.NULL)
     .put("calibration_flags", calibrationFlags ?: JSONObject.NULL)
     .put("distortion_model", distortionModel ?: JSONObject.NULL)
-    .put("per_pair_epipolar_errors", perPairErrors.toJsonArray())
+    .put("per_pair_epipolar_errors", perPairErrors.toPairCalibrationErrorJsonArray())
     .put("worst_pair_indexes", worstPairIndexes.toIntJsonArray())
     .put("errors", errors.toStringJsonArray())
 
@@ -443,8 +445,8 @@ private fun Mat.toNestedList(): List<List<Double>> = (0 until rows()).map { r ->
 private fun List<Double>.toDoubleJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
 private fun List<String>.toStringJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
 private fun List<Int>.toIntJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
-private fun List<CornerOrderTrialResult>.toJsonArray() = JSONArray().also { arr -> forEach { arr.put(JSONObject().put("variant", it.variant).put("rms", it.rms)) } }
-private fun List<PairCalibrationError>.toJsonArray() = JSONArray().also { arr -> forEach { arr.put(JSONObject().put("pair_index", it.pairIndex).put("epipolar_error_px", it.error)) } }
+private fun List<CornerOrderTrialResult>.toCornerOrderTrialJsonArray() = JSONArray().also { arr -> forEach { arr.put(JSONObject().put("variant", it.variant).put("rms", it.rms)) } }
+private fun List<PairCalibrationError>.toPairCalibrationErrorJsonArray() = JSONArray().also { arr -> forEach { arr.put(JSONObject().put("pair_index", it.pairIndex).put("epipolar_error_px", it.error)) } }
 private fun List<List<Double>>.toDoubleJsonArray2() = JSONArray().also { outer -> forEach { outer.put(it.toDoubleJsonArray()) } }
 private fun matFromNestedJson(json: JSONArray): Mat {
     val rows = json.length()
