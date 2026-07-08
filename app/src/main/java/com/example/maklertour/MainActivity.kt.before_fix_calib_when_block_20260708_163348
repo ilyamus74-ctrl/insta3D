@@ -176,6 +176,7 @@ import java.util.Date
 import java.text.SimpleDateFormat
 import java.io.FileOutputStream
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.app.Activity
 import android.content.pm.ActivityInfo
 
@@ -188,6 +189,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+private const val CALIBRATION_CAM0_DISPLAY_ROTATION_DEGREES = 0f
+private const val CALIBRATION_CAM1_DISPLAY_ROTATION_DEGREES = 90f
+
+private fun calibrationDisplayAspect(rotationDegrees: Float): Float =
+    if (normalizeDisplayRotation(rotationDegrees) == 90 || normalizeDisplayRotation(rotationDegrees) == 270) 9f / 16f else 16f / 9f
 
 private const val CAM1_PREVIEW_ROTATION_DEGREES = 90f
 
@@ -4336,30 +4343,30 @@ private fun CalibrationCaptureDialog(
                             "cam0",
                             lastCam0PreviewBitmap,
                             cam0Detection,
-                            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                            rotationDegrees = 0f,
+                            Modifier.fillMaxWidth().aspectRatio(calibrationDisplayAspect(CALIBRATION_CAM0_DISPLAY_ROTATION_DEGREES))),
+                            rotationDegrees = CALIBRATION_CAM0_DISPLAY_ROTATION_DEGREES,
                         )
                         CalibrationWorkflowMode.CAM1_INTRINSICS -> PreviewBitmapPanel(
                             "cam1",
                             lastCam1PreviewBitmap,
                             cam1Detection,
-                            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                            rotationDegrees = 90f,
+                            Modifier.fillMaxWidth().aspectRatio(calibrationDisplayAspect(CALIBRATION_CAM1_DISPLAY_ROTATION_DEGREES))),
+                            rotationDegrees = CALIBRATION_CAM1_DISPLAY_ROTATION_DEGREES,
                         )
                         CalibrationWorkflowMode.STEREO_EXTRINSICS -> Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             PreviewBitmapPanel(
                                 "cam0",
                                 lastCam0PreviewBitmap,
                                 cam0Detection,
-                                Modifier.weight(1f).aspectRatio(16f / 9f),
-                                rotationDegrees = 90f,
+                                Modifier.weight(1f).aspectRatio(calibrationDisplayAspect(CALIBRATION_CAM0_DISPLAY_ROTATION_DEGREES)),
+                                rotationDegrees = CALIBRATION_CAM0_DISPLAY_ROTATION_DEGREES,
                             )
                             PreviewBitmapPanel(
                                 "cam1",
                                 lastCam1PreviewBitmap,
                                 cam1Detection,
-                                Modifier.weight(1f).aspectRatio(16f / 9f),
-                                rotationDegrees = 0f,
+                                Modifier.weight(1f).aspectRatio(calibrationDisplayAspect(CALIBRATION_CAM1_DISPLAY_ROTATION_DEGREES)),
+                                rotationDegrees = CALIBRATION_CAM1_DISPLAY_ROTATION_DEGREES,
                             )
                         }
                     }
@@ -4438,15 +4445,73 @@ private fun PreviewBitmapPanel(
 ) {
     Box(modifier = modifier.background(Color.DarkGray), contentAlignment = Alignment.Center) {
         if (bitmap != null) {
+            val displayRotation = normalizeDisplayRotation(rotationDegrees)
+            val displayBitmap = remember(bitmap, displayRotation) {
+                rotateBitmapForDisplayOnly(bitmap, displayRotation)
+            }
+
             AsyncImage(
-                model = bitmap,
+                model = displayBitmap,
                 contentDescription = label,
-                modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotationDegrees },
+                modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
             )
+
+            val detectionResult = detection
+            if (detectionResult != null && detectionResult.normalizedCornerPoints.isNotEmpty()) {
+                val points = detectionResult.normalizedCornerPoints.map {
+                    transformNormalizedCornerForDisplay(it, displayRotation)
+                }
+
+                val imageWidth = if (displayRotation == 90 || displayRotation == 270) {
+                    detectionResult.imageHeight
+                } else {
+                    detectionResult.imageWidth
+                }
+
+                val imageHeight = if (displayRotation == 90 || displayRotation == 270) {
+                    detectionResult.imageWidth
+                } else {
+                    detectionResult.imageHeight
+                }
+
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val imageAspect = imageWidth.toFloat() / imageHeight.toFloat().coerceAtLeast(1f)
+                    val boxAspect = size.width / size.height.coerceAtLeast(1f)
+
+                    val drawWidth: Float
+                    val drawHeight: Float
+                    val offsetX: Float
+                    val offsetY: Float
+
+                    if (imageAspect > boxAspect) {
+                        drawWidth = size.width
+                        drawHeight = size.width / imageAspect
+                        offsetX = 0f
+                        offsetY = (size.height - drawHeight) / 2f
+                    } else {
+                        drawHeight = size.height
+                        drawWidth = size.height * imageAspect
+                        offsetX = (size.width - drawWidth) / 2f
+                        offsetY = 0f
+                    }
+
+                    points.forEach { point ->
+                        drawCircle(
+                            color = Color(0xFF00E676),
+                            radius = 5f,
+                            center = androidx.compose.ui.geometry.Offset(
+                                offsetX + point.x * drawWidth,
+                                offsetY + point.y * drawHeight,
+                            ),
+                        )
+                    }
+                }
+            }
         } else {
             Text("Waiting for preview", color = Color.White)
         }
+
         val status = detection?.let { if (it.found) "board found" else "board not found" } ?: "detecting"
         val count = detection?.let { " ${it.cornersFound}/${it.expectedCorners}" }.orEmpty()
         val statusColor = when (detection?.found) {
@@ -4454,49 +4519,54 @@ private fun PreviewBitmapPanel(
             false -> Color(0xFFFFD54F)
             null -> Color.White
         }
-        val detectionResult = detection
-        if (detectionResult != null && detectionResult.normalizedCornerPoints.isNotEmpty()) {
-            val points = detectionResult.normalizedCornerPoints
-            Canvas(modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotationDegrees }) {
-                val imageAspect =
-                    detectionResult.imageWidth.toFloat() /
-                        detectionResult.imageHeight.toFloat().coerceAtLeast(1f)
-                val boxAspect = size.width / size.height.coerceAtLeast(1f)
-                val drawWidth: Float
-                val drawHeight: Float
-                val offsetX: Float
-                val offsetY: Float
-                if (imageAspect > boxAspect) {
-                    drawWidth = size.width
-                    drawHeight = size.width / imageAspect
-                    offsetX = 0f
-                    offsetY = (size.height - drawHeight) / 2f
-                } else {
-                    drawHeight = size.height
-                    drawWidth = size.height * imageAspect
-                    offsetX = (size.width - drawWidth) / 2f
-                    offsetY = 0f
-                }
-                val offsets = points.map {
-                    Offset(offsetX + it.x * drawWidth, offsetY + it.y * drawHeight)
-                }
-                offsets.forEach {
-                    drawCircle(Color(0xFF00E676), radius = 4.dp.toPx(), center = it)
-                }
-                drawRect(
-                    Color(0xFF00E676),
-                    topLeft = Offset(offsetX, offsetY),
-                    size = ComposeSize(drawWidth, drawHeight),
-                    style = Stroke(width = 1.dp.toPx()),
-                )
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .background(Color.Black.copy(alpha = 0.55f))
+                .padding(8.dp),
+        ) {
+            Text("$label $status$count", color = statusColor, style = MaterialTheme.typography.bodySmall)
+            detection?.qualityMessage?.let {
+                Text(it, color = Color.White, style = MaterialTheme.typography.bodySmall)
             }
-        }
-        Column(modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.65f)).padding(8.dp)) {
-            Text("$label $status$count", color = statusColor)
-            detection?.qualityMessage?.let { Text(it, color = Color.White) }
         }
     }
 }
+
+private fun normalizeDisplayRotation(rotationDegrees: Float): Int {
+    val rounded = ((rotationDegrees % 360f) + 360f) % 360f
+    return when {
+        rounded >= 45f && rounded < 135f -> 90
+        rounded >= 135f && rounded < 225f -> 180
+        rounded >= 225f && rounded < 315f -> 270
+        else -> 0
+    }
+}
+
+private fun rotateBitmapForDisplayOnly(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
+    if (rotationDegrees == 0) return bitmap
+    val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+}
+
+private fun transformNormalizedCornerForDisplay(point: NormalizedCornerPoint, rotationDegrees: Int): NormalizedCornerPoint =
+    when (rotationDegrees) {
+        90 -> NormalizedCornerPoint(
+            x = (1f - point.y).coerceIn(0f, 1f),
+            y = point.x.coerceIn(0f, 1f),
+        )
+        180 -> NormalizedCornerPoint(
+            x = (1f - point.x).coerceIn(0f, 1f),
+            y = (1f - point.y).coerceIn(0f, 1f),
+        )
+        270 -> NormalizedCornerPoint(
+            x = point.y.coerceIn(0f, 1f),
+            y = (1f - point.x).coerceIn(0f, 1f),
+        )
+        else -> point
+    }
+
 
 private fun cleanupCalibrationSessions(context: Context) {
     val root = File(context.filesDir, "calibration_sessions")

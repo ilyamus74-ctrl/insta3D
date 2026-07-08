@@ -4344,7 +4344,7 @@ private fun CalibrationCaptureDialog(
                             lastCam1PreviewBitmap,
                             cam1Detection,
                             Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                            rotationDegrees = 90f,
+                            rotationDegrees = 0f,
                         )
                         CalibrationWorkflowMode.STEREO_EXTRINSICS -> Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             PreviewBitmapPanel(
@@ -4352,7 +4352,7 @@ private fun CalibrationCaptureDialog(
                                 lastCam0PreviewBitmap,
                                 cam0Detection,
                                 Modifier.weight(1f).aspectRatio(16f / 9f),
-                                rotationDegrees = 90f,
+                                rotationDegrees = 0f,
                             )
                             PreviewBitmapPanel(
                                 "cam1",
@@ -4441,7 +4441,7 @@ private fun PreviewBitmapPanel(
             AsyncImage(
                 model = bitmap,
                 contentDescription = label,
-                modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotationDegrees },
+                modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
             )
         } else {
@@ -4457,7 +4457,7 @@ private fun PreviewBitmapPanel(
         val detectionResult = detection
         if (detectionResult != null && detectionResult.normalizedCornerPoints.isNotEmpty()) {
             val points = detectionResult.normalizedCornerPoints
-            Canvas(modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotationDegrees }) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
                 val imageAspect =
                     detectionResult.imageWidth.toFloat() /
                         detectionResult.imageHeight.toFloat().coerceAtLeast(1f)
