@@ -4354,14 +4354,14 @@ private fun CalibrationCaptureDialog(
                                 lastCam0PreviewBitmap,
                                 cam0Detection,
                                 Modifier.weight(1f).aspectRatio(16f / 9f),
-                                rotationDegrees = 0f,
+                                rotationDegrees = 90f,
                             )
                             PreviewBitmapPanel(
                                 "cam1",
                                 lastCam1PreviewBitmap,
                                 cam1Detection,
                                 Modifier.weight(1f).aspectRatio(16f / 9f),
-                                rotationDegrees = CAM1_PREVIEW_ROTATION_DEGREES,
+                                rotationDegrees = 0f,
                             )
                         }
                     }
