@@ -4064,15 +4064,6 @@ private fun CalibrationCaptureDialog(
                                 CalibrationWorkflowMode.STEREO_EXTRINSICS -> if (cam0Detection?.found == true && cam1Detection?.found == true) "${boardDisplayName(settings)} found in both cameras" else "Looking for ${boardDisplayName(settings)} in both cameras"
                             }
                             Text(detectionText, color = Color.White)
-                            if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
-                                Button(
-                                    onClick = { autoCapture = !autoCapture },
-                                    enabled = !calibrationRunning && pairCount < requiredPairs,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text("Auto stereo capture: ${if (autoCapture) "On" else "Off"}")
-                                }
-                            }
                             if (message.isNotBlank()) Text(message, color = Color.White)
                         }
                         if (wizardState == CalibrationWizardState.CAM0_RESULT || wizardState == CalibrationWizardState.CAM1_RESULT || wizardState == CalibrationWizardState.STEREO_RESULT) {
