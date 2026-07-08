@@ -4425,6 +4425,7 @@ private fun CalibrationCaptureDialog(
             }
         }
     }
+
     @Composable
     fun CaptureControls(modifier: Modifier = Modifier) {
         val captureEnabled = when (workflowMode) {
@@ -4432,55 +4433,28 @@ private fun CalibrationCaptureDialog(
             CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Detection?.found == true
             CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Detection?.found == true && cam1Detection?.found == true && stereoInputsReady(sessionDir)
         } && !calibrationRunning
-
-        val autoLabel = if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
-            "Auto stereo: ${if (autoCapture) "On" else "Off"}"
-        } else {
-            "Auto: ${if (autoCapture) "On" else "Off"}"
-        }
-
         Column(
             modifier = modifier
                 .background(Color.Black.copy(alpha = 0.65f))
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+                Text(
+                    "Manual stereo capture. Hold the board still 1–2 seconds.",
+                    color = Color(0xFFFFD166),
+                )
+            } else {
                 Button(
                     onClick = { autoCapture = !autoCapture },
                     enabled = !calibrationRunning && pairCount < requiredPairs,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(autoLabel)
-                }
-
-                Button(
-                    onClick = { capturePair(requireValidDetection = true) },
-                    enabled = captureEnabled,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(captureButtonText)
+                    Text("Auto capture: ${if (autoCapture) "On" else "Off"}")
                 }
             }
-
-            if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS && autoCapture) {
-                Text(
-                    "Auto stereo is running. Move the board slowly; press Auto stereo again to pause.",
-                    color = Color(0xFFFFD166),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-
-            Button(
-                onClick = onDismiss,
-                enabled = !calibrationRunning,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Cancel")
-            }
+            Button(onClick = { capturePair(requireValidDetection = true) }, enabled = captureEnabled, modifier = Modifier.fillMaxWidth()) { Text(captureButtonText) }
+            Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
         }
     }
 
