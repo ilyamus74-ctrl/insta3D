@@ -93,6 +93,13 @@ data class CalibrationFrame(
     val bitmap: Bitmap,
     val timestampNs: Long,
     val sequence: Long,
+    val rotationDegreesApplied: Int = 0,
+    val rawWidth: Int? = null,
+    val rawHeight: Int? = null,
+    val savedWidth: Int = bitmap.width,
+    val savedHeight: Int = bitmap.height,
+    val displayRotationAtCapture: Int? = null,
+    val appOrientationAtCapture: String? = null,
 ) {
     fun ageMs(nowNs: Long = SystemClock.elapsedRealtimeNanos()): Long = (nowNs - timestampNs) / 1_000_000L
 }
@@ -475,7 +482,8 @@ private class NativeLibuvcCam1Backend(private val log: (String) -> Unit) : Cam1U
             UVC_FRAME_FORMAT_UYVY -> uyvyToBitmap(bytes, width, height)
             else -> null
         } ?: return null
-        return CalibrationFrame(bitmap = bitmap, timestampNs = metadata[0], sequence = metadata[1])
+        Log.d("StereoUsbUvc", "cam1 saved frame: ${bitmap.width}x${bitmap.height} rotationApplied=0 raw=${width}x${height}")
+        return CalibrationFrame(bitmap = bitmap, timestampNs = metadata[0], sequence = metadata[1], rotationDegreesApplied = 0, rawWidth = width, rawHeight = height, savedWidth = bitmap.width, savedHeight = bitmap.height)
     }
 
     override fun snapshot(): Cam1UvcBackendState = synchronized(lock) {

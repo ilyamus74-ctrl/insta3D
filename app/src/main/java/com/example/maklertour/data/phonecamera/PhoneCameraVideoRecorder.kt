@@ -4,10 +4,12 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 import androidx.camera.core.Camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -70,6 +72,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var loggedCalibrationAnalysisFrames = 0L
     private var lastAcceptedCalibrationAnalysisNs = 0L
     private var loggedOversizedCalibrationFrameWarning = false
+    private var currentTargetRotation: Int = Surface.ROTATION_0
 
     suspend fun bindPreview(
         previewView: PreviewView,
@@ -95,9 +98,10 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         loggedCalibrationAnalysisFrames = 0L
         lastAcceptedCalibrationAnalysisNs = 0L
         loggedOversizedCalibrationFrameWarning = false
-        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio video_capture=$enableVideoCapture requested_profile=${profileRequestedSize?.width}x${profileRequestedSize?.height} requested_calibration=${requestedSize?.width}x${requestedSize?.height} reason=${calibrationResolutionReason ?: "none"}")
+        currentTargetRotation = previewView.display?.rotation ?: Surface.ROTATION_0
+        Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio video_capture=$enableVideoCapture target_rotation=$currentTargetRotation requested_profile=${profileRequestedSize?.width}x${profileRequestedSize?.height} requested_calibration=${requestedSize?.width}x${requestedSize?.height} reason=${calibrationResolutionReason ?: "none"}")
         val cameraProvider = getCameraProvider()
-        val preview = Preview.Builder().build()
+        val preview = Preview.Builder().setTargetRotation(currentTargetRotation).build()
         val options = lensRepository.listBackCameras()
         val requestedLens = cameraId?.let { id -> options.firstOrNull { it.cameraId == id } }
         val fallbackLens = lensRepository.selectedOrDefault().first
@@ -105,7 +109,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         val selector = lensRepository.cameraSelectorFor(lens.cameraId)
         Log.d(TAG, "Phone camera bind: selected_camera_id=${lens.cameraId} lens=${lens.lensLabel}")
         selectedVideoInfo = SelectedPhoneVideoInfo(width = videoWidth ?: requestedSize?.width ?: 1280, height = videoHeight ?: requestedSize?.height ?: 720, fps = videoFps)
-        val preparedVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()) else null
+        val preparedVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()).also { it.targetRotation = currentTargetRotation } else null
         preview.setSurfaceProvider(previewView.surfaceProvider)
         val previousLens = selectedLensOption
         try {
@@ -126,8 +130,8 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             val recoveryLens = previousLens ?: fallbackLens.takeIf { it.cameraId != lens.cameraId }
             if (previousLens != null && previousLens.cameraId != lens.cameraId) {
                 runCatching {
-                    val previousPreview = Preview.Builder().build()
-                    val previousVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()) else null
+                    val previousPreview = Preview.Builder().setTargetRotation(currentTargetRotation).build()
+                    val previousVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()).also { it.targetRotation = currentTargetRotation } else null
                     previousPreview.setSurfaceProvider(previewView.surfaceProvider)
                     val camera = bindWithCalibrationFallbacks(
                         cameraProvider = cameraProvider,
@@ -144,8 +148,8 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 }
             } else if (recoveryLens != null) {
                 runCatching {
-                    val fallbackPreview = Preview.Builder().build()
-                    val fallbackVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()) else null
+                    val fallbackPreview = Preview.Builder().setTargetRotation(currentTargetRotation).build()
+                    val fallbackVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()).also { it.targetRotation = currentTargetRotation } else null
                     fallbackPreview.setSurfaceProvider(previewView.surfaceProvider)
                     val camera = bindWithCalibrationFallbacks(
                         cameraProvider = cameraProvider,
@@ -219,7 +223,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     .build()
             )
         }
-        return builder.build()
+        return builder.setTargetRotation(currentTargetRotation).build()
             .also { analyzer ->
                 analyzer.setAnalyzer(analysisExecutor) { imageProxy ->
                     updateLatestCalibrationFrame(imageProxy)
@@ -250,23 +254,33 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 return
             }
             val conversionStartNs = android.os.SystemClock.elapsedRealtimeNanos()
-            val bitmap = imageProxy.toNv21Bitmap() ?: return
+            val rawBitmap = imageProxy.toNv21Bitmap() ?: return
+            val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+            val bitmap = rotateBitmapForDisplay(rawBitmap, rotationDegrees)
             val conversionMs = ((android.os.SystemClock.elapsedRealtimeNanos() - conversionStartNs) / 1_000_000.0).roundToLong()
             val timestampNs = imageProxy.imageInfo.timestamp
             val ageMs = (android.os.SystemClock.elapsedRealtimeNanos() - timestampNs) / 1_000_000L
             loggedCalibrationAnalysisFrames += 1L
             if (loggedCalibrationAnalysisFrames <= 10L || loggedCalibrationAnalysisFrames % 30L == 0L) {
-                Log.d(TAG, "cam0 calibration analysis frame actual=${imageProxy.width}x${imageProxy.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight} age=${ageMs}ms conversion_ms=$conversionMs")
+                Log.d(TAG, "cam0 analysis actual=${imageProxy.width}x${imageProxy.height} rotationDegrees=$rotationDegrees targetRotation=$currentTargetRotation before=${rawBitmap.width}x${rawBitmap.height} after=${bitmap.width}x${bitmap.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight} age=${ageMs}ms conversion_ms=$conversionMs saved frame cam0=${bitmap.width}x${bitmap.height} rotationApplied=$rotationDegrees")
             }
             synchronized(latestFrameLock) {
                 latestCalibrationSequence += 1L
-                val frame = CalibrationFrame(bitmap, timestampNs, latestCalibrationSequence)
+                val frame = CalibrationFrame(bitmap, timestampNs, latestCalibrationSequence, rotationDegreesApplied = rotationDegrees, rawWidth = imageProxy.width, rawHeight = imageProxy.height, savedWidth = bitmap.width, savedHeight = bitmap.height, displayRotationAtCapture = currentTargetRotation, appOrientationAtCapture = if (bitmap.width >= bitmap.height) "landscape" else "portrait")
                 latestCalibrationFrame = frame
                 recentCalibrationFrames.add(frame)
+                if (loggedCalibrationAnalysisFrames <= 10L || loggedCalibrationAnalysisFrames % 30L == 0L) Log.d(TAG, "calibration frame ring-buffer saved size cam0=${frame.savedWidth}x${frame.savedHeight} rotationApplied=${frame.rotationDegreesApplied}")
             }
         } finally {
             imageProxy.close()
         }
+    }
+
+    private fun rotateBitmapForDisplay(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
+        val normalized = ((rotationDegrees % 360) + 360) % 360
+        if (normalized == 0) return bitmap
+        val matrix = Matrix().apply { postRotate(normalized.toFloat()) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
     private fun ImageProxy.toNv21Bitmap(): Bitmap? {

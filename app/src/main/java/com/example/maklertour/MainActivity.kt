@@ -3081,6 +3081,10 @@ private fun StereoCaptureExperimentalScreen(
         bindCam0NormalPreview()
     }
 
+    LaunchedEffect(isLandscape, selectedCameraId, requestedZoomRatio, activeProfile.cam0Mode) {
+        cam0PreviewView?.let { bindCam0NormalPreview() }
+    }
+
     Surface(modifier = Modifier.fillMaxSize().zIndex(20f), color = Color.Black) {
         Column(modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -3388,6 +3392,7 @@ private suspend fun runSyncedDepthRecorder(
         } else {
             val nextIndex = state.savedPairs + 1
             val meta = syncedDepthPairMeta(nextIndex, pair, cam0AgeMs, cam1AgeMs)
+            Log.d("SyncedDepth", "synced depth saved frame pair=$nextIndex cam0 saved frame: ${pair.cam0.savedWidth}x${pair.cam0.savedHeight} rotationApplied=${pair.cam0.rotationDegreesApplied} cam1 saved frame: ${pair.cam1.savedWidth}x${pair.cam1.savedHeight} rotationApplied=${pair.cam1.rotationDegreesApplied} delta_ms=${pair.deltaMs}")
             val outputDir = state.outputDir ?: return
             withContext(Dispatchers.IO) {
                 val pairsDir = File(outputDir, "pairs").apply { mkdirs() }
@@ -3419,6 +3424,17 @@ private fun syncedDepthPairMeta(index: Int, pair: StereoCalibrationFramePair, ca
         .put("cam0_height", pair.cam0.bitmap.height)
         .put("cam1_width", pair.cam1.bitmap.width)
         .put("cam1_height", pair.cam1.bitmap.height)
+        .put("cam0_rotation_degrees_applied", pair.cam0.rotationDegreesApplied)
+        .put("cam1_rotation_degrees_applied", pair.cam1.rotationDegreesApplied)
+        .put("cam0_raw_width", pair.cam0.rawWidth ?: JSONObject.NULL)
+        .put("cam0_raw_height", pair.cam0.rawHeight ?: JSONObject.NULL)
+        .put("cam0_saved_width", pair.cam0.savedWidth)
+        .put("cam0_saved_height", pair.cam0.savedHeight)
+        .put("cam1_saved_width", pair.cam1.savedWidth)
+        .put("cam1_saved_height", pair.cam1.savedHeight)
+        .put("app_orientation_at_capture", pair.cam0.appOrientationAtCapture ?: JSONObject.NULL)
+        .put("display_rotation_at_capture", pair.cam0.displayRotationAtCapture ?: JSONObject.NULL)
+        .put("cam0_image_analysis_rotation_degrees", pair.cam0.rotationDegreesApplied)
         .put("capture_source", "nearest_ring_buffer")
         .put("stereo_max_delta_ms", SYNCED_DEPTH_MAX_DELTA_MS)
 
