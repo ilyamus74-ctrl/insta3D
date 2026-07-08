@@ -3167,25 +3167,12 @@ private fun StereoCaptureExperimentalScreen(
                     }
                 }
             }
-            Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(260.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    cam0Card(
-                        Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                    )
-                    cam1Card(
-                        Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                    )
-                }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                cam0Card(Modifier.weight(1f).aspectRatio(16f / 9f))
+                cam1Card(Modifier.weight(1f).aspectRatio(16f / 9f))
+            }
 
-                Spacer(modifier = Modifier.height(12.dp))Card(modifier = Modifier.fillMaxWidth()) {
+            Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Rig / status", style = MaterialTheme.typography.titleSmall)
                     Text("Active profile: ${activeProfile.rigId}")
@@ -3258,8 +3245,35 @@ private fun StereoCaptureExperimentalScreen(
                 }, enabled = !isRecording && cam1Ready && (syncedDepthRecording || profileCalibratedForDepth)) { Text(if (syncedDepthRecording) "Stop synced depth recording" else "Record synced depth frames") }
                 Button(onClick = { showRigSettings = true }, enabled = !isRecording && !syncedDepthRecording) { Text("Open settings") }
             }
-            
-probePath?.let { Text("Probe JSON: $it", color = Color.White, style = MaterialTheme.typography.bodySmall) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = {
+                    scope.launch {
+                        probeRunning = true
+                        status = "phone dual camera probe running"
+                        manager.close()
+                        try {
+                            runCatching { withContext(Dispatchers.IO) { PhoneDualCameraProbe(context).run() } }
+                                .onSuccess { file ->
+                                    probePath = file.absolutePath
+                                    status = "phone dual camera probe written: ${file.absolutePath}"
+                                    Toast.makeText(context, file.absolutePath, Toast.LENGTH_LONG).show()
+                                }
+                                .onFailure { error ->
+                                    status = "phone dual camera probe failed: ${error.message}"
+                                    Toast.makeText(context, "Phone dual camera probe failed: ${error.message}", Toast.LENGTH_LONG).show()
+                                }
+                        } finally {
+                            probeRunning = false
+                        }
+                    }
+                }, enabled = !isRecording && !probeRunning) { Text(if (probeRunning) "Probe running…" else "Probe phone dual camera") }
+                Button(onClick = {
+                    val path = File(context.filesDir, PhoneDualCameraProbe.OUTPUT_FILE_NAME).absolutePath
+                    probePath = path
+                    Toast.makeText(context, path, Toast.LENGTH_LONG).show()
+                }, enabled = !probeRunning) { Text("Show phone dual camera probe JSON path") }
+            }
+            probePath?.let { Text("Probe JSON: $it", color = Color.White, style = MaterialTheme.typography.bodySmall) }
             if (!canRecord && !isRecording) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (!baselineReady) Text("Set baseline in Stereo rig / Cameras settings.", color = Color(0xFFFFD166))
