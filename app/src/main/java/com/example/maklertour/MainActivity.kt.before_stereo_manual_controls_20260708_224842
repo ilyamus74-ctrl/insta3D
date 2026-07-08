@@ -4439,20 +4439,7 @@ private fun CalibrationCaptureDialog(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
-                Text(
-                    "Manual stereo capture. Hold the board still 1–2 seconds.",
-                    color = Color(0xFFFFD166),
-                )
-            } else {
-                Button(
-                    onClick = { autoCapture = !autoCapture },
-                    enabled = !calibrationRunning && pairCount < requiredPairs,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Auto capture: ${if (autoCapture) "On" else "Off"}")
-                }
-            }
+            Button(onClick = { autoCapture = !autoCapture }, enabled = !calibrationRunning && pairCount < requiredPairs, modifier = Modifier.fillMaxWidth()) { Text("Auto capture: ${if (autoCapture) "On" else "Off"}") }
             Button(onClick = { capturePair(requireValidDetection = true) }, enabled = captureEnabled, modifier = Modifier.fillMaxWidth()) { Text(captureButtonText) }
             Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
         }
