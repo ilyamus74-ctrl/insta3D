@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Matrix
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -3142,19 +3143,43 @@ private fun StereoCaptureExperimentalScreen(
                     Text("cam0", color = Color.White, modifier = Modifier.align(Alignment.TopStart).padding(8.dp))
                 }
             }
+            fun applyCam1PreviewTransform(textureView: TextureView, width: Int = textureView.width, height: Int = textureView.height) {
+                if (width <= 0 || height <= 0) return
+                val centerX = width / 2f
+                val centerY = height / 2f
+                val normalizedRotation = ((CAM1_PREVIEW_ROTATION_DEGREES % 360f) + 360f) % 360f
+                val swapsBounds = normalizedRotation == 90f || normalizedRotation == 270f
+                val rotatedWidth = if (swapsBounds) height.toFloat() else width.toFloat()
+                val rotatedHeight = if (swapsBounds) width.toFloat() else height.toFloat()
+                val cropScale = maxOf(width / rotatedWidth, height / rotatedHeight)
+                val matrix = Matrix().apply {
+                    postRotate(CAM1_PREVIEW_ROTATION_DEGREES, centerX, centerY)
+                    postScale(cropScale, cropScale, centerX, centerY)
+                }
+                textureView.setTransform(matrix)
+            }
             val cam1Card: @Composable (Modifier) -> Unit = { modifier ->
                 Box(modifier = modifier.background(Color(0xFF202020)), contentAlignment = Alignment.Center) {
-                    AndroidView(modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = CAM1_PREVIEW_ROTATION_DEGREES }, factory = { ctx ->
-                        TextureView(ctx).apply {
-                            cam1TextureView = this
-                            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                                override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) { usbInfo = manager.refreshCam1(activeProfile.cam1Mode, this@apply) }
-                                override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
-                                override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
-                                override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) { manager.onCam1PreviewFrameRendered() }
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            TextureView(ctx).apply {
+                                cam1TextureView = this
+                                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                                    override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                        applyCam1PreviewTransform(this@apply, width, height)
+                                        usbInfo = manager.refreshCam1(activeProfile.cam1Mode, this@apply)
+                                    }
+                                    override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                        applyCam1PreviewTransform(this@apply, width, height)
+                                    }
+                                    override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
+                                    override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) { manager.onCam1PreviewFrameRendered() }
+                                }
                             }
-                        }
-                    })
+                        },
+                        update = { textureView -> applyCam1PreviewTransform(textureView) },
+                    )
                     Column(modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.55f)).padding(8.dp)) {
                         Text("cam1", color = Color.White, style = MaterialTheme.typography.labelLarge)
                         if (showDiagnostics) {
