@@ -46,6 +46,8 @@ def main():
     ap.add_argument('--cam1-rotate', default='auto', choices=['auto','none','cw','ccw','180'])
     ap.add_argument('--alpha', type=float, default=0.0)
     ap.add_argument('--no-zero-disparity', action='store_true')
+    ap.add_argument('--new-width', type=int, default=0)
+    ap.add_argument('--new-height', type=int, default=0)
     args = ap.parse_args()
 
     extr = load_json(args.stereo_extrinsics_json)
@@ -72,9 +74,10 @@ def main():
     first0 = maybe_rotate(first0, args.cam0_rotate); first1 = maybe_rotate(first1, args.cam1_rotate)
     size = (first0.shape[1], first0.shape[0])
     flags = 0 if args.no_zero_disparity else cv2.CALIB_ZERO_DISPARITY
-    R0,R1,P0,P1,Q,roi0,roi1 = cv2.stereoRectify(K0,D0,K1,D1,size,R,T,alpha=args.alpha,flags=flags)
-    m00,m01 = cv2.initUndistortRectifyMap(K0,D0,R0,P0,size,cv2.CV_16SC2)
-    m10,m11 = cv2.initUndistortRectifyMap(K1,D1,R1,P1,size,cv2.CV_16SC2)
+    new_size = (args.new_width, args.new_height) if args.new_width > 0 and args.new_height > 0 else size
+    R0,R1,P0,P1,Q,roi0,roi1 = cv2.stereoRectify(K0,D0,K1,D1,size,R,T,alpha=args.alpha,flags=flags,newImageSize=new_size)
+    m00,m01 = cv2.initUndistortRectifyMap(K0,D0,R0,P0,new_size,cv2.CV_16SC2)
+    m10,m11 = cv2.initUndistortRectifyMap(K1,D1,R1,P1,new_size,cv2.CV_16SC2)
 
     contact = []
     debug_pairs = []
@@ -92,7 +95,7 @@ def main():
         contact.append(np.hstack([r0, r1]))
         debug_pairs.append({'pair_index': p.get('pair_index'), 'cam0_file': p.get('cam0_file'), 'cam1_file': p.get('cam1_file')})
     cv2.imwrite(str(out / 'contact_rectified_synced.jpg'), np.vstack(contact))
-    (out / 'rectification_synced_debug.json').write_text(json.dumps({'samples': debug_pairs, 'size': size, 'alpha': args.alpha, 'zero_disparity': not args.no_zero_disparity}, indent=2), encoding='utf-8')
+    (out / 'rectification_synced_debug.json').write_text(json.dumps({'samples': debug_pairs, 'size': size, 'new_size': new_size, 'roi0': list(map(int, roi0)), 'roi1': list(map(int, roi1)), 'alpha': args.alpha, 'zero_disparity': not args.no_zero_disparity}, indent=2), encoding='utf-8')
 
 if __name__ == '__main__':
     main()
