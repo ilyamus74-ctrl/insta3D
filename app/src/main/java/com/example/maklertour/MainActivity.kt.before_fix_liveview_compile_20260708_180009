@@ -3175,14 +3175,17 @@ private fun StereoCaptureExperimentalScreen(
                 ) {
                     cam0Card(
                         Modifier
-                            .weight(1f),
+                            .weight(1f)
+                            .fillMaxHeight(),
                     )
                     cam1Card(
                         Modifier
-                            .weight(1f),
+                            .weight(1f)
+                            .fillMaxHeight(),
                     )
                 }
-Card(modifier = Modifier.fillMaxWidth()) {
+
+                Spacer(modifier = Modifier.height(12.dp))Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Rig / status", style = MaterialTheme.typography.titleSmall)
                     Text("Active profile: ${activeProfile.rigId}")
