@@ -4430,35 +4430,12 @@ private fun CalibrationCaptureDialog(
 
 }
 
-private fun cleanupCalibrationSessions(context: Context) {
-    val root = File(context.filesDir, "calibration_sessions")
-    if (!root.exists()) {
-        Log.d("CalibrationCleanup", "calibration_sessions does not exist; nothing to delete")
-        return
-    }
-    var deleted = 0
-    var failed = 0
-    root.listFiles { file -> file.isDirectory }?.forEach { dir ->
-        if (dir.deleteRecursively()) deleted += 1 else failed += 1
-    }
-    Log.d("CalibrationCleanup", "deleted=$deleted failed=$failed root=${root.absolutePath}")
-}
-
-private fun normalizeCalibrationDisplayRotation(rotationDegrees: Float): Int {
-    val normalized = ((rotationDegrees % 360f) + 360f) % 360f
-    return when {
-        normalized >= 45f && normalized < 135f -> 90
-        normalized >= 135f && normalized < 225f -> 180
-        normalized >= 225f && normalized < 315f -> 270
-        else -> 0
-    }
-}
-
-private fun rotateBitmapForCalibrationDisplayOnly(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
-    if (rotationDegrees == 0) return bitmap
+private fun rotateBitmapForCalibrationDisplayOnly(bitmap: Bitmap, rotationDegrees: Float): Bitmap {
+    val normalized = (((rotationDegrees % 360f) + 360f) % 360f).toInt()
+    if (normalized == 0) return bitmap
 
     val matrix = Matrix().apply {
-        postRotate(rotationDegrees.toFloat())
+        postRotate(normalized.toFloat())
     }
 
     return Bitmap.createBitmap(
@@ -4472,40 +4449,6 @@ private fun rotateBitmapForCalibrationDisplayOnly(bitmap: Bitmap, rotationDegree
     )
 }
 
-private fun makeCalibrationOverlayBitmapForDisplayOnly(
-    sourceBitmap: Bitmap,
-    detection: CalibrationDetectionResult?,
-    rotationDegrees: Int,
-): Bitmap? {
-    val points = detection?.normalizedCornerPoints ?: return null
-    if (points.isEmpty()) return null
-
-    val overlay = Bitmap.createBitmap(
-        sourceBitmap.width,
-        sourceBitmap.height,
-        Bitmap.Config.ARGB_8888,
-    )
-
-    val canvas = android.graphics.Canvas(overlay)
-    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.rgb(0, 230, 118)
-        style = android.graphics.Paint.Style.FILL
-    }
-
-    val radius = kotlin.math.max(
-        5f,
-        kotlin.math.min(sourceBitmap.width, sourceBitmap.height) * 0.006f,
-    )
-
-    points.forEach { point ->
-        val x = point.x.coerceIn(0f, 1f) * sourceBitmap.width
-        val y = point.y.coerceIn(0f, 1f) * sourceBitmap.height
-        canvas.drawCircle(x, y, radius, paint)
-    }
-
-    return rotateBitmapForCalibrationDisplayOnly(overlay, rotationDegrees)
-}
-
 @Composable
 private fun PreviewBitmapPanel(
     label: String,
@@ -4514,25 +4457,10 @@ private fun PreviewBitmapPanel(
     modifier: Modifier = Modifier,
     rotationDegrees: Float = 0f,
 ) {
-    Box(
-        modifier = modifier
-            .background(Color.DarkGray)
-            .clipToBounds(),
-        contentAlignment = Alignment.Center,
-    ) {
+    Box(modifier = modifier.background(Color.DarkGray).clipToBounds(), contentAlignment = Alignment.Center) {
         if (bitmap != null) {
-            val displayRotation = normalizeCalibrationDisplayRotation(rotationDegrees)
-
-            val displayBitmap = remember(bitmap, displayRotation) {
-                rotateBitmapForCalibrationDisplayOnly(bitmap, displayRotation)
-            }
-
-            val overlayBitmap = remember(bitmap, detection, displayRotation) {
-                makeCalibrationOverlayBitmapForDisplayOnly(
-                    sourceBitmap = bitmap,
-                    detection = detection,
-                    rotationDegrees = displayRotation,
-                )
+            val displayBitmap = remember(bitmap, rotationDegrees) {
+                rotateBitmapForCalibrationDisplayOnly(bitmap, rotationDegrees)
             }
 
             AsyncImage(
@@ -4541,19 +4469,9 @@ private fun PreviewBitmapPanel(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
             )
-
-            if (overlayBitmap != null) {
-                AsyncImage(
-                    model = overlayBitmap,
-                    contentDescription = "$label overlay",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit,
-                )
-            }
         } else {
             Text("Waiting for preview", color = Color.White)
         }
-
         val status = detection?.let { if (it.found) "board found" else "board not found" } ?: "detecting"
         val count = detection?.let { " ${it.cornersFound}/${it.expectedCorners}" }.orEmpty()
         val statusColor = when (detection?.found) {
@@ -4561,19 +4479,62 @@ private fun PreviewBitmapPanel(
             false -> Color(0xFFFFD54F)
             null -> Color.White
         }
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .background(Color.Black.copy(alpha = 0.55f))
-                .padding(8.dp),
-        ) {
-            Text("$label $status$count", color = statusColor, style = MaterialTheme.typography.bodySmall)
-            detection?.qualityMessage?.let {
-                Text(it, color = Color.White, style = MaterialTheme.typography.bodySmall)
+        val detectionResult = detection
+        if (detectionResult != null && detectionResult.normalizedCornerPoints.isNotEmpty()) {
+            val points = detectionResult.normalizedCornerPoints
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val imageAspect =
+                    detectionResult.imageWidth.toFloat() /
+                        detectionResult.imageHeight.toFloat().coerceAtLeast(1f)
+                val boxAspect = size.width / size.height.coerceAtLeast(1f)
+                val drawWidth: Float
+                val drawHeight: Float
+                val offsetX: Float
+                val offsetY: Float
+                if (imageAspect > boxAspect) {
+                    drawWidth = size.width
+                    drawHeight = size.width / imageAspect
+                    offsetX = 0f
+                    offsetY = (size.height - drawHeight) / 2f
+                } else {
+                    drawHeight = size.height
+                    drawWidth = size.height * imageAspect
+                    offsetX = (size.width - drawWidth) / 2f
+                    offsetY = 0f
+                }
+                val offsets = points.map {
+                    Offset(offsetX + it.x * drawWidth, offsetY + it.y * drawHeight)
+                }
+                offsets.forEach {
+                    drawCircle(Color(0xFF00E676), radius = 4.dp.toPx(), center = it)
+                }
+                drawRect(
+                    Color(0xFF00E676),
+                    topLeft = Offset(offsetX, offsetY),
+                    size = ComposeSize(drawWidth, drawHeight),
+                    style = Stroke(width = 1.dp.toPx()),
+                )
             }
         }
+        Column(modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.65f)).padding(8.dp)) {
+            Text("$label $status$count", color = statusColor)
+            detection?.qualityMessage?.let { Text(it, color = Color.White) }
+        }
     }
+}
+
+private fun cleanupCalibrationSessions(context: Context) {
+    val root = File(context.filesDir, "calibration_sessions")
+    if (!root.exists()) {
+        Log.d("CalibrationCleanup", "calibration_sessions does not exist; nothing to delete")
+        return
+    }
+    var deleted = 0
+    var failed = 0
+    root.listFiles { file -> file.isDirectory }?.forEach { dir ->
+        if (dir.deleteRecursively()) deleted += 1 else failed += 1
+    }
+    Log.d("CalibrationCleanup", "deleted=$deleted failed=$failed root=${root.absolutePath}")
 }
 
 private fun writeCalibrationDiagnosticsJson(context: Context, profileStore: StereoRigProfileStore): File {
