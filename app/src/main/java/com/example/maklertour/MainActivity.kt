@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -3168,22 +3169,24 @@ private fun StereoCaptureExperimentalScreen(
                 }
             }
             Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(260.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    cam0Card(
-                        Modifier
-                            .weight(1f),
-                    )
-                    cam1Card(
-                        Modifier
-                            .weight(1f),
-                    )
-                }
-Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(360.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                cam0Card(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
+                cam1Card(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("Rig / status", style = MaterialTheme.typography.titleSmall)
                     Text("Active profile: ${activeProfile.rigId}")
                     Text("Baseline: ${baseline?.let { "${it} mm" } ?: "not set"}")
@@ -3210,53 +3213,64 @@ Card(modifier = Modifier.fillMaxWidth()) {
                 }
             }
 
-            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { openCalibrationCapture() }, enabled = !isRecording && !syncedDepthRecording) { Text("Calibration") }
-                Button(onClick = {
-                    val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
-                    val currentBaseline = currentProfile.baselineMm
-                    if (currentBaseline == null || currentBaseline <= 0.0) { validationText = "Set baseline in Stereo rig / Cameras settings."; return@Button }
-                    scope.launch {
-                        runCatching { manager.start(orderId, captureSessionId, StereoRigConfig(currentProfile.rigId, currentProfile.cam0Label, currentProfile.cam1Label, currentBaseline)) }
-                            .onSuccess { isRecording = true; status = "recording to ${it.name}" }
-                            .onFailure { status = "start failed: ${it.message}" }
-                    }
-                }, enabled = canRecord) { Text("Record stereo video (legacy)") }
-                Button(onClick = {
-                    scope.launch {
-                        val result = manager.stop()
-                        isRecording = false
-                        validationText = if (result.ok) "OK: ${result.bundleDir.name}" else "Failed: ${result.errors.joinToString()}"
-                    }
-                }, enabled = isRecording) { Text("Stop video") }
-                Button(onClick = {
-                    if (syncedDepthRecording) {
-                        syncedDepthJob?.cancel()
-                        syncedDepthJob = null
-                        syncedDepthState.outputDir?.let { finalizeSyncedDepthManifest(it, syncedDepthState) }
-                        status = "synced depth stopped: ${syncedDepthState.outputDir?.name ?: "unknown"}"
-                    } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(onClick = {
                         val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
-                        if (currentProfile.calibrationStatus != CalibrationStatus.CALIBRATED || currentProfile.calibrationResult == null) {
-                            validationText = "Profile is not calibrated; run stereo calibration first."
-                            return@Button
+                        val currentBaseline = currentProfile.baselineMm
+                        if (currentBaseline == null || currentBaseline <= 0.0) { validationText = "Set baseline in Stereo rig / Cameras settings."; return@Button }
+                        scope.launch {
+                            runCatching { manager.start(orderId, captureSessionId, StereoRigConfig(currentProfile.rigId, currentProfile.cam0Label, currentProfile.cam1Label, currentBaseline)) }
+                                .onSuccess { isRecording = true; status = "recording to ${it.name}" }
+                                .onFailure { status = "start failed: ${it.message}" }
                         }
-                        val initial = createSyncedDepthCapture(context, currentProfile)
-                        syncedDepthState = initial
-                        status = "recording synced depth frames to ${initial.outputDir?.name}"
-                        syncedDepthJob = scope.launch {
-                            runSyncedDepthRecorder(
-                                initialState = initial,
-                                pairProvider = { manager.getNearestStereoCalibrationFrames(SYNCED_DEPTH_MAX_DELTA_MS) },
-                                onState = { syncedDepthState = it },
-                            )
+                    }, modifier = Modifier.fillMaxWidth(), enabled = canRecord) { Text("Record stereo video (legacy)") }
+                    Button(onClick = {
+                        scope.launch {
+                            val result = manager.stop()
+                            isRecording = false
+                            validationText = if (result.ok) "OK: ${result.bundleDir.name}" else "Failed: ${result.errors.joinToString()}"
                         }
-                    }
-                }, enabled = !isRecording && cam1Ready && (syncedDepthRecording || profileCalibratedForDepth)) { Text(if (syncedDepthRecording) "Stop synced depth recording" else "Record synced depth frames") }
-                Button(onClick = { showRigSettings = true }, enabled = !isRecording && !syncedDepthRecording) { Text("Open settings") }
+                    }, modifier = Modifier.fillMaxWidth(), enabled = isRecording) { Text("Stop video") }
+                    Button(onClick = {
+                        if (syncedDepthRecording) {
+                            syncedDepthJob?.cancel()
+                            syncedDepthJob = null
+                            syncedDepthState.outputDir?.let { finalizeSyncedDepthManifest(it, syncedDepthState) }
+                            status = "synced depth stopped: ${syncedDepthState.outputDir?.name ?: "unknown"}"
+                        } else {
+                            val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
+                            if (currentProfile.calibrationStatus != CalibrationStatus.CALIBRATED || currentProfile.calibrationResult == null) {
+                                validationText = "Profile is not calibrated; run stereo calibration first."
+                                return@Button
+                            }
+                            val initial = createSyncedDepthCapture(context, currentProfile)
+                            syncedDepthState = initial
+                            status = "recording synced depth frames to ${initial.outputDir?.name}"
+                            syncedDepthJob = scope.launch {
+                                runSyncedDepthRecorder(
+                                    initialState = initial,
+                                    pairProvider = { manager.getNearestStereoCalibrationFrames(SYNCED_DEPTH_MAX_DELTA_MS) },
+                                    onState = { syncedDepthState = it },
+                                )
+                            }
+                        }
+                    }, modifier = Modifier.fillMaxWidth(), enabled = !isRecording && cam1Ready && (syncedDepthRecording || profileCalibratedForDepth)) { Text(if (syncedDepthRecording) "Stop synced depth recording" else "Record synced depth frames") }
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(onClick = { openCalibrationCapture() }, modifier = Modifier.fillMaxWidth(), enabled = !isRecording && !syncedDepthRecording) { Text("Calibration") }
+                    Button(onClick = { showRigSettings = true }, modifier = Modifier.fillMaxWidth(), enabled = !isRecording && !syncedDepthRecording) { Text("Open settings") }
+                }
             }
-            
-probePath?.let { Text("Probe JSON: $it", color = Color.White, style = MaterialTheme.typography.bodySmall) }
             if (!canRecord && !isRecording) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (!baselineReady) Text("Set baseline in Stereo rig / Cameras settings.", color = Color(0xFFFFD166))
