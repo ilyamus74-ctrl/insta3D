@@ -361,6 +361,24 @@ def audit_depth_axis_contract(audit: Audit) -> None:
     if root_audit:
         audit.require("tools" in root_audit and "stereo_contract_audit.py" in root_audit, "root stereo_contract_audit.py delegates to tools audit")
 
+def audit_capture_bundle_upload(audit: Audit) -> None:
+    packager = read(ROOT / "app/src/main/java/com/example/maklertour/data/capture/CaptureBundlePackager.kt", audit)
+    main = read(MAIN, audit)
+    models = read(ROOT / "app/src/main/java/com/example/maklertour/domain/Models.kt", audit)
+    repo = read(ROOT / "app/src/main/java/com/example/maklertour/data/repository/Repositories.kt", audit)
+    docs = read(ROOT / "docs/APP_CAMERA_STEREO_CONTRACT.md", audit)
+    audit.require("class CaptureBundlePackager" in packager, "CaptureBundlePackager exists")
+    audit.require("bundle_manifest.json" in packager, "bundle_manifest.json string exists")
+    audit.require("synced_depth_manifest.json" in packager and "stereo_extrinsics.json" in packager, "bundle includes synced_depth_manifest.json and stereo_extrinsics.json")
+    audit.require("upload_packages" in packager or "upload_packages" in main, "files/upload_packages path exists in code")
+    audit.require("Dispatchers.IO" in packager or "WorkManager" in packager or "Dispatchers.IO" in main or "WorkManager" in main, "packaging uses Dispatchers.IO or WorkManager")
+    audit.require("CAPTURE_BUNDLE" in models or "CAPTURE_BUNDLE" in repo or "MAKLERTOUR_CAPTURE_BUNDLE" in models or "MAKLERTOUR_CAPTURE_BUNDLE" in repo, "upload_type CAPTURE_BUNDLE or MAKLERTOUR_CAPTURE_BUNDLE exists")
+    in_memory = balanced_block(repo, "class InMemoryUploadQueueRepository")
+    for method in ["updateStatus", "updateProgress", "resetForRetry", "updateServerCaptureSessionId"]:
+        audit.require(f"override fun {method}" in in_memory, f"InMemoryUploadQueueRepository keeps {method}")
+    audit.require("enqueueCaptureBundle" in in_memory and "CAPTURE_BUNDLE" in in_memory, "InMemoryUploadQueueRepository can enqueue CAPTURE_BUNDLE")
+    audit.require("asynchronous" in docs.lower() and "upload queue" in docs.lower(), "docs mention asynchronous packaging and upload queue")
+
 def main() -> int:
     audit = Audit()
 
@@ -388,6 +406,7 @@ def main() -> int:
         audit_saved_frames(recorder_text, audit)
 
     audit_depth_axis_contract(audit)
+    audit_capture_bundle_upload(audit)
 
     return audit.report()
 

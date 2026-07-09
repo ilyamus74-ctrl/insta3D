@@ -36,6 +36,7 @@ import com.maklertour.data.phonecamera.PhoneCameraBindResult
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
 import com.example.maklertour.auth.MobileOrder
 import com.example.maklertour.auth.MobileUploadApi
+import com.example.maklertour.data.capture.CaptureBundlePackager
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -607,6 +608,80 @@ class AppStateViewModel(
         return EnqueueUploadResult.Enqueued
     }
 
+    fun enqueueSyncedDepthCaptureBundle(
+        context: android.content.Context,
+        sessionId: String?,
+        captureDir: File,
+        calibrationSessionDir: File?,
+        activeRigProfileJson: JSONObject?,
+    ) {
+        val session = uiState.value.sessions.firstOrNull { it.id == sessionId }
+        viewModelScope.launch {
+            try {
+                Log.i("CaptureBundle", "packaging started captureDir=${captureDir.absolutePath}")
+                val packageFile = CaptureBundlePackager(context.applicationContext).packageSyncedDepthCapture(
+                    captureDir = captureDir,
+                    calibrationSessionDir = calibrationSessionDir,
+                    activeRigProfileJson = activeRigProfileJson,
+                    outputRoot = File(context.filesDir, "upload_packages"), // files/upload_packages
+                )
+                val orderId = session?.serverOrderId ?: selectedOrder.value?.id
+                uploadQueueRepository.enqueueCaptureBundle(
+                    sessionId = session?.id ?: "pending_capture_bundle",
+                    sessionTitle = session?.name,
+                    orderId = orderId,
+                    orderTitle = session?.orderTitle ?: selectedOrder.value?.title,
+                    orderAddress = session?.orderAddress ?: selectedOrder.value?.address,
+                    uploadAppSessionUuid = orderId?.let { "${session?.id ?: "pending"}_$it" },
+                    serverCaptureSessionId = session?.serverCaptureSessionId,
+                    captureType = "synced_depth_frames",
+                    localFilePath = packageFile.absolutePath,
+                    displayName = "Synced depth capture bundle",
+                    mimeType = "application/gzip",
+                )
+            } catch (e: Exception) {
+                Log.e("CaptureBundle", "packaging failed", e)
+            }
+        }
+    }
+
+    fun enqueueLegacyStereoVideoBundle(
+        context: android.content.Context,
+        sessionId: String?,
+        videoSessionDir: File,
+        calibrationSessionDir: File?,
+        activeRigProfileJson: JSONObject?,
+    ) {
+        val session = uiState.value.sessions.firstOrNull { it.id == sessionId }
+        viewModelScope.launch {
+            try {
+                Log.i("CaptureBundle", "packaging started legacy video dir=${videoSessionDir.absolutePath}")
+                val packageFile = CaptureBundlePackager(context.applicationContext).packageLegacyStereoVideoCapture(
+                    videoSessionDir = videoSessionDir,
+                    calibrationSessionDir = calibrationSessionDir,
+                    activeRigProfileJson = activeRigProfileJson,
+                    outputRoot = File(context.filesDir, "upload_packages"), // files/upload_packages
+                )
+                val orderId = session?.serverOrderId ?: selectedOrder.value?.id
+                uploadQueueRepository.enqueueCaptureBundle(
+                    sessionId = session?.id ?: "pending_capture_bundle",
+                    sessionTitle = session?.name,
+                    orderId = orderId,
+                    orderTitle = session?.orderTitle ?: selectedOrder.value?.title,
+                    orderAddress = session?.orderAddress ?: selectedOrder.value?.address,
+                    uploadAppSessionUuid = orderId?.let { "${session?.id ?: "pending"}_$it" },
+                    serverCaptureSessionId = session?.serverCaptureSessionId,
+                    captureType = "stereo_video_legacy",
+                    localFilePath = packageFile.absolutePath,
+                    displayName = "Legacy stereo video capture bundle",
+                    mimeType = "application/gzip",
+                )
+            } catch (e: Exception) {
+                Log.e("CaptureBundle", "packaging failed", e)
+            }
+        }
+    }
+
     fun processUpload(uploadId: String) {
         viewModelScope.launch { processUploadInternal(uploadId) }
     }
@@ -763,6 +838,30 @@ class AppStateViewModel(
             Log.d("Upload", "captureSessionId used=$captureSessionId")
 
             var allUploaded = true
+            if (item.uploadType == "CAPTURE_BUNDLE" || item.uploadType == "MAKLERTOUR_CAPTURE_BUNDLE") {
+                val bundleFile = item.localFilePath?.let(::File)
+                if (bundleFile == null || !bundleFile.exists() || bundleFile.length() <= 0L) {
+                    uploadError.value = "Capture bundle file not found"
+                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
+                    uploadQueueRepository.updateProgress(uploadId, 0, 0L, 0L, item.displayName ?: "Capture bundle", "Capture bundle packaging failed")
+                    Log.e("UploadQueue", "capture bundle file missing uploadId=$uploadId path=${item.localFilePath}")
+                    return
+                }
+                val ok = uploader.uploadCaptureBundle(orderId, captureSessionId, bundleFile, item.captureType ?: "synced_depth_frames", item.uploadAppSessionUuid ?: appSessionUuid) { progress ->
+                    val percent = if (progress.bytesTotal > 0) ((progress.bytesUploaded * 100L) / progress.bytesTotal).toInt().coerceIn(0, 100) else 0
+                    uploadQueueRepository.updateProgress(uploadId, percent, progress.bytesUploaded, progress.bytesTotal, bundleFile.name, "Uploading Capture bundle ${item.captureType ?: ""}")
+                }
+                if (ok) {
+                    uploadQueueRepository.updateProgress(uploadId, 100, bundleFile.length(), bundleFile.length(), bundleFile.name, "Uploaded Capture bundle")
+                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Success)
+                    Log.i("UploadQueue", "uploaded capture bundle uploadId=$uploadId path=${bundleFile.absolutePath}")
+                } else {
+                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
+                    uploadQueueRepository.incrementRetry(uploadId)
+                    Log.e("UploadQueue", "capture bundle upload failed uploadId=$uploadId path=${bundleFile.absolutePath}")
+                }
+                return
+            }
             scanVideos.forEach { scan ->
                 val file = scan.localVideoPath?.let { path -> File(path) }
                 val exists = file?.exists() == true

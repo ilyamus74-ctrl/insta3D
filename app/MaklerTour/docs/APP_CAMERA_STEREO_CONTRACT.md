@@ -413,3 +413,19 @@ Dense depth debug JSON must state:
 - `block_size`
 - `min_disparity`
 - `valid_depth_ratio`
+
+## Capture Bundle Upload Contract
+
+After capture, the app packages the required capture files into a `.tgz` bundle under `files/upload_packages/` and adds the completed package to the existing upload queue as `CAPTURE_BUNDLE`.
+
+Packaging is asynchronous and must use `Dispatchers.IO` or WorkManager. Stopping a synced-depth recording must not block the next recording: the UI returns to idle/ready immediately while tar/gzip packaging and upload happen in the background.
+
+A synced depth capture bundle contains:
+
+- `bundle_manifest.json`
+- `capture/synced_depth_manifest.json`
+- `capture/pairs/` with raw saved JPG pairs and pair metadata
+- `calibration/stereo_extrinsics.json` and calibration sidecar JSON when a calibration session is available
+- `rig/active_rig_profile.json`
+
+Dense/processing is not run on the phone. Server/GrafikStation processing starts only after the capture bundle has been uploaded through the queue. Raw frames remain unrotated and are archived as saved; the app must not rotate or recompress JPG frames during bundle creation.

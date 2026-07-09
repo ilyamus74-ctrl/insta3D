@@ -80,6 +80,7 @@ data class CameraStatus(
 )
 
 enum class UploadStatus {
+    Packaging,
     Queued,
     Uploading,
     Success,
@@ -104,6 +105,11 @@ data class UploadItem(
     val bytesTotal: Long = 0L,
     val currentFileName: String? = null,
     val currentStep: String? = null,
+    val uploadType: String = "MEDIA",
+    val captureType: String? = null,
+    val localFilePath: String? = null,
+    val displayName: String? = null,
+    val mimeType: String? = null,
 )
 
 

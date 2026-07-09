@@ -622,6 +622,7 @@ private fun MaklerTourApp() {
                         onDisconnect = viewModel::disconnectCamera,
                         onRefresh = viewModel::refreshCameraStatus,
                         onCapture = viewModel::capturePoint,
+                        selectedSessionId = state.selectedSessionId,
                         selectedSessionName = state.selectedSessionName,
                         selectedSessionPointsCount = state.selectedSessionPointsCount,
                         isCapturing = state.isCapturing,
@@ -647,6 +648,8 @@ private fun MaklerTourApp() {
                         onClearSessionQueue = viewModel::clearUploadQueueForSelectedSession,
                         onRequeueAllVideos = viewModel::requeueAllVideosForSelectedSession,
                         onRequeueVideo = viewModel::requeueVideo,
+                        onEnqueueSyncedDepthCaptureBundle = viewModel::enqueueSyncedDepthCaptureBundle,
+                        onEnqueueLegacyStereoVideoBundle = viewModel::enqueueLegacyStereoVideoBundle,
                         debugMode = debugMode,
                         selectedOrder = selectedOrder,
                     )
@@ -682,6 +685,8 @@ private fun MaklerTourApp() {
                         onClearSessionQueue = viewModel::clearUploadQueueForSelectedSession,
                         onRequeueAllVideos = viewModel::requeueAllVideosForSelectedSession,
                         onRequeueVideo = viewModel::requeueVideo,
+                        onEnqueueSyncedDepthCaptureBundle = viewModel::enqueueSyncedDepthCaptureBundle,
+                        onEnqueueLegacyStereoVideoBundle = viewModel::enqueueLegacyStereoVideoBundle,
                         debugMode = debugMode,
                     )
                 }
@@ -1443,6 +1448,7 @@ private fun CameraScreen(
     onDisconnect: () -> Unit,
     onRefresh: () -> Unit,
     onCapture: (String) -> Unit,
+    selectedSessionId: String?,
     selectedSessionName: String?,
     selectedSessionPointsCount: Int,
     isCapturing: Boolean,
@@ -1459,6 +1465,8 @@ private fun CameraScreen(
     onClearSessionQueue: () -> Unit,
     onRequeueAllVideos: () -> String,
     onRequeueVideo: (String) -> EnqueueUploadResult,
+    onEnqueueSyncedDepthCaptureBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
+    onEnqueueLegacyStereoVideoBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
     debugMode: Boolean,
     selectedOrder: MobileOrder?,
 ) {
@@ -1607,6 +1615,9 @@ private fun CameraScreen(
                 StereoCaptureExperimentalScreen(
                     orderId = selectedOrder?.id?.toString(),
                     captureSessionId = selectedSessionName ?: "local",
+                    selectedSessionId = selectedSessionId,
+                    onEnqueueSyncedDepthCaptureBundle = onEnqueueSyncedDepthCaptureBundle,
+                    onEnqueueLegacyStereoVideoBundle = onEnqueueLegacyStereoVideoBundle,
                     onClose = { showStereoCapture = false },
                 )
             }
@@ -2065,6 +2076,8 @@ private fun DraftScreen(
     onClearSessionQueue: () -> Unit,
     onRequeueAllVideos: () -> String,
     onRequeueVideo: (String) -> EnqueueUploadResult,
+    onEnqueueSyncedDepthCaptureBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
+    onEnqueueLegacyStereoVideoBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
     debugMode: Boolean,
 ) {
     val unassignedPoints = points.filter { it.roomId == null }
@@ -2707,6 +2720,10 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                             if (!item.orderAddress.isNullOrBlank()) {
                                 Text("Адрес: ${item.orderAddress}")
                             }
+                            if (item.uploadType == "CAPTURE_BUNDLE" || item.uploadType == "MAKLERTOUR_CAPTURE_BUNDLE") {
+                                Text("Capture bundle: ${item.captureType ?: "unknown"}")
+                                Text("Файл: ${item.currentFileName ?: item.displayName ?: "bundle"} · ${item.bytesTotal} bytes")
+                            }
                             Text("Статус: ${item.status}")
                             Text("Попыток: ${item.retryCount}")
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2726,6 +2743,7 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                                 ) {
                                     Text(
                                         when (item.status) {
+                                            com.maklertour.domain.UploadStatus.Packaging -> "Упаковка..."
                                             com.maklertour.domain.UploadStatus.Uploading -> "Отправляется..."
                                             com.maklertour.domain.UploadStatus.Queued -> "Отправить на сервер"
                                             com.maklertour.domain.UploadStatus.Error -> "Отправить повторно"
@@ -2740,6 +2758,7 @@ private fun DraftPointCard(index: Int, point: com.maklertour.domain.CapturePoint
                                     Button(onClick = { onResetQueueItem(item.id) }) {
                                         Text(
                                             when (item.status) {
+                                                com.maklertour.domain.UploadStatus.Packaging -> "Упаковка"
                                                 com.maklertour.domain.UploadStatus.Uploading -> "Добавить новые файлы в очередь"
                                                 com.maklertour.domain.UploadStatus.Error -> "Добавить новые файлы в очередь"
                                                 com.maklertour.domain.UploadStatus.Success -> "Добавить новые файлы в очередь"
@@ -2999,6 +3018,9 @@ private fun videoRoleLabel(role: com.maklertour.domain.ScanVideoRole): String =
 private fun StereoCaptureExperimentalScreen(
     orderId: String?,
     captureSessionId: String,
+    selectedSessionId: String?,
+    onEnqueueSyncedDepthCaptureBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
+    onEnqueueLegacyStereoVideoBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -3336,15 +3358,26 @@ private fun StereoCaptureExperimentalScreen(
                         scope.launch {
                             val result = manager.stop()
                             isRecording = false
-                            validationText = if (result.ok) "OK: ${result.bundleDir.name}" else "Failed: ${result.errors.joinToString()}"
+                            if (result.ok) {
+                                val calibrationDir = activeProfile.calibrationResultPath?.let(::File)?.parentFile?.takeIf { dir -> dir.exists() }
+                                onEnqueueLegacyStereoVideoBundle(context, selectedSessionId, result.bundleDir, calibrationDir, activeProfile.toJson())
+                            }
+                            validationText = if (result.ok) "OK: ${result.bundleDir.name}; packaging in background" else "Failed: ${result.errors.joinToString()}"
                         }
                     }, modifier = Modifier.fillMaxWidth(), enabled = isRecording) { Text("Stop video") }
                     Button(onClick = {
                         if (syncedDepthRecording) {
                             syncedDepthJob?.cancel()
                             syncedDepthJob = null
-                            syncedDepthState.outputDir?.let { finalizeSyncedDepthManifest(it, syncedDepthState) }
-                            status = "synced depth stopped: ${syncedDepthState.outputDir?.name ?: "unknown"}"
+                            val finishedState = syncedDepthState
+                            val captureDir = finishedState.outputDir
+                            captureDir?.let {
+                                finalizeSyncedDepthManifest(it, finishedState)
+                                val calibrationDir = finishedState.calibrationResultPath?.let(::File)?.parentFile?.takeIf { dir -> dir.exists() }
+                                onEnqueueSyncedDepthCaptureBundle(context, selectedSessionId, it, calibrationDir, finishedState.activeRigProfile)
+                            }
+                            syncedDepthState = SyncedDepthRecordingState()
+                            status = "synced depth stopped; packaging in background: ${captureDir?.name ?: "unknown"}"
                         } else {
                             val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
                             if (currentProfile.calibrationStatus != CalibrationStatus.CALIBRATED || currentProfile.calibrationResult == null) {

@@ -207,6 +207,43 @@ class MobileUploadApi(
         return true
     }
 
+    suspend fun uploadCaptureBundle(
+        orderId: Long,
+        captureSessionId: Long,
+        bundleFile: File,
+        captureType: String,
+        appBundleUuid: String,
+        onProgress: ((UploadProgress) -> Unit)? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (!bundleFile.exists() || bundleFile.length() <= 0L) return@withContext false
+        val token = authStorage.getToken().orEmpty()
+        Log.i("UploadQueue", "upload capture bundle request orderId=$orderId captureSessionId=$captureSessionId path=${bundleFile.absolutePath} size=${bundleFile.length()} captureType=$captureType")
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("order_id", orderId.toString())
+            .addFormDataPart("capture_session_id", captureSessionId.toString())
+            .addFormDataPart("upload_type", "CAPTURE_BUNDLE")
+            .addFormDataPart("capture_type", captureType)
+            .addFormDataPart("app_bundle_uuid", appBundleUuid)
+            .addFormDataPart(
+                "capture_bundle",
+                bundleFile.name,
+                ProgressRequestBody(bundleFile.asRequestBody("application/gzip".toMediaType())) { uploaded, total ->
+                    onProgress?.invoke(UploadProgress(uploaded, total))
+                }
+            )
+            .build()
+        val request = Request.Builder()
+            .url("${ApiConfig.mobileApiUrl}?action=upload_capture_bundle")
+            .header("Authorization", "Bearer $token")
+            .post(body)
+            .build()
+        client.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            Log.i("UploadQueue", "upload capture bundle response http=${response.code} body=$text")
+            response.isSuccessful && runCatching { JSONObject(text).optBoolean("ok", false) }.getOrDefault(text.contains("\"ok\":true"))
+        }
+    }
+
     suspend fun uploadPhotoPoint(orderId: Long, captureSessionId: Long, point: CapturePoint, onProgress: ((UploadProgress) -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
         val token = authStorage.getToken().orEmpty()
         val previewFile = point.localPreviewPath?.let(::File)

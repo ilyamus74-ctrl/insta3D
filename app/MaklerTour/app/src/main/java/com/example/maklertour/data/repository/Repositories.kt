@@ -33,6 +33,7 @@ import com.maklertour.domain.ScanVideo
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +86,19 @@ interface UploadQueueRepository {
         bindingId: String?,
         uploadAppSessionUuid: String?,
         serverCaptureSessionId: Long?,
+    )
+    fun enqueueCaptureBundle(
+        sessionId: String,
+        sessionTitle: String?,
+        orderId: Long?,
+        orderTitle: String?,
+        orderAddress: String?,
+        uploadAppSessionUuid: String?,
+        serverCaptureSessionId: Long?,
+        captureType: String,
+        localFilePath: String,
+        displayName: String,
+        mimeType: String = "application/gzip",
     )
     fun updateStatus(uploadId: String, status: UploadStatus)
     fun updateProgress(
@@ -446,6 +460,44 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
         }
     }
 
+    override fun enqueueCaptureBundle(
+        sessionId: String,
+        sessionTitle: String?,
+        orderId: Long?,
+        orderTitle: String?,
+        orderAddress: String?,
+        uploadAppSessionUuid: String?,
+        serverCaptureSessionId: Long?,
+        captureType: String,
+        localFilePath: String,
+        displayName: String,
+        mimeType: String,
+    ) {
+        _queue.update {
+            it + UploadItem(
+                id = UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                sessionTitle = sessionTitle,
+                orderId = orderId,
+                orderTitle = orderTitle,
+                orderAddress = orderAddress,
+                uploadAppSessionUuid = uploadAppSessionUuid,
+                serverCaptureSessionId = serverCaptureSessionId,
+                status = UploadStatus.Queued,
+                updatedAt = Instant.now(),
+                bytesTotal = File(localFilePath).length().coerceAtLeast(0L),
+                currentFileName = File(localFilePath).name,
+                currentStep = "Pending upload",
+                uploadType = "CAPTURE_BUNDLE",
+                captureType = captureType,
+                localFilePath = localFilePath,
+                displayName = displayName,
+                mimeType = mimeType,
+            )
+        }
+        Log.i("UploadQueue", "queued capture bundle path=$localFilePath captureType=$captureType sessionId=$sessionId orderId=$orderId")
+    }
+
     override fun updateStatus(uploadId: String, status: UploadStatus) {
         _queue.update { items ->
             items.map { item ->
@@ -474,11 +526,7 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
     override fun incrementRetry(uploadId: String) {
         _queue.update { items ->
             items.map { item ->
-                if (item.id == uploadId) {
-                    item.copy(retryCount = item.retryCount + 1, updatedAt = Instant.now())
-                } else {
-                    item
-                }
+                if (item.id == uploadId) item.copy(retryCount = item.retryCount + 1, updatedAt = Instant.now()) else item
             }
         }
     }
@@ -536,6 +584,7 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
             }
         }
     }
+
     override fun resetInterruptedUploadsOnStartup() {
         _queue.update { items ->
             items.map { item ->
@@ -561,6 +610,7 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
             }
         }
     }
+
     override fun delete(uploadId: String) {
         _queue.update { items -> items.filterNot { it.id == uploadId } }
     }
@@ -570,6 +620,7 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
     override fun clearUploadQueueForSession(sessionId: String) { _queue.update { it.filterNot { item -> item.sessionId == sessionId } } }
     override fun clearUploadQueueForVideo(scanVideoId: String) = Unit
 }
+
 
 class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository {
     private val prefs = context.getSharedPreferences("maklertour_storage", Context.MODE_PRIVATE)
@@ -607,6 +658,45 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
             )
         }
         persist()
+    }
+
+    override fun enqueueCaptureBundle(
+        sessionId: String,
+        sessionTitle: String?,
+        orderId: Long?,
+        orderTitle: String?,
+        orderAddress: String?,
+        uploadAppSessionUuid: String?,
+        serverCaptureSessionId: Long?,
+        captureType: String,
+        localFilePath: String,
+        displayName: String,
+        mimeType: String,
+    ) {
+        _queue.update {
+            it + UploadItem(
+                id = UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                sessionTitle = sessionTitle,
+                orderId = orderId,
+                orderTitle = orderTitle,
+                orderAddress = orderAddress,
+                uploadAppSessionUuid = uploadAppSessionUuid,
+                serverCaptureSessionId = serverCaptureSessionId,
+                status = UploadStatus.Queued,
+                updatedAt = Instant.now(),
+                bytesTotal = File(localFilePath).length().coerceAtLeast(0L),
+                currentFileName = File(localFilePath).name,
+                currentStep = "Pending upload",
+                uploadType = "CAPTURE_BUNDLE",
+                captureType = captureType,
+                localFilePath = localFilePath,
+                displayName = displayName,
+                mimeType = mimeType,
+            )
+        }
+        persist()
+        Log.i("UploadQueue", "queued capture bundle path=$localFilePath captureType=$captureType sessionId=$sessionId orderId=$orderId")
     }
 
     override fun updateStatus(uploadId: String, status: UploadStatus) {
@@ -767,6 +857,11 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
                         put("bytesTotal", item.bytesTotal)
                         put("currentFileName", item.currentFileName)
                         put("currentStep", item.currentStep)
+                        put("uploadType", item.uploadType)
+                        put("captureType", item.captureType)
+                        put("localFilePath", item.localFilePath)
+                        put("displayName", item.displayName)
+                        put("mimeType", item.mimeType)
                     }
                 )
             }
@@ -800,6 +895,11 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
                             bytesTotal = json.optLong("bytesTotal", 0L),
                             currentFileName = json.optString("currentFileName").takeIf { it.isNotBlank() && it != "null" },
                             currentStep = json.optString("currentStep").takeIf { it.isNotBlank() && it != "null" },
+                            uploadType = json.optString("uploadType", "MEDIA").takeIf { it.isNotBlank() && it != "null" } ?: "MEDIA",
+                            captureType = json.optString("captureType").takeIf { it.isNotBlank() && it != "null" },
+                            localFilePath = json.optString("localFilePath").takeIf { it.isNotBlank() && it != "null" },
+                            displayName = json.optString("displayName").takeIf { it.isNotBlank() && it != "null" },
+                            mimeType = json.optString("mimeType").takeIf { it.isNotBlank() && it != "null" },
                         )
                     )
                 }
@@ -1072,6 +1172,51 @@ class RoomUploadQueueRepository(
         }
     }
 
+    override fun enqueueCaptureBundle(
+        sessionId: String,
+        sessionTitle: String?,
+        orderId: Long?,
+        orderTitle: String?,
+        orderAddress: String?,
+        uploadAppSessionUuid: String?,
+        serverCaptureSessionId: Long?,
+        captureType: String,
+        localFilePath: String,
+        displayName: String,
+        mimeType: String,
+    ) {
+        val now = Instant.now().toEpochMilli()
+        scope.launch {
+            uploadItemDao.upsert(
+                UploadItemEntity(
+                    id = UUID.randomUUID().toString(),
+                    syncState = SyncState.PENDING_CREATE.name,
+                    createdAtEpochMs = now,
+                    updatedAtEpochMs = now,
+                    captureSessionId = sessionId,
+                    sessionTitle = sessionTitle,
+                    serverOrderId = orderId,
+                    orderTitle = orderTitle,
+                    orderAddress = orderAddress,
+                    bindingId = null,
+                    uploadAppSessionUuid = uploadAppSessionUuid,
+                    serverCaptureSessionId = serverCaptureSessionId,
+                    status = UploadStatus.Queued.name,
+                    retryCount = 0,
+                    bytesTotal = File(localFilePath).length().coerceAtLeast(0L),
+                    currentFileName = File(localFilePath).name,
+                    currentStep = "Pending upload",
+                    uploadType = "CAPTURE_BUNDLE",
+                    captureType = captureType,
+                    localFilePath = localFilePath,
+                    displayName = displayName,
+                    mimeType = mimeType,
+                )
+            )
+        }
+        Log.i("UploadQueue", "queued capture bundle path=$localFilePath captureType=$captureType sessionId=$sessionId orderId=$orderId")
+    }
+
     override fun updateStatus(uploadId: String, status: UploadStatus) {
         val current = queue.value.firstOrNull { it.id == uploadId } ?: return
         scope.launch {
@@ -1096,6 +1241,11 @@ class RoomUploadQueueRepository(
                     bytesTotal = current.bytesTotal,
                     currentFileName = current.currentFileName,
                     currentStep = current.currentStep,
+                    uploadType = current.uploadType,
+                    captureType = current.captureType,
+                    localFilePath = current.localFilePath,
+                    displayName = current.displayName,
+                    mimeType = current.mimeType,
                 )
             )
         }
@@ -1125,6 +1275,11 @@ class RoomUploadQueueRepository(
                     bytesTotal = bytesTotal.coerceAtLeast(0L),
                     currentFileName = currentFileName,
                     currentStep = currentStep,
+                    uploadType = current.uploadType,
+                    captureType = current.captureType,
+                    localFilePath = current.localFilePath,
+                    displayName = current.displayName,
+                    mimeType = current.mimeType,
                 )
             )
         }
@@ -1155,6 +1310,11 @@ class RoomUploadQueueRepository(
                     bytesTotal = current.bytesTotal,
                     currentFileName = current.currentFileName,
                     currentStep = current.currentStep,
+                    uploadType = current.uploadType,
+                    captureType = current.captureType,
+                    localFilePath = current.localFilePath,
+                    displayName = current.displayName,
+                    mimeType = current.mimeType,
                 )
             )
         }
@@ -1184,6 +1344,11 @@ class RoomUploadQueueRepository(
                     bytesTotal = 0L,
                     currentFileName = null,
                     currentStep = "Preparing upload",
+                    uploadType = current.uploadType,
+                    captureType = current.captureType,
+                    localFilePath = current.localFilePath,
+                    displayName = current.displayName,
+                    mimeType = current.mimeType,
                 )
             )
         }
@@ -1213,6 +1378,11 @@ class RoomUploadQueueRepository(
                     bytesTotal = 0L,
                     currentFileName = null,
                     currentStep = "Waiting",
+                    uploadType = current.uploadType,
+                    captureType = current.captureType,
+                    localFilePath = current.localFilePath,
+                    displayName = current.displayName,
+                    mimeType = current.mimeType,
                 )
             )
         }
@@ -1242,6 +1412,11 @@ class RoomUploadQueueRepository(
                     bytesTotal = 0L,
                     currentFileName = null,
                     currentStep = "Order changed, upload required",
+                    uploadType = current.uploadType,
+                    captureType = current.captureType,
+                    localFilePath = current.localFilePath,
+                    displayName = current.displayName,
+                    mimeType = current.mimeType,
                 )
             )
         }
@@ -1271,6 +1446,11 @@ class RoomUploadQueueRepository(
                     bytesTotal = current.bytesTotal,
                     currentFileName = current.currentFileName,
                     currentStep = current.currentStep,
+                    uploadType = current.uploadType,
+                    captureType = current.captureType,
+                    localFilePath = current.localFilePath,
+                    displayName = current.displayName,
+                    mimeType = current.mimeType,
                 )
             )
         }
@@ -1333,6 +1513,11 @@ private fun UploadItemEntity.toDomain(): UploadItem = UploadItem(
     bytesTotal = bytesTotal,
     currentFileName = currentFileName,
     currentStep = currentStep,
+    uploadType = uploadType,
+    captureType = captureType,
+    localFilePath = localFilePath,
+    displayName = displayName,
+    mimeType = mimeType,
 )
 
 private fun com.maklertour.data.local.entity.RoomEntity.toDomain(): RoomDraft = RoomDraft(
