@@ -316,6 +316,9 @@ Step 3 (`STEREO_EXTRINSICS`) uses stereo-specific ChArUco overlap gates in addit
 
 - ChArUco stereo pairs with fewer than **35 common IDs** are rejected before `stereoCalibrate`.
 - At least **10 filtered stereo pairs** are required; otherwise calibration fails clearly instead of returning a high-RMS result.
-- The processor performs an initial calibration on candidates, computes per-pair epipolar errors, rejects robust outliers, then runs a final calibration on the remaining pairs.
-- Result JSON records total pairs, candidates after common-ID filtering, used pairs, rejected pair indexes/reasons, initial/final RMS, initial/final per-pair epipolar errors, and common ChArUco IDs per accepted pair.
+- One-pass outlier filtering is not enough: a refit can expose additional high-error pairs after the fundamental matrix changes.
+- The processor performs an initial calibration on candidates, computes per-pair epipolar errors, and then uses iterative epipolar-error filtering (maximum 5 iterations) before accepting the final model.
+- Each iteration removes pairs above **6.0 px** epipolar error only while preserving at least **10 filtered stereo pairs**, refits `stereoCalibrate`, and recomputes final per-pair errors from the new fundamental matrix.
+- The final result must not contain removable pairs above **6.0 px**. If high-error pairs remain and enough pairs are available, the processor must remove them and refit once more; if not enough pairs remain, calibration fails with a clear list like `pair X=Y px`.
+- Result JSON records total pairs, candidates after common-ID filtering, used pairs, rejected pair indexes/reasons with actual epipolar error values, outlier iteration count, initial/final RMS, initial/final per-pair epipolar errors, and common ChArUco IDs per accepted pair.
 - The stereo RMS acceptance threshold is **not lowered**; final stereo RMS must still pass the existing threshold.
