@@ -14,6 +14,7 @@ import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
+import android.widget.FrameLayout
 import android.util.Log
 import android.view.TextureView
 import androidx.activity.ComponentActivity
@@ -21,6 +22,9 @@ import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -29,6 +33,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -86,6 +91,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -102,7 +108,6 @@ import com.maklertour.data.phonecamera.PhoneCameraLensRepository
 import com.maklertour.data.phonecamera.PhoneCalibrationResolutionInfo
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -177,7 +182,6 @@ import java.util.Date
 import java.text.SimpleDateFormat
 import java.io.FileOutputStream
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.app.Activity
 import android.content.pm.ActivityInfo
 
@@ -192,6 +196,8 @@ class MainActivity : ComponentActivity() {
 }
 
 private const val CAM1_PREVIEW_ROTATION_DEGREES = 90f
+private const val STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS = 35
+private const val STEREO_AUTO_MIN_COMMON_CHARUCO_IDS = 38
 
 private enum class AppTab(val route: String, val titleRes: Int) {
     Sessions("sessions", R.string.tab_sessions),
@@ -3141,19 +3147,82 @@ private fun StereoCaptureExperimentalScreen(
                     Text("cam0", color = Color.White, modifier = Modifier.align(Alignment.TopStart).padding(8.dp))
                 }
             }
+            fun layoutCam1Preview(frameLayout: FrameLayout) {
+                val textureView = frameLayout.getChildAt(0) as? TextureView ?: return
+                val parentW = frameLayout.width
+                val parentH = frameLayout.height
+                if (parentW <= 0 || parentH <= 0) return
+
+                val rawAspect = 16f / 9f
+                val rotatedAspect = 1f / rawAspect
+                val parentAspect = parentW.toFloat() / parentH.toFloat()
+                val (targetW, targetH) = if (parentAspect > rotatedAspect) {
+                    val height = parentH.toFloat()
+                    (height * rotatedAspect) to height
+                } else {
+                    val width = parentW.toFloat()
+                    width to (width / rotatedAspect)
+                }
+
+                val textureWidth = targetH.toInt()
+                val textureHeight = targetW.toInt()
+                val left = ((parentW - textureWidth) / 2f).toInt()
+                val top = ((parentH - textureHeight) / 2f).toInt()
+                textureView.rotation = CAM1_PREVIEW_ROTATION_DEGREES
+
+                val currentParams = textureView.layoutParams as? FrameLayout.LayoutParams
+                if (currentParams == null ||
+                    currentParams.width != textureWidth ||
+                    currentParams.height != textureHeight ||
+                    currentParams.leftMargin != left ||
+                    currentParams.topMargin != top
+                ) {
+                    textureView.layoutParams = FrameLayout.LayoutParams(textureWidth, textureHeight).apply {
+                        leftMargin = left
+                        topMargin = top
+                    }
+                }
+            }
             val cam1Card: @Composable (Modifier) -> Unit = { modifier ->
                 Box(modifier = modifier.background(Color(0xFF202020)), contentAlignment = Alignment.Center) {
-                    AndroidView(modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = CAM1_PREVIEW_ROTATION_DEGREES }, factory = { ctx ->
-                        TextureView(ctx).apply {
-                            cam1TextureView = this
-                            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                                override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) { usbInfo = manager.refreshCam1(activeProfile.cam1Mode, this@apply) }
-                                override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
-                                override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
-                                override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) { manager.onCam1PreviewFrameRendered() }
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            object : FrameLayout(ctx) {
+                                override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+                                    super.onLayout(changed, left, top, right, bottom)
+                                    if (changed) post { layoutCam1Preview(this) }
+                                }
+                            }.apply {
+                                clipChildren = true
+                                clipToPadding = true
+                                addView(
+                                    TextureView(ctx).apply {
+                                        cam1TextureView = this
+                                        rotation = CAM1_PREVIEW_ROTATION_DEGREES
+                                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                                            override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                                (parent as? FrameLayout)?.let { layoutCam1Preview(it) }
+                                                usbInfo = manager.refreshCam1(activeProfile.cam1Mode, this@apply)
+                                            }
+                                            override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                                (parent as? FrameLayout)?.let { layoutCam1Preview(it) }
+                                            }
+                                            override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean = true
+                                            override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) {
+                                                manager.onCam1PreviewFrameRendered()
+                                            }
+                                        }
+                                    },
+                                    FrameLayout.LayoutParams(0, 0),
+                                )
+                                post { layoutCam1Preview(this) }
                             }
-                        }
-                    })
+                        },
+                        update = { frameLayout ->
+                            layoutCam1Preview(frameLayout)
+                        },
+                    )
                     Column(modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.55f)).padding(8.dp)) {
                         Text("cam1", color = Color.White, style = MaterialTheme.typography.labelLarge)
                         if (showDiagnostics) {
@@ -3167,13 +3236,25 @@ private fun StereoCaptureExperimentalScreen(
                     }
                 }
             }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                cam0Card(Modifier.weight(1f).aspectRatio(16f / 9f))
-                cam1Card(Modifier.weight(1f).aspectRatio(16f / 9f))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(360.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                cam0Card(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
+                cam1Card(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
             }
-
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("Rig / status", style = MaterialTheme.typography.titleSmall)
                     Text("Active profile: ${activeProfile.rigId}")
                     Text("Baseline: ${baseline?.let { "${it} mm" } ?: "not set"}")
@@ -3200,80 +3281,64 @@ private fun StereoCaptureExperimentalScreen(
                 }
             }
 
-            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { openCalibrationCapture() }, enabled = !isRecording && !syncedDepthRecording) { Text("Calibration") }
-                Button(onClick = {
-                    val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
-                    val currentBaseline = currentProfile.baselineMm
-                    if (currentBaseline == null || currentBaseline <= 0.0) { validationText = "Set baseline in Stereo rig / Cameras settings."; return@Button }
-                    scope.launch {
-                        runCatching { manager.start(orderId, captureSessionId, StereoRigConfig(currentProfile.rigId, currentProfile.cam0Label, currentProfile.cam1Label, currentBaseline)) }
-                            .onSuccess { isRecording = true; status = "recording to ${it.name}" }
-                            .onFailure { status = "start failed: ${it.message}" }
-                    }
-                }, enabled = canRecord) { Text("Record stereo video (legacy)") }
-                Button(onClick = {
-                    scope.launch {
-                        val result = manager.stop()
-                        isRecording = false
-                        validationText = if (result.ok) "OK: ${result.bundleDir.name}" else "Failed: ${result.errors.joinToString()}"
-                    }
-                }, enabled = isRecording) { Text("Stop video") }
-                Button(onClick = {
-                    if (syncedDepthRecording) {
-                        syncedDepthJob?.cancel()
-                        syncedDepthJob = null
-                        syncedDepthState.outputDir?.let { finalizeSyncedDepthManifest(it, syncedDepthState) }
-                        status = "synced depth stopped: ${syncedDepthState.outputDir?.name ?: "unknown"}"
-                    } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(onClick = {
                         val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
-                        if (currentProfile.calibrationStatus != CalibrationStatus.CALIBRATED || currentProfile.calibrationResult == null) {
-                            validationText = "Profile is not calibrated; run stereo calibration first."
-                            return@Button
+                        val currentBaseline = currentProfile.baselineMm
+                        if (currentBaseline == null || currentBaseline <= 0.0) { validationText = "Set baseline in Stereo rig / Cameras settings."; return@Button }
+                        scope.launch {
+                            runCatching { manager.start(orderId, captureSessionId, StereoRigConfig(currentProfile.rigId, currentProfile.cam0Label, currentProfile.cam1Label, currentBaseline)) }
+                                .onSuccess { isRecording = true; status = "recording to ${it.name}" }
+                                .onFailure { status = "start failed: ${it.message}" }
                         }
-                        val initial = createSyncedDepthCapture(context, currentProfile)
-                        syncedDepthState = initial
-                        status = "recording synced depth frames to ${initial.outputDir?.name}"
-                        syncedDepthJob = scope.launch {
-                            runSyncedDepthRecorder(
-                                initialState = initial,
-                                pairProvider = { manager.getNearestStereoCalibrationFrames(SYNCED_DEPTH_MAX_DELTA_MS) },
-                                onState = { syncedDepthState = it },
-                            )
+                    }, modifier = Modifier.fillMaxWidth(), enabled = canRecord) { Text("Record stereo video (legacy)") }
+                    Button(onClick = {
+                        scope.launch {
+                            val result = manager.stop()
+                            isRecording = false
+                            validationText = if (result.ok) "OK: ${result.bundleDir.name}" else "Failed: ${result.errors.joinToString()}"
                         }
-                    }
-                }, enabled = !isRecording && cam1Ready && (syncedDepthRecording || profileCalibratedForDepth)) { Text(if (syncedDepthRecording) "Stop synced depth recording" else "Record synced depth frames") }
-                Button(onClick = { showRigSettings = true }, enabled = !isRecording && !syncedDepthRecording) { Text("Open settings") }
+                    }, modifier = Modifier.fillMaxWidth(), enabled = isRecording) { Text("Stop video") }
+                    Button(onClick = {
+                        if (syncedDepthRecording) {
+                            syncedDepthJob?.cancel()
+                            syncedDepthJob = null
+                            syncedDepthState.outputDir?.let { finalizeSyncedDepthManifest(it, syncedDepthState) }
+                            status = "synced depth stopped: ${syncedDepthState.outputDir?.name ?: "unknown"}"
+                        } else {
+                            val currentProfile = profileStore.loadActiveProfile().also { activeProfile = it }
+                            if (currentProfile.calibrationStatus != CalibrationStatus.CALIBRATED || currentProfile.calibrationResult == null) {
+                                validationText = "Profile is not calibrated; run stereo calibration first."
+                                return@Button
+                            }
+                            val initial = createSyncedDepthCapture(context, currentProfile)
+                            syncedDepthState = initial
+                            status = "recording synced depth frames to ${initial.outputDir?.name}"
+                            syncedDepthJob = scope.launch {
+                                runSyncedDepthRecorder(
+                                    initialState = initial,
+                                    pairProvider = { manager.getNearestStereoCalibrationFrames(SYNCED_DEPTH_MAX_DELTA_MS) },
+                                    onState = { syncedDepthState = it },
+                                )
+                            }
+                        }
+                    }, modifier = Modifier.fillMaxWidth(), enabled = !isRecording && cam1Ready && (syncedDepthRecording || profileCalibratedForDepth)) { Text(if (syncedDepthRecording) "Stop synced depth recording" else "Record synced depth frames") }
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(onClick = { openCalibrationCapture() }, modifier = Modifier.fillMaxWidth(), enabled = !isRecording && !syncedDepthRecording) { Text("Calibration") }
+                    Button(onClick = { showRigSettings = true }, modifier = Modifier.fillMaxWidth(), enabled = !isRecording && !syncedDepthRecording) { Text("Open settings") }
+                }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = {
-                    scope.launch {
-                        probeRunning = true
-                        status = "phone dual camera probe running"
-                        manager.close()
-                        try {
-                            runCatching { withContext(Dispatchers.IO) { PhoneDualCameraProbe(context).run() } }
-                                .onSuccess { file ->
-                                    probePath = file.absolutePath
-                                    status = "phone dual camera probe written: ${file.absolutePath}"
-                                    Toast.makeText(context, file.absolutePath, Toast.LENGTH_LONG).show()
-                                }
-                                .onFailure { error ->
-                                    status = "phone dual camera probe failed: ${error.message}"
-                                    Toast.makeText(context, "Phone dual camera probe failed: ${error.message}", Toast.LENGTH_LONG).show()
-                                }
-                        } finally {
-                            probeRunning = false
-                        }
-                    }
-                }, enabled = !isRecording && !probeRunning) { Text(if (probeRunning) "Probe running…" else "Probe phone dual camera") }
-                Button(onClick = {
-                    val path = File(context.filesDir, PhoneDualCameraProbe.OUTPUT_FILE_NAME).absolutePath
-                    probePath = path
-                    Toast.makeText(context, path, Toast.LENGTH_LONG).show()
-                }, enabled = !probeRunning) { Text("Show phone dual camera probe JSON path") }
-            }
-            probePath?.let { Text("Probe JSON: $it", color = Color.White, style = MaterialTheme.typography.bodySmall) }
             if (!canRecord && !isRecording) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (!baselineReady) Text("Set baseline in Stereo rig / Cameras settings.", color = Color(0xFFFFD166))
@@ -3561,6 +3626,7 @@ private fun CalibrationCaptureDialog(
     var lastCalibrationResult by remember { mutableStateOf<StereoCalibrationResult?>(null) }
     var lastCam0PreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var lastCam1PreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var calibrationInfoExpanded by remember { mutableStateOf(false) }
     val currentCam0PreviewBitmap by rememberUpdatedState(lastCam0PreviewBitmap)
     val currentCam1PreviewBitmap by rememberUpdatedState(lastCam1PreviewBitmap)
     val coroutineScope = rememberCoroutineScope()
@@ -3568,6 +3634,12 @@ private fun CalibrationCaptureDialog(
     val isProcessing = wizardState == CalibrationWizardState.PROCESSING_CAM0 ||
         wizardState == CalibrationWizardState.PROCESSING_CAM1 ||
         wizardState == CalibrationWizardState.PROCESSING_STEREO
+    val isResultState = wizardState == CalibrationWizardState.CAM0_RESULT ||
+        wizardState == CalibrationWizardState.CAM1_RESULT ||
+        wizardState == CalibrationWizardState.STEREO_RESULT ||
+        wizardState == CalibrationWizardState.SUCCESS ||
+        wizardState == CalibrationWizardState.FAILED
+    val showFullCalibrationInfo = calibrationInfoExpanded || isResultState
     val isCapturing = wizardState == CalibrationWizardState.CAPTURING_CAM0 ||
         wizardState == CalibrationWizardState.CAPTURING_CAM1 ||
         wizardState == CalibrationWizardState.CAPTURING_STEREO
@@ -4128,6 +4200,13 @@ private fun CalibrationCaptureDialog(
             CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result?.found == true
             CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true
         }
+        if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS && latestFrameDetectionValid) {
+            val commonIds = stereoCommonCharucoIds(cam0Result, cam1Result)
+            if (commonIds < STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) {
+                message = "Stereo pair rejected: common ChArUco ids $commonIds/40, need at least $STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS. Move board fully into both cameras."
+                return false
+            }
+        }
         if (!latestFrameDetectionValid) {
             message = when (workflowMode) {
                 CalibrationWorkflowMode.CAM0_INTRINSICS -> "${boardDisplayName(settings)} not found on latest cam0 frame; frame was not saved. Repeat capture."
@@ -4250,7 +4329,7 @@ private fun CalibrationCaptureDialog(
                 val autoCaptureReady = when (workflowMode) {
                     CalibrationWorkflowMode.CAM0_INTRINSICS -> cam0Result?.found == true
                     CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result?.found == true
-                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true && stereoInputsReady(sessionDir)
+                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true && stereoInputsReady(sessionDir) && stereoCommonCharucoIds(cam0Result, cam1Result) >= STEREO_AUTO_MIN_COMMON_CHARUCO_IDS
                 }
                 if (autoCapture && pairCount < settings.requiredPairs && autoCaptureReady) {
                     val now = System.currentTimeMillis()
@@ -4266,261 +4345,263 @@ private fun CalibrationCaptureDialog(
         }
     }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(modifier = Modifier.fillMaxSize().padding(12.dp), color = Color(0xFF101010)) {
-            Column(modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    fun stereoCommonCharucoIds(
+        cam0: CalibrationDetectionResult?,
+        cam1: CalibrationDetectionResult?,
+    ): Int {
+        if (cam0?.found != true || cam1?.found != true) return 0
+        return cam0.charucoIds.intersect(cam1.charucoIds.toSet()).size
+    }
+
+    fun stereoQualitySummary(commonIds: Int): String = if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) {
+        "common ids: $commonIds/40 — OK"
+    } else {
+        "common ids: $commonIds/40 — move board fully into both cameras"
+    }
+
+    fun detectionSummary(label: String, detection: CalibrationDetectionResult?): String {
+        val status = if (detection?.found == true) "board found" else "board not found"
+        val corners = detection?.let { "corners ${it.cornersFound}/${it.expectedCorners}" } ?: "corners pending"
+        return "$label: $status, $corners"
+    }
+
+    @Composable
+    fun CalibrationInfoCard(modifier: Modifier = Modifier, overlay: Boolean = false) {
+        Card(
+            modifier = modifier
+                .animateContentSize()
+                .clickable { calibrationInfoExpanded = !calibrationInfoExpanded },
+            colors = CardDefaults.cardColors(
+                containerColor = if (overlay) Color(0xFF1E2A3A).copy(alpha = 0.70f) else Color(0xFF1E2A3A),
+            ),
+        ) {
+            Column(
+                Modifier
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .then(if (overlay && showFullCalibrationInfo) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Camera calibration", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    TextButton(onClick = onDismiss, enabled = !calibrationRunning) { Text("Close") }
+                    Text(stepTitle, color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Text(if (calibrationInfoExpanded) "▲ Tap to collapse" else "▼ Tap to expand", color = Color(0xFFB7C7DD), style = MaterialTheme.typography.bodySmall)
                 }
 
-                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2A3A))) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stepTitle, color = Color.White, style = MaterialTheme.typography.titleMedium)
-                        Text(instructionText, color = Color.White)
-                        if (isCapturing) {
-                            Text("Captured: $pairCount / $requiredPairs", color = Color.White)
-                            val cam0ResolutionInfo = cam0CalibrationResolutionProvider()
-                            Text("cam0 analysis actual=${cam0ResolutionInfo.actualWidth ?: "pending"}x${cam0ResolutionInfo.actualHeight ?: "pending"} requested=${cam0ResolutionInfo.requestedWidth ?: "auto"}x${cam0ResolutionInfo.requestedHeight ?: "auto"} profile=${cam0ResolutionInfo.requestedProfileWidth ?: "auto"}x${cam0ResolutionInfo.requestedProfileHeight ?: "auto"}", color = Color.White)
-                            cam0ResolutionInfo.reason?.let { Text("cam0 analysis reason: $it", color = Color(0xFFFFD166)) }
-                            cam1CalibrationModeWarning?.let { Text(it, color = Color(0xFFFFD166)) }
-                            val detectionText = when (workflowMode) {
-                                CalibrationWorkflowMode.CAM0_INTRINSICS -> if (cam0Detection?.found == true) "${boardDisplayName(settings)} found" else "Looking for ${boardDisplayName(settings)}"
-                                CalibrationWorkflowMode.CAM1_INTRINSICS -> if (cam1Detection?.found == true) "${boardDisplayName(settings)} found" else "Looking for ${boardDisplayName(settings)}"
-                                CalibrationWorkflowMode.STEREO_EXTRINSICS -> if (cam0Detection?.found == true && cam1Detection?.found == true) "${boardDisplayName(settings)} found in both cameras" else "Looking for ${boardDisplayName(settings)} in both cameras"
-                            }
-                            Text(detectionText, color = Color.White)
-                            if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
-                                Button(
-                                    onClick = { autoCapture = !autoCapture },
-                                    enabled = !calibrationRunning && pairCount < requiredPairs,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text("Auto stereo capture: ${if (autoCapture) "On" else "Off"}")
-                                }
-                            }
-                            if (message.isNotBlank()) Text(message, color = Color.White)
-                        }
-                        if (wizardState == CalibrationWizardState.CAM0_RESULT || wizardState == CalibrationWizardState.CAM1_RESULT || wizardState == CalibrationWizardState.STEREO_RESULT) {
-                            val resultMode = lastStepResultMode
-                            val passed = lastStepPassed == true
-                            val rms = lastStepRms
-                            Text(if (passed) "PASSED" else "FAILED", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                            Text(message, color = Color.White)
-                            rms?.let { Text("RMS: ${String.format(Locale.US, "%.3f", it)} px", color = Color.White) }
-                            if (!passed) thresholdFor(resultMode)?.let { Text("Required: <= ${String.format(Locale.US, "%.1f", it)} px", color = Color.White) }
-                            if (passed && resultMode == CalibrationWorkflowMode.CAM0_INTRINSICS) {
-                                Text("Continuing to USB camera in ${continueCountdownSeconds ?: 0} seconds...", color = Color.White)
-                            }
-                            if (passed && resultMode == CalibrationWorkflowMode.CAM1_INTRINSICS) {
-                                Text("Continuing to stereo calibration in ${continueCountdownSeconds ?: 0} seconds...", color = Color.White)
-                            }
-                            if (resultMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
-                                if (passed) {
-                                    Text("Calibration applied to profile.", color = Color.White)
-                                    Text("Profile status: CALIBRATED.", color = Color.White)
-                                } else {
-                                    Text("This calibration was NOT applied to profile.", color = Color.White)
-                                    if (profile.calibrationStatus == CalibrationStatus.CALIBRATED) {
-                                        Text("Previous successful calibration remains active.", color = Color.White)
-                                    } else {
-                                        Text("No valid stereo calibration is active.", color = Color.White)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (isCapturing || isProcessing) {
+                if (!showFullCalibrationInfo) {
+                    Text("Captured: $pairCount / $requiredPairs", color = Color.White)
                     when (workflowMode) {
-                        CalibrationWorkflowMode.CAM0_INTRINSICS -> PreviewBitmapPanel(
-                            "cam0",
-                            lastCam0PreviewBitmap,
-                            cam0Detection,
-                            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                            rotationDegrees = 0f,
-                        )
-                        CalibrationWorkflowMode.CAM1_INTRINSICS -> PreviewBitmapPanel(
-                            "cam1",
-                            lastCam1PreviewBitmap,
-                            cam1Detection,
-                            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                            rotationDegrees = 90f,
-                        )
-                        CalibrationWorkflowMode.STEREO_EXTRINSICS -> Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PreviewBitmapPanel(
-                                "cam0",
-                                lastCam0PreviewBitmap,
-                                cam0Detection,
-                                Modifier.weight(1f).aspectRatio(16f / 9f),
-                                rotationDegrees = 90f,
-                            )
-                            PreviewBitmapPanel(
-                                "cam1",
-                                lastCam1PreviewBitmap,
-                                cam1Detection,
-                                Modifier.weight(1f).aspectRatio(16f / 9f),
-                                rotationDegrees = 0f,
-                            )
+                        CalibrationWorkflowMode.CAM0_INTRINSICS -> {
+                            val cam0ResolutionInfo = cam0CalibrationResolutionProvider()
+                            Text("cam0 actual size=${cam0ResolutionInfo.actualWidth ?: "pending"}x${cam0ResolutionInfo.actualHeight ?: "pending"}", color = Color.White)
+                            Text(detectionSummary("cam0", cam0Detection), color = Color.White)
+                        }
+                        CalibrationWorkflowMode.CAM1_INTRINSICS -> {
+                            val cam1Bitmap = lastCam1PreviewBitmap
+                            Text("cam1 actual size=${cam1Bitmap?.width ?: "pending"}x${cam1Bitmap?.height ?: "pending"}", color = Color.White)
+                            Text(detectionSummary("cam1", cam1Detection), color = Color.White)
+                        }
+                        CalibrationWorkflowMode.STEREO_EXTRINSICS -> {
+                            val cam0ResolutionInfo = cam0CalibrationResolutionProvider()
+                            val cam1Bitmap = lastCam1PreviewBitmap
+                            Text("cam0 actual size=${cam0ResolutionInfo.actualWidth ?: "pending"}x${cam0ResolutionInfo.actualHeight ?: "pending"}", color = Color.White)
+                            Text("cam1 actual size=${cam1Bitmap?.width ?: "pending"}x${cam1Bitmap?.height ?: "pending"}", color = Color.White)
+                            Text(detectionSummary("cam0", cam0Detection), color = Color.White)
+                            Text(detectionSummary("cam1", cam1Detection), color = Color.White)
+                            val commonIds = stereoCommonCharucoIds(cam0Detection, cam1Detection)
+                            Text(stereoQualitySummary(commonIds), color = if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) Color(0xFF7CFC98) else Color(0xFFFFD166))
+                            Text("stereo quality: ${if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) "OK" else "need more overlap"}", color = Color.White)
                         }
                     }
-                }
-
-                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Button(onClick = { clearOldCalibrationSessions() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Clear old calibration sessions") }
-                    Button(onClick = { writeDiagnostics() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Write diagnostics JSON") }
-                    when (wizardState) {
-                        CalibrationWizardState.IDLE -> Button(onClick = { startNewCalibrationSession() }, modifier = Modifier.fillMaxWidth()) { Text("Start calibration") }
-                        CalibrationWizardState.SUCCESS -> Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
-                        CalibrationWizardState.FAILED -> Unit
-                        CalibrationWizardState.CAM0_RESULT, CalibrationWizardState.CAM1_RESULT, CalibrationWizardState.STEREO_RESULT -> {
-                            val resultMode = lastStepResultMode ?: workflowMode
-                            val retryLabel = when (resultMode) {
-                                CalibrationWorkflowMode.CAM0_INTRINSICS -> "Retry phone camera"
-                                CalibrationWorkflowMode.CAM1_INTRINSICS -> "Retry USB camera"
-                                CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Retry stereo calibration"
-                            }
-                            if (lastStepPassed == true && resultMode != CalibrationWorkflowMode.STEREO_EXTRINSICS) {
-                                Button(onClick = { retryCurrentStep() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text(retryLabel) }
-                                Button(
-                                    onClick = {
-                                        when (resultMode) {
-                                            CalibrationWorkflowMode.CAM0_INTRINSICS -> continueTo(CalibrationWorkflowMode.CAM1_INTRINSICS)
-                                            CalibrationWorkflowMode.CAM1_INTRINSICS -> continueTo(CalibrationWorkflowMode.STEREO_EXTRINSICS)
-                                            CalibrationWorkflowMode.STEREO_EXTRINSICS -> Unit
-                                        }
-                                    },
-                                    enabled = !calibrationRunning,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) { Text("Continue now") }
-                            } else if (lastStepPassed == true && resultMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
-                                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
-                            } else {
-                                Button(onClick = { retryCurrentStep() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text(retryLabel) }
-                                Button(onClick = { startNewCalibrationSession() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Start new calibration") }
-                                Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
-                            }
-                        }
-                        CalibrationWizardState.CAPTURING_CAM0, CalibrationWizardState.CAPTURING_CAM1, CalibrationWizardState.CAPTURING_STEREO -> {
-                            Button(
-                                onClick = { capturePair(requireValidDetection = true) },
-                                enabled = when (workflowMode) {
-                                    CalibrationWorkflowMode.CAM0_INTRINSICS -> cam0Detection?.found == true
-                                    CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Detection?.found == true
-                                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Detection?.found == true && cam1Detection?.found == true && stereoInputsReady(sessionDir)
-                                } && !calibrationRunning,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) { Text(captureButtonText) }
-                            if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
-                                Text("Auto capture disabled for stereo. Hold the board still 1–2 seconds, then capture manually.", color = Color(0xFFFFD166))
-                            } else {
-                                Button(onClick = { autoCapture = !autoCapture }, enabled = !calibrationRunning && pairCount < requiredPairs, modifier = Modifier.fillMaxWidth()) { Text("Auto capture: ${if (autoCapture) "On" else "Off"}") }
-                            }
-                            Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
-                        }
-                        CalibrationWizardState.PROCESSING_CAM0, CalibrationWizardState.PROCESSING_CAM1, CalibrationWizardState.PROCESSING_STEREO -> {
-                            Text("Please wait.", color = Color.White)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-}
-
-@Composable
-private fun rotateBitmapForCalibrationDisplayOnly(bitmap: Bitmap, rotationDegrees: Float): Bitmap {
-    val normalized = (((rotationDegrees % 360f) + 360f) % 360f).toInt()
-    if (normalized == 0) return bitmap
-
-    val matrix = Matrix().apply {
-        postRotate(normalized.toFloat())
-    }
-
-    return Bitmap.createBitmap(
-        bitmap,
-        0,
-        0,
-        bitmap.width,
-        bitmap.height,
-        matrix,
-        true,
-    )
-}
-
-private fun PreviewBitmapPanel(
-    label: String,
-    bitmap: Bitmap?,
-    detection: CalibrationDetectionResult?,
-    modifier: Modifier = Modifier,
-    rotationDegrees: Float = 0f,
-) {
-    Box(modifier = modifier.background(Color.DarkGray).clipToBounds(), contentAlignment = Alignment.Center) {
-        if (bitmap != null) {
-            val displayBitmap = remember(bitmap, rotationDegrees) {
-                rotateBitmapForCalibrationDisplayOnly(bitmap, rotationDegrees)
-            }
-
-            AsyncImage(
-                model = displayBitmap,
-                contentDescription = label,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit,
-            )
-        } else {
-            Text("Waiting for preview", color = Color.White)
-        }
-        val status = detection?.let { if (it.found) "board found" else "board not found" } ?: "detecting"
-        val count = detection?.let { " ${it.cornersFound}/${it.expectedCorners}" }.orEmpty()
-        val statusColor = when (detection?.found) {
-            true -> Color(0xFF00E676)
-            false -> Color(0xFFFFD54F)
-            null -> Color.White
-        }
-        val detectionResult = detection
-        if (detectionResult != null && detectionResult.normalizedCornerPoints.isNotEmpty()) {
-            val points = detectionResult.normalizedCornerPoints
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val imageAspect =
-                    detectionResult.imageWidth.toFloat() /
-                        detectionResult.imageHeight.toFloat().coerceAtLeast(1f)
-                val boxAspect = size.width / size.height.coerceAtLeast(1f)
-                val drawWidth: Float
-                val drawHeight: Float
-                val offsetX: Float
-                val offsetY: Float
-                if (imageAspect > boxAspect) {
-                    drawWidth = size.width
-                    drawHeight = size.width / imageAspect
-                    offsetX = 0f
-                    offsetY = (size.height - drawHeight) / 2f
                 } else {
-                    drawHeight = size.height
-                    drawWidth = size.height * imageAspect
-                    offsetX = (size.width - drawWidth) / 2f
-                    offsetY = 0f
+                    Text(instructionText, color = Color.White)
+                    Text("Captured: $pairCount / $requiredPairs", color = Color.White)
+                    val cam0ResolutionInfo = cam0CalibrationResolutionProvider()
+                    Text("cam0 analysis actual=${cam0ResolutionInfo.actualWidth ?: "pending"}x${cam0ResolutionInfo.actualHeight ?: "pending"} requested=${cam0ResolutionInfo.requestedWidth ?: "auto"}x${cam0ResolutionInfo.requestedHeight ?: "auto"} profile=${cam0ResolutionInfo.requestedProfileWidth ?: "auto"}x${cam0ResolutionInfo.requestedProfileHeight ?: "auto"}", color = Color.White)
+                    cam0ResolutionInfo.reason?.let { Text("cam0 analysis reason: $it", color = Color(0xFFFFD166)) }
+                    cam1CalibrationModeWarning?.let { Text(it, color = Color(0xFFFFD166)) }
+                    if (isCapturing) {
+                        Text(detectionSummary("cam0", cam0Detection), color = Color.White)
+                        Text(detectionSummary("cam1", cam1Detection), color = Color.White)
+                        if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+                            val commonIds = stereoCommonCharucoIds(cam0Detection, cam1Detection)
+                            Text(stereoQualitySummary(commonIds), color = if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) Color(0xFF7CFC98) else Color(0xFFFFD166))
+                            Text("stereo quality: ${if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) "OK" else "need more overlap"}", color = Color.White)
+                        }
+                        if (message.isNotBlank()) Text(message, color = Color.White)
+                    }
+                    if (wizardState == CalibrationWizardState.CAM0_RESULT || wizardState == CalibrationWizardState.CAM1_RESULT || wizardState == CalibrationWizardState.STEREO_RESULT) {
+                        val resultMode = lastStepResultMode
+                        val passed = lastStepPassed == true
+                        val rms = lastStepRms
+                        Text(if (passed) "PASSED" else "FAILED", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                        Text(message, color = Color.White)
+                        rms?.let { Text("RMS: ${String.format(Locale.US, "%.3f", it)} px", color = Color.White) }
+                        if (!passed) thresholdFor(resultMode)?.let { Text("Required: <= ${String.format(Locale.US, "%.1f", it)} px", color = Color.White) }
+                        if (passed && resultMode == CalibrationWorkflowMode.CAM0_INTRINSICS) Text("Continuing to USB camera in ${continueCountdownSeconds ?: 0} seconds...", color = Color.White)
+                        if (passed && resultMode == CalibrationWorkflowMode.CAM1_INTRINSICS) Text("Continuing to stereo calibration in ${continueCountdownSeconds ?: 0} seconds...", color = Color.White)
+                        if (resultMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) Text(if (passed) "Calibration applied to profile. Profile status: CALIBRATED." else "This calibration was NOT applied to profile.", color = Color.White)
+                    }
                 }
-                val offsets = points.map {
-                    Offset(offsetX + it.x * drawWidth, offsetY + it.y * drawHeight)
-                }
-                offsets.forEach {
-                    drawCircle(Color(0xFF00E676), radius = 4.dp.toPx(), center = it)
-                }
-                drawRect(
-                    Color(0xFF00E676),
-                    topLeft = Offset(offsetX, offsetY),
-                    size = ComposeSize(drawWidth, drawHeight),
-                    style = Stroke(width = 1.dp.toPx()),
+            }
+        }
+    }
+
+    @Composable
+    fun CapturePreview() {
+        when (workflowMode) {
+            CalibrationWorkflowMode.CAM0_INTRINSICS -> PreviewBitmapPanel("cam0", lastCam0PreviewBitmap, cam0Detection, Modifier.fillMaxSize(), rotationDegrees = 0f)
+            CalibrationWorkflowMode.CAM1_INTRINSICS -> PreviewBitmapPanel("cam1", lastCam1PreviewBitmap, cam1Detection, Modifier.fillMaxSize(), rotationDegrees = 90f)
+            CalibrationWorkflowMode.STEREO_EXTRINSICS -> Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                PreviewBitmapPanel(
+                    "cam0",
+                    lastCam0PreviewBitmap,
+                    cam0Detection,
+                    Modifier.weight(1f).fillMaxHeight(),
+                    rotationDegrees = 0f,
+                )
+                PreviewBitmapPanel(
+                    "cam1",
+                    lastCam1PreviewBitmap,
+                    cam1Detection,
+                    Modifier.weight(1f).fillMaxHeight(),
+                    rotationDegrees = CAM1_PREVIEW_ROTATION_DEGREES,
                 )
             }
         }
-        Column(modifier = Modifier.align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.65f)).padding(8.dp)) {
-            Text("$label $status$count", color = statusColor)
-            detection?.qualityMessage?.let { Text(it, color = Color.White) }
+    }
+    @Composable
+    fun CaptureControls(modifier: Modifier = Modifier) {
+        val captureEnabled = when (workflowMode) {
+            CalibrationWorkflowMode.CAM0_INTRINSICS -> cam0Detection?.found == true
+            CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Detection?.found == true
+            CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Detection?.found == true && cam1Detection?.found == true && stereoInputsReady(sessionDir) && stereoCommonCharucoIds(cam0Detection, cam1Detection) >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS
+        } && !calibrationRunning
+
+        val autoLabel = if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+            "Auto stereo: ${if (autoCapture) "On" else "Off"}"
+        } else {
+            "Auto: ${if (autoCapture) "On" else "Off"}"
+        }
+
+        Column(
+            modifier = modifier
+                .background(Color.Black.copy(alpha = 0.65f))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = { autoCapture = !autoCapture },
+                    enabled = !calibrationRunning && pairCount < requiredPairs,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(autoLabel)
+                }
+
+                Button(
+                    onClick = { capturePair(requireValidDetection = true) },
+                    enabled = captureEnabled,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(captureButtonText)
+                }
+            }
+
+            if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS && autoCapture) {
+                Text(
+                    "Auto stereo is running. Move the board slowly; press Auto stereo again to pause.",
+                    color = Color(0xFFFFD166),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Button(
+                onClick = onDismiss,
+                enabled = !calibrationRunning,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Cancel")
+            }
         }
     }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize().padding(12.dp), color = Color(0xFF101010)) {
+            if (isCapturing) {
+                Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+                    CapturePreview()
+                    CalibrationInfoCard(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .padding(10.dp)
+                            .then(if (showFullCalibrationInfo) Modifier.fillMaxHeight(0.45f) else Modifier),
+                        overlay = true,
+                    )
+                    CaptureControls(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth(),
+                    )
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxSize().padding(10.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Camera calibration", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                        TextButton(onClick = onDismiss, enabled = !calibrationRunning) { Text("Close") }
+                    }
+
+                    if (wizardState == CalibrationWizardState.IDLE) {
+                        val idlePreview = lastCam0PreviewBitmap ?: lastCam1PreviewBitmap
+                        if (idlePreview != null) PreviewBitmapPanel("preview", idlePreview, null, Modifier.fillMaxWidth().height(180.dp), rotationDegrees = 0f)
+                    } else if (isProcessing) {
+                        Text("Please wait.", color = Color.White)
+                    }
+
+                    CalibrationInfoCard(modifier = Modifier.fillMaxWidth(), overlay = false)
+
+                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (wizardState == CalibrationWizardState.IDLE) {
+                            Button(onClick = { clearOldCalibrationSessions() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Clear old calibration sessions") }
+                            Button(onClick = { writeDiagnostics() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Write diagnostics JSON") }
+                            Button(onClick = { startNewCalibrationSession() }, modifier = Modifier.fillMaxWidth()) { Text("Start calibration") }
+                            Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Cancel/Close") }
+                        } else when (wizardState) {
+                            CalibrationWizardState.SUCCESS -> Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+                            CalibrationWizardState.FAILED -> Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Close") }
+                            CalibrationWizardState.CAM0_RESULT, CalibrationWizardState.CAM1_RESULT, CalibrationWizardState.STEREO_RESULT -> {
+                                val resultMode = lastStepResultMode ?: workflowMode
+                                val retryLabel = when (resultMode) {
+                                    CalibrationWorkflowMode.CAM0_INTRINSICS -> "Retry phone camera"
+                                    CalibrationWorkflowMode.CAM1_INTRINSICS -> "Retry USB camera"
+                                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> "Retry stereo calibration"
+                                }
+                                if (lastStepPassed == true && resultMode != CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+                                    Button(onClick = { retryCurrentStep() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text(retryLabel) }
+                                    Button(onClick = { if (resultMode == CalibrationWorkflowMode.CAM0_INTRINSICS) continueTo(CalibrationWorkflowMode.CAM1_INTRINSICS) else continueTo(CalibrationWorkflowMode.STEREO_EXTRINSICS) }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Continue now") }
+                                } else if (lastStepPassed == true && resultMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+                                    Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+                                } else {
+                                    Button(onClick = { retryCurrentStep() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text(retryLabel) }
+                                    Button(onClick = { startNewCalibrationSession() }, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Start new calibration") }
+                                    Button(onClick = onDismiss, enabled = !calibrationRunning, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+                                }
+                            }
+                            CalibrationWizardState.PROCESSING_CAM0, CalibrationWizardState.PROCESSING_CAM1, CalibrationWizardState.PROCESSING_STEREO -> Text("Please wait.", color = Color.White)
+                            CalibrationWizardState.IDLE, CalibrationWizardState.CAPTURING_CAM0, CalibrationWizardState.CAPTURING_CAM1, CalibrationWizardState.CAPTURING_STEREO -> Unit
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 }
 
 private fun cleanupCalibrationSessions(context: Context) {
@@ -4535,6 +4616,138 @@ private fun cleanupCalibrationSessions(context: Context) {
         if (dir.deleteRecursively()) deleted += 1 else failed += 1
     }
     Log.d("CalibrationCleanup", "deleted=$deleted failed=$failed root=${root.absolutePath}")
+}
+
+private fun normalizeCalibrationDisplayRotation(rotationDegrees: Float): Int {
+    val normalized = ((rotationDegrees % 360f) + 360f) % 360f
+    return when {
+        normalized >= 45f && normalized < 135f -> 90
+        normalized >= 135f && normalized < 225f -> 180
+        normalized >= 225f && normalized < 315f -> 270
+        else -> 0
+    }
+}
+
+private fun rotateBitmapForCalibrationDisplayOnly(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
+    if (rotationDegrees == 0) return bitmap
+
+    val matrix = android.graphics.Matrix().apply {
+        postRotate(rotationDegrees.toFloat())
+    }
+
+    return Bitmap.createBitmap(
+        bitmap,
+        0,
+        0,
+        bitmap.width,
+        bitmap.height,
+        matrix,
+        true,
+    )
+}
+
+private fun makeCalibrationOverlayBitmapForDisplayOnly(
+    sourceBitmap: Bitmap,
+    detection: CalibrationDetectionResult?,
+    rotationDegrees: Int,
+): Bitmap? {
+    val points = detection?.normalizedCornerPoints ?: return null
+    if (points.isEmpty()) return null
+
+    val overlay = Bitmap.createBitmap(
+        sourceBitmap.width,
+        sourceBitmap.height,
+        Bitmap.Config.ARGB_8888,
+    )
+
+    val canvas = android.graphics.Canvas(overlay)
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(0, 230, 118)
+        style = android.graphics.Paint.Style.FILL
+    }
+
+    val radius = kotlin.math.max(
+        5f,
+        kotlin.math.min(sourceBitmap.width, sourceBitmap.height) * 0.006f,
+    )
+
+    points.forEach { point ->
+        val x = point.x.coerceIn(0f, 1f) * sourceBitmap.width
+        val y = point.y.coerceIn(0f, 1f) * sourceBitmap.height
+        canvas.drawCircle(x, y, radius, paint)
+    }
+
+    return rotateBitmapForCalibrationDisplayOnly(overlay, rotationDegrees)
+}
+
+@Composable
+private fun PreviewBitmapPanel(
+    label: String,
+    bitmap: Bitmap?,
+    detection: CalibrationDetectionResult?,
+    modifier: Modifier = Modifier,
+    rotationDegrees: Float = 0f,
+) {
+    Box(
+        modifier = modifier
+            .background(Color.DarkGray)
+            .clipToBounds(),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            val displayRotation = normalizeCalibrationDisplayRotation(rotationDegrees)
+
+            val displayBitmap = remember(bitmap, displayRotation) {
+                rotateBitmapForCalibrationDisplayOnly(bitmap, displayRotation)
+            }
+
+            val overlayBitmap = remember(bitmap, detection, displayRotation) {
+                makeCalibrationOverlayBitmapForDisplayOnly(
+                    sourceBitmap = bitmap,
+                    detection = detection,
+                    rotationDegrees = displayRotation,
+                )
+            }
+
+            Image(
+                bitmap = displayBitmap.asImageBitmap(),
+                contentDescription = label,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+            )
+
+            if (overlayBitmap != null) {
+                Image(
+                    bitmap = overlayBitmap.asImageBitmap(),
+                    contentDescription = "$label overlay",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+        } else {
+            Text("Waiting for preview", color = Color.White)
+        }
+
+        val status = detection?.let { if (it.found) "board found" else "board not found" } ?: "detecting"
+        val count = detection?.let { " ${it.cornersFound}/${it.expectedCorners}" }.orEmpty()
+        val statusColor = when (detection?.found) {
+            true -> Color(0xFF00E676)
+            false -> Color(0xFFFFD54F)
+            null -> Color.White
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .background(Color.Black.copy(alpha = 0.55f))
+                .padding(8.dp),
+        ) {
+            Text("$label $status$count", color = statusColor, style = MaterialTheme.typography.bodySmall)
+            detection?.qualityMessage?.let {
+                Text(it, color = Color.White, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
 }
 
 private fun writeCalibrationDiagnosticsJson(context: Context, profileStore: StereoRigProfileStore): File {

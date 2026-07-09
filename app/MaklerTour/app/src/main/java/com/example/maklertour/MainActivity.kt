@@ -199,6 +199,15 @@ private const val CAM1_PREVIEW_ROTATION_DEGREES = 90f
 private const val STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS = 35
 private const val STEREO_AUTO_MIN_COMMON_CHARUCO_IDS = 38
 
+private fun stereoCommonCharucoIds(
+    cam0: CalibrationDetectionResult?,
+    cam1: CalibrationDetectionResult?,
+): Int {
+    if (cam0?.found != true || cam1?.found != true) return 0
+    return cam0.charucoIds.intersect(cam1.charucoIds.toSet()).size
+}
+
+
 private enum class AppTab(val route: String, val titleRes: Int) {
     Sessions("sessions", R.string.tab_sessions),
     Orders("orders", R.string.tab_orders),
@@ -4343,14 +4352,6 @@ private fun CalibrationCaptureDialog(
             }
             delay(500)
         }
-    }
-
-    fun stereoCommonCharucoIds(
-        cam0: CalibrationDetectionResult?,
-        cam1: CalibrationDetectionResult?,
-    ): Int {
-        if (cam0?.found != true || cam1?.found != true) return 0
-        return cam0.charucoIds.intersect(cam1.charucoIds.toSet()).size
     }
 
     fun stereoQualitySummary(commonIds: Int): String = if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) {
