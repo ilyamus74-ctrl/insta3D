@@ -842,8 +842,7 @@ class AppStateViewModel(
                 val bundleFile = item.localFilePath?.let(::File)
                 if (bundleFile == null || !bundleFile.exists() || bundleFile.length() <= 0L) {
                     uploadError.value = "Capture bundle file not found"
-                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
-                    uploadQueueRepository.updateProgress(uploadId, 0, 0L, 0L, item.displayName ?: "Capture bundle", "Capture bundle packaging failed")
+                    uploadQueueRepository.markUploadError(uploadId, item.displayName ?: "Capture bundle", "Capture bundle packaging failed")
                     Log.e("UploadQueue", "capture bundle file missing uploadId=$uploadId path=${item.localFilePath}")
                     return
                 }
@@ -852,11 +851,16 @@ class AppStateViewModel(
                     uploadQueueRepository.updateProgress(uploadId, percent, progress.bytesUploaded, progress.bytesTotal, bundleFile.name, "Uploading Capture bundle ${item.captureType ?: ""}")
                 }
                 if (ok) {
-                    uploadQueueRepository.updateProgress(uploadId, 100, bundleFile.length(), bundleFile.length(), bundleFile.name, "Uploaded Capture bundle")
-                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Success)
+                    uploadQueueRepository.markUploadSuccess(
+                        uploadId = uploadId,
+                        bytesUploaded = bundleFile.length(),
+                        bytesTotal = bundleFile.length(),
+                        currentFileName = bundleFile.name,
+                        currentStep = "Uploaded Capture bundle",
+                    )
                     Log.i("UploadQueue", "uploaded capture bundle uploadId=$uploadId path=${bundleFile.absolutePath}")
                 } else {
-                    uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
+                    uploadQueueRepository.markUploadError(uploadId, bundleFile.name, "Capture bundle upload failed")
                     uploadQueueRepository.incrementRetry(uploadId)
                     Log.e("UploadQueue", "capture bundle upload failed uploadId=$uploadId path=${bundleFile.absolutePath}")
                 }
@@ -976,15 +980,17 @@ class AppStateViewModel(
             }
 
             if (allUploaded) {
-                uploadQueueRepository.updateProgress(uploadId, 100, 0L, 0L, null, "Completed")
-                uploadQueueRepository.updateStatus(uploadId, UploadStatus.Success)
+                uploadQueueRepository.markUploadSuccess(
+                    uploadId = uploadId,
+                    bytesUploaded = 0L,
+                    bytesTotal = 0L,
+                    currentFileName = null,
+                    currentStep = "Completed",
+                )
                 Log.d("Upload", "final Success uploadId=$uploadId")
             } else {
-                uploadQueueRepository.updateStatus(uploadId, UploadStatus.Error)
                 val latest = uiState.value.uploadQueue.firstOrNull { it.id == uploadId }
-                if (latest != null) {
-                    uploadQueueRepository.updateProgress(uploadId, latest.progressPercent, latest.bytesUploaded, latest.bytesTotal, latest.currentFileName, "Upload failed")
-                }
+                uploadQueueRepository.markUploadError(uploadId, latest?.currentFileName, "Upload failed")
                 uploadQueueRepository.incrementRetry(uploadId)
                 Log.e("Upload", "final Error uploadId=$uploadId")
             }

@@ -109,6 +109,18 @@ interface UploadQueueRepository {
         currentFileName: String?,
         currentStep: String?,
     )
+    fun markUploadSuccess(
+        uploadId: String,
+        bytesUploaded: Long,
+        bytesTotal: Long,
+        currentFileName: String?,
+        currentStep: String,
+    )
+    fun markUploadError(
+        uploadId: String,
+        currentFileName: String?,
+        currentStep: String,
+    )
     fun incrementRetry(uploadId: String)
     fun resetForRetry(uploadId: String)
     fun resetQueueItem(uploadId: String)
@@ -523,6 +535,39 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
         }
     }
 
+    override fun markUploadSuccess(uploadId: String, bytesUploaded: Long, bytesTotal: Long, currentFileName: String?, currentStep: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(
+                        status = UploadStatus.Success,
+                        progressPercent = 100,
+                        bytesUploaded = bytesUploaded.coerceAtLeast(0L),
+                        bytesTotal = bytesTotal.coerceAtLeast(0L),
+                        currentFileName = currentFileName,
+                        currentStep = currentStep,
+                        updatedAt = Instant.now(),
+                    )
+                } else item
+            }
+        }
+    }
+
+    override fun markUploadError(uploadId: String, currentFileName: String?, currentStep: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(
+                        status = UploadStatus.Error,
+                        currentFileName = currentFileName,
+                        currentStep = currentStep,
+                        updatedAt = Instant.now(),
+                    )
+                } else item
+            }
+        }
+    }
+
     override fun incrementRetry(uploadId: String) {
         _queue.update { items ->
             items.map { item ->
@@ -716,6 +761,41 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
                         progressPercent = progressPercent.coerceIn(0, 100),
                         bytesUploaded = bytesUploaded.coerceAtLeast(0L),
                         bytesTotal = bytesTotal.coerceAtLeast(0L),
+                        currentFileName = currentFileName,
+                        currentStep = currentStep,
+                        updatedAt = Instant.now(),
+                    )
+                } else item
+            }
+        }
+        persist()
+    }
+
+    override fun markUploadSuccess(uploadId: String, bytesUploaded: Long, bytesTotal: Long, currentFileName: String?, currentStep: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(
+                        status = UploadStatus.Success,
+                        progressPercent = 100,
+                        bytesUploaded = bytesUploaded.coerceAtLeast(0L),
+                        bytesTotal = bytesTotal.coerceAtLeast(0L),
+                        currentFileName = currentFileName,
+                        currentStep = currentStep,
+                        updatedAt = Instant.now(),
+                    )
+                } else item
+            }
+        }
+        persist()
+    }
+
+    override fun markUploadError(uploadId: String, currentFileName: String?, currentStep: String) {
+        _queue.update { items ->
+            items.map { item ->
+                if (item.id == uploadId) {
+                    item.copy(
+                        status = UploadStatus.Error,
                         currentFileName = currentFileName,
                         currentStep = currentStep,
                         updatedAt = Instant.now(),
@@ -1252,70 +1332,48 @@ class RoomUploadQueueRepository(
     }
 
     override fun updateProgress(uploadId: String, progressPercent: Int, bytesUploaded: Long, bytesTotal: Long, currentFileName: String?, currentStep: String?) {
-        val current = queue.value.firstOrNull { it.id == uploadId } ?: return
         scope.launch {
-            uploadItemDao.upsert(
-                UploadItemEntity(
-                    id = current.id,
-                    syncState = SyncState.PENDING_UPDATE.name,
-                    createdAtEpochMs = current.updatedAt.toEpochMilli(),
-                    updatedAtEpochMs = Instant.now().toEpochMilli(),
-                    captureSessionId = current.sessionId,
-                    sessionTitle = current.sessionTitle,
-                    serverOrderId = current.orderId,
-                    orderTitle = current.orderTitle,
-                    orderAddress = current.orderAddress,
-                    bindingId = current.bindingId,
-                    uploadAppSessionUuid = current.uploadAppSessionUuid,
-                    serverCaptureSessionId = current.serverCaptureSessionId,
-                    status = current.status.name,
-                    retryCount = current.retryCount,
-                    progressPercent = progressPercent.coerceIn(0, 100),
-                    bytesUploaded = bytesUploaded.coerceAtLeast(0L),
-                    bytesTotal = bytesTotal.coerceAtLeast(0L),
-                    currentFileName = currentFileName,
-                    currentStep = currentStep,
-                    uploadType = current.uploadType,
-                    captureType = current.captureType,
-                    localFilePath = current.localFilePath,
-                    displayName = current.displayName,
-                    mimeType = current.mimeType,
-                )
+            uploadItemDao.updateProgress(
+                uploadId = uploadId,
+                progressPercent = progressPercent.coerceIn(0, 100),
+                bytesUploaded = bytesUploaded.coerceAtLeast(0L),
+                bytesTotal = bytesTotal.coerceAtLeast(0L),
+                currentFileName = currentFileName,
+                currentStep = currentStep,
+                now = Instant.now().toEpochMilli(),
+            )
+        }
+    }
+
+    override fun markUploadSuccess(uploadId: String, bytesUploaded: Long, bytesTotal: Long, currentFileName: String?, currentStep: String) {
+        scope.launch {
+            uploadItemDao.markUploadSuccess(
+                uploadId = uploadId,
+                bytesUploaded = bytesUploaded.coerceAtLeast(0L),
+                bytesTotal = bytesTotal.coerceAtLeast(0L),
+                currentFileName = currentFileName,
+                currentStep = currentStep,
+                now = Instant.now().toEpochMilli(),
+            )
+        }
+    }
+
+    override fun markUploadError(uploadId: String, currentFileName: String?, currentStep: String) {
+        scope.launch {
+            uploadItemDao.markUploadError(
+                uploadId = uploadId,
+                currentFileName = currentFileName,
+                currentStep = currentStep,
+                now = Instant.now().toEpochMilli(),
             )
         }
     }
 
     override fun incrementRetry(uploadId: String) {
-        val current = queue.value.firstOrNull { it.id == uploadId } ?: return
-        val now = Instant.now().toEpochMilli()
         scope.launch {
-            uploadItemDao.upsert(
-                UploadItemEntity(
-                    id = current.id,
-                    syncState = SyncState.PENDING_UPDATE.name,
-                    createdAtEpochMs = current.updatedAt.toEpochMilli(),
-                    updatedAtEpochMs = now,
-                    captureSessionId = current.sessionId,
-                    sessionTitle = current.sessionTitle,
-                    serverOrderId = current.orderId,
-                    orderTitle = current.orderTitle,
-                    orderAddress = current.orderAddress,
-                    bindingId = current.bindingId,
-                    uploadAppSessionUuid = current.uploadAppSessionUuid,
-                    serverCaptureSessionId = current.serverCaptureSessionId,
-                    status = current.status.name,
-                    retryCount = current.retryCount + 1,
-                    progressPercent = current.progressPercent,
-                    bytesUploaded = current.bytesUploaded,
-                    bytesTotal = current.bytesTotal,
-                    currentFileName = current.currentFileName,
-                    currentStep = current.currentStep,
-                    uploadType = current.uploadType,
-                    captureType = current.captureType,
-                    localFilePath = current.localFilePath,
-                    displayName = current.displayName,
-                    mimeType = current.mimeType,
-                )
+            uploadItemDao.incrementRetry(
+                uploadId = uploadId,
+                now = Instant.now().toEpochMilli(),
             )
         }
     }

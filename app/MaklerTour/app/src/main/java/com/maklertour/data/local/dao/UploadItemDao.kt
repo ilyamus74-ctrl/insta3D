@@ -29,6 +29,73 @@ interface UploadItemDao {
     @Query("UPDATE upload_items SET syncState = 'PENDING_UPDATE', updatedAtEpochMs = :updatedAtEpochMs, status = 'Queued', progressPercent = 0, bytesUploaded = 0, bytesTotal = 0, currentFileName = NULL, currentStep = 'Interrupted, ready to retry' WHERE status = 'Uploading' AND deletedAtEpochMs IS NULL")
     suspend fun resetInterruptedUploads(updatedAtEpochMs: Long)
 
+    @Query("""
+        UPDATE upload_items
+        SET progressPercent = :progressPercent,
+            bytesUploaded = :bytesUploaded,
+            bytesTotal = :bytesTotal,
+            currentFileName = :currentFileName,
+            currentStep = :currentStep,
+            updatedAtEpochMs = :now,
+            syncState = 'PENDING_UPDATE'
+        WHERE id = :uploadId
+    """)
+    suspend fun updateProgress(
+        uploadId: String,
+        progressPercent: Int,
+        bytesUploaded: Long,
+        bytesTotal: Long,
+        currentFileName: String?,
+        currentStep: String?,
+        now: Long,
+    )
+
+    @Query("""
+        UPDATE upload_items
+        SET status = 'Success',
+            progressPercent = 100,
+            bytesUploaded = :bytesUploaded,
+            bytesTotal = :bytesTotal,
+            currentFileName = :currentFileName,
+            currentStep = :currentStep,
+            updatedAtEpochMs = :now,
+            syncState = 'PENDING_UPDATE'
+        WHERE id = :uploadId
+    """)
+    suspend fun markUploadSuccess(
+        uploadId: String,
+        bytesUploaded: Long,
+        bytesTotal: Long,
+        currentFileName: String?,
+        currentStep: String,
+        now: Long,
+    )
+
+    @Query("""
+        UPDATE upload_items
+        SET status = 'Error',
+            currentFileName = :currentFileName,
+            currentStep = :currentStep,
+            updatedAtEpochMs = :now,
+            syncState = 'PENDING_UPDATE'
+        WHERE id = :uploadId
+    """)
+    suspend fun markUploadError(
+        uploadId: String,
+        currentFileName: String?,
+        currentStep: String,
+        now: Long,
+    )
+
+    @Query("""
+        UPDATE upload_items
+        SET retryCount = retryCount + 1,
+            updatedAtEpochMs = :now,
+            syncState = 'PENDING_UPDATE'
+        WHERE id = :uploadId
+    """)
+    suspend fun incrementRetry(uploadId: String, now: Long)
+
     @Query("DELETE FROM upload_items WHERE id = :id")
     suspend fun deleteById(id: String)
 

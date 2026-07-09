@@ -366,6 +366,8 @@ def audit_capture_bundle_upload(audit: Audit) -> None:
     main = read(MAIN, audit)
     models = read(ROOT / "app/src/main/java/com/example/maklertour/domain/Models.kt", audit)
     repo = read(ROOT / "app/src/main/java/com/example/maklertour/data/repository/Repositories.kt", audit)
+    view_model = read(ROOT / "app/src/main/java/com/example/maklertour/state/AppStateViewModel.kt", audit)
+    upload_dao = read(ROOT / "app/src/main/java/com/maklertour/data/local/dao/UploadItemDao.kt", audit)
     docs = read(ROOT / "docs/APP_CAMERA_STEREO_CONTRACT.md", audit)
     audit.require("class CaptureBundlePackager" in packager, "CaptureBundlePackager exists")
     audit.require("bundle_manifest.json" in packager, "bundle_manifest.json string exists")
@@ -374,9 +376,31 @@ def audit_capture_bundle_upload(audit: Audit) -> None:
     audit.require("Dispatchers.IO" in packager or "WorkManager" in packager or "Dispatchers.IO" in main or "WorkManager" in main, "packaging uses Dispatchers.IO or WorkManager")
     audit.require("CAPTURE_BUNDLE" in models or "CAPTURE_BUNDLE" in repo or "MAKLERTOUR_CAPTURE_BUNDLE" in models or "MAKLERTOUR_CAPTURE_BUNDLE" in repo, "upload_type CAPTURE_BUNDLE or MAKLERTOUR_CAPTURE_BUNDLE exists")
     in_memory = balanced_block(repo, "class InMemoryUploadQueueRepository")
-    for method in ["updateStatus", "updateProgress", "resetForRetry", "updateServerCaptureSessionId"]:
+    for method in ["updateStatus", "updateProgress", "markUploadSuccess", "markUploadError", "resetForRetry", "updateServerCaptureSessionId"]:
         audit.require(f"override fun {method}" in in_memory, f"InMemoryUploadQueueRepository keeps {method}")
     audit.require("enqueueCaptureBundle" in in_memory and "CAPTURE_BUNDLE" in in_memory, "InMemoryUploadQueueRepository can enqueue CAPTURE_BUNDLE")
+    audit.require("fun markUploadSuccess(" in repo and "fun markUploadError(" in repo, "UploadQueueRepository exposes atomic success/error methods")
+    audit.require('"Uploaded Capture bundle"' in view_model and "markUploadSuccess(" in view_model, "CAPTURE_BUNDLE success path uses markUploadSuccess")
+    audit.require(
+        not re.search(r'updateProgress\([^)]*"Uploaded Capture bundle"[\s\S]{0,300}?updateStatus\([^)]*UploadStatus\.Success', view_model),
+        "CAPTURE_BUNDLE success path no longer chains updateProgress then updateStatus(Success)",
+    )
+    progress_update_query = upload_dao.split("suspend fun updateProgress(")[0].rsplit("UPDATE upload_items", 1)[-1]
+    audit.require(
+        "suspend fun updateProgress(" in upload_dao
+        and "SET progressPercent = :progressPercent" in progress_update_query
+        and "status =" not in progress_update_query,
+        "Room DAO has progress-only update",
+    )
+    audit.require("suspend fun markUploadSuccess(" in upload_dao and "SET status = 'Success'" in upload_dao, "Room DAO has atomic markUploadSuccess query")
+    room_repo = balanced_block(repo, "class RoomUploadQueueRepository")
+    room_increment_retry = balanced_block(room_repo, "override fun incrementRetry")
+    audit.require("suspend fun incrementRetry(" in upload_dao, "Room DAO has atomic incrementRetry query")
+    audit.require("uploadItemDao.incrementRetry(" in room_increment_retry, "RoomUploadQueueRepository.incrementRetry uses DAO incrementRetry")
+    audit.require(
+        "UploadItemEntity(" not in room_increment_retry and ".upsert(" not in room_increment_retry,
+        "RoomUploadQueueRepository.incrementRetry no longer full-upserts a stale entity",
+    )
     audit.require("asynchronous" in docs.lower() and "upload queue" in docs.lower(), "docs mention asynchronous packaging and upload queue")
 
 def main() -> int:
@@ -413,4 +437,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
