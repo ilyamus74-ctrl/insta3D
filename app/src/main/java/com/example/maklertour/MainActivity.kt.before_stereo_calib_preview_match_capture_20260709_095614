@@ -4419,24 +4419,9 @@ private fun CalibrationCaptureDialog(
         when (workflowMode) {
             CalibrationWorkflowMode.CAM0_INTRINSICS -> PreviewBitmapPanel("cam0", lastCam0PreviewBitmap, cam0Detection, Modifier.fillMaxSize(), rotationDegrees = 0f)
             CalibrationWorkflowMode.CAM1_INTRINSICS -> PreviewBitmapPanel("cam1", lastCam1PreviewBitmap, cam1Detection, Modifier.fillMaxSize(), rotationDegrees = 90f)
-            CalibrationWorkflowMode.STEREO_EXTRINSICS -> Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                PreviewBitmapPanel(
-                    "cam0",
-                    lastCam0PreviewBitmap,
-                    cam0Detection,
-                    Modifier.weight(1f).fillMaxHeight(),
-                    rotationDegrees = 0f,
-                )
-                PreviewBitmapPanel(
-                    "cam1",
-                    lastCam1PreviewBitmap,
-                    cam1Detection,
-                    Modifier.weight(1f).fillMaxHeight(),
-                    rotationDegrees = CAM1_PREVIEW_ROTATION_DEGREES,
-                )
+            CalibrationWorkflowMode.STEREO_EXTRINSICS -> Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                PreviewBitmapPanel("cam0", lastCam0PreviewBitmap, cam0Detection, Modifier.weight(1f).fillMaxWidth(), rotationDegrees = 0f)
+                PreviewBitmapPanel("cam1", lastCam1PreviewBitmap, cam1Detection, Modifier.weight(1f).fillMaxWidth(), rotationDegrees = CAM1_PREVIEW_ROTATION_DEGREES)
             }
         }
     }
