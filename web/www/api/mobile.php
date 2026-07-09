@@ -1032,6 +1032,226 @@ if ($stmt) {
     ]);
 }
 
+
+if ($action === 'upload_capture_bundle') {
+    $user = api_require_mobile_user($dbcnx);
+    $userId = (int)$user['id'];
+    $role = $user['role'] ?? 'BROKER';
+
+    error_log('UPLOAD_CAPTURE_BUNDLE POST=' . json_encode($_POST, JSON_UNESCAPED_UNICODE));
+    error_log('UPLOAD_CAPTURE_BUNDLE FILES=' . json_encode(array_map(function($f) {
+        return [
+            'name' => $f['name'] ?? null,
+            'type' => $f['type'] ?? null,
+            'size' => $f['size'] ?? null,
+            'error' => $f['error'] ?? null,
+        ];
+    }, $_FILES), JSON_UNESCAPED_UNICODE));
+
+    $orderId = (int)($_POST['order_id'] ?? 0);
+    $captureSessionId = (int)($_POST['capture_session_id'] ?? 0);
+    $uploadType = trim((string)($_POST['upload_type'] ?? 'CAPTURE_BUNDLE'));
+    $captureType = trim((string)($_POST['capture_type'] ?? ''));
+    $appBundleUuid = trim((string)($_POST['app_bundle_uuid'] ?? ''));
+
+    if ($orderId <= 0 || $captureSessionId <= 0 || $appBundleUuid === '') {
+        api_json(['ok' => false, 'error' => 'missing required fields'], 400);
+    }
+
+    if (!in_array($captureType, ['synced_depth_frames', 'stereo_video_legacy'], true)) {
+        api_json(['ok' => false, 'error' => 'invalid capture_type'], 400);
+    }
+
+    if (!in_array($uploadType, ['CAPTURE_BUNDLE', 'MAKLERTOUR_CAPTURE_BUNDLE'], true)) {
+        api_json(['ok' => false, 'error' => 'invalid upload_type'], 400);
+    }
+
+    $stmt = $dbcnx->prepare("
+    SELECT cs.id, cs.order_id, cs.app_session_uuid
+    FROM capture_sessions cs
+    JOIN tour_orders o ON o.id = cs.order_id
+    WHERE cs.id = ?
+      AND cs.order_id = ?
+      AND (
+          ? = 'ADMIN'
+          OR o.operator_id = ?
+          OR o.broker_id = ?
+      )
+      AND o.status NOT IN ('READY','COMPLETED','CLOSED')
+      AND operator_closed_at IS NULL
+    LIMIT 1
+    ");
+
+    if (!$stmt) {
+        api_json(['ok' => false, 'error' => 'db session check prepare error'], 500);
+    }
+
+    $stmt->bind_param("iisii", $captureSessionId, $orderId, $role, $userId, $userId);
+    $stmt->execute();
+    $session = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$session) {
+        api_json(['ok' => false, 'error' => 'order_closed_or_not_available'], 409);
+    }
+
+    $dbOrderId = (int)($session['order_id'] ?? 0);
+    if ($dbOrderId <= 0) {
+        api_json(['ok' => false, 'error' => 'invalid_session_order'], 409);
+    }
+    $orderId = $dbOrderId;
+
+    if (!isset($_FILES['capture_bundle'])) {
+        api_json(['ok' => false, 'error' => 'missing capture_bundle file'], 400);
+    }
+
+    $file = $_FILES['capture_bundle'];
+    $uploadError = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($uploadError !== UPLOAD_ERR_OK) {
+        api_json(['ok' => false, 'error' => 'capture_bundle upload error', 'upload_error' => $uploadError], 400);
+    }
+
+    if (!is_uploaded_file((string)($file['tmp_name'] ?? ''))) {
+        api_json(['ok' => false, 'error' => 'tmp file is not uploaded file'], 500);
+    }
+
+    $originalName = basename((string)($file['name'] ?? ''));
+    $allowedBundleExtension = preg_match('/\.(tgz|tar\.gz)$/i', $originalName) === 1;
+    if (!$allowedBundleExtension) {
+        api_json(['ok' => false, 'error' => 'invalid capture_bundle extension'], 400);
+    }
+
+    $sizeBytes = (int)($file['size'] ?? 0);
+    if ($sizeBytes <= 0) {
+        $sizeBytes = (int)(filesize((string)$file['tmp_name']) ?: 0);
+    }
+    if ($sizeBytes <= 0) {
+        api_json(['ok' => false, 'error' => 'empty capture_bundle file'], 400);
+    }
+
+    $base = realpath(__DIR__ . '/../../storage');
+    if ($base === false) {
+        $base = __DIR__ . '/../../storage';
+        if (!is_dir($base) && !mkdir($base, 0775, true)) {
+            api_json(['ok' => false, 'error' => 'failed to create storage root', 'storage_root' => $base], 500);
+        }
+        $base = realpath($base);
+    }
+
+    if ($base === false || !is_dir($base) || !is_writable($base)) {
+        api_json(['ok' => false, 'error' => 'storage root is not writable', 'storage_root' => (string)$base], 500);
+    }
+
+    $safeSessionUuid = api_safe_storage_name((string)$session['app_session_uuid'], 'session_' . $captureSessionId);
+    $safeBundleUuid = api_safe_storage_name($appBundleUuid, 'bundle_' . time());
+    $safeOriginalName = api_safe_storage_name($originalName, 'capture_bundle_' . time() . '.tgz');
+    $targetDir = $base . '/orders/' . $orderId . '/sessions/' . $safeSessionUuid . '/capture_bundles';
+
+    if (!is_dir($targetDir) && !mkdir($targetDir, 0775, true)) {
+        api_json(['ok' => false, 'error' => 'failed to create capture bundle dir', 'target_dir' => $targetDir], 500);
+    }
+
+    if (!is_writable($targetDir)) {
+        api_json(['ok' => false, 'error' => 'capture bundle dir is not writable', 'target_dir' => $targetDir], 500);
+    }
+
+    $filename = $safeBundleUuid . '_' . $safeOriginalName;
+    $targetPath = $targetDir . '/' . $filename;
+    $relativePath = 'orders/' . $orderId . '/sessions/' . $safeSessionUuid . '/capture_bundles/' . $filename;
+
+    if (!move_uploaded_file((string)$file['tmp_name'], $targetPath)) {
+        api_json(['ok' => false, 'error' => 'failed to move capture_bundle file', 'target_path' => $targetPath], 500);
+    }
+
+    $sizeBytes = (int)(filesize($targetPath) ?: $sizeBytes);
+    $uploadedAt = gmdate('c');
+    $mimeType = (string)($file['type'] ?? 'application/gzip');
+    $metadata = [
+        'order_id' => $orderId,
+        'capture_session_id' => $captureSessionId,
+        'upload_type' => $uploadType,
+        'capture_type' => $captureType,
+        'app_bundle_uuid' => $appBundleUuid,
+        'filename' => $filename,
+        'storage_path' => $relativePath,
+        'size_bytes' => $sizeBytes,
+        'uploaded_at' => $uploadedAt,
+        'uploaded_by_user_id' => $userId,
+        'original_name' => $originalName,
+        'mime_type' => $mimeType,
+    ];
+
+    if (file_put_contents($targetPath . '.json', json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT)) === false) {
+        api_json(['ok' => false, 'error' => 'failed to write capture_bundle metadata'], 500);
+    }
+
+    if (!$dbcnx->query("CREATE TABLE IF NOT EXISTS capture_bundles (id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, capture_session_id BIGINT NOT NULL, app_bundle_uuid VARCHAR(128) NOT NULL, capture_type VARCHAR(64) NOT NULL, filename VARCHAR(255) NOT NULL, storage_path TEXT NOT NULL, size_bytes BIGINT NOT NULL DEFAULT 0, status VARCHAR(32) NOT NULL DEFAULT 'UPLOADED', created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), UNIQUE KEY uniq_capture_bundle_file (capture_session_id, filename), KEY idx_capture_bundles_order_session (order_id, capture_session_id), KEY idx_capture_bundles_app_uuid (capture_session_id, app_bundle_uuid)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci")) {
+        api_json(['ok' => false, 'error' => 'db capture bundles table create error: ' . $dbcnx->error], 500);
+    }
+
+    $stmt = $dbcnx->prepare("
+        INSERT INTO capture_bundles
+            (order_id, capture_session_id, app_bundle_uuid, capture_type, filename, storage_path, size_bytes, status)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?, 'UPLOADED')
+        ON DUPLICATE KEY UPDATE
+            filename = VALUES(filename),
+            storage_path = VALUES(storage_path),
+            size_bytes = VALUES(size_bytes),
+            capture_type = VALUES(capture_type),
+            status = 'UPLOADED',
+            updated_at = NOW(6)
+    ");
+    if (!$stmt) {
+        api_json(['ok' => false, 'error' => 'db capture bundle insert prepare error: ' . $dbcnx->error], 500);
+    }
+    $stmt->bind_param("iissssi", $orderId, $captureSessionId, $appBundleUuid, $captureType, $filename, $relativePath, $sizeBytes);
+    if (!$stmt->execute()) {
+        api_json(['ok' => false, 'error' => 'db capture bundle insert execute error: ' . $stmt->error], 500);
+    }
+    $stmt->close();
+
+    $stmt = $dbcnx->prepare("
+        UPDATE tour_orders
+        SET status = 'UPLOADED'
+        WHERE id = ?
+          AND status IN ('ASSIGNED','IN_PROGRESS','CAPTURED','UPLOADING')
+    ");
+    if ($stmt) {
+        $stmt->bind_param("i", $orderId);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    audit_log(
+        $userId,
+        'CAPTURE_BUNDLE_UPLOADED',
+        'TOUR_ORDER',
+        $orderId,
+        'Загружен capture bundle',
+        api_request_meta([
+            'capture_session_id' => $captureSessionId,
+            'upload_type' => $uploadType,
+            'capture_type' => $captureType,
+            'app_bundle_uuid' => $appBundleUuid,
+            'storage_path' => $relativePath,
+            'size_bytes' => $sizeBytes,
+            'original_name' => $originalName,
+            'mime_type' => $mimeType,
+        ])
+    );
+
+    api_json([
+        'ok' => true,
+        'upload_complete' => true,
+        'storage_path' => $relativePath,
+        'size_bytes' => $sizeBytes,
+        'capture_type' => $captureType,
+        'app_bundle_uuid' => $appBundleUuid,
+        'message' => 'Capture bundle uploaded. Ready for server processing.',
+    ]);
+}
+
 if ($action === 'create_processing_job') {
     $user = api_require_mobile_user($dbcnx);
     $userId = (int)$user['id'];
