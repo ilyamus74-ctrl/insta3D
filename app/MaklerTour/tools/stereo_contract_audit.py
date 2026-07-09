@@ -13,6 +13,7 @@ MAIN = ROOT / "app/src/main/java/com/example/maklertour/MainActivity.kt"
 PHONE_RECORDER = ROOT / "app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraVideoRecorder.kt"
 STEREO_PROCESSOR = ROOT / "app/src/main/java/com/example/maklertour/data/calibration/StereoCalibrationProcessor.kt"
 STEREO_CAPTURE = ROOT / "app/src/main/java/com/example/maklertour/data/phonecamera/StereoCaptureExperimental.kt"
+NATIVE_UVC = ROOT / "app/src/main/cpp/cam1_uvc.cpp"
 
 
 class Audit:
@@ -262,6 +263,33 @@ def audit_saved_frames(recorder: str, audit: Audit) -> None:
         audit.require(item not in recorder, f"cam0 saved frames do not apply CameraX rotation: {item}")
 
 
+
+def audit_native_uvc_shutdown(native: str, audit: Audit) -> None:
+    if not native:
+        return
+
+    audit.require("g_uvc_stopping" in native and "g_uvc_alive" in native and "std::atomic<bool>" in native, "native UVC has atomic stopping/alive flags")
+    audit.require("g_lifecycle_lock" in native and "std::lock_guard<std::mutex> lifecycle(g_lifecycle_lock)" in native, "native UVC stop/release paths are serialized by lifecycle mutex")
+    audit.require("g_accept_frames=false" in native and "g_active_callback_state.store(nullptr" in native, "native UVC disables frame callback delivery during stop")
+    audit.require("state->stopping.load" in native and "state->alive.load" in native and "g_uvc_stopping.load" in native, "native UVC callback checks alive/stopping before using shared state")
+
+    done = native[native.find("done:") : native.find('ALOGI("streamingThread stop', native.find("done:"))]
+    stop_idx = done.find("uvc_stop_streaming")
+    close_idx = done.find("uvc_close")
+    exit_idx = done.find("uvc_exit")
+    destroy_idx = done.find("native_uvc_stop resources_destroyed")
+    audit.require(stop_idx >= 0, "native UVC stop path calls uvc_stop_streaming")
+    audit.require(stop_idx >= 0 and close_idx > stop_idx and exit_idx > close_idx, "native UVC stop path calls uvc_stop_streaming before uvc_close/uvc_exit")
+    audit.require("g_callbacks_in_flight.load()>0" in done and (close_idx > done.find("g_callbacks_in_flight.load()>0")), "native UVC drains callbacks before resource destruction")
+    audit.require(destroy_idx > exit_idx >= 0, "native UVC logs resources_destroyed after uvc_exit")
+
+    joiner = balanced_block(native, "bool joinStreamThreadLocked")
+    audit.require("g_thread.join()" in joiner, "native UVC event/stream thread is joined")
+    audit.require("native_uvc_stop begin" in joiner, "native UVC stop logs begin")
+    audit.require("native_uvc_stop event_thread_joined" in joiner, "native UVC stop logs event_thread_joined")
+    audit.require("native_uvc_stop end" in joiner, "native UVC stop logs end")
+    audit.require("timeout_warning" in native, "native UVC stop has timeout warning logs for slow drains/joins")
+
 def audit_imports(main: str, audit: Audit) -> None:
     android_matrix = "import android.graphics.Matrix" in main
     compose_matrix = "import androidx.compose.ui.graphics.Matrix" in main
@@ -304,6 +332,7 @@ def main() -> int:
     recorder_text = read(PHONE_RECORDER, audit)
     processor_text = read(STEREO_PROCESSOR, audit)
     capture_text = read(STEREO_CAPTURE, audit)
+    native_uvc_text = read(NATIVE_UVC, audit)
 
     if main_text:
         audit_imports(main_text, audit)
@@ -313,6 +342,8 @@ def main() -> int:
 
     if main_text and processor_text and capture_text:
         audit_stereo(main_text, processor_text, capture_text, audit)
+
+    audit_native_uvc_shutdown(native_uvc_text, audit)
 
     if recorder_text:
         audit_saved_frames(recorder_text, audit)
