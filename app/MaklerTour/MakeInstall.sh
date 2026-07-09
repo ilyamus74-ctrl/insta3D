@@ -1,6 +1,6 @@
 #!/bin/bash
 
-
+/usr/bin/python3 tools/stereo_contract_audit.py
 ./gradlew :app:assembleDebug
 SER=192.168.2.217:5555
 PKG=com.maklertour
