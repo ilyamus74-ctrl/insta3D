@@ -93,13 +93,11 @@ def main():
     R = mat(pick(extr, 'stereo_R', 'R', 'rotation_matrix'), (3,3))
     T = mat(pick(extr, 'stereo_T', 'T', 'translation_vector')).reshape(3,1)
 
-    first0_raw = cv2.imread(str(cap / selected[0]['cam0_file']))
-    first1_raw = cv2.imread(str(cap / selected[0]['cam1_file']))
-    if first0_raw is None or first1_raw is None:
+    first0 = cv2.imread(str(cap / selected[0]['cam0_file']))
+    first1 = cv2.imread(str(cap / selected[0]['cam1_file']))
+    if first0 is None or first1 is None:
         raise SystemExit('failed to read first JPEG pair')
-    raw_size = (first0_raw.shape[1], first0_raw.shape[0])
-    first0 = maybe_rotate(first0_raw, args.cam0_rotate)
-    first1 = maybe_rotate(first1_raw, args.cam1_rotate)
+    first0 = maybe_rotate(first0, args.cam0_rotate); first1 = maybe_rotate(first1, args.cam1_rotate)
     size = (first0.shape[1], first0.shape[0])
     flags = 0 if args.no_zero_disparity else cv2.CALIB_ZERO_DISPARITY
     new_size = (args.new_width, args.new_height) if args.new_width > 0 and args.new_height > 0 else size
@@ -144,18 +142,9 @@ def main():
         debug_pairs.append({'pair_index': p.get('pair_index'), 'cam0_file': p.get('cam0_file'), 'cam1_file': p.get('cam1_file')})
     cv2.imwrite(str(out / 'contact_rectified_synced.jpg'), np.vstack(contact))
     depth_h, depth_w = rotate_for_depth_input(np.zeros((new_size[1], new_size[0], 3), dtype=np.uint8), depth_input_rotation).shape[:2]
-    first_pair = selected[0] if selected else {}
-    operator_orientation = manifest.get('operator_orientation') or manifest.get('operator_frame_orientation') or first_pair.get('operator_orientation') or first_pair.get('app_orientation_at_capture') or 'unknown'
-    if operator_orientation == 'unknown':
-        operator_orientation = first_pair.get('operator_orientation') or first_pair.get('app_orientation_at_capture') or 'unknown'
-    display_rotation_degrees = manifest.get('display_rotation_degrees')
-    if display_rotation_degrees is None:
-        display_rotation_degrees = first_pair.get('display_rotation_degrees', first_pair.get('display_rotation_at_capture', None))
-
     debug = {
-        'samples': debug_pairs, 'size': size, 'new_size': new_size, 'raw_frame_width': raw_size[0], 'raw_frame_height': raw_size[1],
-        'saved_rotation_degrees_applied': 0, 'operator_frame_orientation': operator_orientation,
-        'display_rotation_degrees': display_rotation_degrees,
+        'samples': debug_pairs, 'size': size, 'new_size': new_size, 'raw_frame_width': size[0], 'raw_frame_height': size[1],
+        'saved_rotation_degrees_applied': 0, 'operator_frame_orientation': manifest.get('operator_orientation', manifest.get('operator_frame_orientation', 'unknown')),
         'stereo_T': np.ravel(T).tolist(), 'P1': P0.tolist(), 'P2': P1.tolist(), 'p2_tx': p2_tx, 'p2_ty': p2_ty,
         'rectified_baseline_axis': rectified_baseline_axis, 'disparity_axis': disparity_axis,
         'depth_input_rotation': depth_input_rotation, 'depth_input_width': depth_w, 'depth_input_height': depth_h, 'depth_disparity_axis': 'x',
