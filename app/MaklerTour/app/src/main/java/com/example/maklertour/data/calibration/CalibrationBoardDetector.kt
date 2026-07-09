@@ -16,6 +16,7 @@ data class CalibrationDetectionResult(
     val imageHeight: Int,
     val qualityMessage: String,
     val normalizedCornerPoints: List<NormalizedCornerPoint> = emptyList(),
+    val charucoIds: List<Int> = emptyList(),
 )
 
 interface CalibrationBoardDetector {

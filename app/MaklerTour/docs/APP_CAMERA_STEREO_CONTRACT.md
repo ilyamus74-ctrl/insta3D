@@ -303,3 +303,19 @@ cam0 preview
 cam1 preview
 
 The detector/saved/calibration math must still use the original unmodified bitmaps.
+## Stereo ChArUco quality gates (2026-07-09)
+
+Step 3 (`STEREO_EXTRINSICS`) uses stereo-specific ChArUco overlap gates in addition to the existing per-camera `found` state. Intrinsics capture keeps the existing minimum ChArUco corner rule (12); the stricter overlap thresholds apply only to stereo extrinsics.
+
+- Manual stereo capture requires both cameras to detect the board, stereo inputs to be ready, and at least **35 common ChArUco IDs** between cam0 and cam1.
+- Auto stereo capture requires both cameras to detect the board, stereo inputs to be ready, and at least **38 common ChArUco IDs** between cam0 and cam1.
+- The Step 3 overlay reports `common ids: X/40` plus `stereo quality: OK / need more overlap` so the operator can move the board fully into both cameras before saving a pair.
+- A manual capture below the 35-ID threshold is rejected without saving frames and instructs the operator to increase overlap.
+
+`StereoCalibrationProcessor` also protects final stereo calibration:
+
+- ChArUco stereo pairs with fewer than **35 common IDs** are rejected before `stereoCalibrate`.
+- At least **10 filtered stereo pairs** are required; otherwise calibration fails clearly instead of returning a high-RMS result.
+- The processor performs an initial calibration on candidates, computes per-pair epipolar errors, rejects robust outliers, then runs a final calibration on the remaining pairs.
+- Result JSON records total pairs, candidates after common-ID filtering, used pairs, rejected pair indexes/reasons, initial/final RMS, initial/final per-pair epipolar errors, and common ChArUco IDs per accepted pair.
+- The stereo RMS acceptance threshold is **not lowered**; final stereo RMS must still pass the existing threshold.

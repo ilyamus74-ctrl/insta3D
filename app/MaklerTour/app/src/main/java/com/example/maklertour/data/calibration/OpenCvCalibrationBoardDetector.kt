@@ -67,7 +67,8 @@ class OpenCvCalibrationBoardDetector : CalibrationBoardDetector {
             val foundCount = charucoIds.rows()
             val found = foundCount >= settings.minCharucoCorners
             val points = matToPointList(charucoCorners).map { point -> NormalizedCornerPoint((point.x / bitmap.width).toFloat().coerceIn(0f, 1f), (point.y / bitmap.height).toFloat().coerceIn(0f, 1f)) }
-            CalibrationDetectionResult(found, foundCount, expectedCorners, bitmap.width, bitmap.height, if (found) "ChArUco found; $foundCount corners detected" else "ChArUco not found; need at least ${settings.minCharucoCorners} corners", if (found) points else emptyList())
+            val ids = matToIdList(charucoIds)
+            CalibrationDetectionResult(found, foundCount, expectedCorners, bitmap.width, bitmap.height, if (found) "ChArUco found; $foundCount corners detected" else "ChArUco not found; need at least ${settings.minCharucoCorners} corners", if (found) points else emptyList(), if (found) ids else emptyList())
         } finally { charucoCorners.release(); charucoIds.release() }
     }
 
@@ -97,6 +98,10 @@ class OpenCvCalibrationBoardDetector : CalibrationBoardDetector {
             val xy = mat.get(row, 0) ?: return@mapNotNull null
             if (xy.size < 2) return@mapNotNull null
             org.opencv.core.Point(xy[0], xy[1])
+        }
+
+        fun matToIdList(mat: Mat) = (0 until mat.rows()).mapNotNull { row ->
+            mat.get(row, 0)?.getOrNull(0)?.toInt()
         }
     }
 

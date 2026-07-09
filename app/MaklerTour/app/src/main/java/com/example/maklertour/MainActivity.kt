@@ -196,6 +196,8 @@ class MainActivity : ComponentActivity() {
 }
 
 private const val CAM1_PREVIEW_ROTATION_DEGREES = 90f
+private const val STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS = 35
+private const val STEREO_AUTO_MIN_COMMON_CHARUCO_IDS = 38
 
 private enum class AppTab(val route: String, val titleRes: Int) {
     Sessions("sessions", R.string.tab_sessions),
@@ -4198,6 +4200,13 @@ private fun CalibrationCaptureDialog(
             CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result?.found == true
             CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true
         }
+        if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS && latestFrameDetectionValid) {
+            val commonIds = stereoCommonCharucoIds(cam0Result, cam1Result)
+            if (commonIds < STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) {
+                message = "Stereo pair rejected: common ChArUco ids $commonIds/40, need at least $STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS. Move board fully into both cameras."
+                return false
+            }
+        }
         if (!latestFrameDetectionValid) {
             message = when (workflowMode) {
                 CalibrationWorkflowMode.CAM0_INTRINSICS -> "${boardDisplayName(settings)} not found on latest cam0 frame; frame was not saved. Repeat capture."
@@ -4320,7 +4329,7 @@ private fun CalibrationCaptureDialog(
                 val autoCaptureReady = when (workflowMode) {
                     CalibrationWorkflowMode.CAM0_INTRINSICS -> cam0Result?.found == true
                     CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Result?.found == true
-                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true && stereoInputsReady(sessionDir)
+                    CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Result?.found == true && cam1Result?.found == true && stereoInputsReady(sessionDir) && stereoCommonCharucoIds(cam0Result, cam1Result) >= STEREO_AUTO_MIN_COMMON_CHARUCO_IDS
                 }
                 if (autoCapture && pairCount < settings.requiredPairs && autoCaptureReady) {
                     val now = System.currentTimeMillis()
@@ -4334,6 +4343,20 @@ private fun CalibrationCaptureDialog(
             }
             delay(500)
         }
+    }
+
+    fun stereoCommonCharucoIds(
+        cam0: CalibrationDetectionResult?,
+        cam1: CalibrationDetectionResult?,
+    ): Int {
+        if (cam0?.found != true || cam1?.found != true) return 0
+        return cam0.charucoIds.intersect(cam1.charucoIds.toSet()).size
+    }
+
+    fun stereoQualitySummary(commonIds: Int): String = if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) {
+        "common ids: $commonIds/40 — OK"
+    } else {
+        "common ids: $commonIds/40 — move board fully into both cameras"
     }
 
     fun detectionSummary(label: String, detection: CalibrationDetectionResult?): String {
@@ -4383,6 +4406,9 @@ private fun CalibrationCaptureDialog(
                             Text("cam1 actual size=${cam1Bitmap?.width ?: "pending"}x${cam1Bitmap?.height ?: "pending"}", color = Color.White)
                             Text(detectionSummary("cam0", cam0Detection), color = Color.White)
                             Text(detectionSummary("cam1", cam1Detection), color = Color.White)
+                            val commonIds = stereoCommonCharucoIds(cam0Detection, cam1Detection)
+                            Text(stereoQualitySummary(commonIds), color = if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) Color(0xFF7CFC98) else Color(0xFFFFD166))
+                            Text("stereo quality: ${if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) "OK" else "need more overlap"}", color = Color.White)
                         }
                     }
                 } else {
@@ -4395,6 +4421,11 @@ private fun CalibrationCaptureDialog(
                     if (isCapturing) {
                         Text(detectionSummary("cam0", cam0Detection), color = Color.White)
                         Text(detectionSummary("cam1", cam1Detection), color = Color.White)
+                        if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {
+                            val commonIds = stereoCommonCharucoIds(cam0Detection, cam1Detection)
+                            Text(stereoQualitySummary(commonIds), color = if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) Color(0xFF7CFC98) else Color(0xFFFFD166))
+                            Text("stereo quality: ${if (commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS) "OK" else "need more overlap"}", color = Color.White)
+                        }
                         if (message.isNotBlank()) Text(message, color = Color.White)
                     }
                     if (wizardState == CalibrationWizardState.CAM0_RESULT || wizardState == CalibrationWizardState.CAM1_RESULT || wizardState == CalibrationWizardState.STEREO_RESULT) {
@@ -4445,7 +4476,7 @@ private fun CalibrationCaptureDialog(
         val captureEnabled = when (workflowMode) {
             CalibrationWorkflowMode.CAM0_INTRINSICS -> cam0Detection?.found == true
             CalibrationWorkflowMode.CAM1_INTRINSICS -> cam1Detection?.found == true
-            CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Detection?.found == true && cam1Detection?.found == true && stereoInputsReady(sessionDir)
+            CalibrationWorkflowMode.STEREO_EXTRINSICS -> cam0Detection?.found == true && cam1Detection?.found == true && stereoInputsReady(sessionDir) && stereoCommonCharucoIds(cam0Detection, cam1Detection) >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS
         } && !calibrationRunning
 
         val autoLabel = if (workflowMode == CalibrationWorkflowMode.STEREO_EXTRINSICS) {

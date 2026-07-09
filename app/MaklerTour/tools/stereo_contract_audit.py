@@ -224,10 +224,24 @@ def audit_stereo(main: str, processor: str, capture: str, audit: Audit) -> None:
     audit.require("maxDeltaMs" in capture, "nearest stereo pair function accepts maxDeltaMs")
     audit.require("delta_exceeds" in capture or "best_delta_ms" in capture, "nearest stereo pair function logs/rejects bad deltas")
 
+    audit.require("STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS" in main, "MainActivity has manual stereo common-ID threshold")
+    audit.require("STEREO_AUTO_MIN_COMMON_CHARUCO_IDS" in main, "MainActivity has auto stereo common-ID threshold")
+    audit.require("stereoCommonCharucoIds" in main, "Step 3 computes common ChArUco IDs")
+    audit.require("commonIds >= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS" in main or ">= STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS" in main, "manual capture gate checks common IDs")
+    audit.require("commonIds" in main and "STEREO_AUTO_MIN_COMMON_CHARUCO_IDS" in main and "autoCaptureReady" in main, "auto stereo gate checks common IDs")
+    audit.require("common ids:" in main or "stereo quality:" in main, "Step 3 UI shows common IDs / stereo quality")
+
     audit.require("detectCharucoCorners" in processor, "StereoCalibrationProcessor detects ChArUco")
     audit.require("commonIds" in processor, "StereoCalibrationProcessor uses common ChArUco IDs")
     audit.require(".intersect(" in processor, "StereoCalibrationProcessor intersects cam0/cam1 IDs")
     audit.require("charucoCommonIdsPerPair" in processor, "StereoCalibrationProcessor reports common IDs per pair")
+    audit.require("STEREO_PROCESSOR_MIN_COMMON_CHARUCO_IDS" in processor, "processor has common-ID filter threshold")
+    audit.require("STEREO_OUTLIER_HARD_MAX_ERROR_PX" in processor, "processor has hard outlier error threshold")
+    audit.require("STEREO_MIN_FILTERED_PAIRS" in processor, "processor has minimum filtered pair count")
+    audit.require("rejectedPairIndexes" in processor and "rejected_pair_indexes" in processor, "processor populates rejected_pair_indexes")
+    audit.require("common_id_and_epipolar_error_filter" in processor, "outlier_rejection_mode can be non-None")
+    audit.require(processor.count("stereoCalibrate(") >= 2, "final stereoCalibrate can run after filtering")
+    audit.require("pairsCandidatesAfterCommonIdFilter" in processor and "pairsUsed = finalPairsUsed" in processor, "pairs_used can be lower than pairs_total")
     audit.require("CALIB_FIX_INTRINSIC" in processor, "stereoCalibrate uses CALIB_FIX_INTRINSIC")
 
 

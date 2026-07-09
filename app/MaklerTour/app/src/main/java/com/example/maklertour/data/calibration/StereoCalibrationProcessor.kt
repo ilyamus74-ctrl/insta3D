@@ -85,6 +85,7 @@ class StereoCalibrationProcessor(
         var cam0ImageSize: Size? = null
         var cam1ImageSize: Size? = null
         val charucoCommonIdsPerPair = mutableListOf<List<Int>>()
+        val rejectedPairReasons = linkedMapOf<Int, String>()
 
         for (i in 0 until pairs.length()) {
             val pair = pairs.optJSONObject(i) ?: continue
@@ -95,7 +96,7 @@ class StereoCalibrationProcessor(
                 val cam0 = detectCharucoCorners(File(sessionDir, cam0Path), settings)
                 val cam1 = detectCharucoCorners(File(sessionDir, cam1Path), settings)
                 val commonIds = cam0.ids.intersect(cam1.ids.toSet()).sorted()
-                if (cam0.error == null && cam1.error == null && commonIds.size >= settings.minCharucoCorners) {
+                if (cam0.error == null && cam1.error == null && commonIds.size >= STEREO_PROCESSOR_MIN_COMMON_CHARUCO_IDS) {
                     objectPoints += MatOfPoint3f(*commonIds.mapNotNull { cam0.objectPointsById[it] }.toTypedArray())
                     cam0Points += MatOfPoint2f(*commonIds.mapNotNull { cam0.imagePointsById[it] }.toTypedArray())
                     cam1Points += MatOfPoint2f(*commonIds.mapNotNull { cam1.imagePointsById[it] }.toTypedArray())
@@ -104,7 +105,10 @@ class StereoCalibrationProcessor(
                     cam0ImageSize = cam0.size
                     cam1ImageSize = cam1.size
                 } else {
-                    errors += "Skipped pair ${pair.optInt("pair_index", i + 1)}: common ChArUco ids=${commonIds.size}, cam0=${cam0.error ?: "ok"}, cam1=${cam1.error ?: "ok"}"
+                    val pairIndex = pair.optInt("pair_index", i + 1)
+                    val reason = "common ChArUco ids=${commonIds.size}, cam0=${cam0.error ?: "ok"}, cam1=${cam1.error ?: "ok"}"
+                    rejectedPairReasons[pairIndex] = reason
+                    errors += "Skipped pair $pairIndex: $reason"
                 }
             } else {
                 val cam0 = detectCorners(File(sessionDir, cam0Path), boardSize, expectedCorners)
@@ -123,8 +127,9 @@ class StereoCalibrationProcessor(
         }
 
         val pairsUsed = cam0Points.size
-        val requiredForSuccess = max(minPairs, minOf(settings.requiredPairs, 15))
-        if (pairsUsed < requiredForSuccess) return finish(failed(sessionDir, errors + "Only $pairsUsed usable pairs; need at least $requiredForSuccess", settings, pairs.length(), pairsUsed, cam0ImageSize, cam1ImageSize))
+        val requiredForSuccess = maxOf(STEREO_MIN_FILTERED_PAIRS, minPairs, minOf(settings.requiredPairs, 15))
+        if (pairsUsed < STEREO_MIN_FILTERED_PAIRS) return finish(failed(sessionDir, errors + "Not enough valid stereo pairs after common-id filtering: $pairsUsed/$STEREO_MIN_FILTERED_PAIRS", settings, pairs.length(), pairsUsed, cam0ImageSize, cam1ImageSize, rejectedPairIndexes = rejectedPairReasons.keys.toList(), rejectedPairReasons = rejectedPairReasons))
+        if (pairsUsed < requiredForSuccess) return finish(failed(sessionDir, errors + "Only $pairsUsed usable pairs; need at least $requiredForSuccess", settings, pairs.length(), pairsUsed, cam0ImageSize, cam1ImageSize, rejectedPairIndexes = rejectedPairReasons.keys.toList(), rejectedPairReasons = rejectedPairReasons))
 
         val cam0Size = cam0ImageSize ?: Size(cam0IntrinsicsJson.optInt("image_width").toDouble(), cam0IntrinsicsJson.optInt("image_height").toDouble())
         val cam1Size = cam1ImageSize ?: Size(cam1IntrinsicsJson.optInt("image_width").toDouble(), cam1IntrinsicsJson.optInt("image_height").toDouble())
@@ -230,7 +235,7 @@ class StereoCalibrationProcessor(
                     )
                 }.getOrDefault(Double.POSITIVE_INFINITY)
 
-                if (refitRms.isFinite() && refitRms < stereoRms) {
+                if (refitRms.isFinite()) {
                     finalR = refitR
                     finalT = refitT
                     finalE = refitE
@@ -239,8 +244,9 @@ class StereoCalibrationProcessor(
                     finalCam1Points = refitCam1Points
                     finalPerPairErrors = computePerPairEpipolarErrors(refitCam0Points, refitCam1Points, refitF, refitPairIndexes)
                     finalPairsUsed = acceptedPositions.size
-                    finalRejectedPairIndexes = candidateRejectedPairIndexes
-                    finalOutlierMode = "epipolar_error_refit_max30pct_min4px_median2_5x"
+                    candidateRejectedPairIndexes.forEach { rejectedPairReasons[it] = "epipolar error above robust limit" }
+                    finalRejectedPairIndexes = (rejectedPairReasons.keys).toList()
+                    finalOutlierMode = "common_id_and_epipolar_error_filter"
                     Log.i(
                         "StereoCalibrationProcessor",
                         "outlier_refit accepted initial_rms=$stereoRms refined_rms=$refitRms rejected=${candidateRejectedPairIndexes.joinToString(",")}",
@@ -261,9 +267,13 @@ class StereoCalibrationProcessor(
                     checkerboardInnerCols = settings.checkerboardInnerCols, checkerboardInnerRows = settings.checkerboardInnerRows, squareSizeMm = settings.squareSizeMm,
                     boardType = settings.boardType.name, charucoSquaresX = settings.charucoSquaresX, charucoSquaresY = settings.charucoSquaresY, charucoSquareLengthMm = settings.charucoSquareLengthMm, charucoMarkerLengthMm = settings.charucoMarkerLengthMm, charucoDictionary = settings.charucoDictionary, minCharucoCorners = settings.minCharucoCorners, charucoLegacyPattern = settings.charucoLegacyPattern, charucoCommonIdsPerPair = charucoCommonIdsPerPair,
                     pairsTotal = pairs.length(), pairsUsed = finalPairsUsed, stereoRms = finalStereoRms,
-                    initialStereoRms = if (finalRejectedPairIndexes.isNotEmpty()) stereoRms else null,
-                    rejectedPairIndexes = finalRejectedPairIndexes,
-                    outlierRejectionMode = finalOutlierMode,
+                    initialStereoRms = stereoRms,
+                    pairsCandidatesAfterCommonIdFilter = pairsUsed,
+                    rejectedPairIndexes = finalRejectedPairIndexes.ifEmpty { rejectedPairReasons.keys.toList() },
+                    rejectedPairReasons = rejectedPairReasons,
+                    outlierRejectionMode = finalOutlierMode ?: if (rejectedPairReasons.isNotEmpty()) "common_id_and_epipolar_error_filter" else null,
+                    perPairErrorsInitial = initialPerPairErrors,
+                    outlierFinalRms = finalStereoRms,
                     cam0ImageWidth = cam0Size.width.toInt(), cam0ImageHeight = cam0Size.height.toInt(), cam1ImageWidth = cam1Size.width.toInt(), cam1ImageHeight = cam1Size.height.toInt(),
                     cam0CameraMatrix = cam0Matrix.toNestedList(), cam0DistCoeffs = cam0Dist.toFlatList(), cam1CameraMatrix = cam1Matrix.toNestedList(), cam1DistCoeffs = cam1Dist.toFlatList(),
                     stereoR = finalR.toNestedList(), stereoT = finalT.toFlatList(), stereoE = finalE.toNestedList(), stereoF = finalF.toNestedList(),
@@ -427,12 +437,12 @@ class StereoCalibrationProcessor(
         )
     }
 
-    private fun failed(sessionDir: File, errors: List<String>, settings: CalibrationSettings = CalibrationSettings(0, 0, 0.0, 0), pairsTotal: Int = 0, pairsUsed: Int = 0, cam0Size: Size? = null, cam1Size: Size? = null) = StereoCalibrationResult(
+    private fun failed(sessionDir: File, errors: List<String>, settings: CalibrationSettings = CalibrationSettings(0, 0, 0.0, 0), pairsTotal: Int = 0, pairsUsed: Int = 0, cam0Size: Size? = null, cam1Size: Size? = null, rejectedPairIndexes: List<Int> = emptyList(), rejectedPairReasons: Map<Int, String> = emptyMap()) = StereoCalibrationResult(
         status = "failed", createdAtUtc = utcNow(), sessionPath = sessionDir.absolutePath,
         checkerboardInnerCols = settings.checkerboardInnerCols, checkerboardInnerRows = settings.checkerboardInnerRows, squareSizeMm = settings.squareSizeMm,
                     boardType = settings.boardType.name, charucoSquaresX = settings.charucoSquaresX, charucoSquaresY = settings.charucoSquaresY, charucoSquareLengthMm = settings.charucoSquareLengthMm, charucoMarkerLengthMm = settings.charucoMarkerLengthMm, charucoDictionary = settings.charucoDictionary, minCharucoCorners = settings.minCharucoCorners, charucoLegacyPattern = settings.charucoLegacyPattern,
         pairsTotal = pairsTotal, pairsUsed = pairsUsed, cam0ImageWidth = cam0Size?.width?.toInt() ?: 0, cam0ImageHeight = cam0Size?.height?.toInt() ?: 0,
-        cam1ImageWidth = cam1Size?.width?.toInt() ?: 0, cam1ImageHeight = cam1Size?.height?.toInt() ?: 0, errors = errors,
+        cam1ImageWidth = cam1Size?.width?.toInt() ?: 0, cam1ImageHeight = cam1Size?.height?.toInt() ?: 0, rejectedPairIndexes = rejectedPairIndexes, rejectedPairReasons = rejectedPairReasons, errors = errors,
     )
 
     private fun detectCharucoCorners(file: File, settings: CalibrationSettings): CharucoDetection {
@@ -540,20 +550,23 @@ class StereoCalibrationProcessor(
 
         val sorted = finite.sortedBy { it.error }
         val median = sorted[sorted.size / 2].error
-        val threshold = max(4.0, median * 2.5)
+        val threshold = max(STEREO_OUTLIER_HARD_MAX_ERROR_PX, median * STEREO_OUTLIER_MEDIAN_MULTIPLIER)
 
         val maxReject = minOf(
-            (finite.size * 0.30).toInt().coerceAtLeast(1),
+            (finite.size * STEREO_OUTLIER_MAX_DROP_FRACTION).toInt().coerceAtLeast(1),
             finite.size - requiredForSuccess,
         ).coerceAtLeast(0)
 
         if (maxReject <= 0) return emptyList()
 
-        return finite
-            .filter { it.error > threshold }
+        val extreme = finite.filter { it.error > 12.0 }.sortedByDescending { it.error }
+        val extremeLimited = extreme.take((finite.size - requiredForSuccess).coerceAtLeast(0))
+        val remainingSlots = (maxReject - extremeLimited.size).coerceAtLeast(0)
+        val dynamic = finite
+            .filter { it.error > threshold && it.pairIndex !in extremeLimited.map { extremePair -> extremePair.pairIndex }.toSet() }
             .sortedByDescending { it.error }
-            .take(maxReject)
-            .map { it.pairIndex }
+            .take(remainingSlots)
+        return (extremeLimited + dynamic).map { it.pairIndex }
     }
 
     private fun computePerPairEpipolarErrors(cam0Points: List<Mat>, cam1Points: List<Mat>, fundamental: Mat, pairIndexes: List<Int>): List<PairCalibrationError> {
@@ -585,6 +598,11 @@ class StereoCalibrationProcessor(
     companion object {
         const val DEFAULT_STEREO_RMS_THRESHOLD_PX: Double = 2.0
         const val DEFAULT_INTRINSICS_RMS_THRESHOLD_PX: Double = 3.0
+        private const val STEREO_PROCESSOR_MIN_COMMON_CHARUCO_IDS = 35
+        private const val STEREO_MIN_FILTERED_PAIRS = 10
+        private const val STEREO_OUTLIER_HARD_MAX_ERROR_PX = 6.0
+        private const val STEREO_OUTLIER_MEDIAN_MULTIPLIER = 2.5
+        private const val STEREO_OUTLIER_MAX_DROP_FRACTION = 0.35
 
         const val RESULT_FILE = "calibration_result.json"
         const val CAM0_INTRINSICS_FILE = "cam0_intrinsics.json"
@@ -623,7 +641,9 @@ data class StereoCalibrationResult(
     val cam1Rms: Double? = null,
     val stereoRms: Double? = null,
     val initialStereoRms: Double? = null,
+    val pairsCandidatesAfterCommonIdFilter: Int? = null,
     val rejectedPairIndexes: List<Int> = emptyList(),
+    val rejectedPairReasons: Map<Int, String> = emptyMap(),
     val outlierRejectionMode: String? = null,
     val cam0ImageWidth: Int = 0,
     val cam0ImageHeight: Int = 0,
@@ -642,6 +662,8 @@ data class StereoCalibrationResult(
     val selectedCornerOrderRms: Double? = null,
     val calibrationFlags: Int? = null,
     val distortionModel: String? = null,
+    val perPairErrorsInitial: List<PairCalibrationError> = emptyList(),
+    val outlierFinalRms: Double? = null,
     val perPairErrors: List<PairCalibrationError> = emptyList(),
     val worstPairIndexes: List<Int> = emptyList(),
     val errors: List<String> = emptyList(),
@@ -692,8 +714,12 @@ fun StereoCalibrationResult.toJson(): JSONObject = JSONObject()
     .put("charuco_corners_used_per_frame", charucoCornersUsedPerFrame.toIntJsonArray()).put("charuco_common_ids_per_pair", charucoCommonIdsPerPair.toIntListJsonArray())
     .put("pairs_total", pairsTotal).put("pairs_used", pairsUsed).put("cam0_rms", cam0Rms).put("cam1_rms", cam1Rms).put("stereo_rms", stereoRms)
     .put("initial_stereo_rms", initialStereoRms ?: JSONObject.NULL)
+    .put("outlier_initial_rms", initialStereoRms ?: JSONObject.NULL)
+    .put("pairs_candidates_after_common_id_filter", pairsCandidatesAfterCommonIdFilter ?: pairsUsed)
     .put("rejected_pair_indexes", rejectedPairIndexes.toIntJsonArray())
+    .put("rejected_pair_reasons", rejectedPairReasons.toRejectedReasonsJson())
     .put("outlier_rejection_mode", outlierRejectionMode ?: JSONObject.NULL)
+    .put("outlier_final_rms", outlierFinalRms ?: stereoRms ?: JSONObject.NULL)
     .put("cam0_image_width", cam0ImageWidth).put("cam0_image_height", cam0ImageHeight).put("cam1_image_width", cam1ImageWidth).put("cam1_image_height", cam1ImageHeight)
     .put("cam0_camera_matrix", cam0CameraMatrix.toDoubleJsonArray2()).put("cam0_dist_coeffs", cam0DistCoeffs.toDoubleJsonArray())
     .put("cam1_camera_matrix", cam1CameraMatrix.toDoubleJsonArray2()).put("cam1_dist_coeffs", cam1DistCoeffs.toDoubleJsonArray())
@@ -703,6 +729,8 @@ fun StereoCalibrationResult.toJson(): JSONObject = JSONObject()
     .put("selected_corner_order_rms", selectedCornerOrderRms ?: JSONObject.NULL)
     .put("calibration_flags", calibrationFlags ?: JSONObject.NULL)
     .put("distortion_model", distortionModel ?: JSONObject.NULL)
+    .put("per_pair_epipolar_errors_initial", perPairErrorsInitial.toPairCalibrationErrorJsonArray())
+    .put("per_pair_epipolar_errors_final", perPairErrors.toPairCalibrationErrorJsonArray())
     .put("per_pair_epipolar_errors", perPairErrors.toPairCalibrationErrorJsonArray())
     .put("worst_pair_indexes", worstPairIndexes.toIntJsonArray())
     .put("errors", errors.toStringJsonArray())
@@ -715,6 +743,7 @@ private fun List<String>.toStringJsonArray() = JSONArray().also { arr -> forEach
 private fun List<Int>.toIntJsonArray() = JSONArray().also { arr -> forEach { arr.put(it) } }
 private fun List<List<Int>>.toIntListJsonArray() = JSONArray().also { outer -> forEach { outer.put(it.toIntJsonArray()) } }
 private fun List<CornerOrderTrialResult>.toCornerOrderTrialJsonArray() = JSONArray().also { arr -> forEach { arr.put(JSONObject().put("variant", it.variant).put("rms", it.rms)) } }
+private fun Map<Int, String>.toRejectedReasonsJson() = JSONObject().also { obj -> forEach { (pairIndex, reason) -> obj.put(pairIndex.toString(), reason) } }
 private fun List<PairCalibrationError>.toPairCalibrationErrorJsonArray() = JSONArray().also { arr -> forEach { arr.put(JSONObject().put("pair_index", it.pairIndex).put("epipolar_error_px", it.error)) } }
 private fun List<List<Double>>.toDoubleJsonArray2() = JSONArray().also { outer -> forEach { outer.put(it.toDoubleJsonArray()) } }
 private fun matFromNestedJson(json: JSONArray): Mat {
