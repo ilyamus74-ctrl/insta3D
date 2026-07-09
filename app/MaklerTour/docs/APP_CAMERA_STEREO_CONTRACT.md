@@ -325,7 +325,7 @@ Step 3 (`STEREO_EXTRINSICS`) uses stereo-specific ChArUco overlap gates in addit
 
 ## Depth / rectification baseline-axis contract
 
-Operators may capture the stereo rig in portrait or landscape, and calibration UI may also be portrait or landscape for human convenience. This UI/operator orientation is diagnostics/display metadata only; calibration math and depth axis selection must use the raw saved frames and the rectified projection matrices, not the preview orientation.
+Operators may capture the stereo rig in portrait or landscape, and calibration UI may also be portrait or landscape for human convenience. Operator, UI, display-rotation, and IMU physical orientation are diagnostics/display metadata only; calibration math and depth axis selection must use the raw saved frames and the rectified projection matrices (`P2`/`T`), not the preview orientation. The IMU physical orientation (`portrait_upright`, `portrait_upside_down`, `landscape_left`, `landscape_right`, `face_up`, `face_down`, or `unknown`) is recorded only to understand how the operator held the phone/rig during capture and must not rotate, rectify, or otherwise alter image processing.
 
 Saved `cam0`/`cam1` synced depth frames remain unrotated raw frames. The saved-frame contract is still `rotation_degrees_applied = 0` with raw width/height recorded in manifests.
 

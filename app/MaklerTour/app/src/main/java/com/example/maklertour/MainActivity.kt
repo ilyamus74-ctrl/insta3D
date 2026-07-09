@@ -120,6 +120,7 @@ import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
+import com.maklertour.data.phonecamera.DeviceOrientationTracker
 import com.maklertour.data.phonecamera.PhoneDualCameraProbe
 import com.maklertour.data.phonecamera.StereoCaptureExperimentalManager
 import com.maklertour.data.phonecamera.StereoRigConfig
@@ -186,14 +187,36 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 
 class MainActivity : ComponentActivity() {
+    private lateinit var deviceOrientationTracker: DeviceOrientationTracker
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         RoomDatabaseProvider.get(this)
+        deviceOrientationTracker = DeviceOrientationTracker(this)
+        appDeviceOrientationTracker = deviceOrientationTracker
         setContent {
             MaklerTourApp()
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        deviceOrientationTracker.start()
+    }
+
+    override fun onPause() {
+        deviceOrientationTracker.stop()
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        deviceOrientationTracker.stop()
+        if (appDeviceOrientationTracker === deviceOrientationTracker) appDeviceOrientationTracker = null
+        super.onDestroy()
+    }
 }
+
+private var appDeviceOrientationTracker: DeviceOrientationTracker? = null
 
 private const val CAM1_PREVIEW_ROTATION_DEGREES = 90f
 private const val STEREO_MANUAL_MIN_COMMON_CHARUCO_IDS = 35
@@ -3493,6 +3516,52 @@ private suspend fun runSyncedDepthRecorder(
     }
 }
 
+
+private fun readJsonObjectOrNull(file: File): JSONObject? = runCatching {
+    if (!file.exists()) return@runCatching null
+    val text = file.readText().takeIf { it.isNotBlank() } ?: return@runCatching null
+    JSONObject(text)
+}.getOrNull()
+
+private fun writeJsonObjectAtomic(file: File, json: JSONObject) {
+    file.parentFile?.mkdirs()
+    val tmp = File(file.parentFile, "${file.name}.tmp")
+    tmp.writeText(json.toString(2))
+    if (!tmp.renameTo(file)) {
+        if (file.exists() && !file.delete()) error("Failed to replace ${file.absolutePath}")
+        if (!tmp.renameTo(file)) error("Failed to rename ${tmp.absolutePath} to ${file.absolutePath}")
+    }
+}
+
+private fun addPhysicalOrientationMetadata(
+    json: JSONObject,
+    appOrientation: String?,
+    displayRotationDegrees: Int?,
+    orientationTimestampNs: Long?,
+): JSONObject {
+    val sample = orientationTimestampNs?.let { appDeviceOrientationTracker?.nearestSample(it) }
+        ?: DeviceOrientationTracker.Sample(sampleDeltaMs = null)
+    val physicalOrientation = if (sample.stale) "unknown" else sample.physicalOrientation
+    val source = if (sample.stale) "unknown" else sample.source
+    return json
+        .put("app_orientation_at_capture", appOrientation ?: JSONObject.NULL)
+        .put("config_orientation", appOrientation ?: JSONObject.NULL)
+        .put("display_rotation_at_capture", displayRotationDegrees ?: JSONObject.NULL)
+        .put("display_rotation_degrees", displayRotationDegrees ?: JSONObject.NULL)
+        .put("operator_orientation", physicalOrientation)
+        .put("physical_orientation", physicalOrientation)
+        .put("physical_orientation_source", source)
+        .put("physical_orientation_confidence", sample.confidence)
+        .put("imu_orientation_stale", sample.stale)
+        .put("imu_gravity_x", sample.gravityX ?: JSONObject.NULL)
+        .put("imu_gravity_y", sample.gravityY ?: JSONObject.NULL)
+        .put("imu_gravity_z", sample.gravityZ ?: JSONObject.NULL)
+        .put("imu_roll_deg", sample.rollDeg ?: JSONObject.NULL)
+        .put("imu_pitch_deg", sample.pitchDeg ?: JSONObject.NULL)
+        .put("imu_sample_timestamp_ns", if (sample.timestampNs > 0L) sample.timestampNs else JSONObject.NULL)
+        .put("imu_sample_delta_ms", sample.sampleDeltaMs ?: JSONObject.NULL)
+}
+
 private fun syncedDepthPairMeta(index: Int, pair: StereoCalibrationFramePair, cam0AgeMs: Long, cam1AgeMs: Long): JSONObject =
     JSONObject()
         .put("pair_index", index)
@@ -3513,8 +3582,6 @@ private fun syncedDepthPairMeta(index: Int, pair: StereoCalibrationFramePair, ca
         .put("raw_height", pair.cam0.rawHeight ?: pair.cam0.savedHeight)
         .put("cam0_rotation_degrees_applied", pair.cam0.rotationDegreesApplied)
         .put("cam1_rotation_degrees_applied", pair.cam1.rotationDegreesApplied)
-        .put("display_rotation_degrees", pair.cam0.displayRotationAtCapture ?: JSONObject.NULL)
-        .put("operator_orientation", pair.cam0.appOrientationAtCapture ?: "unknown")
         .put("cam0_raw_width", pair.cam0.rawWidth ?: JSONObject.NULL)
         .put("cam0_raw_height", pair.cam0.rawHeight ?: JSONObject.NULL)
         .put("cam1_raw_width", pair.cam1.rawWidth ?: JSONObject.NULL)
@@ -3523,19 +3590,20 @@ private fun syncedDepthPairMeta(index: Int, pair: StereoCalibrationFramePair, ca
         .put("cam0_saved_height", pair.cam0.savedHeight)
         .put("cam1_saved_width", pair.cam1.savedWidth)
         .put("cam1_saved_height", pair.cam1.savedHeight)
-        .put("app_orientation_at_capture", pair.cam0.appOrientationAtCapture ?: JSONObject.NULL)
-        .put("display_rotation_at_capture", pair.cam0.displayRotationAtCapture ?: JSONObject.NULL)
+        .put("pair_orientation_timestamp_ns", (pair.cam0.timestampNs + pair.cam1.timestampNs) / 2L)
+        .let { addPhysicalOrientationMetadata(it, pair.cam0.appOrientationAtCapture, pair.cam0.displayRotationAtCapture, it.optLong("pair_orientation_timestamp_ns")) }
         .put("cam0_image_analysis_rotation_degrees", pair.cam0.rotationDegreesApplied)
         .put("capture_source", "nearest_ring_buffer")
         .put("stereo_max_delta_ms", SYNCED_DEPTH_MAX_DELTA_MS)
 
 private fun appendSyncedDepthManifestPair(outputDir: File, pairMeta: JSONObject, state: SyncedDepthRecordingState) {
     val manifestFile = File(outputDir, "synced_depth_manifest.json")
-    val manifest = if (manifestFile.exists()) JSONObject(manifestFile.readText()) else syncedDepthManifestBase(state)
+    val manifest = readJsonObjectOrNull(manifestFile) ?: syncedDepthManifestBase(state)
     val pairs = manifest.optJSONArray("pairs") ?: JSONArray().also { manifest.put("pairs", it) }
     pairs.put(pairMeta)
     manifest.put("pairs_total", pairs.length()).put("pairs_saved", pairs.length())
-    manifestFile.writeText(manifest.toString(2))
+    updateSyncedDepthManifestOrientationSummary(manifest, pairs)
+    writeJsonObjectAtomic(manifestFile, manifest)
 }
 
 private fun finalizeSyncedDepthManifest(outputDir: File, state: SyncedDepthRecordingState) {
@@ -3544,9 +3612,47 @@ private fun finalizeSyncedDepthManifest(outputDir: File, state: SyncedDepthRecor
 
 private fun writeSyncedDepthManifest(outputDir: File, state: SyncedDepthRecordingState) {
     val manifestFile = File(outputDir, "synced_depth_manifest.json")
-    val existingPairs = if (manifestFile.exists()) JSONObject(manifestFile.readText()).optJSONArray("pairs") ?: JSONArray() else JSONArray()
-    manifestFile.writeText(syncedDepthManifestBase(state).put("pairs", existingPairs).toString(2))
+    val existingPairs = readJsonObjectOrNull(manifestFile)?.optJSONArray("pairs") ?: JSONArray()
+    val manifest = syncedDepthManifestBase(state).put("pairs", existingPairs)
+    updateSyncedDepthManifestOrientationSummary(manifest, existingPairs)
+    writeJsonObjectAtomic(manifestFile, manifest)
 }
+
+private fun updateSyncedDepthManifestOrientationSummary(manifest: JSONObject, pairs: JSONArray) {
+    val physicalCounts = JSONObject()
+    val displayCounts = JSONObject()
+    val configCounts = JSONObject()
+    var previousPhysical: String? = null
+    var transitionCount = 0
+    for (i in 0 until pairs.length()) {
+        val pair = pairs.optJSONObject(i) ?: continue
+        val physical = pair.optString("physical_orientation", pair.optString("operator_orientation", "unknown")).ifBlank { "unknown" }
+        physicalCounts.put(physical, physicalCounts.optInt(physical, 0) + 1)
+        val display = if (pair.has("display_rotation_degrees") && !pair.isNull("display_rotation_degrees")) pair.opt("display_rotation_degrees").toString() else "unknown"
+        displayCounts.put(display, displayCounts.optInt(display, 0) + 1)
+        val config = pair.optString("config_orientation", pair.optString("app_orientation_at_capture", "unknown")).ifBlank { "unknown" }
+        configCounts.put(config, configCounts.optInt(config, 0) + 1)
+        previousPhysical?.let { if (it != physical) transitionCount += 1 }
+        previousPhysical = physical
+        if (i == 0) {
+            val firstDisplay = pair.opt("display_rotation_degrees") ?: pair.opt("display_rotation_at_capture") ?: JSONObject.NULL
+            val firstConfig = pair.opt("config_orientation") ?: pair.opt("app_orientation_at_capture") ?: JSONObject.NULL
+            manifest.put("first_pair_physical_orientation", physical)
+            manifest.put("first_pair_display_rotation_degrees", firstDisplay)
+            manifest.put("first_pair_config_orientation", firstConfig)
+            if (manifest.optString("operator_orientation", "unknown") == "unknown") manifest.put("operator_orientation", physical)
+            if (!manifest.has("display_rotation_degrees") || manifest.isNull("display_rotation_degrees")) manifest.put("display_rotation_degrees", firstDisplay)
+        }
+        if (i == pairs.length() - 1) {
+            manifest.put("last_pair_physical_orientation", physical)
+        }
+    }
+    manifest.put("physical_orientation_counts", physicalCounts)
+    manifest.put("display_rotation_counts", displayCounts)
+    manifest.put("config_orientation_counts", configCounts)
+    manifest.put("orientation_transition_count", transitionCount)
+}
+
 
 private fun syncedDepthManifestBase(state: SyncedDepthRecordingState): JSONObject =
     JSONObject()
@@ -3894,7 +4000,7 @@ private fun CalibrationCaptureDialog(
             .put("capture_source", "latest_frame_buffer")
             .put("note", "not hardware synchronized")
         File(dir, "calibration_input.json").writeText(input.toString(2))
-        File(dir, "pairs_manifest.json").writeText(JSONObject().put("pairs", JSONArray()).toString(2))
+        writeJsonObjectAtomic(File(dir, "pairs_manifest.json"), JSONObject().put("pairs", JSONArray()))
         return dir
     }
 
@@ -3942,7 +4048,7 @@ private fun CalibrationCaptureDialog(
         }
 
         manifest.put("pairs", kept)
-        manifestFile.writeText(manifest.toString(2))
+        writeJsonObjectAtomic(manifestFile, manifest)
     }
 
     fun processingStateFor(mode: CalibrationWorkflowMode): CalibrationWizardState = when (mode) {
@@ -4879,8 +4985,14 @@ private fun appendCalibrationPairManifest(
 ) {
     val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
     val stereoCaptureDeltaMs = if (cam0Frame != null && cam1Frame != null) kotlin.math.abs(cam0Frame.timestampNs - cam1Frame.timestampNs) / 1_000_000.0 else JSONObject.NULL
+    val orientationTimestampNs = when {
+        cam0Frame != null && cam1Frame != null -> (cam0Frame.timestampNs + cam1Frame.timestampNs) / 2L
+        cam0Frame != null -> cam0Frame.timestampNs
+        cam1Frame != null -> cam1Frame.timestampNs
+        else -> null
+    }
     val manifestFile = File(sessionDir, "pairs_manifest.json")
-    val manifest = if (manifestFile.exists()) JSONObject(manifestFile.readText()) else JSONObject().put("pairs", JSONArray())
+    val manifest = readJsonObjectOrNull(manifestFile) ?: JSONObject().put("pairs", JSONArray())
     val pairs = manifest.optJSONArray("pairs") ?: JSONArray().also { manifest.put("pairs", it) }
     pairs.put(
         JSONObject()
@@ -4912,9 +5024,11 @@ private fun appendCalibrationPairManifest(
             .put("stereo_max_delta_ms", stereoMaxDeltaMs ?: JSONObject.NULL)
             .put("cam0_frame_age_ms", cam0Frame?.ageMs(nowNs) ?: JSONObject.NULL)
             .put("cam1_frame_age_ms", cam1Frame?.ageMs(nowNs) ?: JSONObject.NULL)
+            .put("pair_orientation_timestamp_ns", orientationTimestampNs ?: JSONObject.NULL)
+            .let { addPhysicalOrientationMetadata(it, cam0Frame?.appOrientationAtCapture ?: cam1Frame?.appOrientationAtCapture, cam0Frame?.displayRotationAtCapture ?: cam1Frame?.displayRotationAtCapture, orientationTimestampNs) }
             .put("sync_status", "not_hardware_synchronized")
     )
-    manifestFile.writeText(manifest.toString(2))
+    writeJsonObjectAtomic(manifestFile, manifest)
 }
 
 private fun utcNowIso8601(): String {

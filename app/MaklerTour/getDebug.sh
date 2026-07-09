@@ -11,7 +11,7 @@ mkdir -p "$OUT"
 adb -s "$SER" logcat -d -v time > "$OUT/logcat_full.txt"
 
 adb -s "$SER" logcat -d -v time | grep -Ei \
-"PhoneCameraVideoRecorder|CalibrationCapture|StereoCalibration|CalibrationResult|stereo_rms|corner_order|checkerboard|cam0 calibration|cam1|UVC|TurboJPEG|OpenCV|FATAL|Exception|error|failed|distortion_model|per_pair|epipolar|worst" \
+"PhoneCameraVideoRecorder|CalibrationCapture|StereoCalibration|CalibrationResult|stereo_rms|corner_order|checkerboard|cam0 calibration|cam1|UVC|TurboJPEG|OpenCV|orientation|imu|gravity|physical_orientation|FATAL|Exception|error|failed|distortion_model|per_pair|epipolar|worst" \
 > "$OUT/logcat_filtered.txt" || true
 
 adb -s "$SER" exec-out run-as "$PKG" sh -c '

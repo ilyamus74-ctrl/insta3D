@@ -145,9 +145,10 @@ def main():
     cv2.imwrite(str(out / 'contact_rectified_synced.jpg'), np.vstack(contact))
     depth_h, depth_w = rotate_for_depth_input(np.zeros((new_size[1], new_size[0], 3), dtype=np.uint8), depth_input_rotation).shape[:2]
     first_pair = selected[0] if selected else {}
-    operator_orientation = manifest.get('operator_orientation') or manifest.get('operator_frame_orientation') or first_pair.get('operator_orientation') or first_pair.get('app_orientation_at_capture') or 'unknown'
-    if operator_orientation == 'unknown':
-        operator_orientation = first_pair.get('operator_orientation') or first_pair.get('app_orientation_at_capture') or 'unknown'
+    physical_orientation = first_pair.get('physical_orientation') or manifest.get('first_pair_physical_orientation') or manifest.get('operator_orientation') or first_pair.get('operator_orientation') or 'unknown'
+    operator_orientation = manifest.get('operator_orientation') or manifest.get('operator_frame_orientation') or physical_orientation or first_pair.get('app_orientation_at_capture') or 'unknown'
+    if operator_orientation in (None, 'unknown'):
+        operator_orientation = physical_orientation or first_pair.get('operator_orientation') or first_pair.get('app_orientation_at_capture') or 'unknown'
     display_rotation_degrees = manifest.get('display_rotation_degrees')
     if display_rotation_degrees is None:
         display_rotation_degrees = first_pair.get('display_rotation_degrees', first_pair.get('display_rotation_at_capture', None))
@@ -155,7 +156,16 @@ def main():
     debug = {
         'samples': debug_pairs, 'size': size, 'new_size': new_size, 'raw_frame_width': raw_size[0], 'raw_frame_height': raw_size[1],
         'saved_rotation_degrees_applied': 0, 'operator_frame_orientation': operator_orientation,
+        'physical_orientation': physical_orientation,
+        'physical_orientation_source': first_pair.get('physical_orientation_source', manifest.get('physical_orientation_source', 'unknown')),
         'display_rotation_degrees': display_rotation_degrees,
+        'config_orientation': first_pair.get('config_orientation', manifest.get('first_pair_config_orientation', manifest.get('config_orientation', 'unknown'))),
+        'pair_orientation_timestamp_ns': first_pair.get('pair_orientation_timestamp_ns'),
+        'imu_sample_timestamp_ns': first_pair.get('imu_sample_timestamp_ns'),
+        'imu_sample_delta_ms': first_pair.get('imu_sample_delta_ms'),
+        'imu_gravity_x': first_pair.get('imu_gravity_x'),
+        'imu_gravity_y': first_pair.get('imu_gravity_y'),
+        'imu_gravity_z': first_pair.get('imu_gravity_z'),
         'stereo_T': np.ravel(T).tolist(), 'P1': P0.tolist(), 'P2': P1.tolist(), 'p2_tx': p2_tx, 'p2_ty': p2_ty,
         'rectified_baseline_axis': rectified_baseline_axis, 'disparity_axis': disparity_axis,
         'depth_input_rotation': depth_input_rotation, 'depth_input_width': depth_w, 'depth_input_height': depth_h, 'depth_disparity_axis': 'x',

@@ -14,6 +14,7 @@ PHONE_RECORDER = ROOT / "app/src/main/java/com/example/maklertour/data/phonecame
 STEREO_PROCESSOR = ROOT / "app/src/main/java/com/example/maklertour/data/calibration/StereoCalibrationProcessor.kt"
 STEREO_CAPTURE = ROOT / "app/src/main/java/com/example/maklertour/data/phonecamera/StereoCaptureExperimental.kt"
 NATIVE_UVC = ROOT / "app/src/main/cpp/cam1_uvc.cpp"
+DEVICE_ORIENTATION = ROOT / "app/src/main/java/com/example/maklertour/data/phonecamera/DeviceOrientationTracker.kt"
 
 
 class Audit:
@@ -305,6 +306,25 @@ def audit_imports(main: str, audit: Audit) -> None:
 
 
 
+
+def audit_orientation_metadata(main: str, docs: str, tracker: str, audit: Audit) -> None:
+    combined = main + "\n" + tracker
+    audit.require("DeviceOrientationTracker" in combined or "Sensor.TYPE_GRAVITY" in combined or "Sensor.TYPE_ACCELEROMETER" in combined, "IMU physical orientation tracker exists")
+    audit.require("Sensor.TYPE_GRAVITY" in combined and "Sensor.TYPE_ACCELEROMETER" in combined, "orientation tracker prefers gravity and falls back to accelerometer")
+    audit.require("nearestSample(timestampNs" in tracker or "fun nearestSample(timestampNs" in tracker, "orientation tracker exposes nearestSample(timestampNs)")
+    audit.require("event.timestamp" in tracker and "timestampNs" in tracker, "orientation tracker stores SensorEvent.timestamp in samples")
+    audit.require("pair_orientation_timestamp_ns" in main and "(pair.cam0.timestampNs + pair.cam1.timestampNs) / 2L" in main, "syncedDepthPairMeta writes pair_orientation_timestamp_ns from cam0/cam1 midpoint")
+    audit.require("physical_orientation" in main and "syncedDepthPairMeta" in main, "syncedDepthPairMeta writes physical_orientation")
+    audit.require("imu_sample_timestamp_ns" in main, "metadata writes imu_sample_timestamp_ns")
+    audit.require("imu_sample_delta_ms" in main, "metadata writes imu_sample_delta_ms")
+    audit.require("imu_gravity_x" in main and "imu_gravity_y" in main and "imu_gravity_z" in main, "metadata writes imu_gravity_x/y/z")
+    audit.require("readJsonObjectOrNull" in main, "manifests use safe readJsonObjectOrNull")
+    audit.require("writeJsonObjectAtomic" in main and ".tmp" in main and "renameTo" in main, "manifests use atomic tmp+rename JSON writes")
+    audit.require("first_pair_physical_orientation" in main and "last_pair_physical_orientation" in main and "physical_orientation_counts" in main, "root synced depth manifest records first/last/count physical orientation")
+    audit.require("config_orientation_counts" in main, "root synced depth manifest records config_orientation_counts")
+    audit.require("orientation_transition_count" in main, "root synced depth manifest records orientation_transition_count")
+    audit.require("IMU physical orientation" in docs and "diagnostics" in docs and "must not rotate" in docs, "docs mention IMU orientation diagnostics only")
+
 def audit_depth_axis_contract(audit: Audit) -> None:
     rectify = read(ROOT / "tools/rectify_synced_depth_capture.py", audit)
     docs = read(ROOT / "docs/APP_CAMERA_STEREO_CONTRACT.md", audit)
@@ -333,12 +353,15 @@ def main() -> int:
     processor_text = read(STEREO_PROCESSOR, audit)
     capture_text = read(STEREO_CAPTURE, audit)
     native_uvc_text = read(NATIVE_UVC, audit)
+    tracker_text = read(DEVICE_ORIENTATION, audit)
+    docs_text = read(ROOT / "docs/APP_CAMERA_STEREO_CONTRACT.md", audit)
 
     if main_text:
         audit_imports(main_text, audit)
         audit_main(main_text, audit)
         audit_calibration_ui(main_text, audit)
         audit_calibration_capture_ux(main_text, audit)
+        audit_orientation_metadata(main_text, docs_text, tracker_text, audit)
 
     if main_text and processor_text and capture_text:
         audit_stereo(main_text, processor_text, capture_text, audit)

@@ -16,7 +16,7 @@ echo "== Logcat =="
 adb -s "$SER" logcat -d -v time > "$OUT/logcat_full.txt"
 
 adb -s "$SER" logcat -d -v time | grep -Ei \
-"StereoCapture|synced|depth|disparity|rectif|rectify|Record synced|recording|frame|pair|delta|timestamp|pts|cam0|cam1|UVC|MJPEG|YUYV|TurboJPEG|OpenCV|Calibration|stereo_rms|epipolar|per_pair|worst|PhoneCameraVideoRecorder|orientation|rotation|ActivityInfo|display|portrait|landscape|FATAL|Exception|error|failed|pthread_mutex|destroyed mutex|libuvc|libusb" \
+"StereoCapture|synced|depth|disparity|rectif|rectify|Record synced|recording|frame|pair|delta|timestamp|pts|cam0|cam1|UVC|MJPEG|YUYV|TurboJPEG|OpenCV|Calibration|stereo_rms|epipolar|per_pair|worst|PhoneCameraVideoRecorder|orientation|imu|gravity|physical_orientation|rotation|ActivityInfo|display|portrait|landscape|FATAL|Exception|error|failed|pthread_mutex|destroyed mutex|libuvc|libusb" \
 > "$OUT/logcat_filtered.txt" || true
 
 echo "== App files tree =="
