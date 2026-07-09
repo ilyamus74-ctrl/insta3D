@@ -216,7 +216,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Volatile
 private var appDeviceOrientationTracker: DeviceOrientationTracker? = null
 
 private const val CAM1_PREVIEW_ROTATION_DEGREES = 90f
@@ -3543,14 +3542,13 @@ private fun addPhysicalOrientationMetadata(
     val sample = orientationTimestampNs?.let { appDeviceOrientationTracker?.nearestSample(it) }
         ?: DeviceOrientationTracker.Sample(sampleDeltaMs = null)
     val physicalOrientation = if (sample.stale) "unknown" else sample.physicalOrientation
-    val operatorOrientation = if (physicalOrientation != "unknown") physicalOrientation else (appOrientation ?: "unknown")
     val source = if (sample.stale) "unknown" else sample.source
     return json
         .put("app_orientation_at_capture", appOrientation ?: JSONObject.NULL)
         .put("config_orientation", appOrientation ?: JSONObject.NULL)
         .put("display_rotation_at_capture", displayRotationDegrees ?: JSONObject.NULL)
         .put("display_rotation_degrees", displayRotationDegrees ?: JSONObject.NULL)
-        .put("operator_orientation", operatorOrientation)
+        .put("operator_orientation", physicalOrientation)
         .put("physical_orientation", physicalOrientation)
         .put("physical_orientation_source", source)
         .put("physical_orientation_confidence", sample.confidence)
