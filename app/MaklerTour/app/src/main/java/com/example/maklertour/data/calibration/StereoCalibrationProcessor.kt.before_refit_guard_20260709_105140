@@ -235,7 +235,7 @@ class StereoCalibrationProcessor(
                     )
                 }.getOrDefault(Double.POSITIVE_INFINITY)
 
-                if (refitRms.isFinite() && refitRms <= stereoRms) {
+                if (refitRms.isFinite()) {
                     finalR = refitR
                     finalT = refitT
                     finalE = refitE
