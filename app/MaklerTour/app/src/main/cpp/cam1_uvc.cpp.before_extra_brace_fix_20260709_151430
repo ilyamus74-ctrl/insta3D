@@ -714,3 +714,4 @@ extern "C" JNIEXPORT jobjectArray JNICALL Java_com_maklertour_data_phonecamera_N
  return outer;
 }
 
+}
