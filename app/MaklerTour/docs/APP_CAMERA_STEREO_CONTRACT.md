@@ -337,3 +337,79 @@ After `stereoRectify`, the pipeline must inspect `P2[0,3]` and `P2[1,3]`:
 OpenCV `StereoBM` / `StereoSGBM` search along X. Therefore a vertical rectified baseline must be converted for the matcher by rotating both rectified images identically by 90 degrees for depth/disparity processing only. Raw frames, calibration results, and saved captures must not be modified by this transform.
 
 If rectified images are rotated before disparity, `Q` from the original `stereoRectify` output must not be reused blindly for `cv2.reprojectImageTo3D`. The depth pipeline must either adapt/recompute `Q` for the rotated disparity image, or skip `Q` and compute depth explicitly (for example `Z = f * B / disparity`) while marking the debug output with the selected depth method.
+
+## IMU orientation metadata contract
+
+The operator may rotate the physical rig during synced-depth capture. This is allowed, but it is metadata only: raw saved frames remain unrotated, and calibration/depth math must not use IMU orientation to rotate, rectify, select axes, or otherwise alter image processing.
+
+Per saved stereo pair, the manifest must record the physical orientation that was closest to that pair in time:
+
+- `pair_orientation_timestamp_ns` is the midpoint timestamp: `(pair.cam0.timestampNs + pair.cam1.timestampNs) / 2L`.
+- The IMU sample must be selected by nearest `SensorEvent.timestamp` using `nearestSample(timestampNs)`.
+- IMU orientation is diagnostics only.
+- Calibration/depth math must not use IMU orientation.
+- Raw frames remain unrotated.
+
+Required pair fields:
+
+- `pair_orientation_timestamp_ns`
+- `physical_orientation`
+- `physical_orientation_source`
+- `physical_orientation_confidence`
+- `imu_orientation_stale`
+- `imu_sample_timestamp_ns`
+- `imu_sample_delta_ms`
+- `imu_gravity_x`
+- `imu_gravity_y`
+- `imu_gravity_z`
+- `config_orientation`
+- `display_rotation_degrees`
+
+Required root manifest summary:
+
+- `physical_orientation_counts`
+- `display_rotation_counts`
+- `config_orientation_counts`
+- `orientation_transition_count`
+- `first_pair_physical_orientation`
+- `last_pair_physical_orientation`
+
+## Safe manifest IO contract
+
+Manifest JSON must be read via a safe read helper. Empty, partially written, or corrupt manifest files must not crash recording, append, or rewrite flows.
+
+Required behavior:
+
+- Read manifest JSON through `readJsonObjectOrNull` or the current safe read helper equivalent.
+- Empty/corrupt manifest content must be treated as missing and rebuilt when possible, not propagated as an uncaught `JSONException`.
+- JSON writes should use temp file + rename, for example `writeJsonObjectAtomic` with a `.tmp` file and `renameTo`.
+- `appendSyncedDepthManifestPair` and `writeSyncedDepthManifest` must use the safe read path before modifying existing manifest JSON.
+
+## Dense depth contract
+
+Dense depth must use rectified images. Axis/orientation for dense matching is determined from stereo rectification output, not from UI orientation or IMU orientation.
+
+Required behavior:
+
+- Horizontal baseline may use `Q` only when disparity was not rotated.
+- Vertical baseline must rotate both rectified images identically before `StereoBM` / `StereoSGBM`, because OpenCV block matchers search along X.
+- For vertical rotated disparity, `Q` from original `stereoRectify` must not be reused blindly.
+- Dense depth for the vertical branch must use manual Z computation:
+
+```text
+Z = f * B / disparity
+```
+
+Dense depth debug JSON must state:
+
+- `rectified_baseline_axis`
+- `disparity_axis`
+- `depth_input_rotation`
+- `depth_method`
+- `q_valid_for_rotated_disparity`
+- `baseline_magnitude`
+- `focal_for_depth`
+- `num_disparities`
+- `block_size`
+- `min_disparity`
+- `valid_depth_ratio`

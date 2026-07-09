@@ -15,6 +15,7 @@ STEREO_PROCESSOR = ROOT / "app/src/main/java/com/example/maklertour/data/calibra
 STEREO_CAPTURE = ROOT / "app/src/main/java/com/example/maklertour/data/phonecamera/StereoCaptureExperimental.kt"
 NATIVE_UVC = ROOT / "app/src/main/cpp/cam1_uvc.cpp"
 DEVICE_ORIENTATION = ROOT / "app/src/main/java/com/example/maklertour/data/phonecamera/DeviceOrientationTracker.kt"
+DENSE_DEPTH = ROOT / "tools/dense_depth_from_synced_capture.py"
 
 
 class Audit:
@@ -318,7 +319,11 @@ def audit_orientation_metadata(main: str, docs: str, tracker: str, audit: Audit)
     audit.require("imu_sample_timestamp_ns" in main, "metadata writes imu_sample_timestamp_ns")
     audit.require("imu_sample_delta_ms" in main, "metadata writes imu_sample_delta_ms")
     audit.require("imu_gravity_x" in main and "imu_gravity_y" in main and "imu_gravity_z" in main, "metadata writes imu_gravity_x/y/z")
-    audit.require("readJsonObjectOrNull" in main, "manifests use safe readJsonObjectOrNull")
+    audit.require("physical_orientation_source" in main and "physical_orientation_confidence" in main and "imu_orientation_stale" in main, "metadata writes physical orientation source/confidence/stale")
+    audit.require("config_orientation" in main and "display_rotation_degrees" in main, "metadata writes config_orientation and display_rotation_degrees")
+    audit.require("readJsonObjectOrNull" in main, "readJsonObjectOrNull exists")
+    audit.require("appendSyncedDepthManifestPair" in main and "appendSyncedDepthManifestPair" in main[main.find("readJsonObjectOrNull"):] or "readJsonObjectOrNull(manifestFile" in balanced_block(main, "private fun appendSyncedDepthManifestPair"), "appendSyncedDepthManifestPair uses readJsonObjectOrNull")
+    audit.require("readJsonObjectOrNull" in balanced_block(main, "private fun writeSyncedDepthManifest"), "writeSyncedDepthManifest uses readJsonObjectOrNull")
     audit.require("writeJsonObjectAtomic" in main and ".tmp" in main and "renameTo" in main, "manifests use atomic tmp+rename JSON writes")
     audit.require("first_pair_physical_orientation" in main and "last_pair_physical_orientation" in main and "physical_orientation_counts" in main, "root synced depth manifest records first/last/count physical orientation")
     audit.require("config_orientation_counts" in main, "root synced depth manifest records config_orientation_counts")
@@ -327,6 +332,7 @@ def audit_orientation_metadata(main: str, docs: str, tracker: str, audit: Audit)
 
 def audit_depth_axis_contract(audit: Audit) -> None:
     rectify = read(ROOT / "tools/rectify_synced_depth_capture.py", audit)
+    dense = read(DENSE_DEPTH, audit)
     docs = read(ROOT / "docs/APP_CAMERA_STEREO_CONTRACT.md", audit)
     root_audit = read(ROOT / "stereo_contract_audit.py", audit)
 
@@ -336,6 +342,16 @@ def audit_depth_axis_contract(audit: Audit) -> None:
         audit.require("rectified_baseline_axis == 'vertical'" in rectify, "rectify/depth script has vertical baseline branch")
         audit.require("rotate_90_ccw" in rectify and "rotate_90_cw" in rectify, "rectify/depth script rotates vertical baseline inputs both directions")
         audit.require("q_valid_for_rotated_disparity" in rectify and "vertical_rotated_manual_z" in rectify, "rectify/depth script does not fake Q depth for rotated vertical disparity")
+
+    if dense:
+        audit.require("cv2.StereoSGBM_create" in dense, "dense script uses StereoSGBM")
+        audit.require("p2_tx" in dense and "p2_ty" in dense and "abs(p2_tx) >= abs(p2_ty)" in dense, "dense script detects axis via P2[0,3]/P2[1,3]")
+        audit.require("baseline_axis=='vertical'" in dense or "baseline_axis == 'vertical'" in dense or "rectified_baseline_axis == 'vertical'" in dense, "dense script has vertical branch")
+        audit.require("rotate_90_ccw" in dense and "rotate_90_cw" in dense, "dense script has rotate_90_ccw / rotate_90_cw")
+        audit.require("q_valid_for_rotated_disparity" in dense, "dense script writes q_valid_for_rotated_disparity")
+        audit.require("vertical_rotated_manual_z" in dense, "dense script writes vertical_rotated_manual_z")
+        audit.require("focal_for_depth*baseline_magnitude" in dense.replace(" ", "") or "f * B / disparity" in dense, "dense script computes Z = f * B / disparity or equivalent")
+        audit.require("dense_depth_debug.json" in dense, "dense script writes dense_depth_debug.json")
 
     if docs:
         audit.require(("vertical baseline" in docs or "vertical rectified baseline" in docs) and ("P2[0,3]" in docs or "P2[0, 3]" in docs) and ("P2[1,3]" in docs or "P2[1, 3]" in docs), "docs describe P2/T baseline-axis detection")
