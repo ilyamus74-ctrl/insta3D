@@ -24,6 +24,32 @@ def pick(d, *names):
     raise KeyError(names[0])
 
 
+
+def rectified_axis(P1, P2):
+    p2_tx = float(P2[0, 3])
+    p2_ty = float(P2[1, 3])
+    if abs(p2_tx) >= abs(p2_ty):
+        return p2_tx, p2_ty, 'horizontal', 'x'
+    return p2_tx, p2_ty, 'vertical', 'y'
+
+
+def rotate_for_depth_input(img, depth_input_rotation):
+    if depth_input_rotation == 'rotate_90_ccw':
+        return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    if depth_input_rotation == 'rotate_90_cw':
+        return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+    return img
+
+
+def put_label(img, lines):
+    canvas = img.copy()
+    y = 28
+    for line in lines:
+        cv2.putText(canvas, line, (16, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.putText(canvas, line, (16, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+        y += 30
+    return canvas
+
 def maybe_rotate(img, mode):
     if mode in (None, 'auto', 'none'):
         return img
@@ -76,6 +102,12 @@ def main():
     flags = 0 if args.no_zero_disparity else cv2.CALIB_ZERO_DISPARITY
     new_size = (args.new_width, args.new_height) if args.new_width > 0 and args.new_height > 0 else size
     R0,R1,P0,P1,Q,roi0,roi1 = cv2.stereoRectify(K0,D0,K1,D1,size,R,T,alpha=args.alpha,flags=flags,newImageSize=new_size)
+    p2_tx, p2_ty, rectified_baseline_axis, disparity_axis = rectified_axis(P0, P1)
+    depth_input_rotation = 'none'
+    if rectified_baseline_axis == 'vertical':
+        depth_input_rotation = 'rotate_90_ccw' if p2_ty < 0 else 'rotate_90_cw'
+    depth_method = 'horizontal_q' if rectified_baseline_axis == 'horizontal' else 'vertical_rotated_manual_z'
+    q_valid_for_rotated_disparity = rectified_baseline_axis == 'horizontal'
     m00,m01 = cv2.initUndistortRectifyMap(K0,D0,R0,P0,new_size,cv2.CV_16SC2)
     m10,m11 = cv2.initUndistortRectifyMap(K1,D1,R1,P1,new_size,cv2.CV_16SC2)
 
@@ -89,13 +121,37 @@ def main():
         r1 = cv2.remap(im1, m10, m11, cv2.INTER_LINEAR)
         cv2.imwrite(str(out / f'sample_{i}_rect_cam0.jpg'), r0)
         cv2.imwrite(str(out / f'sample_{i}_rect_cam1.jpg'), r1)
-        disp = stereo.compute(cv2.cvtColor(r0, cv2.COLOR_BGR2GRAY), cv2.cvtColor(r1, cv2.COLOR_BGR2GRAY))
+        if i == 1:
+            cv2.imwrite(str(out / 'rectified_left_raw.png'), r0)
+            cv2.imwrite(str(out / 'rectified_right_raw.png'), r1)
+        d0 = rotate_for_depth_input(r0, depth_input_rotation)
+        d1 = rotate_for_depth_input(r1, depth_input_rotation)
+        if i == 1:
+            cv2.imwrite(str(out / 'depth_input_left_rotated.png'), d0)
+            cv2.imwrite(str(out / 'depth_input_right_rotated.png'), d1)
+        disp = stereo.compute(cv2.cvtColor(d0, cv2.COLOR_BGR2GRAY), cv2.cvtColor(d1, cv2.COLOR_BGR2GRAY))
         prev = cv2.normalize(disp, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         cv2.imwrite(str(out / f'sample_{i}_disparity_preview.jpg'), prev)
-        contact.append(np.hstack([r0, r1]))
+        if i == 1:
+            cv2.imwrite(str(out / 'disparity.png'), prev)
+        prev_bgr = cv2.cvtColor(prev, cv2.COLOR_GRAY2BGR)
+        h = min(d0.shape[0], d1.shape[0], prev_bgr.shape[0])
+        panel = np.hstack([d0[:h], d1[:h], cv2.resize(prev_bgr, (d0.shape[1], h))])
+        labels = [f'baseline axis: {rectified_baseline_axis}', f'depth input rotation: {depth_input_rotation}', f'sync delta ms: {p.get("stereo_capture_delta_ms", p.get("delta_ms", "unknown"))}', f'stereo rms: {extr.get("stereo_rms", extr.get("rms", "unknown"))}', f'pairs_used: {extr.get("pairs_used", "unknown")}', f'T vector: {np.ravel(T).tolist()}']
+        contact.append(put_label(panel, labels))
         debug_pairs.append({'pair_index': p.get('pair_index'), 'cam0_file': p.get('cam0_file'), 'cam1_file': p.get('cam1_file')})
     cv2.imwrite(str(out / 'contact_rectified_synced.jpg'), np.vstack(contact))
-    (out / 'rectification_synced_debug.json').write_text(json.dumps({'samples': debug_pairs, 'size': size, 'new_size': new_size, 'roi0': list(map(int, roi0)), 'roi1': list(map(int, roi1)), 'alpha': args.alpha, 'zero_disparity': not args.no_zero_disparity}, indent=2), encoding='utf-8')
+    depth_h, depth_w = rotate_for_depth_input(np.zeros((new_size[1], new_size[0], 3), dtype=np.uint8), depth_input_rotation).shape[:2]
+    debug = {
+        'samples': debug_pairs, 'size': size, 'new_size': new_size, 'raw_frame_width': size[0], 'raw_frame_height': size[1],
+        'saved_rotation_degrees_applied': 0, 'operator_frame_orientation': manifest.get('operator_orientation', manifest.get('operator_frame_orientation', 'unknown')),
+        'stereo_T': np.ravel(T).tolist(), 'P1': P0.tolist(), 'P2': P1.tolist(), 'p2_tx': p2_tx, 'p2_ty': p2_ty,
+        'rectified_baseline_axis': rectified_baseline_axis, 'disparity_axis': disparity_axis,
+        'depth_input_rotation': depth_input_rotation, 'depth_input_width': depth_w, 'depth_input_height': depth_h, 'depth_disparity_axis': 'x',
+        'q_valid_for_rotated_disparity': q_valid_for_rotated_disparity, 'depth_method': depth_method,
+        'roi0': list(map(int, roi0)), 'roi1': list(map(int, roi1)), 'alpha': args.alpha, 'zero_disparity': not args.no_zero_disparity
+    }
+    (out / 'rectification_synced_debug.json').write_text(json.dumps(debug, indent=2), encoding='utf-8')
 
 if __name__ == '__main__':
     main()

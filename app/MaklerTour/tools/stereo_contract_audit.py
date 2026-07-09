@@ -276,6 +276,27 @@ def audit_imports(main: str, audit: Audit) -> None:
         audit.warn("android.graphics.Matrix is used somewhere; OK for calibration bitmap helper, not OK for cam1 TextureView.setTransform")
 
 
+
+def audit_depth_axis_contract(audit: Audit) -> None:
+    rectify = read(ROOT / "tools/rectify_synced_depth_capture.py", audit)
+    docs = read(ROOT / "docs/APP_CAMERA_STEREO_CONTRACT.md", audit)
+    root_audit = read(ROOT / "stereo_contract_audit.py", audit)
+
+    if rectify:
+        audit.require("rectified_baseline_axis" in rectify or "disparity_axis" in rectify, "rectify/depth script records rectified_baseline_axis or disparity_axis")
+        audit.require("p2_tx" in rectify and "p2_ty" in rectify and "abs(p2_tx) >= abs(p2_ty)" in rectify, "rectify/depth script detects axis from P2 tx/ty")
+        audit.require("rectified_baseline_axis == 'vertical'" in rectify, "rectify/depth script has vertical baseline branch")
+        audit.require("rotate_90_ccw" in rectify and "rotate_90_cw" in rectify, "rectify/depth script rotates vertical baseline inputs both directions")
+        audit.require("q_valid_for_rotated_disparity" in rectify and "vertical_rotated_manual_z" in rectify, "rectify/depth script does not fake Q depth for rotated vertical disparity")
+
+    if docs:
+        audit.require(("vertical baseline" in docs or "vertical rectified baseline" in docs) and ("P2[0,3]" in docs or "P2[0, 3]" in docs) and ("P2[1,3]" in docs or "P2[1, 3]" in docs), "docs describe P2/T baseline-axis detection")
+        audit.require("must not be reused blindly" in docs, "docs warn against blindly reusing Q after rotation")
+        audit.require("raw saved frames remain unrotated" in docs.lower() or "remain unrotated raw frames" in docs.lower(), "docs preserve unrotated saved-frame contract")
+
+    if root_audit:
+        audit.require("tools" in root_audit and "stereo_contract_audit.py" in root_audit, "root stereo_contract_audit.py delegates to tools audit")
+
 def main() -> int:
     audit = Audit()
 
@@ -295,6 +316,8 @@ def main() -> int:
 
     if recorder_text:
         audit_saved_frames(recorder_text, audit)
+
+    audit_depth_axis_contract(audit)
 
     return audit.report()
 

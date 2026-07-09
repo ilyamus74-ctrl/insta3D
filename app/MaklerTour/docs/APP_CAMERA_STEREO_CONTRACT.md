@@ -322,3 +322,18 @@ Step 3 (`STEREO_EXTRINSICS`) uses stereo-specific ChArUco overlap gates in addit
 - The final result must not contain removable pairs above **6.0 px**. If high-error pairs remain and enough pairs are available, the processor must remove them and refit once more; if not enough pairs remain, calibration fails with a clear list like `pair X=Y px`.
 - Result JSON records total pairs, candidates after common-ID filtering, used pairs, rejected pair indexes/reasons with actual epipolar error values, outlier iteration count, initial/final RMS, initial/final per-pair epipolar errors, and common ChArUco IDs per accepted pair.
 - The stereo RMS acceptance threshold is **not lowered**; final stereo RMS must still pass the existing threshold.
+
+## Depth / rectification baseline-axis contract
+
+Operators may capture the stereo rig in portrait or landscape, and calibration UI may also be portrait or landscape for human convenience. This UI/operator orientation is diagnostics/display metadata only; calibration math and depth axis selection must use the raw saved frames and the rectified projection matrices, not the preview orientation.
+
+Saved `cam0`/`cam1` synced depth frames remain unrotated raw frames. The saved-frame contract is still `rotation_degrees_applied = 0` with raw width/height recorded in manifests.
+
+After `stereoRectify`, the pipeline must inspect `P2[0,3]` and `P2[1,3]`:
+
+- if `abs(P2[0,3]) >= abs(P2[1,3])`, the rectified baseline is horizontal and disparity is on `x`;
+- otherwise the rectified baseline is vertical and disparity is on `y`.
+
+OpenCV `StereoBM` / `StereoSGBM` search along X. Therefore a vertical rectified baseline must be converted for the matcher by rotating both rectified images identically by 90 degrees for depth/disparity processing only. Raw frames, calibration results, and saved captures must not be modified by this transform.
+
+If rectified images are rotated before disparity, `Q` from the original `stereoRectify` output must not be reused blindly for `cv2.reprojectImageTo3D`. The depth pipeline must either adapt/recompute `Q` for the rotated disparity image, or skip `Q` and compute depth explicitly (for example `Z = f * B / disparity`) while marking the debug output with the selected depth method.
