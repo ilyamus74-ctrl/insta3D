@@ -1105,6 +1105,12 @@ function launch_job(mysqli $db, array $job): void
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         $mode = (string)($job['reconstruction_mode'] ?: 'preview');
         $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: []; $mesh=($params['settings']['mesh'] ?? (worker_run_parameters($db,$job)['mesh'] ?? [])); if(isset($params['poisson_depth']) && !isset($mesh['depth'])){$mesh['depth']=$params['poisson_depth'];} if(isset($params['target_faces']) && !isset($mesh['target_faces'])){$mesh['target_faces']=$params['target_faces'];} if(isset($params['density_quantile']) && !isset($mesh['density_quantile'])){$mesh['density_quantile']=$params['density_quantile'];} if(isset($params['mesh_engine']) && !isset($mesh['engine'])){$mesh['engine']=$params['mesh_engine'];} $args = [SFM_REMOTE_BASE . '/run_colmap_mesh_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, (string)$parent, $mode, (string)($mesh['engine'] ?? ''), (string)($mesh['depth'] ?? ''), (string)($mesh['target_faces'] ?? ''), (string)($mesh['density_quantile'] ?? ''), json_encode($mesh, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)];
+    } elseif ($type === 'MAKLERTOUR_SYNCED_DENSE') {
+        $input=(string)($job['input_path'] ?? '');
+        if($input==='' || !is_file($input)){ set_job($db,$id,'ERROR',0,'Capture bundle input file not found'); return; }
+        $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: [];
+        $maxPairs=(int)($params['max_pairs'] ?? 40); $numDisp=(int)($params['num_disparities'] ?? 128); $block=(int)($params['block_size'] ?? 7);
+        $args=[SFM_REMOTE_BASE.'/run_maklertour_synced_dense_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)$maxPairs, (string)$numDisp, (string)$block];
     } elseif ($type === 'COLMAP_DENSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         if ($parent <= 0) {
@@ -1142,6 +1148,8 @@ function launch_job(mysqli $db, array $job): void
         set_job($db, $id, 'DONE', 100, 'PLY exported: job_' . $parent . '/colmap/sparse/' . $modelId . '/model.ply');
     } elseif ($type === 'COLMAP_DENSE_CHUNK') {
         set_job($db, $id, 'RUNNING', 0, 'launched COLMAP_DENSE_CHUNK');
+    } elseif ($type === 'MAKLERTOUR_SYNCED_DENSE') {
+        set_job($db, $id, 'RUNNING', 0, 'launched MAKLERTOUR_SYNCED_DENSE');
     } elseif ($type === 'COLMAP_DENSE') {
         set_job($db, $id, 'RUNNING', 0, 'dense job launched');
     } else {
@@ -1314,6 +1322,16 @@ function sync_running_jobs(mysqli $db): void
             }
         }
         if ($remoteStatus === 'DONE') {
+            if ($type === 'MAKLERTOUR_SYNCED_DENSE') {
+                try { [$fetchCode,$fetchOut,$fetchCmd]=run_command([SFM_REMOTE_BASE.'/fetch_job_result.sh', SFM_REMOTE_CONF, (string)$remote, SFM_REMOTE_OUTPUT]); }
+                catch(Throwable $e){ set_job($db,$id,'ERROR',$progress,'Remote synced dense DONE but fetch failed: '.$e->getMessage()); continue; }
+                if($fetchCode!==0){ set_job($db,$id,'ERROR',$progress,'Remote synced dense DONE but fetch failed: '.format_command_failure($fetchCmd,$fetchCode,$fetchOut)); continue; }
+                $result=remote_output_dir($remote).'/result.json';
+                $jpg=remote_output_dir($remote).'/dense/contact_dense_depth.jpg';
+                if(!is_file($result)){ set_job($db,$id,'ERROR',$progress,'Remote synced dense result.json missing after fetch'); continue; }
+                set_job($db,$id,'DONE',100,'Synced stereo dense completed');
+                continue;
+            }
             if ($type === 'COLMAP_MESH') {
                 worker_log("running mesh fetch command for job id={$id} type={$type} remote_job_id={$remote}");
                 try {

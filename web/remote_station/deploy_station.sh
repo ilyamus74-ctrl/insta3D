@@ -65,17 +65,19 @@ if [[ "$INSTALL_STATION_DEPENDENCIES" == "1" ]]; then
     fi
     python3 -m venv '$STATION_BASE/venv'
     '$STATION_BASE/venv/bin/pip' install --upgrade pip
-    '$STATION_BASE/venv/bin/pip' install numpy
+    '$STATION_BASE/venv/bin/pip' install numpy opencv-python-headless
   "
 fi
 
 echo "==> Deploying scripts to $STATION_NAME at $STATION_HOST"
 "${SSH[@]}" "mkdir -p '$STATION_BASE/scripts'"
 "${SCP[@]}" "${SCRIPT_FILES[@]}" "${STATION_USER}@${STATION_HOST}:$STATION_BASE/scripts/"
+"${SCP[@]}" "$LOCAL_DIR"/*.sh "${STATION_USER}@${STATION_HOST}:$STATION_BASE/"
 "${SSH[@]}" "
   set -e
   chmod +x '$STATION_BASE'/scripts/*.sh
   chmod +x '$STATION_BASE'/scripts/*.py
+  chmod +x '$STATION_BASE'/*.sh 2>/dev/null || true
 "
 
 echo "==> Checking station Python dependencies"
@@ -89,16 +91,18 @@ if ! "${SSH[@]}" "
     echo 'ERROR: station venv python not found: $STATION_BASE/venv/bin/python' >&2
     exit 1
   fi
-  '$STATION_BASE/venv/bin/python' -c 'import numpy; print(numpy.__version__)'
+  '$STATION_BASE/venv/bin/python' -c 'import cv2, numpy; print(cv2.__version__, numpy.__version__)'
   test -f '$STATION_BASE/scripts/plan_colmap_dense_chunks.py'
   test -f '$STATION_BASE/scripts/merge_dense_chunks.py'
   test -x '$STATION_BASE/scripts/process_colmap_mesh.sh'
+  test -x '$STATION_BASE/scripts/process_maklertour_synced_dense.sh'
+  test -f '$STATION_BASE/scripts/dense_depth_from_synced_capture.py'
   test -x '$STATION_BASE/scripts/process_open3d_mesh.py'
   test -x '$STATION_BASE/open3d-venv/bin/python'
   '$STATION_BASE/open3d-venv/bin/python' -c 'import open3d; print(open3d.__version__)'
 "; then
   if [[ "$INSTALL_STATION_DEPENDENCIES" != "1" ]]; then
-    echo "ERROR: station Python dependency check failed. Re-run with INSTALL_STATION_DEPENDENCIES=1 in $CONFIG to install python3, pip, venv, and numpy." >&2
+    echo "ERROR: station Python dependency check failed. Re-run with INSTALL_STATION_DEPENDENCIES=1 in $CONFIG to install python3, pip, venv, numpy, and opencv-python-headless." >&2
   fi
   exit 1
 fi

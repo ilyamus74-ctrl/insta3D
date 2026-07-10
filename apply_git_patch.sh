@@ -59,3 +59,4 @@ fi
 
 echo "[INFO] Done."
 
+echo "" > /tmp/new_patch.diff

@@ -1,0 +1,21 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/remote_station/sfm_pipeline.php';
+auth_require_login();
+$user=auth_current_user(); $uid=(int)$user['id']; $role=(string)($user['role'] ?? 'BROKER');
+function json_out(array $p,int $c=200): void { http_response_code($c); header('Content-Type: application/json; charset=utf-8'); echo json_encode($p,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); exit; }
+function can_order(array $o,int $uid,string $role): bool { return $role==='ADMIN' || (int)$o['broker_id']===$uid || ($role==='OPERATOR' && (int)$o['operator_id']===$uid) || (int)$o['broker_id']===$uid; }
+function inside_dir(string $p,string $d): bool { $d=rtrim($d,DIRECTORY_SEPARATOR); return $p===$d || str_starts_with($p,$d.DIRECTORY_SEPARATOR); }
+function api_sfm_job_id(mysqli $db): int { do { $id=random_int(10000,999999999); $st=$db->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1'); if(!$st){return $id;} $st->bind_param('i',$id); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); } while($exists); return $id; }
+if($_SERVER['REQUEST_METHOD']!=='POST'){ json_out(['ok'=>false,'error'=>'POST required'],405); }
+$bundleId=(int)($_POST['capture_bundle_id'] ?? 0); if($bundleId<=0){ json_out(['ok'=>false,'error'=>'Bad capture_bundle_id'],400); }
+$st=$dbcnx->prepare('SELECT * FROM capture_bundles WHERE id=? LIMIT 1'); if(!$st){ json_out(['ok'=>false,'error'=>'capture_bundles unavailable'],500); } $st->bind_param('i',$bundleId); $st->execute(); $bundle=$st->get_result()->fetch_assoc(); $st->close(); if(!$bundle){ json_out(['ok'=>false,'error'=>'Capture bundle not found'],404); }
+$orderId=(int)$bundle['order_id']; $st=$dbcnx->prepare('SELECT id,broker_id,operator_id,is_published,status FROM tour_orders WHERE id=? LIMIT 1'); $st->bind_param('i',$orderId); $st->execute(); $order=$st->get_result()->fetch_assoc(); $st->close(); if(!$order || !can_order($order,$uid,$role)){ json_out(['ok'=>false,'error'=>'Forbidden'],403); }
+if((string)$bundle['capture_type']!=='synced_depth_frames'){ json_out(['ok'=>false,'error'=>'Dense is only available for synced_depth_frames'],422); }
+$storage=(string)$bundle['storage_path']; $path=str_starts_with($storage,'/')?$storage:rtrim(APP_STORAGE_DIR,'/').'/'.ltrim($storage,'/'); $real=realpath($path); $orders=realpath(rtrim(APP_STORAGE_DIR,'/').'/orders'); if($real===false || $orders===false || !is_file($real) || !inside_dir($real,$orders) || !preg_match('/\.tgz$/i',$real)){ json_out(['ok'=>false,'error'=>'Bundle file unavailable or invalid'],422); }
+$force=(int)($_POST['force'] ?? 0)===1; if(!$force){ $st=$dbcnx->prepare("SELECT id FROM sfm_remote_jobs WHERE input_path=? AND job_type='MAKLERTOUR_SYNCED_DENSE' AND status IN ('QUEUED','RUNNING') LIMIT 1"); if($st){$st->bind_param('s',$real);$st->execute();$exists=$st->get_result()->fetch_assoc();$st->close(); if($exists){ json_out(['ok'=>false,'error'=>'Job already queued or running','job_id'=>(int)$exists['id']],409); }} }
+$maxPairs=max(1,min(1000,(int)($_POST['max_pairs'] ?? 40))); $numDisp=max(16,min(512,(int)($_POST['num_disparities'] ?? 128))); $block=max(3,min(51,(int)($_POST['block_size'] ?? 7))); if($block%2===0){$block++;}
+$rid=api_sfm_job_id($dbcnx); $out='/home/makler/web/remote_station/output/job_'.$rid; $result=$out.'/result.json'; $log=$out.'/logs'; $jt='MAKLERTOUR_SYNCED_DENSE'; $msg='Queued synced stereo dense from capture bundle'; $params=json_encode(['capture_bundle_id'=>$bundleId,'capture_type'=>'synced_depth_frames','max_pairs'=>$maxPairs,'num_disparities'=>$numDisp,'block_size'=>$block],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $sid=(int)$bundle['capture_session_id'];
+$st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path,parameters_json) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?,?)"); if(!$st){ json_out(['ok'=>false,'error'=>'DB prepare failed'],500); } $st->bind_param('iisissssss',$orderId,$sid,$jt,$rid,$real,$out,$msg,$result,$log,$params); $st->execute(); $jobId=(int)$dbcnx->insert_id; $st->close();
+json_out(['ok'=>true,'job_id'=>$jobId,'remote_job_id'=>$rid]);

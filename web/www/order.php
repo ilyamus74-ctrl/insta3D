@@ -58,7 +58,7 @@ function sfm_mesh_ply_info(int $meshRemoteId): array {
 }
 function sfm_job_status_class(string $status): string { $s=strtoupper($status); if($s==='DONE'){return 'bg-success';} if(in_array($s,['ERROR','FAILED','ERROR_EMPTY'],true)){return 'bg-danger';} if(in_array($s,['RUNNING','PLANNING','RUNNING_CHUNKS','MERGING'],true)){return 'bg-primary progress-bar-striped progress-bar-animated';} return 'bg-secondary'; }
 function sfm_job_model_id(array $j, array $byRemote=[]): ?int { $params=json_decode((string)($j['parameters_json'] ?? '{}'), true); if(is_array($params) && array_key_exists('model_id',$params)){ return (int)$params['model_id']; } $parent=(int)($j['parent_remote_job_id'] ?? 0); if($parent>0 && isset($byRemote[$parent])){ return sfm_job_model_id($byRemote[$parent], $byRemote); } return null; }
-function sfm_job_title(array $j): string { $t=(string)$j['job_type']; $mid=$j['ui_model_id'] ?? null; $model=$mid!==null?' — Model '.(int)$mid:''; if($t==='COLMAP_RECONSTRUCTION_PREVIEW'){return 'Preview reconstruction'.$model;} if($t==='COLMAP_RECONSTRUCTION_HQ'){return 'High quality reconstruction'.$model;} if($t==='COLMAP_DENSE_CHUNK'){return 'Dense chunk '.(((int)($j['chunk_index']??0))+1).' of '.max(1,(int)($j['chunk_count']??1)).$model;} if($t==='COLMAP_MESH'){return 'Mesh generation'.$model;} if($t==='COLMAP_SPARSE'){return 'Sparse reconstruction';} if($t==='EXTRACT_FRAMES'){return 'Frame extraction';} if($t==='EXPORT_PLY'){return 'Export sparse PLY'.$model;} return $t; }
+function sfm_job_title(array $j): string { $t=(string)$j['job_type']; if($t==='MAKLERTOUR_SYNCED_DENSE'){return 'Synced stereo dense';} $mid=$j['ui_model_id'] ?? null; $model=$mid!==null?' — Model '.(int)$mid:''; if($t==='COLMAP_RECONSTRUCTION_PREVIEW'){return 'Preview reconstruction'.$model;} if($t==='COLMAP_RECONSTRUCTION_HQ'){return 'High quality reconstruction'.$model;} if($t==='COLMAP_DENSE_CHUNK'){return 'Dense chunk '.(((int)($j['chunk_index']??0))+1).' of '.max(1,(int)($j['chunk_count']??1)).$model;} if($t==='COLMAP_MESH'){return 'Mesh generation'.$model;} if($t==='COLMAP_SPARSE'){return 'Sparse reconstruction';} if($t==='EXTRACT_FRAMES'){return 'Frame extraction';} if($t==='EXPORT_PLY'){return 'Export sparse PLY'.$model;} return $t; }
 function sfm_enrich_session_jobs(array $jobs): array {
   $activeStatuses=['QUEUED','RUNNING','PLANNING','RUNNING_CHUNKS','MERGING']; $failedStatuses=['ERROR','FAILED','ERROR_EMPTY'];
   $byRemote=[]; foreach($jobs as $j){ $byRemote[(int)$j['remote_job_id']]=$j; } foreach($jobs as $k=>$j){ $jobs[$k]['ui_model_id']=sfm_job_model_id($j,$byRemote); $byRemote[(int)$j['remote_job_id']]=$jobs[$k]; }
@@ -166,7 +166,7 @@ $canOperatorClose = $role==='ADMIN' || ($role==='OPERATOR' && (int)$order['opera
 $canBrokerClose = $role==='ADMIN' || ((int)$order['broker_id']===$userId && empty($order['broker_closed_at']));
 $canReopen = $role==='ADMIN' || ((int)$order['broker_id']===$userId && (string)$order['status']!=='COMPLETED');
 $canCreatePublicLink = $role==='ADMIN' || (int)$order['broker_id']===$userId || ($role==='OPERATOR' && (int)$order['operator_id']===$userId);
-$error=null; $success=isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['sfm_pipeline_restarted'])?'SfM pipeline restarted':(isset($_GET['sfm_job_queued'])?'SfM job queued':(isset($_GET['photo_deleted'])?'Снимок удалён':(isset($_GET['session_deleted'])?'Сессия удалена':(isset($_GET['video_deleted'])?'Видео удалено':(isset($_GET['video_uploaded'])?'External video uploaded':null)))))))));
+$error=null; $success=isset($_GET['capture_dense_queued'])?'Synced stereo dense job queued':(isset($_GET['updated'])?'Заявка обновлена':(isset($_GET['closed'])?'Заявка закрыта':(isset($_GET['reopened'])?'Заявка переоткрыта':(isset($_GET['job_queued'])?'Задача обработки меток поставлена в очередь':(isset($_GET['sfm_pipeline_restarted'])?'SfM pipeline restarted':(isset($_GET['sfm_job_queued'])?'SfM job queued':(isset($_GET['photo_deleted'])?'Снимок удалён':(isset($_GET['session_deleted'])?'Сессия удалена':(isset($_GET['video_deleted'])?'Видео удалено':(isset($_GET['video_uploaded'])?'External video uploaded':null))))))))));
 
 function table_exists(mysqli $dbcnx,string $table): bool { $t=$dbcnx->real_escape_string($table); $r=$dbcnx->query("SHOW TABLES LIKE '".$t."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
 function column_exists(mysqli $dbcnx,string $table,string $column): bool { $t=$dbcnx->real_escape_string($table); $c=$dbcnx->real_escape_string($column); $r=$dbcnx->query("SHOW COLUMNS FROM `".$t."` LIKE '".$c."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
@@ -295,7 +295,7 @@ function sfm_web_session_videos_dir(int $orderId,string $appSessionUuid): string
 
 function video_scan_safe_uuid(string $uuid,int $scanId): string { $safe=preg_replace('/[^a-zA-Z0-9._-]+/','_', $uuid); return $safe!==''?$safe:('scan_'.$scanId); }
 function video_scan_metadata_info(int $scanId,string $appScanUuid,string $videoDir): array { $safe=video_scan_safe_uuid($appScanUuid,$scanId); $defs=['camera_info'=>['_camera_info.json','View camera_info'],'manifest'=>['_manifest.json','View manifest'],'imu'=>['_imu.jsonl','Download imu']]; $out=[]; foreach($defs as $type=>$def){ $path=$videoDir.'/'.$safe.$def[0]; $exists=is_file($path); $out[$type]=['exists'=>$exists,'label'=>$def[1],'url'=>$exists?('/api/video_scan_metadata.php?scan_id='.$scanId.'&type='.$type):'']; } return $out; }
-function ensure_sfm_remote_jobs_chunk_columns(mysqli $dbcnx): void { foreach(['reconstruction_mode'=>'VARCHAR(20) NULL','chunk_index'=>'INT NULL','chunk_count'=>'INT NULL','retry_count'=>'INT NOT NULL DEFAULT 0','parameters_json'=>'LONGTEXT NULL'] as $c=>$def){ if(!column_exists($dbcnx,'sfm_remote_jobs',$c)){ @$dbcnx->query('ALTER TABLE sfm_remote_jobs ADD COLUMN '.$c.' '.$def); } } }
+function ensure_sfm_remote_jobs_chunk_columns(mysqli $dbcnx): void { foreach(['reconstruction_mode'=>'VARCHAR(20) NULL','chunk_index'=>'INT NULL','chunk_count'=>'INT NULL','retry_count'=>'INT NOT NULL DEFAULT 0','parameters_json'=>'LONGTEXT NULL','cancel_requested_at'=>'DATETIME(6) NULL','cancelled_at'=>'DATETIME(6) NULL'] as $c=>$def){ if(!column_exists($dbcnx,'sfm_remote_jobs',$c)){ @$dbcnx->query('ALTER TABLE sfm_remote_jobs ADD COLUMN '.$c.' '.$def); } } }
 function ensure_sfm_settings_pipeline_columns(mysqli $dbcnx): void { if(!table_exists($dbcnx,'sfm_user_settings')){ @$dbcnx->query("CREATE TABLE sfm_user_settings (user_id BIGINT UNSIGNED NOT NULL, settings_json LONGTEXT NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), PRIMARY KEY(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } if(!table_exists($dbcnx,'sfm_session_settings')){ @$dbcnx->query("CREATE TABLE sfm_session_settings (capture_session_id BIGINT UNSIGNED NOT NULL, user_id BIGINT UNSIGNED NOT NULL, settings_json LONGTEXT NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), PRIMARY KEY(capture_session_id,user_id), KEY idx_sfm_session_settings_user(user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); } foreach(['parameters_json'=>'LONGTEXT NULL','started_by_user_id'=>'BIGINT UNSIGNED NULL','extracted_frames'=>'INT NULL','registration_ratio'=>'DECIMAL(6,2) NULL','sparse_models_count'=>'INT NULL','selected_model_id'=>'INT NULL','selected_model_points'=>'INT NULL'] as $c=>$def){ if(table_exists($dbcnx,'sfm_pipeline_runs') && !column_exists($dbcnx,'sfm_pipeline_runs',$c)){ @$dbcnx->query('ALTER TABLE sfm_pipeline_runs ADD COLUMN '.$c.' '.$def); } } }
 function sfm_remote_output_dir(int $remoteJobId): string { return '/home/makler/web/remote_station/output/job_'.$remoteJobId; }
 function sfm_job_id(mysqli $dbcnx): int { do { $id=random_int(10000,999999999); $st=$dbcnx->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1'); if(!$st){return $id;} $st->bind_param('i',$id); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); } while($exists); return $id; }
@@ -734,6 +734,31 @@ function safe_unlink_video_candidate(string $candidate,array $allowedDirs,array 
   $deleted[]=$real;
   return $real;
 }
+
+function capture_bundle_abs_path(array $bundle): string {
+  $storage=(string)($bundle['storage_path'] ?? '');
+  $path=str_starts_with($storage,'/')?$storage:rtrim(APP_STORAGE_DIR,'/').'/'.ltrim($storage,'/');
+  $real=realpath($path); $orders=realpath(rtrim(APP_STORAGE_DIR,'/').'/orders');
+  if($real===false || $orders===false || !is_file($real) || !path_is_inside_dir($real,$orders)){ throw new RuntimeException('Capture bundle path is invalid or outside storage/orders'); }
+  return $real;
+}
+function create_capture_bundle_dense_job(mysqli $dbcnx,int $orderId,int $bundleId,array $opts=[]): int {
+  $st=$dbcnx->prepare('SELECT * FROM capture_bundles WHERE id=? AND order_id=? LIMIT 1'); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+  $st->bind_param('ii',$bundleId,$orderId); $st->execute(); $bundle=$st->get_result()->fetch_assoc(); $st->close();
+  if(!$bundle){ throw new RuntimeException('Capture bundle not found'); }
+  if((string)$bundle['capture_type']!=='synced_depth_frames'){ throw new RuntimeException('Dense processing is only available for synced_depth_frames bundles'); }
+  $input=capture_bundle_abs_path($bundle);
+  if(!preg_match('/\.tgz$/i',$input)){ throw new RuntimeException('Capture bundle must be .tgz'); }
+  $force=!empty($opts['force']);
+  if(!$force){ $st=$dbcnx->prepare("SELECT id FROM sfm_remote_jobs WHERE order_id=? AND input_path=? AND job_type='MAKLERTOUR_SYNCED_DENSE' AND status IN ('QUEUED','RUNNING') LIMIT 1"); if($st){$st->bind_param('is',$orderId,$input);$st->execute();$exists=$st->get_result()->fetch_assoc();$st->close(); if($exists){ throw new RuntimeException('A synced dense job is already queued or running for this bundle'); }} }
+  $maxPairs=max(1,min(1000,(int)($opts['max_pairs'] ?? 40))); $numDisp=max(16,min(512,(int)($opts['num_disparities'] ?? 128))); $block=max(3,min(51,(int)($opts['block_size'] ?? 7))); if($block%2===0){$block++;}
+  $rid=sfm_job_id($dbcnx); $out=sfm_remote_output_dir($rid); $result=$out.'/result.json'; $log=$out.'/logs'; $jt='MAKLERTOUR_SYNCED_DENSE'; $msg='Queued synced stereo dense from capture bundle';
+  $params=json_encode(['capture_bundle_id'=>$bundleId,'capture_type'=>'synced_depth_frames','max_pairs'=>$maxPairs,'num_disparities'=>$numDisp,'block_size'=>$block],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+  $sid=(int)$bundle['capture_session_id'];
+  $st=$dbcnx->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,job_type,remote_job_id,input_path,output_path,status,progress_percent,message,result_json_path,log_path,parameters_json) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?,?)"); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
+  $st->bind_param('iisissssss',$orderId,$sid,$jt,$rid,$input,$out,$msg,$result,$log,$params); $st->execute(); $jobId=(int)$dbcnx->insert_id; $st->close(); return $jobId;
+}
+
 function delete_video_scan_for_order(mysqli $dbcnx,int $orderId,int $videoScanId,int $userId): array {
   $sql='SELECT vs.*, cs.id AS capture_session_id, cs.app_session_uuid, cs.order_id FROM video_scans vs JOIN capture_sessions cs ON cs.id=vs.session_id WHERE vs.id=? AND cs.order_id=? AND vs.deleted_at IS NULL AND cs.deleted_at IS NULL LIMIT 1';
   $st=$dbcnx->prepare($sql); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
@@ -842,6 +867,14 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
    }
  }
 
+
+
+ if($action==='create_capture_bundle_dense_job' && $canDeleteMedia){
+   try{
+     create_capture_bundle_dense_job($dbcnx,$orderId,(int)($_POST['capture_bundle_id']??0),['max_pairs'=>$_POST['max_pairs']??40,'num_disparities'=>$_POST['num_disparities']??128,'block_size'=>$_POST['block_size']??7,'force'=>$_POST['force']??0]);
+     header('Location: /order.php?id='.$orderId.'&capture_dense_queued=1'); exit;
+   }catch(Throwable $e){ $error=$e->getMessage(); }
+ }
 
  if(in_array($action,['sfm_retry_job','sfm_delete_job_record','sfm_delete_job_files'],true) && $canDeleteMedia){
    try{
@@ -1172,6 +1205,13 @@ if($stmt){
 }
 
 
+
+$captureBundlesBySession=[];
+if(table_exists($dbcnx,'capture_bundles')){
+  $stmt=$dbcnx->prepare("SELECT * FROM capture_bundles WHERE order_id=? ORDER BY created_at DESC, id DESC");
+  if($stmt){$stmt->bind_param('i',$orderId);$stmt->execute();$rs=$stmt->get_result();while($b=$rs->fetch_assoc()){ $sid=(int)$b['capture_session_id']; $b['size_human']=bytes_human((float)($b['size_bytes'] ?? 0)); $b['download_url']='/api/capture_bundle_file.php?capture_bundle_id='.(int)$b['id']; $b['inspect_url']='/api/capture_bundle_file.php?capture_bundle_id='.(int)$b['id'].'&sidecar=manifest'; if(!isset($captureBundlesBySession[$sid])){$captureBundlesBySession[$sid]=[];} $captureBundlesBySession[$sid][]=$b; }$stmt->close();}
+}
+
 $processingJobsBySession = [];
 $stmt=$dbcnx->prepare("SELECT * FROM processing_jobs WHERE order_id = ? AND session_id IN (SELECT id FROM capture_sessions WHERE order_id = ? AND deleted_at IS NULL) ORDER BY created_at DESC, id DESC");
 if($stmt){
@@ -1209,7 +1249,7 @@ if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_res
 
 $sfmJobsBySession=[];
 $stmt=$dbcnx->prepare("SELECT * FROM sfm_remote_jobs WHERE order_id=? ORDER BY created_at DESC, id DESC");
-if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($j=$rs->fetch_assoc()){ $sid=(int)$j['capture_session_id']; if(!isset($sfmJobsBySession[$sid])){$sfmJobsBySession[$sid]=[];} $j['status_url']='/api/sfm_remote_job_status.php?job_id='.(int)$j['id']; $j['status_json_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=status'; $j['result_json_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=result'; $j['logs_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=logs'; $j['ply_url']=$j['status_url'].'&file=ply'; $j['mesh_final_url']=$j['status_url'].'&file=ply'; $j['mesh_poisson_url']=$j['status_url'].'&file=ply&mesh=poisson'; $j['mesh_cleaned_url']=$j['status_url'].'&file=ply&mesh=cleaned'; $j['dense_model_ids']=[0,1]; $j['sparse_model_stats']=[]; $j['ui_model_id']=null; if((string)$j['job_type']==='COLMAP_MESH'){ $mr=sfm_remote_output_dir((int)$j['remote_job_id']).'/mesh/mesh_result.json'; $md=is_file($mr)?(json_decode((string)file_get_contents($mr),true)?:[]):[]; $mi=sfm_mesh_ply_info((int)$j['remote_job_id']); $j['mesh_engine']=$md['engine']??''; $j['mesh_vertices']=$md['vertices']??($md['mesh_vertices']??($mi['vertices']?:'')); $j['mesh_faces']=$md['faces']??($md['mesh_faces']??($mi['faces']?:'')); $j['mesh_mode']=$md['mode']??($j['reconstruction_mode']??''); $j['mesh_fallback']=!empty($md['fallback_used']); $j['mesh_duration_sec']=$md['duration_sec']??($md['duration']??''); $j['ui_can_download_mesh']=strtoupper((string)$j['status'])==='DONE' && $mi['downloadable']; } $params=json_decode((string)($j['parameters_json'] ?? '{}'), true); if(is_array($params) && array_key_exists('model_id',$params)){ $j['ui_model_id']=(int)$params['model_id']; } if((string)$j['job_type']==='COLMAP_SPARSE'){ foreach($j['dense_model_ids'] as $mid){ $j['sparse_model_stats'][(int)$mid]=sfm_sparse_model_stats((int)$j['remote_job_id'],(int)$mid); } } $sfmJobsBySession[$sid][]=$j; } $stmt->close(); }
+if($stmt){ $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($j=$rs->fetch_assoc()){ $sid=(int)$j['capture_session_id']; if(!isset($sfmJobsBySession[$sid])){$sfmJobsBySession[$sid]=[];} $j['status_url']='/api/sfm_remote_job_status.php?job_id='.(int)$j['id']; $j['status_json_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=status'; $j['result_json_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=result'; $j['logs_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=logs'; $j['ply_url']=$j['status_url'].'&file=ply'; $j['mesh_final_url']=$j['status_url'].'&file=ply'; $j['mesh_poisson_url']=$j['status_url'].'&file=ply&mesh=poisson'; $j['mesh_cleaned_url']=$j['status_url'].'&file=ply&mesh=cleaned'; $j['dense_model_ids']=[0,1]; if((string)$j['job_type']==='MAKLERTOUR_SYNCED_DENSE'){ $base=sfm_remote_output_dir((int)$j['remote_job_id']); $j['contact_dense_depth_url']=is_file($base.'/dense/contact_dense_depth.jpg')?('/api/sfm_remote_job_artifact.php?job_id='.(int)$j['id'].'&file=dense/contact_dense_depth.jpg'):''; $j['dense_debug_url']='/api/sfm_remote_job_artifact.php?job_id='.(int)$j['id'].'&file=dense/dense_depth_debug.json'; $j['dense_summary_url']='/api/sfm_remote_job_artifact.php?job_id='.(int)$j['id'].'&file=dense/dense_depth_summary.csv'; } $j['sparse_model_stats']=[]; $j['ui_model_id']=null; if((string)$j['job_type']==='COLMAP_MESH'){ $mr=sfm_remote_output_dir((int)$j['remote_job_id']).'/mesh/mesh_result.json'; $md=is_file($mr)?(json_decode((string)file_get_contents($mr),true)?:[]):[]; $mi=sfm_mesh_ply_info((int)$j['remote_job_id']); $j['mesh_engine']=$md['engine']??''; $j['mesh_vertices']=$md['vertices']??($md['mesh_vertices']??($mi['vertices']?:'')); $j['mesh_faces']=$md['faces']??($md['mesh_faces']??($mi['faces']?:'')); $j['mesh_mode']=$md['mode']??($j['reconstruction_mode']??''); $j['mesh_fallback']=!empty($md['fallback_used']); $j['mesh_duration_sec']=$md['duration_sec']??($md['duration']??''); $j['ui_can_download_mesh']=strtoupper((string)$j['status'])==='DONE' && $mi['downloadable']; } $params=json_decode((string)($j['parameters_json'] ?? '{}'), true); if(is_array($params) && array_key_exists('model_id',$params)){ $j['ui_model_id']=(int)$params['model_id']; } if((string)$j['job_type']==='COLMAP_SPARSE'){ foreach($j['dense_model_ids'] as $mid){ $j['sparse_model_stats'][(int)$mid]=sfm_sparse_model_stats((int)$j['remote_job_id'],(int)$mid); } } $sfmJobsBySession[$sid][]=$j; } $stmt->close(); }
 
 foreach($captureSessions as $idx=>$session){
   $safeUuid=sfm_safe_uuid((string)($session['app_session_uuid'] ?? ''));
@@ -1256,6 +1296,7 @@ foreach($captureSessions as $idx=>$session){
     $diskVideos[$dvIdx]['auto_sfm_can_manual']=!$active;
   }
   $captureSessions[$idx]['sfm_disk_videos']=$diskVideos;
+  $captureSessions[$idx]['capture_bundles']=$captureBundlesBySession[(int)$session['id']] ?? [];
   $captureSessions[$idx]['sfm_remote_jobs']=$sessionSfmJobs;
   $captureSessions[$idx]['sfm_pipeline']=sfm_enrich_session_jobs($sessionSfmJobs);
   $runs=$sfmPipelineRunsBySession[(int)$session['id']] ?? [];
