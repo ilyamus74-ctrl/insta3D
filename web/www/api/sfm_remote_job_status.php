@@ -98,4 +98,10 @@ if(is_file($statusPath)){
 $job['status']=(string)($job['status'] ?? 'UNKNOWN');
 $job['progress_percent']=(int)($job['progress_percent'] ?? 0);
 $job['message']=(string)($job['message'] ?? '');
-srj_json(['ok'=>true,'job'=>$job,'remote_status'=>$statusJson,'files'=>['status'=>is_file($base.'/status.json'),'result'=>is_file($base.'/result.json'),'logs'=>(bool)(glob($base.'/logs/*.log') ?: []),'ply'=>is_file($base.'/mesh/mesh_final.ply') || is_file($base.'/dense/fused.ply') || (bool)(glob($base.'/*.ply') ?: [])]]);
+$files=['status'=>is_file($base.'/status.json'),'result'=>is_file($base.'/result.json'),'logs'=>(bool)(glob($base.'/logs/*.log') ?: []),'ply'=>is_file($base.'/mesh/mesh_final.ply') || is_file($base.'/dense/fused.ply') || (bool)(glob($base.'/*.ply') ?: [])];
+if ((string)($job['job_type'] ?? '') === 'MAKLERTOUR_SYNCED_DENSE') {
+  $files['contact_dense_depth']=is_file($base.'/dense/contact_dense_depth.jpg');
+  $files['dense_depth_debug']=is_file($base.'/dense/dense_depth_debug.json');
+  $files['dense_depth_summary']=is_file($base.'/dense/dense_depth_summary.csv');
+}
+srj_json(['ok'=>true,'job'=>$job,'remote_status'=>$statusJson,'files'=>$files]);

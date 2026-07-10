@@ -319,29 +319,11 @@
                       <div class="mt-3 pt-2 border-top">
                         <div class="fw-semibold small mb-2">Synced dense jobs</div>
                         {if $cb.synced_dense_jobs|default:[]|@count > 0}
-                          {foreach from=$cb.synced_dense_jobs item=dj}
-                            <div class="border rounded p-2 mb-2 bg-light">
-                              <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
-                                <div>
-                                  <span class="badge bg-primary">MAKLERTOUR_SYNCED_DENSE</span>
-                                  <span class="small text-muted ms-1">Job DB id: {$dj.id|escape} · remote_job_id: {$dj.remote_job_id|escape}</span>
-                                  <div class="small mt-1"><strong>Status:</strong> {$dj.status|escape} · {$dj.progress_percent|default:0|escape}%{if $dj.message|default:'' != ''} · {$dj.message|escape}{/if}</div>
-                                  <div class="small text-muted">Created: {$dj.created_at|escape} · Updated: {$dj.updated_at|escape}</div>
-                                  {if $dj.status == 'RUNNING'}
-                                    <div class="progress mt-2" style="height:8px;"><div class="progress-bar" role="progressbar" style="width: {$dj.progress_percent|default:0|escape}%;" aria-valuenow="{$dj.progress_percent|default:0|escape}" aria-valuemin="0" aria-valuemax="100"></div></div>
-                                  {/if}
-                                </div>
-                                <div class="d-flex gap-1 flex-wrap">
-                                  {if $dj.has_preview}<a class="btn btn-sm btn-outline-primary" href="{$dj.preview_url|escape}" target="_blank">View preview</a>{/if}
-                                  {if $dj.has_debug}<a class="btn btn-sm btn-outline-secondary" href="{$dj.debug_url|escape}" target="_blank">Download debug JSON</a>{/if}
-                                  {if $dj.has_summary}<a class="btn btn-sm btn-outline-secondary" href="{$dj.summary_url|escape}" target="_blank">Download summary CSV</a>{/if}
-                                </div>
-                              </div>
-                              {if $dj.status == 'DONE' && $dj.has_preview}
-                                <div class="mt-2"><img src="{$dj.preview_url|escape}" alt="Synced dense preview for job {$dj.id|escape}" style="max-width:100%; max-height:420px"></div>
-                              {/if}
-                            </div>
-                          {/foreach}
+                          <div class="synced-dense-job-cards">
+                            {foreach from=$cb.synced_dense_jobs item=dj}
+                              {include file='sfm_job_card.tpl' rj=$dj s=$s order=$order}
+                            {/foreach}
+                          </div>
                         {else}
                           <div class="small text-muted">No synced dense jobs yet.</div>
                         {/if}
@@ -1618,6 +1600,7 @@ function pollSfmRemoteJobs(){
       const badge=el.querySelector('[data-job-field="status_badge"]'); if(badge){ badge.textContent=s; sfmSetClass(badge,classes.badge); }
       const msg=el.querySelector('[data-job-field="message"]'); if(msg) msg.textContent=j.message||'';
       const up=el.querySelector('[data-job-field="updated"]'); if(up) up.textContent=j.updated_at||'';
+      if(d.files && d.files.contact_dense_depth){ el.querySelectorAll('[data-synced-dense-artifact="preview"]').forEach(a=>a.classList.remove('d-none')); }
     }).catch(()=>{});
   });
 }

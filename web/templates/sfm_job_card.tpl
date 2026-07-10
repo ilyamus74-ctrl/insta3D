@@ -26,7 +26,7 @@
       <div class="small">updated: <span data-job-field="updated">{$rj.updated_at|default:'-'|escape}</span></div>
       {if $rj.job_type == 'MAKLERTOUR_SYNCED_DENSE'}
         <div class="small mt-1"><span class="badge bg-info text-dark">Synced stereo capture bundle</span></div>
-        {if $rj.contact_dense_depth_url|default:'' != ''}<div class="mt-2"><img src="{$rj.contact_dense_depth_url|escape}" alt="contact dense depth" style="max-width:320px;max-height:220px" class="img-thumbnail"></div>{/if}
+        <div class="mt-2 {if $rj.contact_dense_depth_url|default:'' == ''}d-none{/if}" data-synced-dense-artifact="preview"><img src="{if $rj.contact_dense_depth_url|default:'' != ''}{$rj.contact_dense_depth_url|escape}{else}{$rj.preview_url|default:''|escape}{/if}" alt="contact dense depth" style="max-width:320px;max-height:220px" class="img-thumbnail"></div>
       {/if}
     </div>
     <span class="badge {$rj.ui_progress_class|regex_replace:'/ progress-bar[^ ]*/':''|escape}" data-job-field="status_badge">{$rj.status|escape}</span>
@@ -46,7 +46,7 @@
     <button type="button" class="btn btn-sm btn-outline-secondary" data-job-file-url="{$rj.logs_url|escape}" data-job-file-target="jobFile{$rj.id}">View logs</button>
     {if $rj.job_type == 'EXPORT_PLY'}<a class="btn btn-sm btn-outline-success" href="{$rj.ply_url|escape}" target="_blank">Download PLY</a>{/if}
     {if $rj.job_type == 'MAKLERTOUR_SYNCED_DENSE'}
-      {if $rj.contact_dense_depth_url|default:'' != ''}<a class="btn btn-sm btn-outline-success" href="{$rj.contact_dense_depth_url|escape}" target="_blank">contact_dense_depth.jpg</a>{/if}
+      <a class="btn btn-sm btn-outline-success {if $rj.contact_dense_depth_url|default:'' == ''}d-none{/if}" data-synced-dense-artifact="preview" href="{if $rj.contact_dense_depth_url|default:'' != ''}{$rj.contact_dense_depth_url|escape}{else}{$rj.preview_url|default:''|escape}{/if}" target="_blank">contact_dense_depth.jpg</a>
       <a class="btn btn-sm btn-outline-secondary" href="{$rj.dense_debug_url|escape}" target="_blank">dense_depth_debug.json</a>
       <a class="btn btn-sm btn-outline-secondary" href="{$rj.dense_summary_url|escape}" target="_blank">dense_depth_summary.csv</a>
     {/if}
