@@ -266,10 +266,10 @@ function auto_chain_after_done(mysqli $db, array $job): void
         $runParams=json_decode((string)($run['parameters_json'] ?? '{}'), true) ?: []; $mode=(string)($run['pipeline_mode'] ?? ($runParams['pipeline_mode'] ?? 'preview'));
         $preset=sfm_pipeline_preset($mode); $runSettings=worker_run_parameters($db,$job); $dense=$runSettings['dense'] ?? [];
         $best=sfm_pipeline_best_sparse_model_worker($remote);
-        foreach([0,1,2,3,4] as $mid){ $ms=sfm_sparse_stats_worker($remote,$mid); if($ms['registered_images']>0 || $ms['points']>0){ pipeline_log($pipelineRunId,'INFO','SPARSE','Model '.$mid.': images='.$ms['registered_images'].' points='.$ms['points']); } }
+        $componentsPath=remote_output_dir($remote).'/colmap/sparse_components.json'; $components=is_file($componentsPath)?(json_decode((string)file_get_contents($componentsPath),true)?:[]):[]; $logModels=[]; foreach(($components['models'] ?? []) as $component){ if(isset($component['model_id'])){$logModels[]=(int)$component['model_id'];} } if(!$logModels){$logModels=range(0,20);} foreach(array_values(array_unique($logModels)) as $mid){ $ms=sfm_sparse_stats_worker($remote,$mid); if($ms['registered_images']>0 || $ms['points']>0){ pipeline_log($pipelineRunId,'INFO','SPARSE','Model '.$mid.': images='.$ms['registered_images'].' points='.$ms['points']); } }
         if((int)$best['registered_images']<5 || (int)$best['points']<=0){ sfm_pipeline_fail($db,$pipelineRunId,'Sparse reconstruction failed: no model has at least 5 registered images and points',['sparse_remote_job_id'=>$remote]); return; }
         pipeline_log($pipelineRunId,'INFO','SPARSE','Selected model '.$best['model_id'].': registered_images='.$best['registered_images'].' points='.$best['points']);
-        $rowRes=$db->query('SELECT extracted_frames FROM sfm_pipeline_runs WHERE id='.(int)$pipelineRunId); $row=$rowRes?$rowRes->fetch_assoc():[]; if($rowRes){$rowRes->close();} $ef=(int)($row['extracted_frames'] ?? 0); $extra=['sparse_model_id'=>(int)$best['model_id'],'registered_images'=>(int)$best['registered_images'],'selected_model_id'=>(int)$best['model_id'],'selected_model_points'=>(int)$best['points'],'sparse_points'=>(int)$best['points']]; if($ef>0){$extra['registration_ratio']=(string)round(((int)$best['registered_images'])*100/$ef,2);} $extra += sfm_pipeline_integrate_sparse_artifacts($db,$pipelineRunId,$remote,(int)$best['model_id']); $runScope=(string)($runParams['run_scope'] ?? ($run['run_scope'] ?? 'FULL')); if($runScope==='SPARSE_ONLY'){ sfm_pipeline_update($db,$pipelineRunId,'DONE','SPARSE_COMPLETE',100,'Sparse complete',$extra+['completed_stage'=>'SPARSE','run_scope'=>'SPARSE_ONLY']); pipeline_log($pipelineRunId,'INFO','PIPELINE','Sparse-only completed'); return; } sfm_pipeline_update($db,$pipelineRunId,'RUNNING','DENSE_PLAN',35,'Dense chunk planning queued',$extra);
+        $rowRes=$db->query('SELECT extracted_frames FROM sfm_pipeline_runs WHERE id='.(int)$pipelineRunId); $row=$rowRes?$rowRes->fetch_assoc():[]; if($rowRes){$rowRes->close();} $ef=(int)($row['extracted_frames'] ?? 0); $extra=['sparse_model_id'=>(int)$best['model_id'],'registered_images'=>(int)$best['registered_images'],'selected_model_id'=>(int)$best['model_id'],'selected_model_points'=>(int)$best['points'],'sparse_points'=>(int)$best['points'],'sparse_models_count'=>(int)($components['models_count'] ?? 0)]; if($ef>0){$extra['registration_ratio']=(string)round(((int)$best['registered_images'])*100/$ef,2);} $extra += sfm_pipeline_integrate_sparse_artifacts($db,$pipelineRunId,$remote,(int)$best['model_id']); $runScope=(string)($runParams['run_scope'] ?? ($run['run_scope'] ?? 'FULL')); if($runScope==='SPARSE_ONLY'){ sfm_pipeline_update($db,$pipelineRunId,'DONE','SPARSE_COMPLETE',100,'Sparse complete',$extra+['completed_stage'=>'SPARSE','run_scope'=>'SPARSE_ONLY']); pipeline_log($pipelineRunId,'INFO','PIPELINE','Sparse-only completed'); return; } sfm_pipeline_update($db,$pipelineRunId,'RUNNING','DENSE_PLAN',35,'Dense chunk planning queued',$extra);
         $rid=sfm_job_id($db); $jt='COLMAP_RECONSTRUCTION_PREVIEW'; $out=remote_output_dir($rid).'/merged/merged_fused.ply'; $result=remote_output_dir($rid).'/merged/result.json'; $log=remote_output_dir($rid).'/logs'; $msg='pipeline dense reconstruction queued';
         $params=json_encode(['sparse_job_id'=>$remote,'model_id'=>(int)$best['model_id'],'settings'=>worker_run_parameters($db,$job),'target_images_per_chunk'=>(int)($dense['target_images_per_chunk'] ?? $preset['target_images_per_chunk']),'max_images_per_chunk'=>(int)($dense['max_images_per_chunk'] ?? $preset['max_images_per_chunk']),'overlap_images'=>(int)($dense['chunk_overlap'] ?? $preset['overlap_images'])]+$preset, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
         $settingsHash=substr(hash('sha256', json_encode($runSettings, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)),0,16); pipeline_log($pipelineRunId,'INFO','DENSE','Dense source sparse_job_id='.$remote.' settings_hash='.$settingsHash);
@@ -520,8 +520,27 @@ function sfm_sparse_stats_worker(
     ];
 }
 function sfm_pipeline_best_sparse_model_worker(int $sparseJobId): array {
+    $componentsPath = remote_output_dir($sparseJobId) . '/colmap/sparse_components.json';
+    if (!is_file($componentsPath)) {
+        $componentsPath = remote_output_dir($sparseJobId) . '/sparse_components.json';
+    }
+    if (is_file($componentsPath)) {
+        $components = json_decode((string)file_get_contents($componentsPath), true) ?: [];
+        $best = null;
+        foreach (($components['models'] ?? []) as $m) {
+            $candidate = [
+                'model_id' => (int)($m['model_id'] ?? 0),
+                'registered_images' => (int)($m['registered_images'] ?? 0),
+                'points' => (int)($m['points3D_count'] ?? 0),
+            ];
+            if ($candidate['registered_images'] < 5) { continue; }
+            $candidate['score'] = $candidate['registered_images'] * 1000000 + $candidate['points'];
+            if ($best === null || $candidate['score'] > $best['score']) { $best = $candidate; }
+        }
+        if ($best !== null) { return $best; }
+    }
     $best=['model_id'=>0,'registered_images'=>0,'points'=>0,'score'=>-1];
-    foreach([0,1,2,3,4] as $mid){ $st=sfm_sparse_stats_worker($sparseJobId,$mid); if($st['registered_images']<5 || $st['points']<=0){ continue; } $score=$st['registered_images']*1000000+$st['points']; if($score>$best['score']){ $best=$st+['score'=>$score]; } }
+    foreach(range(0,20) as $mid){ $st=sfm_sparse_stats_worker($sparseJobId,$mid); if($st['registered_images']<5 || $st['points']<=0){ continue; } $score=$st['registered_images']*1000000+$st['points']; if($score>$best['score']){ $best=$st+['score'=>$score]; } }
     return $best['score']>=0?$best:['model_id'=>0,'registered_images'=>0,'points'=>0,'score'=>0];
 }
 function sfm_pipeline_fail(mysqli $db, int $pipelineRunId, string $message, array $error=[]): void { pipeline_log($pipelineRunId,'ERROR','PIPELINE',$message); sfm_pipeline_update($db,$pipelineRunId,'ERROR','ERROR',100,$message,['error_json'=>json_encode($error, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)]); }

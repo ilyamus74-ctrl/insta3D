@@ -434,6 +434,85 @@ PYDIAG
   fi
 }
 
+generate_sparse_components() {
+  local out_json="$OUTPUT_DIR/sparse_components.json"
+  local extracted_frames
+  extracted_frames="$(find "$FRAMES_DIR" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) | wc -l | tr -d ' ')"
+  local model_dir txt_dir model_id
+  for model_dir in "$SPARSE_DIR"/*; do
+    [[ -d "$model_dir" ]] || continue
+    model_id="$(basename "$model_dir")"
+    txt_dir="$model_dir"
+    if [[ ! -f "$model_dir/images.txt" && -f "$model_dir/images.bin" ]]; then
+      txt_dir="$model_dir/txt"
+      mkdir -p "$txt_dir"
+      run_colmap model_converter --input_path "$model_dir" --output_path "$txt_dir" --output_type TXT >> "$LOG_FILE" 2>&1 || echo "WARNING | SPARSE_COMPONENTS | model_converter failed for model $model_id" >> "$LOG_FILE"
+    fi
+  done
+  python3 - "$SPARSE_DIR" "$out_json" "$extracted_frames" <<'PYCOMP' >> "$LOG_FILE" 2>&1 || echo "WARNING | SPARSE_COMPONENTS | Failed to build sparse_components.json" >> "$LOG_FILE"
+import json, re, struct, sys
+from pathlib import Path
+
+sparse = Path(sys.argv[1])
+out = Path(sys.argv[2])
+extracted = int(sys.argv[3] or 0)
+frame_re = re.compile(r'(?:^|[_-])frame[_-]?(\d+)|(\d+)')
+
+def count_lines(path):
+    if not path.exists(): return 0
+    return sum(1 for line in path.read_text(errors='ignore').splitlines() if line.strip() and not line.lstrip().startswith('#'))
+
+def count_colmap_bin(path):
+    if not path.exists(): return 0
+    data = path.read_bytes()[:8]
+    return struct.unpack('<Q', data)[0] if len(data) == 8 else 0
+
+def frame_no(name):
+    m = frame_re.search(Path(name).stem)
+    if not m: return None
+    return int(next(g for g in m.groups() if g is not None))
+
+def ranges(nums):
+    if not nums: return []
+    nums=sorted(set(nums)); res=[]; s=p=nums[0]
+    for n in nums[1:]:
+        if n==p+1: p=n
+        else: res.append([s,p]); s=p=n
+    res.append([s,p])
+    return [f"{a:03d}" if a==b else f"{a:03d}-{b:03d}" for a,b in res]
+
+models=[]
+images_by_model={}
+for d in sorted([p for p in sparse.iterdir() if p.is_dir()], key=lambda p: int(p.name) if p.name.isdigit() else p.name):
+    images_txt = d/'images.txt'
+    if not images_txt.exists(): images_txt = d/'txt'/'images.txt'
+    names=[]
+    if images_txt.exists():
+        rows=[ln.strip() for ln in images_txt.read_text(errors='ignore').splitlines() if ln.strip() and not ln.lstrip().startswith('#')]
+        for i in range(0,len(rows),2):
+            parts=rows[i].split()
+            if len(parts)>=10: names.append(parts[9])
+    nums=[n for n in (frame_no(x) for x in names) if n is not None]
+    points=count_lines(d/'points3D.txt') or count_lines(d/'txt'/'points3D.txt')
+    if points==0:
+        points=count_colmap_bin(d/'points3D.bin')
+    mid=int(d.name) if d.name.isdigit() else d.name
+    images_by_model[str(mid)]=set(names)
+    models.append({'model_id':mid,'registered_images':len(names),'first_frame':min(nums) if nums else None,'last_frame':max(nums) if nums else None,'frame_ranges':ranges(nums),'points3D_count':points,'percent_of_extracted_frames':round(len(names)*100/extracted,2) if extracted else None})
+for m in models:
+    cur=images_by_model.get(str(m['model_id']), set())
+    shared={}
+    for oid, imgs in images_by_model.items():
+        if oid != str(m['model_id']):
+            shared[oid]=len(cur & imgs)
+    m['shared_images_with']=shared
+largest=max(models, key=lambda x:(x.get('registered_images') or 0, x.get('points3D_count') or 0), default={})
+payload={'models_count':len(models),'largest_model_id':largest.get('model_id'),'largest_model_registered_images':largest.get('registered_images',0),'extracted_frames':extracted,'models':models}
+out.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+print(f"SPARSE_COMPONENTS | wrote {out} with {len(models)} models")
+PYCOMP
+}
+
 MODEL_COUNT=$(find "$SPARSE_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 if [[ "$MODEL_COUNT" == "0" ]]; then
   write_status "ERROR" 0 -1 "COLMAP finished but produced zero sparse models"
@@ -451,8 +530,12 @@ for model_dir in "$SPARSE_DIR"/*; do
   fi
 done
 
+generate_sparse_components
+
 CAMERA_METADATA_RESULT="{}"
 if META_PATH="$(find_camera_metadata_json || true)"; then CAMERA_METADATA_RESULT="$(cat "$META_PATH")"; fi
+SPARSE_COMPONENTS_JSON="{}"
+if [[ -f "$OUTPUT_DIR/sparse_components.json" ]]; then SPARSE_COMPONENTS_JSON="$(cat "$OUTPUT_DIR/sparse_components.json")"; fi
 cat > "$OUTPUT_DIR/result.json" <<JSON
 {
   "job_id": "$JOB_ID",
@@ -470,6 +553,11 @@ cat > "$OUTPUT_DIR/result.json" <<JSON
   "colmap_camera_model_from_metadata": "$COLMAP_CAMERA_MODEL_FROM_METADATA",
   "camera_metadata": $CAMERA_METADATA_RESULT,
   "models": $MODEL_COUNT,
+  "models_count": $(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("models_count",0))' <<< "$SPARSE_COMPONENTS_JSON"),
+  "largest_model_id": $(python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("largest_model_id")))' <<< "$SPARSE_COMPONENTS_JSON"),
+  "largest_model_registered_images": $(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("largest_model_registered_images",0))' <<< "$SPARSE_COMPONENTS_JSON"),
+  "sparse_components_path": "$OUTPUT_DIR/sparse_components.json",
+  "warning": "$(if [[ "$MODEL_COUNT" -gt 1 ]]; then printf 'Sparse reconstruction split into multiple components'; fi)",
   "finished_at": "$(date -Iseconds)"
 }
 JSON
