@@ -69,75 +69,19 @@
     <div class="border rounded p-2 mt-2 small bg-light-subtle">
       <div class="fw-semibold">Sparse reconstruction components</div>
       <div class="text-muted mb-2">Models are disconnected reconstruction components detected by COLMAP, not quality levels.</div>
-
-      {if $rj.sparse_components.models_count|default:0 > 1}
-        <div class="alert alert-warning py-1 mb-2">
-          Sparse split into {$rj.sparse_components.models_count|escape} components.
-          Automatic pipeline selected model {$rj.sparse_components.largest_model_id|escape}.
+      {foreach from=$rj.dense_model_ids item=mid}{assign var=modelStats value=$rj.sparse_model_stats[$mid]}
+        <div class="border rounded p-2 mb-2 bg-white">
+          <div class="fw-semibold">Model {$mid}</div>
+          <div>Registered images: {$modelStats.registered_images|default:0}</div>
+          <div>Sparse points: {$modelStats.points3D|default:0|number_format:0:'.':','}</div>
+          <div>{if $rj.sparse_model_selection[$mid] && $rj.sparse_model_selection[$mid].label != 'Not selected'}Used by: {$rj.sparse_model_selection[$mid].label|replace:'Selected for ':''|escape}{else}Not used{/if}</div>
+          <div class="d-flex gap-1 flex-wrap mt-1">
+            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_preview_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.preview_enabled} disabled{/if}>Run Preview</button></form>
+            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_reconstruction_hq_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.hq_enabled} disabled{/if}>Run High quality</button></form>
+            <form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="sfm_export_ply_web"><input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}"><input type="hidden" name="model_id" value="{$mid}"><button type="submit" class="btn btn-sm btn-outline-success">Download sparse PLY</button></form>
+          </div>
         </div>
-      {/if}
-
-      <div class="table-responsive">
-        <table class="table table-sm align-middle mb-2">
-          <thead>
-            <tr>
-              <th>model_id</th>
-              <th>registered_images</th>
-              <th>frame_ranges</th>
-              <th>points3D_count</th>
-              <th>Used by</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-          {foreach from=$rj.sparse_components.models item=component}
-            {assign var=mid value=$component.model_id}
-            {assign var=modelStats value=$rj.sparse_model_stats[$mid]}
-
-            <tr{if $component.model_id == $rj.sparse_components.largest_model_id} class="table-warning"{/if}>
-              <td>
-                <strong>{$component.model_id|escape}</strong>
-                {if $component.model_id == $rj.sparse_components.largest_model_id}
-                  <span class="badge bg-warning text-dark">largest / auto</span>
-                {/if}
-              </td>
-              <td>{$component.registered_images|default:0|escape}</td>
-              <td>{if $component.frame_ranges|@count}{$component.frame_ranges|@implode:', '|escape}{else}-{/if}</td>
-              <td>{$component.points3D_count|default:0|number_format:0:'.':','}</td>
-              <td>
-                {if $rj.sparse_model_selection[$mid] && $rj.sparse_model_selection[$mid].label != 'Not selected'}
-                  <span class="badge {$rj.sparse_model_selection[$mid].class|escape}">{$rj.sparse_model_selection[$mid].label|replace:'Selected for ':''|escape}</span>
-                {else}
-                  <span class="badge bg-secondary">Not used</span>
-                {/if}
-              </td>
-              <td class="d-flex gap-1 flex-wrap">
-                <form method="post" action="/order.php?id={$order.id}" class="d-inline">
-                  <input type="hidden" name="action" value="sfm_reconstruction_preview_web">
-                  <input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}">
-                  <input type="hidden" name="model_id" value="{$component.model_id}">
-                  <button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.preview_enabled} disabled{/if}>Run preview for model {$component.model_id|escape}</button>
-                </form>
-
-                <form method="post" action="/order.php?id={$order.id}" class="d-inline">
-                  <input type="hidden" name="action" value="sfm_reconstruction_hq_web">
-                  <input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}">
-                  <input type="hidden" name="model_id" value="{$component.model_id}">
-                  <button type="submit" class="btn btn-sm btn-outline-primary"{if !$modelStats.hq_enabled} disabled{/if}>Run HQ for model {$component.model_id|escape}</button>
-                </form>
-
-                <form method="post" action="/order.php?id={$order.id}" class="d-inline">
-                  <input type="hidden" name="action" value="sfm_export_ply_web">
-                  <input type="hidden" name="colmap_job_id" value="{$rj.remote_job_id}">
-                  <input type="hidden" name="model_id" value="{$component.model_id}">
-                  <button type="submit" class="btn btn-sm btn-outline-success">Export PLY for model {$component.model_id|escape}</button>
-                </form>
-              </td>
-            </tr>
-          {/foreach}
-          </tbody>
-        </table>
-      </div>
+      {/foreach}
     </div>
   {/if}
   <details class="small mt-2"><summary>Details</summary><div>Technical type: <code>{$rj.job_type|escape}</code></div></details>
