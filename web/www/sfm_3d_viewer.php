@@ -13,8 +13,80 @@ if ($debugToken !== '') {
 $orderId = (int)($_GET['order_id'] ?? ($debugPublic['order_id'] ?? 0));
 $sessionId = (int)($_GET['session_id'] ?? ($debugPublic['capture_session_id'] ?? 0));
 $pipelineRunId = (int)($_GET['pipeline_run_id'] ?? 0);
+$mergeId = (int)($_GET['merge_id'] ?? 0);
 $videoScanId = (int)($_GET['video_scan_id'] ?? 0);
-$artifact = in_array((string)($_GET['artifact'] ?? 'sparse'), ['sparse','dense','mesh'], true) ? (string)($_GET['artifact'] ?? 'sparse') : 'sparse';
+$artifact = in_array((string)($_GET['artifact'] ?? ($mergeId > 0 ? 'dense' : 'sparse')), ['sparse','dense','mesh'], true) ? (string)($_GET['artifact'] ?? ($mergeId > 0 ? 'dense' : 'sparse')) : 'sparse';
+$mergeViewerData = null;
+function sfm_viewer_can_view_order(array $order, int $userId, string $role): bool {
+    return $role === 'ADMIN'
+        || (int)$order['broker_id'] === $userId
+        || ($role === 'OPERATOR' && (
+            (int)$order['operator_id'] === $userId
+            || ((int)$order['is_published'] === 1 && (string)$order['status'] === 'NEW' && $order['operator_id'] === null)
+        ));
+}
+if ($mergeId > 0) {
+    if ($debugPublic) {
+        http_response_code(403);
+        exit('Merge viewer requires authenticated access');
+    }
+    $user = auth_current_user();
+    $viewerUserId = (int)($user['id'] ?? 0);
+    $viewerRole = (string)($user['role'] ?? 'BROKER');
+    $stmt = $dbcnx->prepare('SELECT m.*, o.broker_id, o.operator_id, o.is_published, o.status FROM sfm_generated_model_merges m JOIN tour_orders o ON o.id=m.order_id WHERE m.id=? LIMIT 1');
+    if (!$stmt) {
+        http_response_code(500);
+        exit('DB prepare error');
+    }
+    $stmt->bind_param('i', $mergeId);
+    $stmt->execute();
+    $merge = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$merge) {
+        http_response_code(404);
+        exit('Merge not found');
+    }
+    if ($orderId > 0 && (int)$merge['order_id'] !== $orderId) {
+        http_response_code(400);
+        exit('Merge does not belong to this order');
+    }
+    $orderId = (int)$merge['order_id'];
+    if (!sfm_viewer_can_view_order($merge, $viewerUserId, $viewerRole)) {
+        http_response_code(403);
+        exit('Forbidden');
+    }
+    $isAlignedMerge = (string)($merge['merge_type'] ?? '') === 'aligned_shared_images_dense_ply';
+    $mergeTitle = ($isAlignedMerge ? 'Aligned merged dense cloud #' : 'Diagnostic merged dense cloud #') . (int)$merge['id'];
+    $mergeWarning = $isAlignedMerge
+        ? 'Aligned by shared COLMAP image poses. Disconnected components may be excluded.'
+        : 'Diagnostic merge only: point clouds are concatenated without alignment.';
+    $mergeViewerData = [
+        'ok' => true,
+        'is_merge' => true,
+        'merge_id' => (int)$merge['id'],
+        'merge_type' => (string)($merge['merge_type'] ?? ''),
+        'title' => $mergeTitle,
+        'warning' => $mergeWarning,
+        'source_video_filename' => $mergeTitle,
+        'video_scan_id' => null,
+        'pipeline_run_id' => null,
+        'pipeline_mode' => $isAlignedMerge ? 'aligned shared images' : 'diagnostic merge',
+        'status' => (string)($merge['status'] ?? 'DONE'),
+        'summary' => [
+            'points_count' => (int)($merge['total_points'] ?? 0),
+            'camera_poses_count' => 0,
+            'keyframe_points_count' => 0,
+            'camera_trajectory_available' => false,
+        ],
+        'artifacts' => [],
+        'sparse' => ['available' => false],
+        'dense' => [
+            'available' => true,
+            'fused_ply_url' => '/api/sfm_generated_merge_file.php?merge_id=' . (int)$merge['id'] . '&file=ply',
+        ],
+        'mesh' => ['available' => false],
+    ];
+}
 ?>
 <!doctype html>
 <html lang="ru">
@@ -38,9 +110,18 @@ body{overflow:hidden}
 <body class="p-3">
 <div class="container-fluid position-relative">
 <div class="d-flex gap-2 mb-2">
-<?php if (!$debugPublic): ?><a class="btn btn-outline-secondary btn-sm" href="/order.php?id=<?php echo $orderId; ?>">← Back to order</a>
-<a class="btn btn-outline-primary btn-sm" href="/sfm_tour_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open SfM tour</a>
-<a class="btn btn-outline-success btn-sm" href="/sfm_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open diagnostics</a><?php else: ?><span class="badge bg-warning text-dark">Read-only debug public access</span><?php endif; ?>
+<?php if (!$debugPublic): ?>
+  <?php if ($mergeId > 0): ?>
+    <a class="btn btn-outline-secondary btn-sm" href="/order_simple.php?id=<?php echo $orderId; ?>#simple-generated">← Back to Simple Order</a>
+    <a class="btn btn-outline-secondary btn-sm" href="/order.php?id=<?php echo $orderId; ?>">Back to Legacy Order</a>
+    <?php if ($sessionId > 0): ?><a class="btn btn-outline-primary btn-sm" href="/sfm_tour_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open SfM tour</a><?php endif; ?>
+    <a class="btn btn-outline-success btn-sm" href="/sfm_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open diagnostics</a>
+  <?php else: ?>
+    <a class="btn btn-outline-secondary btn-sm" href="/order.php?id=<?php echo $orderId; ?>">← Back to order</a>
+    <a class="btn btn-outline-primary btn-sm" href="/sfm_tour_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open SfM tour</a>
+    <a class="btn btn-outline-success btn-sm" href="/sfm_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open diagnostics</a>
+  <?php endif; ?>
+<?php else: ?><span class="badge bg-warning text-dark">Read-only debug public access</span><?php endif; ?>
 </div>
 <div class="alert alert-light border small" id="sourceHeader">Source video: loading…</div>
 <div class="viewer-shell">
@@ -127,17 +208,24 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 
-const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,videoScanId=<?php echo json_encode($videoScanId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
+const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,videoScanId=<?php echo json_encode($videoScanId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,mergeId=<?php echo json_encode($mergeId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
+const mergeViewerData=<?php echo json_encode($mergeViewerData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 const urlParams=new URLSearchParams(window.location.search);
 const autoLevelUrlOverride=urlParams.get('auto_level');
 const statusEl=document.getElementById('viewerStatus');
 function showError(msg){ statusEl.className='text-danger p-3'; statusEl.textContent=msg; if(!statusEl.isConnected) document.getElementById('viewer').prepend(statusEl); }
-const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&video_scan_id=${videoScanId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${videoScanId>0?'&video_scan_id='+videoScanId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
-const r=await fetch(apiUrl);
-const apiContentType=(r.headers.get('Content-Type')||'').toLowerCase();
-const data=(r.ok && apiContentType.includes('application/json')) ? await r.json().catch(()=>({ok:false,error:'Bad API JSON response'})) : {ok:false,error:`API returned HTTP ${r.status}`};
+let data=mergeViewerData;
+if(!data){
+  const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&video_scan_id=${videoScanId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${videoScanId>0?'&video_scan_id='+videoScanId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
+  const r=await fetch(apiUrl);
+  const apiContentType=(r.headers.get('Content-Type')||'').toLowerCase();
+  data=(r.ok && apiContentType.includes('application/json')) ? await r.json().catch(()=>({ok:false,error:'Bad API JSON response'})) : {ok:false,error:`API returned HTTP ${r.status}`};
+}
 if(!data.ok){ showError(data.error||'Artifact not found'); throw new Error(data.error||'load failed'); }
-document.getElementById('sourceHeader').innerHTML = `<b>Source video:</b> ${data.source_video_filename||'unknown'} · <b>Video scan:</b> ${data.video_scan_id||videoScanId||'-'} · <b>Pipeline run:</b> ${data.pipeline_run_id||pipelineRunId||'-'} · <b>Mode:</b> ${data.pipeline_mode||'-'} · <b>Status:</b> ${data.status||'-'}`;
+if(data.title) document.title = data.title;
+document.getElementById('sourceHeader').innerHTML = data.is_merge
+  ? `<b>${data.title}</b> · <b>Merge:</b> ${data.merge_id||mergeId||'-'} · <b>Mode:</b> ${data.pipeline_mode||'-'} · <b>Status:</b> ${data.status||'-'}${data.warning?`<div class="text-warning mt-1">${data.warning}</div>`:''}`
+  : `<b>Source video:</b> ${data.source_video_filename||'unknown'} · <b>Video scan:</b> ${data.video_scan_id||videoScanId||'-'} · <b>Pipeline run:</b> ${data.pipeline_run_id||pipelineRunId||'-'} · <b>Mode:</b> ${data.pipeline_mode||'-'} · <b>Status:</b> ${data.status||'-'}`;
 statusEl.textContent = initialArtifact==='dense' ? 'Loading dense point cloud...' : (initialArtifact==='mesh' ? 'Loading final mesh...' : 'Loading sparse point cloud...');
 
 const el=document.getElementById('viewer');
