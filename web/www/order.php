@@ -251,6 +251,54 @@ function table_exists(mysqli $dbcnx,string $table): bool { $t=$dbcnx->real_escap
 function column_exists(mysqli $dbcnx,string $table,string $column): bool { $t=$dbcnx->real_escape_string($table); $c=$dbcnx->real_escape_string($column); $r=$dbcnx->query("SHOW COLUMNS FROM `".$t."` LIKE '".$c."'"); $ok=$r && $r->num_rows>0; if($r){$r->close();} return $ok; }
 
 
+function sfm_generated_merges_ensure_schema(mysqli $dbcnx): void {
+  $dbcnx->query("CREATE TABLE IF NOT EXISTS sfm_generated_model_merges (id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, capture_session_id BIGINT NULL, created_by_user_id BIGINT NULL, status VARCHAR(32) NOT NULL DEFAULT 'DONE', merge_type VARCHAR(64) NOT NULL, source_jobs_json JSON NULL, output_path TEXT NOT NULL, result_json_path TEXT NULL, total_points BIGINT NOT NULL DEFAULT 0, message TEXT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), KEY idx_sfm_generated_model_merges_order (order_id, created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+}
+function sfm_path_inside_output_root(string $path): bool { $root=realpath('/home/makler/web/remote_station/output'); $real=realpath($path); return $root!==false && $real!==false && ($real===$root || strpos($real,rtrim($root,DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR)===0); }
+function sfm_ply_parse_for_merge(string $path): array {
+  $fh=@fopen($path,'rb'); if(!$fh){ throw new RuntimeException('Cannot read PLY file.'); }
+  if(fread($fh,3)!=="ply"){ fclose($fh); throw new RuntimeException('Invalid PLY file.'); } rewind($fh);
+  $header=[]; $format=''; $vertices=null; $faces=0; $props=[]; $currentElement=''; $headerBytes=0; $ended=false;
+  while(($line=fgets($fh))!==false){
+    $header[]=$line; $headerBytes+=strlen($line); $t=trim($line);
+    if(preg_match('/^format\s+(\S+)\s+1\.0$/',$t,$m)){
+      if(!in_array($m[1],['ascii','binary_little_endian'],true)){ fclose($fh); throw new RuntimeException('Unsupported PLY format for dense merge.'); }
+      $format=$m[1];
+    } elseif(preg_match('/^element\s+(\w+)\s+(\d+)$/',$t,$m)){
+      $currentElement=$m[1]; $count=(int)$m[2];
+      if($currentElement==='vertex'){ $vertices=$count; }
+      elseif($currentElement==='face'){ if($count>0){ fclose($fh); throw new RuntimeException('Cannot merge dense PLY with faces.'); } $faces=0; }
+      else { fclose($fh); throw new RuntimeException('Cannot merge PLY files with unsupported element: '.$currentElement); }
+    } elseif($currentElement==='vertex' && preg_match('/^property\s+(.+)$/',$t,$m)){
+      $props[]=$m[1];
+    }
+    if($t==='end_header'){ $ended=true; break; }
+  }
+  if(!$ended){ fclose($fh); throw new RuntimeException('Invalid PLY header.'); }
+  if($format===''){ fclose($fh); throw new RuntimeException('Unsupported PLY format for dense merge.'); }
+  if($vertices===null || $vertices<=0){ fclose($fh); throw new RuntimeException('PLY file has no mergeable vertices.'); }
+  return ['fh'=>$fh,'format'=>$format,'vertices'=>$vertices,'faces'=>$faces,'props'=>$props,'header'=>$header,'header_bytes'=>$headerBytes];
+}
+function sfm_merge_dense_plys(array $sources,string $out): array {
+  if(!$sources){ throw new RuntimeException('No dense PLY sources selected.'); }
+  $infos=[]; $total=0; $layout=null; $format=null;
+  foreach($sources as $s){ $i=sfm_ply_parse_for_merge($s['path']); $sig=json_encode($i['props']); if($layout===null){$layout=$sig;$format=$i['format'];} elseif($layout!==$sig || $format!==$i['format']){ foreach($infos as $x){fclose($x['fh']);} fclose($i['fh']); throw new RuntimeException('Cannot merge PLY files with different vertex property layout.'); } $total+=(int)$i['vertices']; $infos[]=$i; }
+  $oh=@fopen($out,'wb'); if(!$oh){ foreach($infos as $x){fclose($x['fh']);} throw new RuntimeException('Cannot create merged PLY output.'); }
+  foreach($infos[0]['header'] as $line){ $line=preg_match('/^element\s+vertex\s+\d+/i',trim($line))?'element vertex '.$total."\n":$line; fwrite($oh,$line); }
+  foreach($infos as $i){ fseek($i['fh'],$i['header_bytes']); stream_copy_to_stream($i['fh'],$oh); if($i['format']==='ascii'){ fwrite($oh, "\n"); } fclose($i['fh']); }
+  fclose($oh); return ['total_points'=>$total];
+}
+function handle_merge_generated_dense_clouds(mysqli $dbcnx,int $orderId,int $userId): void {
+  sfm_generated_merges_ensure_schema($dbcnx); $mergeAll=(int)($_POST['merge_all']??0)===1; $exclude=(int)($_POST['exclude_tiny']??0)===1; $min=max(0,(int)($_POST['min_points']??1000));
+  $ids=array_values(array_unique(array_map('intval',(array)($_POST['source_job_ids']??[]))));
+  $sql="SELECT * FROM sfm_remote_jobs WHERE order_id=? AND status='DONE' AND job_type IN ('COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ')".($mergeAll?'':(' AND id IN ('.implode(',',array_fill(0,max(1,count($ids)),'?')).')'))." ORDER BY id ASC";
+  $st=$dbcnx->prepare($sql); if(!$st){throw new RuntimeException('DB prepare error: '.$dbcnx->error);} if($mergeAll){$st->bind_param('i',$orderId);} else { if(!$ids)throw new RuntimeException('No dense PLY sources selected.'); $types='i'.str_repeat('i',count($ids)); $vals=array_merge([$orderId],$ids); $st->bind_param($types,...$vals); }
+  $st->execute(); $rs=$st->get_result(); $src=[]; while($j=$rs->fetch_assoc()){ $path=sfm_remote_output_dir((int)$j['remote_job_id']).'/merged/merged_fused.ply'; if(!sfm_path_inside_output_root($path) || !is_file($path))continue; $pi=sfm_ply_header_info($path); if(!$pi['valid'])continue; if($exclude && (int)$pi['vertices']<$min)continue; $p=json_decode((string)($j['parameters_json']??'{}'),true)?:[]; $src[]=['db_job_id'=>(int)$j['id'],'remote_job_id'=>(int)$j['remote_job_id'],'model_id'=>$p['model_id']??null,'mode'=>(string)($j['reconstruction_mode']?:((string)$j['job_type']==='COLMAP_RECONSTRUCTION_HQ'?'hq':'preview')),'points'=>(int)$pi['vertices'],'path'=>$path,'capture_session_id'=>(int)$j['capture_session_id']]; } $st->close();
+  if(!$src)throw new RuntimeException('No mergeable dense PLY sources found.'); $dir='/home/makler/web/remote_station/output/merged_order_'.$orderId.'_'.date('Ymd_His').'_'.bin2hex(random_bytes(4)); if(!mkdir($dir,0775,true)&&!is_dir($dir))throw new RuntimeException('Cannot create merge output directory.');
+  $ply=$dir.'/merged_dense_cloud.ply'; $res=sfm_merge_dense_plys($src,$ply); $json=$dir.'/merge_result.json'; $payloadJobs=array_map(fn($x)=>['db_job_id'=>$x['db_job_id'],'remote_job_id'=>$x['remote_job_id'],'model_id'=>$x['model_id'],'mode'=>$x['mode'],'points'=>$x['points'],'path'=>$x['path']],$src); $payload=['order_id'=>$orderId,'created_at'=>date('c'),'merge_type'=>'diagnostic_concat_dense_ply','aligned'=>false,'warning'=>'Point clouds are concatenated without alignment. Components may not share coordinate system.','source_jobs'=>$payloadJobs,'total_points'=>$res['total_points'],'output_ply'=>$ply]; file_put_contents($json,json_encode($payload,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+  $sid=$src[0]['capture_session_id']??null; $sj=json_encode($src,JSON_UNESCAPED_SLASHES); $mt='diagnostic_concat_dense_ply'; $msg=$payload['warning']; $st=$dbcnx->prepare('INSERT INTO sfm_generated_model_merges (order_id,capture_session_id,created_by_user_id,status,merge_type,source_jobs_json,output_path,result_json_path,total_points,message) VALUES (?,?,?,\'DONE\',?,?,?,?,?,?)'); if(!$st)throw new RuntimeException('DB prepare error: '.$dbcnx->error); $st->bind_param('iiissssis',$orderId,$sid,$userId,$mt,$sj,$ply,$json,$res['total_points'],$msg); $st->execute(); $st->close(); header('Location: /order_simple.php?id='.$orderId.'#simple-generated'); exit;
+}
+
 function table_columns_info(mysqli $dbcnx,string $table): array {
   $t=$dbcnx->real_escape_string($table); $rs=$dbcnx->query('SHOW COLUMNS FROM `'.$t.'`'); $out=[];
   if($rs){ while($r=$rs->fetch_assoc()){ $out[(string)$r['Field']]=$r; } $rs->close(); }
@@ -886,6 +934,14 @@ function delete_video_scan_for_order(mysqli $dbcnx,int $orderId,int $videoScanId
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
  $action=$_POST['action']??'';
+
+ if($action==='merge_generated_dense_clouds'){
+   if(!($canDeleteMedia || $canEdit)){
+     $error='No permission to create generated model merge.';
+   } else {
+     try{ handle_merge_generated_dense_clouds($dbcnx,$orderId,$userId); } catch(Throwable $e){ $error=$e->getMessage(); }
+   }
+ }
 
  if($action==='update_order'){
    if(!$canEditOrderInfo){
