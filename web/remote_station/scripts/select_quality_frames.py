@@ -55,7 +55,7 @@ def percentile(vals, pct):
     return vals[int(k)] if f==c else vals[f]*(c-k)+vals[c]*(k-f)
 
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--video',required=True); ap.add_argument('--output-dir',required=True); ap.add_argument('--sampling-mode',default='auto_quality'); ap.add_argument('--target-frames',type=int,default=400); ap.add_argument('--candidate-multiplier',type=float,default=1.5); ap.add_argument('--min-fps',type=float,default=.25); ap.add_argument('--max-fps',type=float,default=10); ap.add_argument('--scale-width',type=int,default=1920); ap.add_argument('--allow-upscale',action='store_true'); ap.add_argument('--jpeg-quality',type=int,default=2); ap.add_argument('--keep-candidates',action='store_true'); ap.add_argument('--imu-jsonl'); ap.add_argument('--imu-settings',default='{}')
+    ap=argparse.ArgumentParser(); ap.add_argument('--video',required=True); ap.add_argument('--output-dir',required=True); ap.add_argument('--sampling-mode',default='auto_quality'); ap.add_argument('--target-frames',type=int,default=400); ap.add_argument('--candidate-multiplier',type=float,default=1.5); ap.add_argument('--min-fps',type=float,default=.25); ap.add_argument('--max-fps',type=float,default=10); ap.add_argument('--scale-width',type=int,default=1920); ap.add_argument('--allow-upscale',action='store_true'); ap.add_argument('--jpeg-quality',type=int,default=2); ap.add_argument('--keep-candidates',action='store_true'); ap.add_argument('--bridge-overlap-sampling',action='store_true'); ap.add_argument('--bridge-interval-sec',type=float,default=0.5); ap.add_argument('--bridge-window-sec',type=float,default=2.0); ap.add_argument('--max-allowed-selected-gap-sec',type=float,default=1.5); ap.add_argument('--boundary-frames-per-window',type=int,default=2); ap.add_argument('--bridge-max-frames-multiplier',type=float,default=1.5); ap.add_argument('--imu-jsonl'); ap.add_argument('--imu-settings',default='{}')
     a=ap.parse_args(); out=Path(a.output_dir); cand=out/'candidates'; frames=out/'frames'; qual=out/'quality'
     imu=parse_imu_jsonl(a.imu_jsonl) if a.imu_jsonl else None
     imu_cfg={'enabled':True,'prefer_stable_frames':True,'soft_gyro_threshold_deg_sec':45,'hard_gyro_threshold_deg_sec':120,'accel_deviation_threshold':2.5,'motion_penalty_weight':0.25,'maximum_imu_rejection_ratio':0.20,'allow_coverage_fallback':True}
@@ -102,6 +102,40 @@ def main():
         good=[r for r in bucket if not r['rejected_reason']]
         choice=max(good or bucket, key=lambda r:r['quality_score']); choice['selected']=True; choice['selection_reason']='best_in_time_bin' if not choice['rejected_reason'] else 'fallback_time_coverage'; selected.append(choice)
     selected=sorted(selected,key=lambda r:r['timestamp_sec'])[:a.target_frames]
+    quality_ids={id(r) for r in selected}; max_before=max([selected[i]['timestamp_sec']-selected[i-1]['timestamp_sec'] for i in range(1,len(selected))] or [0])
+    forced=[]; bridge_ids=set(); boundary_ids=set()
+    hard_ok=lambda r: not (r['brightness_mean']<25 or r['underexposure_ratio']>.85 or r['brightness_mean']>240 or r['overexposure_ratio']>.75 or r['sharpness']<max(1.0, sharp_thr*.35))
+    if a.bridge_overlap_sampling and selected:
+        max_allowed=max(1, int(round(a.target_frames*a.bridge_max_frames_multiplier)))
+        chosen={r['candidate'] for r in selected}
+        def add_frame(r, reason, gb=0, ga=0):
+            if len(selected)>=max_allowed or r['candidate'] in chosen or not hard_ok(r): return False
+            r['selected']=True; r['selection_reason']=reason; selected.append(r); chosen.add(r['candidate'])
+            if reason.startswith('bridge_gap'): bridge_ids.add(id(r))
+            if reason.startswith('boundary_overlap'): boundary_ids.add(id(r))
+            forced.append({'timestamp_sec':round(r['timestamp_sec'],4),'reason':reason,'nearest_gap_before':round(gb,4),'nearest_gap_after':round(ga,4)})
+            return True
+        base=sorted(selected,key=lambda r:r['timestamp_sec'])
+        for prev,nxt in zip(base,base[1:]):
+            gap=nxt['timestamp_sec']-prev['timestamp_sec']
+            if gap<=a.max_allowed_selected_gap_sec: continue
+            n=max(1, int(math.floor(gap/max(a.bridge_interval_sec,.001))))
+            for k in range(1,n+1):
+                target_ts=prev['timestamp_sec'] + gap*k/(n+1)
+                pool=[r for r in rows if prev['timestamp_sec']<r['timestamp_sec']<nxt['timestamp_sec'] and r['candidate'] not in chosen]
+                if not pool: break
+                r=max(pool, key=lambda x: (-(abs(x['timestamp_sec']-target_ts)), x['quality_score']))
+                add_frame(r,'bridge_gap',target_ts-prev['timestamp_sec'],nxt['timestamp_sec']-target_ts)
+        if a.bridge_window_sec>0 and a.boundary_frames_per_window>0:
+            b=a.bridge_window_sec
+            t=b
+            while t<duration and len(selected)<max_allowed:
+                for side, pool in [('before',[r for r in rows if t-b<=r['timestamp_sec']<t and r['candidate'] not in chosen]),('after',[r for r in rows if t<=r['timestamp_sec']<t+b and r['candidate'] not in chosen])]:
+                    pool=sorted(pool, key=lambda r:(abs(r['timestamp_sec']-t), -r['quality_score']))[:max(1,a.boundary_frames_per_window*3)]
+                    for r in sorted(pool, key=lambda r:r['quality_score'], reverse=True)[:a.boundary_frames_per_window]:
+                        add_frame(r,'boundary_overlap_'+side,abs(r['timestamp_sec']-t),0)
+                t+=b
+    selected=sorted(selected,key=lambda r:r['timestamp_sec'])
     for i,r in enumerate(selected,1):
         name=f'frame_{i:06d}.jpg'; shutil.copy2(cand/r['candidate'], frames/name); r['output']=name
     gaps=[selected[i]['timestamp_sec']-selected[i-1]['timestamp_sec'] for i in range(1,len(selected))]
@@ -109,9 +143,9 @@ def main():
     coverage=(max(0,last-first)/duration*100) if duration else 0
     def pub(r):
         return {k:(round(v,4) if isinstance(v,float) else v) for k,v in r.items() if not k.startswith('_') and k not in ('selected','index')}
-    sel={'video_duration_sec':round(duration,4),'source_fps':round(info['fps'],4),'target_frames':a.target_frames,'candidate_frames':actual,'selected_frames':len(selected),'first_timestamp_sec':round(first,4),'last_timestamp_sec':round(last,4),'effective_sampling_fps':round((len(selected)/duration),4),'coverage_percent':round(coverage,2),'frames':[pub(r) for r in selected]}
+    sel={'video_duration_sec':round(duration,4),'source_fps':round(info['fps'],4),'target_frames':a.target_frames,'candidate_frames':actual,'selected_frames':len(selected),'first_timestamp_sec':round(first,4),'last_timestamp_sec':round(last,4),'effective_sampling_fps':round((len(selected)/duration),4),'coverage_percent':round(coverage,2),'frame_selection_mode':('auto_quality_bridge_overlap' if a.bridge_overlap_sampling and a.sampling_mode!='manual' else a.sampling_mode),'bridge_overlap_sampling':bool(a.bridge_overlap_sampling),'selected_quality_frames':sum(id(r) in quality_ids for r in selected),'selected_bridge_frames':sum(id(r) in bridge_ids for r in selected),'selected_boundary_frames':sum(id(r) in boundary_ids for r in selected),'selected_total_frames':len(selected),'max_selected_gap_sec_before_bridge':round(max_before,4),'max_selected_gap_sec_after_bridge':round(max(gaps or [0]),4),'timestamp_ranges':({'first_timestamp_sec':round(first,4),'last_timestamp_sec':round(last,4)}),'forced_bridge_frames':forced,'frames':[pub(r) for r in selected]}
     rejected=[pub(r) for r in rows if not r.get('selected')]
-    summary={'status':'DONE','sampling_mode':a.sampling_mode,'video_duration_sec':round(duration,4),'source_fps':round(info['fps'],4),'target_frames':a.target_frames,'candidate_frames':actual,'selected_frames':len(selected),'rejected_blur':sum('blur' in r['rejected_reason'] for r in rows),'rejected_dark':sum('dark' in r['rejected_reason'] for r in rows),'rejected_overexposed':sum('overexposed' in r['rejected_reason'] for r in rows),'rejected_duplicate':sum('duplicate' in r['rejected_reason'] for r in rows),'imu':({'available':bool(imu and imu.records),'sync_method':imu.sync_info.get('method'),'sync_quality':imu.sync_info.get('quality'),'counts':imu.counts()} if imu else {'available':False}),'imu_soft_penalized':sum(bool(r.get('imu_penalized')) for r in rows),'imu_hard_rejected':sum('imu_motion' in r['rejected_reason'] for r in rows),'fallback_frames':sum(r.get('selection_reason')=='fallback_time_coverage' for r in selected),'sharpness':{'min':round(mn,3),'median':round(med,3),'max':round(mx,3)},'coverage':{'first_timestamp_sec':round(first,4),'last_timestamp_sec':round(last,4),'coverage_percent':round(coverage,2),'maximum_gap_sec':round(max(gaps or [0]),4)},'source_width':info['width'],'source_height':info['height'],'rotation':info['rotation'],'output_width':a.scale_width,'output_height':None,'upscaled':False}
+    summary={'status':'DONE','sampling_mode':a.sampling_mode,'frame_selection_mode':('auto_quality_bridge_overlap' if a.bridge_overlap_sampling and a.sampling_mode!='manual' else a.sampling_mode),'bridge_overlap_sampling':bool(a.bridge_overlap_sampling),'video_duration_sec':round(duration,4),'source_fps':round(info['fps'],4),'target_frames':a.target_frames,'candidate_frames':actual,'selected_frames':len(selected),'selected_quality_frames':sum(id(r) in quality_ids for r in selected),'selected_bridge_frames':sum(id(r) in bridge_ids for r in selected),'selected_boundary_frames':sum(id(r) in boundary_ids for r in selected),'selected_total_frames':len(selected),'max_selected_gap_sec_before_bridge':round(max_before,4),'max_selected_gap_sec_after_bridge':round(max(gaps or [0]),4),'timestamp_ranges':({'first_timestamp_sec':round(first,4),'last_timestamp_sec':round(last,4)}),'forced_bridge_frames':forced,'rejected_blur':sum('blur' in r['rejected_reason'] for r in rows),'rejected_dark':sum('dark' in r['rejected_reason'] for r in rows),'rejected_overexposed':sum('overexposed' in r['rejected_reason'] for r in rows),'rejected_duplicate':sum('duplicate' in r['rejected_reason'] for r in rows),'imu':({'available':bool(imu and imu.records),'sync_method':imu.sync_info.get('method'),'sync_quality':imu.sync_info.get('quality'),'counts':imu.counts()} if imu else {'available':False}),'imu_soft_penalized':sum(bool(r.get('imu_penalized')) for r in rows),'imu_hard_rejected':sum('imu_motion' in r['rejected_reason'] for r in rows),'fallback_frames':sum(r.get('selection_reason')=='fallback_time_coverage' for r in selected),'sharpness':{'min':round(mn,3),'median':round(med,3),'max':round(mx,3)},'coverage':{'first_timestamp_sec':round(first,4),'last_timestamp_sec':round(last,4),'coverage_percent':round(coverage,2),'maximum_gap_sec':round(max(gaps or [0]),4)},'source_width':info['width'],'source_height':info['height'],'rotation':info['rotation'],'output_width':a.scale_width,'output_height':None,'upscaled':False}
     (qual/'frame_quality.json').write_text(json.dumps([pub(r) for r in rows],indent=2),encoding='utf-8'); (qual/'selected_frames.json').write_text(json.dumps(sel,indent=2),encoding='utf-8'); (qual/'rejected_frames.json').write_text(json.dumps(rejected,indent=2),encoding='utf-8'); (qual/'quality_summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
     if not a.keep_candidates: shutil.rmtree(cand, ignore_errors=True)
     print(json.dumps(summary))

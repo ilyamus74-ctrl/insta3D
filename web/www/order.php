@@ -706,7 +706,7 @@ function sfm_cleanup_older_runs_for_tuple(mysqli $dbcnx,int $currentRunId,int $c
   if($free!==false && $free < 1073741824){ throw new RuntimeException('Not enough disk space remains after cleanup to start reconstruction (less than 1 GiB free).'); }
 }
 
-function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId,?int $videoScanId,string $mode,int $startedByUserId=0,?int $previousPipelineRunId=null,?array $sameSettingsSnapshot=null): int {
+function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId,?int $videoScanId,string $mode,int $startedByUserId=0,?int $previousPipelineRunId=null,?array $sameSettingsSnapshot=null,?array $requestSettingsOverride=null): int {
   $preset=sfm_pipeline_preset($mode);
   $videoScanId=(int)($videoScanId ?: 0);
   $sourceVideo=sfm_load_source_video($dbcnx,$orderId,$captureSessionId,$videoScanId);
@@ -717,7 +717,7 @@ function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId
   $st=$dbcnx->prepare($sql); if(!$st){ throw new RuntimeException('DB prepare error: '.$dbcnx->error); }
   $types='iis'.str_repeat('s',count($activeStatuses)); $params=array_merge([$captureSessionId,$videoScanId,$mode],$activeStatuses); $st->bind_param($types,...$params); $st->execute(); $active=$st->get_result()->fetch_assoc(); $st->close();
   if($active){ throw new RuntimeException($preset['label'].' is already queued or running for this source video'); }
-  if($sameSettingsSnapshot!==null){ $effective=$sameSettingsSnapshot; } else { $effective=sfm_merge_settings(sfm_system_defaults(), sfm_load_user_settings($dbcnx,$startedByUserId), sfm_load_session_settings($dbcnx,$captureSessionId,$startedByUserId), []); }
+  if($sameSettingsSnapshot!==null){ $effective=$sameSettingsSnapshot; } else { $effective=sfm_merge_settings(sfm_system_defaults(), sfm_load_user_settings($dbcnx,$startedByUserId), sfm_load_session_settings($dbcnx,$captureSessionId,$startedByUserId), $requestSettingsOverride ?? []); }
   if(!isset($effective['extract']['sampling_mode']) && (isset($effective['extract']['fps']) || isset($effective['extract']['max_frames']))){ $effective['extract']['sampling_mode']='manual'; }
   $effective=sfm_merge_settings(sfm_system_defaults(), [], [], $effective); sfm_validate_settings($effective);
   $modeParams=sfm_mode_parameters($effective,$mode); $paramsArray=$effective + ['pipeline_mode'=>$mode,'mode_parameters'=>$modeParams,'source_video'=>sfm_source_video_snapshot($sourceVideo),'previous_pipeline_run_id'=>$previousPipelineRunId];
@@ -739,7 +739,7 @@ function start_sfm_pipeline_run(mysqli $dbcnx,int $orderId,int $captureSessionId
   else { pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','IMU | No source IMU sidecar found for video '.(string)$sourceVideo['filename']); }
   $extract=$modeParams['extract'] ?? [];
   if (($extract['sampling_mode'] ?? '') !== 'manual') {
-    pipeline_log($pipelineRunId,'INFO','PIPELINE',sprintf('Effective parameters: sampling_mode=%s target_frames=%d candidate_multiplier=%s min_sampling_fps=%s max_sampling_fps=%s quality_filter=%s allow_upscale=%s max_image_size=%d mesh_depth=%d target_faces=%d',$extract['sampling_mode'] ?? 'auto_quality',(int)($extract['target_frames'] ?? 400),$extract['candidate_multiplier'] ?? 1.5,$extract['minimum_sampling_fps'] ?? 0.25,$extract['maximum_sampling_fps'] ?? 10,!empty($extract['quality_filter'])?'true':'false',!empty($extract['allow_upscale'])?'true':'false',(int)($modeParams['dense']['max_image_size'] ?? 0),(int)($modeParams['mesh']['depth'] ?? 0),(int)($modeParams['mesh']['target_faces'] ?? 0)));
+    pipeline_log($pipelineRunId,'INFO','PIPELINE',sprintf('Effective parameters: sampling_mode=%s target_frames=%d candidate_multiplier=%s min_sampling_fps=%s max_sampling_fps=%s quality_filter=%s allow_upscale=%s max_image_size=%d mesh_depth=%d target_faces=%d bridge_overlap_sampling=%s',$extract['sampling_mode'] ?? 'auto_quality',(int)($extract['target_frames'] ?? 400),$extract['candidate_multiplier'] ?? 1.5,$extract['minimum_sampling_fps'] ?? 0.25,$extract['maximum_sampling_fps'] ?? 10,!empty($extract['quality_filter'])?'true':'false',!empty($extract['allow_upscale'])?'true':'false',(int)($modeParams['dense']['max_image_size'] ?? 0),(int)($modeParams['mesh']['depth'] ?? 0),(int)($modeParams['mesh']['target_faces'] ?? 0),!empty($extract['bridge_overlap_sampling'])?'true':'false'));
   } else {
     pipeline_log($pipelineRunId,'INFO','PIPELINE','Effective parameters: fps='.$modeParams['extract']['fps'].' max_frames='.$modeParams['extract']['max_frames'].' sequential_overlap='.$modeParams['sparse']['sequential_overlap'].' max_image_size='.$modeParams['dense']['max_image_size'].' num_src_images='.$modeParams['dense']['num_src_images'].' chunk_overlap='.$modeParams['dense']['chunk_overlap'].' mesh_depth='.$modeParams['mesh']['depth'].' target_faces='.$modeParams['mesh']['target_faces']);
   }
@@ -1088,7 +1088,17 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      $captureSessionId=(int)($_POST['capture_session_id']??0);
      $videoScanId=(int)($_POST['video_scan_id']??0);
      $mode=(string)($_POST['pipeline_mode']??'');
-     start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,$videoScanId>0?$videoScanId:null,$mode,$userId);
+     $bridgeRaw=null;
+     if(array_key_exists('bridge_overlap_sampling',$_POST)){
+       $bridgeRaw=$_POST['bridge_overlap_sampling'];
+     }elseif(array_key_exists('extract.bridge_overlap_sampling',$_POST)){
+       $bridgeRaw=$_POST['extract.bridge_overlap_sampling'];
+     }elseif(array_key_exists('extract_bridge_overlap_sampling',$_POST)){
+       $bridgeRaw=$_POST['extract_bridge_overlap_sampling'];
+     }
+     $requestOverride=[];
+     if($bridgeRaw!==null){ $requestOverride=['extract'=>['bridge_overlap_sampling'=>filter_var($bridgeRaw,FILTER_VALIDATE_BOOLEAN)]]; }
+     start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,$videoScanId>0?$videoScanId:null,$mode,$userId,null,null,$requestOverride ?: null);
      header('Location: /order.php?id='.$orderId.'&sfm_job_queued=1'); exit;
    }catch(Throwable $e){ $error=$e->getMessage(); }
  }

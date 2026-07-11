@@ -45,7 +45,7 @@ done
 
 CAMERA_METADATA_JSON="$JOB_ROOT/camera_metadata.json"
 python3 "$STATION_BASE/scripts/camera_metadata.py" --camera-info "$JOB_ROOT/camera_info.json" --manifest "$JOB_ROOT/manifest.json" --output-json "$CAMERA_METADATA_JSON" --print-log >> "$LOG_FILE" 2>&1 || echo "WARNING | CAMERA_METADATA | Failed to parse camera metadata" >> "$LOG_FILE"
-SAMPLING_MODE="$(read_param extract.sampling_mode auto_quality)"; TARGET="$(read_param extract.target_frames 400)"; CAND_MULT="$(read_param extract.candidate_multiplier 1.5)"; MIN_FPS="$(read_param extract.minimum_sampling_fps 0.25)"; MAX_FPS="$(read_param extract.maximum_sampling_fps 10)"; SCALE="$(read_param extract.scale_width 1920)"; JPEG="$(read_param extract.jpeg_quality 2)"; KEEP="$(read_param extract.keep_candidate_frames false)"; ALLOW="$(read_param extract.allow_upscale false)"
+SAMPLING_MODE="$(read_param extract.sampling_mode auto_quality)"; TARGET="$(read_param extract.target_frames 400)"; CAND_MULT="$(read_param extract.candidate_multiplier 1.5)"; MIN_FPS="$(read_param extract.minimum_sampling_fps 0.25)"; MAX_FPS="$(read_param extract.maximum_sampling_fps 10)"; SCALE="$(read_param extract.scale_width 1920)"; JPEG="$(read_param extract.jpeg_quality 2)"; KEEP="$(read_param extract.keep_candidate_frames false)"; ALLOW="$(read_param extract.allow_upscale false)"; BRIDGE="$(read_param extract.bridge_overlap_sampling false)"; BRIDGE_INTERVAL="$(read_param extract.bridge_interval_sec 0.5)"; BRIDGE_WINDOW="$(read_param extract.bridge_window_sec 2.0)"; BRIDGE_MAX_GAP="$(read_param extract.max_allowed_selected_gap_sec 1.5)"; BRIDGE_BOUNDARY="$(read_param extract.boundary_frames_per_window 2)"; BRIDGE_MULT="$(read_param extract.bridge_max_frames_multiplier 1.5)"
 if [[ "$SAMPLING_MODE" == "manual" || ( "$SAMPLING_MODE" == "{}" && -n "$(read_param extract.fps '')" ) ]]; then
   FPS="$(read_param extract.fps ${EXTRACT_FPS:-2})"; MAX_FRAMES="$(read_param extract.max_frames ${EXTRACT_MAX_FRAMES:-360})"
   rm -f "$JOB_ROOT/frames"/frame_*.jpg; write_status RUNNING 1 -1 "Extracting frames (manual)"
@@ -68,7 +68,8 @@ PY
   KEEP_ARG=(); [[ "$KEEP" == "true" || "$KEEP" == "1" ]] && KEEP_ARG=(--keep-candidates)
   UPSCALE_ARG=(); [[ "$ALLOW" == "true" || "$ALLOW" == "1" ]] && UPSCALE_ARG=(--allow-upscale)
   IMU_ARG=(); [[ -n "$IMU_JSONL" && -f "$IMU_JSONL" ]] && IMU_ARG=(--imu-jsonl "$IMU_JSONL" --imu-settings "$IMU_SETTINGS")
-  SUMMARY=$(python3 "$STATION_BASE/scripts/select_quality_frames.py" --video "$INPUT_VIDEO" --output-dir "$JOB_ROOT" --sampling-mode "$SAMPLING_MODE" --target-frames "$TARGET" --candidate-multiplier "$CAND_MULT" --min-fps "$MIN_FPS" --max-fps "$MAX_FPS" --scale-width "$SCALE" --jpeg-quality "$JPEG" "${KEEP_ARG[@]}" "${UPSCALE_ARG[@]}" "${IMU_ARG[@]}")
+  BRIDGE_ARG=(); [[ "$BRIDGE" == "true" || "$BRIDGE" == "1" ]] && BRIDGE_ARG=(--bridge-overlap-sampling --bridge-interval-sec "$BRIDGE_INTERVAL" --bridge-window-sec "$BRIDGE_WINDOW" --max-allowed-selected-gap-sec "$BRIDGE_MAX_GAP" --boundary-frames-per-window "$BRIDGE_BOUNDARY" --bridge-max-frames-multiplier "$BRIDGE_MULT")
+  SUMMARY=$(python3 "$STATION_BASE/scripts/select_quality_frames.py" --video "$INPUT_VIDEO" --output-dir "$JOB_ROOT" --sampling-mode "$SAMPLING_MODE" --target-frames "$TARGET" --candidate-multiplier "$CAND_MULT" --min-fps "$MIN_FPS" --max-fps "$MAX_FPS" --scale-width "$SCALE" --jpeg-quality "$JPEG" "${KEEP_ARG[@]}" "${UPSCALE_ARG[@]}" "${BRIDGE_ARG[@]}" "${IMU_ARG[@]}")
   FRAME_COUNT=$(find "$JOB_ROOT/frames" -type f -name 'frame_*.jpg' | wc -l | tr -d ' ')
   [[ "$FRAME_COUNT" -gt 0 ]] || { write_status ERROR 0 -1 "No frames selected"; exit 2; }
   python3 - "$JOB_ROOT" "$JOB_ID" "$SUMMARY" <<'PY'
@@ -83,7 +84,7 @@ PY
 import json,sys
 s=json.load(open(sys.argv[1])); c=s.get('coverage',{})
 print(f"INFO | FRAME_QUALITY | Blur rejected={s.get('rejected_blur',0)} dark={s.get('rejected_dark',0)} overexposed={s.get('rejected_overexposed',0)} duplicates={s.get('rejected_duplicate',0)}")
-print(f"INFO | FRAME_SELECTION | Selected={s.get('selected_frames',0)} coverage={c.get('coverage_percent',0)}% max_gap={c.get('maximum_gap_sec',0)} sec")
+print(f"INFO | FRAME_SELECTION | Mode={s.get('frame_selection_mode',s.get('sampling_mode'))} Selected={s.get('selected_frames',0)} bridge={s.get('selected_bridge_frames',0)} boundary={s.get('selected_boundary_frames',0)} coverage={c.get('coverage_percent',0)}% max_gap={s.get('max_selected_gap_sec_after_bridge',c.get('maximum_gap_sec',0))} sec")
 imu=s.get("imu",{})
 print(f"INFO | IMU | Parsed gyro={imu.get('counts',{}).get('gyro',0)} accel={imu.get('counts',{}).get('accel',0)} gravity={imu.get('counts',{}).get('gravity',0)} rotation_vector={imu.get('counts',{}).get('rotation_vector',0)}")
 print(f"INFO | IMU | Sync method={imu.get('sync_method','unavailable')} quality={imu.get('sync_quality','unavailable')} offset={imu.get('offset_sec','')}")

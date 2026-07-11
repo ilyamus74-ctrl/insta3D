@@ -423,6 +423,7 @@
                             <div class="col-md-4 form-check ms-3"><input type="checkbox" class="form-check-input" checked disabled><label class="form-check-label">Preserve full timeline coverage</label></div>
                             <div class="col-md-4 form-check ms-3"><input type="checkbox" name="extract.allow_upscale" value="1" class="form-check-input" id="sfm-allow-upscale-{$s.id}" {if $s.sfm_settings.effective_settings.extract.allow_upscale}checked{/if}><label class="form-check-label" for="sfm-allow-upscale-{$s.id}">Allow upscale</label></div>
                             <div class="col-md-4 form-check ms-3"><input type="checkbox" name="extract.keep_candidate_frames" value="1" class="form-check-input" id="sfm-keep-candidates-{$s.id}" {if $s.sfm_settings.effective_settings.extract.keep_candidate_frames}checked{/if}><label class="form-check-label" for="sfm-keep-candidates-{$s.id}">Keep candidate frames</label></div>
+                            <div class="col-md-4 form-check ms-3"><input type="checkbox" name="extract.bridge_overlap_sampling" value="1" class="form-check-input" id="sfm-bridge-overlap-{$s.id}" {if $s.sfm_settings.effective_settings.extract.bridge_overlap_sampling}checked{/if}><label class="form-check-label" for="sfm-bridge-overlap-{$s.id}">Experimental: bridge overlap frame sampling</label><div class="form-text">Adds temporal bridge frames between selected keyframes to reduce COLMAP component splits.</div></div>
                           </div>
                         </div>
                         <div class="col-md-3 sfm-manual-extract-fields">
@@ -539,6 +540,7 @@
                           {if $run.ui_parameters|default:null}
                             <details class="border rounded p-2 bg-light-subtle small mt-2"><summary class="fw-semibold">Processing parameters</summary>
                               <div>Frames: FPS {$run.ui_parameters.extract.fps|escape}, Max frames {$run.ui_parameters.extract.max_frames|escape}, Extracted {$run.extracted_frames|default:0|escape}</div>
+                              <div>Frame selection mode: {if $run.ui_parameters.extract.bridge_overlap_sampling|default:false}auto_quality_bridge_overlap{else}{$run.ui_parameters.extract.sampling_mode|default:'auto_quality'|escape}{/if}, selected frames {$run.extracted_frames|default:0|escape}{if $run.ui_parameters.extract.bridge_overlap_sampling|default:false}, bridge interval {$run.ui_parameters.extract.bridge_interval_sec|default:0.5|escape}s, max allowed gap {$run.ui_parameters.extract.max_allowed_selected_gap_sec|default:1.5|escape}s{/if}</div>
                               <div>Sparse: Matcher {$run.ui_parameters.sparse.matcher|escape}, Sequential overlap {$run.ui_parameters.sparse.sequential_overlap|escape}, Registered {$run.registered_images|default:0|escape} / {$run.extracted_frames|default:0|escape}, Registration ratio {$run.ui_registration_ratio|default:0|escape}%</div>
                               {if $run.ui_registration_ratio|default:0 < 50 && $run.extracted_frames|default:0 > 0}<div class="text-danger">Low registration ratio: only {$run.registered_images|default:0|escape} of {$run.extracted_frames|default:0|escape} frames were registered.</div>{elseif $run.ui_registration_ratio|default:0 >= 70}<div class="text-success">Good registration ratio.</div>{/if}
                               <div>Dense: Max image size {$run.ui_parameters.dense.max_image_size|escape}, Source images {$run.ui_parameters.dense.num_src_images|escape}, Chunk overlap {$run.ui_parameters.dense.chunk_overlap|escape}</div>
@@ -1164,6 +1166,7 @@ function sfmSettingsFromForm(form) {
             quality_filter: sfmSettingsValue(form, 'extract.quality_filter'),
             allow_upscale: sfmSettingsValue(form, 'extract.allow_upscale'),
             keep_candidate_frames: sfmSettingsValue(form, 'extract.keep_candidate_frames'),
+            bridge_overlap_sampling: sfmSettingsValue(form, 'extract.bridge_overlap_sampling'),
             scale_width: sfmSettingsValue(form, 'extract.scale_width'),
             fps: sfmSettingsValue(form, 'extract.fps'),
             max_frames: sfmSettingsValue(form, 'extract.max_frames')
