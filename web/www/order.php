@@ -299,6 +299,22 @@ function handle_merge_generated_dense_clouds(mysqli $dbcnx,int $orderId,int $use
   $sid=$src[0]['capture_session_id']??null; $sj=json_encode($src,JSON_UNESCAPED_SLASHES); $mt='diagnostic_concat_dense_ply'; $msg=$payload['warning']; $st=$dbcnx->prepare('INSERT INTO sfm_generated_model_merges (order_id,capture_session_id,created_by_user_id,status,merge_type,source_jobs_json,output_path,result_json_path,total_points,message) VALUES (?,?,?,\'DONE\',?,?,?,?,?,?)'); if(!$st)throw new RuntimeException('DB prepare error: '.$dbcnx->error); $st->bind_param('iiissssis',$orderId,$sid,$userId,$mt,$sj,$ply,$json,$res['total_points'],$msg); $st->execute(); $st->close(); header('Location: /order_simple.php?id='.$orderId.'#simple-generated'); exit;
 }
 
+function handle_aligned_merge_generated_dense_clouds(mysqli $dbcnx,int $orderId,int $userId): void {
+  sfm_generated_merges_ensure_schema($dbcnx); $exclude=(int)($_POST['exclude_tiny']??0)===1; $min=max(0,(int)($_POST['min_points']??1000)); $requestedSparse=(int)($_POST['sparse_remote_job_id']??0); $anchor=(int)($_POST['anchor_model_id']??0);
+  $ids=array_values(array_unique(array_map('intval',(array)($_POST['source_job_ids']??[])))); if(!$ids)throw new RuntimeException('No dense PLY sources selected.');
+  $sql="SELECT * FROM sfm_remote_jobs WHERE order_id=? AND status='DONE' AND job_type IN ('COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ') AND id IN (".implode(',',array_fill(0,count($ids),'?')).") ORDER BY id ASC";
+  $st=$dbcnx->prepare($sql); if(!$st)throw new RuntimeException('DB prepare error: '.$dbcnx->error); $types='i'.str_repeat('i',count($ids)); $vals=array_merge([$orderId],$ids); $st->bind_param($types,...$vals); $st->execute(); $rs=$st->get_result(); $src=[]; $sparseParents=[];
+  while($j=$rs->fetch_assoc()){ $path=sfm_remote_output_dir((int)$j['remote_job_id']).'/merged/merged_fused.ply'; if(!sfm_path_inside_output_root($path)||!is_file($path))continue; $pi=sfm_ply_header_info($path); if(!$pi['valid'])continue; if($exclude&&(int)$pi['vertices']<$min)continue; $p=json_decode((string)($j['parameters_json']??'{}'),true)?:[]; $mid=$p['model_id']??null; if($mid===null||$mid==='')throw new RuntimeException('Selected dense job #'.(int)$j['id'].' has no model_id in parameters_json.'); $jobSparse=(int)($p['sparse_remote_job_id'] ?? ($p['sparse_job_id'] ?? ($j['parent_remote_job_id'] ?? 0))); if($jobSparse<=0)throw new RuntimeException('Selected dense job #'.(int)$j['id'].' has no sparse parent remote job id.'); $sparseParents[$jobSparse]=true; $src[]=['db_job_id'=>(int)$j['id'],'remote_job_id'=>(int)$j['remote_job_id'],'model_id'=>(int)$mid,'mode'=>(string)($j['reconstruction_mode']?:((string)$j['job_type']==='COLMAP_RECONSTRUCTION_HQ'?'hq':'preview')),'points'=>(int)$pi['vertices'],'path'=>$path,'capture_session_id'=>(int)$j['capture_session_id'],'sparse_remote_job_id'=>$jobSparse]; }
+  $st->close(); if(!$src)throw new RuntimeException('No alignable dense PLY sources found.'); $parents=array_keys($sparseParents); if(count($parents)>1)throw new RuntimeException('Aligned merge requires selected jobs from one sparse reconstruction only.'); $sparseRemote=(int)($parents[0]??0); if($sparseRemote<=0)throw new RuntimeException('Sparse parent remote job id is required.'); if($requestedSparse>0 && $requestedSparse!==$sparseRemote)throw new RuntimeException('Selected jobs belong to sparse job '.$sparseRemote.', but request used sparse job '.$requestedSparse.'.');
+  $sparseDir=sfm_remote_output_dir($sparseRemote).'/colmap/sparse'; if(!is_dir($sparseDir))throw new RuntimeException('Sparse model directory not found: '.$sparseDir);
+  $dir='/home/makler/web/remote_station/output/merged_order_'.$orderId.'_aligned_'.date('Ymd_His').'_'.bin2hex(random_bytes(4)); if(!mkdir($dir,0775,true)&&!is_dir($dir))throw new RuntimeException('Cannot create aligned merge output directory.');
+  $poses=$dir.'/sparse_component_poses.json'; $spec=$dir.'/aligned_merge_spec.json'; $ply=$dir.'/aligned_merged_dense_cloud.ply'; $json=$dir.'/merge_result.json'; file_put_contents($spec,json_encode(['sources'=>$src,'result_json'=>$json],JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+  $script=dirname(__DIR__).'/remote_station/scripts/sparse_component_pose_export.py'; exec('python3 -c '.escapeshellarg('import numpy').' 2>&1',$numpyOut,$numpyCode); if($numpyCode!==0)throw new RuntimeException('Aligned merge requires Python numpy for Sim3 estimation. Install python3-numpy or configure a Python environment with numpy. '.implode("\n",$numpyOut)); $cmd='python3 '.escapeshellarg($script).' --sparse-dir '.escapeshellarg($sparseDir).' --output-json '.escapeshellarg($poses).' --merge-spec-json '.escapeshellarg($spec).' --output-ply '.escapeshellarg($ply).($anchor>0?' --anchor-model-id '.(int)$anchor:'').' 2>&1'; exec($cmd,$out,$code); if($code!==0)throw new RuntimeException('Aligned merge failed: '.implode("\n",$out));
+  $payload=json_decode((string)file_get_contents($json),true)?:[]; $payload=array_merge(['order_id'=>$orderId,'sparse_remote_job_id'=>$sparseRemote,'merge_type'=>'aligned_shared_images_dense_ply','aligned'=>true],$payload); file_put_contents($json,json_encode($payload,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+  $sid=$src[0]['capture_session_id']??null; $sj=json_encode($payload['source_jobs']??$src,JSON_UNESCAPED_SLASHES); $mt='aligned_shared_images_dense_ply'; $msg='Aligned by shared COLMAP image poses. Disconnected components are excluded unless forced.'; $total=(int)($payload['total_points']??0);
+  $st=$dbcnx->prepare('INSERT INTO sfm_generated_model_merges (order_id,capture_session_id,created_by_user_id,status,merge_type,source_jobs_json,output_path,result_json_path,total_points,message) VALUES (?,?,?,\'DONE\',?,?,?,?,?,?)'); if(!$st)throw new RuntimeException('DB prepare error: '.$dbcnx->error); $st->bind_param('iiissssis',$orderId,$sid,$userId,$mt,$sj,$ply,$json,$total,$msg); $st->execute(); $st->close(); header('Location: /order_simple.php?id='.$orderId.'#simple-generated'); exit;
+}
+
 function table_columns_info(mysqli $dbcnx,string $table): array {
   $t=$dbcnx->real_escape_string($table); $rs=$dbcnx->query('SHOW COLUMNS FROM `'.$t.'`'); $out=[];
   if($rs){ while($r=$rs->fetch_assoc()){ $out[(string)$r['Field']]=$r; } $rs->close(); }
@@ -935,6 +951,13 @@ function delete_video_scan_for_order(mysqli $dbcnx,int $orderId,int $videoScanId
 if($_SERVER['REQUEST_METHOD']==='POST'){
  $action=$_POST['action']??'';
 
+ if($action==='aligned_merge_generated_dense_clouds'){
+   if(!($canDeleteMedia || $canEdit)){
+     $error='No permission to create generated model merge.';
+   } else {
+     try{ handle_aligned_merge_generated_dense_clouds($dbcnx,$orderId,$userId); } catch(Throwable $e){ $error=$e->getMessage(); }
+   }
+ }
  if($action==='merge_generated_dense_clouds'){
    if(!($canDeleteMedia || $canEdit)){
      $error='No permission to create generated model merge.';
