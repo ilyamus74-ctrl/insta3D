@@ -30,7 +30,7 @@
         {foreach from=$captureSessions item=s}<div class="card mb-3"><div class="card-body"><h5 class="card-title">Session #{$s.id}</h5><div class="row g-3"><div class="col-md-6"><h6>Uploaded videos</h6>{foreach from=$s.videos item=v}<div class="border rounded p-2 mb-2"><strong>{$v.label|escape}</strong><div class="small text-muted">{$v.filename|escape} · {$v.size_human|escape} · {$v.duration_sec|default:0|escape}s</div>{if $v.media_url}<a class="btn btn-sm btn-outline-primary" href="{$v.media_url|escape}" target="_blank">Open video</a>{/if}</div>{foreachelse}<div class="text-muted">No videos.</div>{/foreach}</div><div class="col-md-6"><h6>Capture bundles</h6>{foreach from=$s.capture_bundles item=cb}<div class="border rounded p-2 mb-2">Bundle #{$cb.id} · {$cb.size_human|escape}<div class="mt-1"><a class="btn btn-sm btn-outline-secondary" href="{$cb.download_url|escape}">Download</a> <a class="btn btn-sm btn-outline-secondary" href="{$cb.inspect_url|escape}" target="_blank">Inspect</a></div></div>{foreachelse}<div class="text-muted">No capture bundles.</div>{/foreach}</div></div></div></div>{foreachelse}<div class="card"><div class="card-body text-muted">No sessions.</div></div>{/foreach}
       </div>
       <div class="tab-pane fade" id="simple-video-sfm">
-        {foreach from=$captureSessions item=s}{foreach from=$s.sfm_disk_videos item=v}<div class="card mb-3"><div class="card-body"><h5 class="card-title">{$v.label|escape}</h5><div class="small text-muted mb-2">{$v.filename|escape} · {$v.duration_sec|default:0|escape}s · {$v.size_human|escape} · IMU: {if $v.imu_available}yes{else}no{/if}</div><div class="row g-3">{foreach from=$v.sfm_pipeline_cards key=mode item=pc}<div class="col-lg-4"><div class="border rounded p-3 h-100"><div class="fw-semibold">{$pc.preset.label|escape}</div>{assign var=run value=$pc.run}{if $run}<div><span class="badge bg-secondary">{$run.status|escape}</span> {$run.stage|default:''|escape} {$run.progress_percent|default:0|escape}%</div>{assign var=art value=$run.artifacts}<div class="small my-2">{if $art.dense.available}<a href="{$art.dense.viewer_url|escape}" target="_blank">Open dense cloud</a> · <a href="{$art.dense.download_url|escape}">Download dense PLY</a>{else}<span class="text-muted">Dense unavailable</span>{/if}<br>{if $art.mesh.available}<a href="{$art.mesh.viewer_url|escape}" target="_blank">Open final mesh</a> · <a href="{$art.mesh.download_url|escape}">Download final mesh PLY</a>{else}<span class="text-muted">Mesh unavailable</span>{/if}{if $art.result_json.available}<br><a href="{$art.result_json.download_url|escape}">Download result JSON</a>{/if}</div>{assign var=ac value=$run.ui_parameters.auto_components|default:null}{if $ac}<div class="small border rounded p-2 my-2"><strong>Auto components:</strong><br>sparse models detected: {$ac.sparse_models_detected|default:0|escape}<br>selected useful models: {$ac.selected_useful_models|default:0|escape}<br>previews done: {$ac.previews_done|default:0|escape}/{$ac.selected_useful_models|default:0|escape}<br>ready models: {if $ac.ready_models|default:null}{foreach from=$ac.ready_models item=mid name=readyModels}{$mid|escape}{if !$smarty.foreach.readyModels.last}, {/if}{/foreach}{else}-{/if}<br>waiting models: {if $ac.waiting_models|default:null}{foreach from=$ac.waiting_models item=mid name=waitingModels}{$mid|escape}{if !$smarty.foreach.waitingModels.last}, {/if}{/foreach}{else}-{/if}<br><div>Excluded tiny models: {if $ac.excluded_tiny_models|default:null}{$ac.excluded_tiny_models|@count|escape} ({foreach from=$ac.excluded_tiny_models item=model name=excludedTinyModels}{$model|escape}{if !$smarty.foreach.excludedTinyModels.last}, {/if}{/foreach}){else}0{/if}</div>aligned merge: {$ac.aligned_merge|default:'not started'|escape}<br>combined model available: {if $ac.combined_model_available|default:false}yes{else}no{/if}{if $ac.last_error|default:null}<br>last error: {$ac.last_error|escape}{/if}</div>{/if}{if $run.ui_parameters|default:null}<div class="small text-muted mb-2">Frame selection mode: {if $run.ui_parameters.extract.bridge_overlap_sampling|default:false}auto_quality_bridge_overlap{else}{$run.ui_parameters.extract.sampling_mode|default:'auto_quality'|escape}{/if} · selected frames {$run.extracted_frames|default:0|escape}{if $run.ui_parameters.extract.bridge_overlap_sampling|default:false} · bridge frames enabled · max gap {$run.ui_parameters.extract.max_allowed_selected_gap_sec|default:1.5|escape}s{/if}</div>{/if}<form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="restart_sfm_pipeline_same_settings"><input type="hidden" name="pipeline_run_id" value="{$run.id}"><input type="hidden" name="capture_session_id" value="{$s.id}"><button class="btn btn-sm btn-outline-danger">Restart same settings</button></form><div class="form-text small mb-2">Restart same settings does not apply the experimental checkboxes below.</div><details class="mt-2"><summary>Start a new run with different options</summary><form method="post" action="/order.php?id={$order.id}" class="mt-2"><input type="hidden" name="action" value="start_sfm_pipeline"><input type="hidden" name="capture_session_id" value="{$s.id}"><input type="hidden" name="pipeline_mode" value="{$mode|escape}"><input type="hidden" name="video_scan_id" value="{$v.id}"><div class="form-check my-2"><input type="checkbox" name="bridge_overlap_sampling" value="1" class="form-check-input" id="simple-new-bridge-{$s.id}-{$v.id}-{$mode|escape}"><label class="form-check-label small" for="simple-new-bridge-{$s.id}-{$v.id}-{$mode|escape}">Experimental: bridge overlap frame sampling</label><div class="form-text small">Adds temporal bridge frames between selected keyframes to reduce COLMAP component splits.</div></div><div class="form-check my-2"><input type="checkbox" name="auto_process_all_components" value="1" class="form-check-input" id="simple-new-auto-components-{$s.id}-{$v.id}-{$mode|escape}"><label class="form-check-label small" for="simple-new-auto-components-{$s.id}-{$v.id}-{$mode|escape}">Experimental: process all sparse components and build combined model</label><div class="form-text small">Runs preview reconstruction for all useful COLMAP components and creates an aligned merged dense cloud when possible. Recommended with bridge overlap sampling.</div></div><button class="btn btn-sm btn-primary">Start new {$pc.preset.label|escape} with selected options</button></form></details>{else}<form method="post" action="/order.php?id={$order.id}"><input type="hidden" name="action" value="start_sfm_pipeline"><input type="hidden" name="capture_session_id" value="{$s.id}"><input type="hidden" name="pipeline_mode" value="{$mode|escape}"><input type="hidden" name="video_scan_id" value="{$v.id}"><div class="form-check my-2"><input type="checkbox" name="bridge_overlap_sampling" value="1" class="form-check-input" id="simple-bridge-{$s.id}-{$v.id}-{$mode|escape}"><label class="form-check-label small" for="simple-bridge-{$s.id}-{$v.id}-{$mode|escape}">Experimental: bridge overlap frame sampling</label><div class="form-text small">Adds temporal bridge frames between selected keyframes to reduce COLMAP component splits.</div></div><div class="form-check my-2"><input type="checkbox" name="auto_process_all_components" value="1" class="form-check-input" id="simple-auto-components-{$s.id}-{$v.id}-{$mode|escape}"><label class="form-check-label small" for="simple-auto-components-{$s.id}-{$v.id}-{$mode|escape}">Experimental: process all sparse components and build combined model</label><div class="form-text small">Runs preview reconstruction for all useful COLMAP components and creates an aligned merged dense cloud when possible. Recommended with bridge overlap sampling.</div></div><button class="btn btn-sm btn-primary">{$pc.preset.start|escape}</button></form>{/if}</div></div>{/foreach}</div></div></div>{/foreach}{/foreach}
+        {foreach from=$captureSessions item=s}{foreach from=$s.sfm_disk_videos item=v}<div class="card mb-3"><div class="card-body"><h5 class="card-title">{$v.label|escape}</h5><div class="small text-muted mb-2">{$v.filename|escape} · {$v.duration_sec|default:0|escape}s · {$v.size_human|escape} · IMU: {if $v.imu_available}yes{else}no{/if}</div><div class="row g-3">{foreach from=$v.sfm_pipeline_cards key=mode item=pc}<div class="col-lg-4"><div class="border rounded p-3 h-100"><div class="fw-semibold">{$pc.preset.label|escape}</div>{assign var=run value=$pc.run}{if $run}<div><span class="badge bg-secondary">{$run.status|escape}</span> {$run.stage|default:''|escape} {$run.progress_percent|default:0|escape}%</div>{assign var=runStatus value=$run.status|upper}{if $runStatus == 'QUEUED' || $runStatus == 'RUNNING' || $runStatus == 'RUNNING_CHUNKS' || $runStatus == 'PLANNING' || $runStatus == 'MERGING' || $runStatus == 'STARTED' || $runStatus == 'PROCESSING'}<div class="small border rounded p-2 my-2 sfm-active-station-load" data-station-metrics="1"><div class="fw-semibold">SfM Video Reconstruction</div><div class="text-muted">Phone Video / SfM processing</div><div class="sfm-station-line text-muted">GrafikStation: loading metrics...</div><div class="progress mt-2" style="height:6px;"><div class="progress-bar sfm-station-gpu-bar" role="progressbar" style="width:0%;" aria-valuemin="0" aria-valuemax="100"></div></div></div>{/if}{assign var=art value=$run.artifacts}<div class="small my-2">{if $art.dense.available}<a href="{$art.dense.viewer_url|escape}" target="_blank">Open dense cloud</a> · <a href="{$art.dense.download_url|escape}">Download dense PLY</a>{else}<span class="text-muted">Dense unavailable</span>{/if}<br>{if $art.mesh.available}<a href="{$art.mesh.viewer_url|escape}" target="_blank">Open final mesh</a> · <a href="{$art.mesh.download_url|escape}">Download final mesh PLY</a>{else}<span class="text-muted">Mesh unavailable</span>{/if}{if $art.result_json.available}<br><a href="{$art.result_json.download_url|escape}">Download result JSON</a>{/if}</div>{assign var=ac value=$run.ui_parameters.auto_components|default:null}{if $ac}<div class="small border rounded p-2 my-2"><strong>Auto components:</strong><br>sparse models detected: {$ac.sparse_models_detected|default:0|escape}<br>selected useful models: {$ac.selected_useful_models|default:0|escape}<br>previews done: {$ac.previews_done|default:0|escape}/{$ac.selected_useful_models|default:0|escape}<br>ready models: {if $ac.ready_models|default:null}{foreach from=$ac.ready_models item=mid name=readyModels}{$mid|escape}{if !$smarty.foreach.readyModels.last}, {/if}{/foreach}{else}-{/if}<br>waiting models: {if $ac.waiting_models|default:null}{foreach from=$ac.waiting_models item=mid name=waitingModels}{$mid|escape}{if !$smarty.foreach.waitingModels.last}, {/if}{/foreach}{else}-{/if}<br><div>Excluded tiny models: {if $ac.excluded_tiny_models|default:null}{$ac.excluded_tiny_models|@count|escape} ({foreach from=$ac.excluded_tiny_models item=model name=excludedTinyModels}{$model|escape}{if !$smarty.foreach.excludedTinyModels.last}, {/if}{/foreach}){else}0{/if}</div>aligned merge: {$ac.aligned_merge|default:'not started'|escape}<br>combined model available: {if $ac.combined_model_available|default:false}yes{else}no{/if}{if $ac.last_error|default:null}<br>last error: {$ac.last_error|escape}{/if}</div>{/if}{if $run.ui_parameters|default:null}<div class="small text-muted mb-2">Frame selection mode: {if $run.ui_parameters.extract.bridge_overlap_sampling|default:false}auto_quality_bridge_overlap{else}{$run.ui_parameters.extract.sampling_mode|default:'auto_quality'|escape}{/if} · selected frames {$run.extracted_frames|default:0|escape}{if $run.ui_parameters.extract.bridge_overlap_sampling|default:false} · bridge frames enabled · max gap {$run.ui_parameters.extract.max_allowed_selected_gap_sec|default:1.5|escape}s{/if}</div>{/if}<form method="post" action="/order.php?id={$order.id}" class="d-inline"><input type="hidden" name="action" value="restart_sfm_pipeline_same_settings"><input type="hidden" name="pipeline_run_id" value="{$run.id}"><input type="hidden" name="capture_session_id" value="{$s.id}"><button class="btn btn-sm btn-outline-danger">Restart same settings</button></form><div class="form-text small mb-2">Restart same settings does not apply the experimental checkboxes below.</div><details class="mt-2"><summary>Start a new run with different options</summary><form method="post" action="/order.php?id={$order.id}" class="mt-2"><input type="hidden" name="action" value="start_sfm_pipeline"><input type="hidden" name="capture_session_id" value="{$s.id}"><input type="hidden" name="pipeline_mode" value="{$mode|escape}"><input type="hidden" name="video_scan_id" value="{$v.id}"><div class="form-check my-2"><input type="checkbox" name="bridge_overlap_sampling" value="1" class="form-check-input" id="simple-new-bridge-{$s.id}-{$v.id}-{$mode|escape}"><label class="form-check-label small" for="simple-new-bridge-{$s.id}-{$v.id}-{$mode|escape}">Experimental: bridge overlap frame sampling</label><div class="form-text small">Adds temporal bridge frames between selected keyframes to reduce COLMAP component splits.</div></div><div class="form-check my-2"><input type="checkbox" name="auto_process_all_components" value="1" class="form-check-input" id="simple-new-auto-components-{$s.id}-{$v.id}-{$mode|escape}"><label class="form-check-label small" for="simple-new-auto-components-{$s.id}-{$v.id}-{$mode|escape}">Experimental: process all sparse components and build combined model</label><div class="form-text small">Runs preview reconstruction for all useful COLMAP components and creates an aligned merged dense cloud when possible. Recommended with bridge overlap sampling.</div></div><button class="btn btn-sm btn-primary">Start new {$pc.preset.label|escape} with selected options</button></form></details>{else}<form method="post" action="/order.php?id={$order.id}"><input type="hidden" name="action" value="start_sfm_pipeline"><input type="hidden" name="capture_session_id" value="{$s.id}"><input type="hidden" name="pipeline_mode" value="{$mode|escape}"><input type="hidden" name="video_scan_id" value="{$v.id}"><div class="form-check my-2"><input type="checkbox" name="bridge_overlap_sampling" value="1" class="form-check-input" id="simple-bridge-{$s.id}-{$v.id}-{$mode|escape}"><label class="form-check-label small" for="simple-bridge-{$s.id}-{$v.id}-{$mode|escape}">Experimental: bridge overlap frame sampling</label><div class="form-text small">Adds temporal bridge frames between selected keyframes to reduce COLMAP component splits.</div></div><div class="form-check my-2"><input type="checkbox" name="auto_process_all_components" value="1" class="form-check-input" id="simple-auto-components-{$s.id}-{$v.id}-{$mode|escape}"><label class="form-check-label small" for="simple-auto-components-{$s.id}-{$v.id}-{$mode|escape}">Experimental: process all sparse components and build combined model</label><div class="form-text small">Runs preview reconstruction for all useful COLMAP components and creates an aligned merged dense cloud when possible. Recommended with bridge overlap sampling.</div></div><button class="btn btn-sm btn-primary">{$pc.preset.start|escape}</button></form>{/if}</div></div>{/foreach}</div></div></div>{/foreach}{/foreach}
       </div>
       <div class="tab-pane fade" id="simple-stereo">
         {foreach from=$captureSessions item=s}<div class="card mb-3"><div class="card-body"><h5 class="card-title">Stereo session #{$s.id}</h5>{foreach from=$s.capture_bundles item=cb}<div class="border rounded p-3 mb-3"><div class="fw-semibold">Capture bundle #{$cb.id}</div><div class="small text-muted mb-2">{$cb.size_human|escape}</div>{if $canDeleteMedia}<form method="post" action="/order.php?id={$order.id}" class="mb-2"><input type="hidden" name="action" value="create_capture_bundle_dense_job"><input type="hidden" name="capture_bundle_id" value="{$cb.id}"><button class="btn btn-sm btn-primary">Run synced dense</button></form>{/if}{foreach from=$cb.synced_dense_jobs item=j}<div class="border rounded p-2 mb-2"><strong>Synced dense job #{$j.id}</strong> <span class="badge bg-secondary">{$j.status|escape}</span><div class="small">remote {$j.remote_job_id|escape} · {$j.progress_percent|default:0|escape}%</div><div class="mt-1">{if $j.has_preview}<a class="btn btn-sm btn-outline-success" href="{$j.preview_url|escape}" target="_blank">contact_dense_depth.jpg</a>{/if}{if $j.has_debug}<a class="btn btn-sm btn-outline-secondary" href="{$j.debug_url|escape}" target="_blank">dense_depth_debug.json</a>{/if}{if $j.has_summary}<a class="btn btn-sm btn-outline-secondary" href="{$j.summary_url|escape}" target="_blank">dense_depth_summary.csv</a>{/if}<a class="btn btn-sm btn-outline-dark" href="{$j.status_url|escape}" target="_blank">Status</a></div></div>{foreachelse}<div class="text-muted">No synced dense jobs yet.</div>{/foreach}</div>{foreachelse}<div class="text-muted">No capture bundles.</div>{/foreach}</div></div>{/foreach}
@@ -44,5 +44,113 @@
       <div class="tab-pane fade" id="simple-debug"><div class="card"><div class="card-body"><h5 class="card-title">Debug</h5><p>Full raw jobs, logs, sparse components, dense chunks and destructive debug actions remain in the legacy view.</p><a class="btn btn-outline-secondary" href="/order.php?id={$order.id}">Legacy / Debug View</a>{foreach from=$captureSessions item=s}<details class="mt-3"><summary>Session #{$s.id} compact jobs ({$s.sfm_remote_jobs|@count})</summary>{foreach from=$s.sfm_remote_jobs item=j}<div class="small border-bottom py-1">#{$j.id} {$j.job_type|escape} · {$j.status|escape} · remote {$j.remote_job_id|escape}</div>{foreachelse}<div class="small text-muted">No jobs.</div>{/foreach}</details>{/foreach}</div></div></div>
     </div>
   </section>
+{literal}
+<script>
+(function () {
+  var blocks = Array.prototype.slice.call(document.querySelectorAll('.sfm-active-station-load'));
+  if (!blocks.length) {
+    return;
+  }
+
+  function shortGpuName(name) {
+    if (!name) {
+      return 'unavailable';
+    }
+    return String(name)
+      .replace(/^NVIDIA\s+GeForce\s+/i, '')
+      .replace(/^NVIDIA\s+/i, '')
+      .trim();
+  }
+
+  function compactGb(mb) {
+    var gb = Number(mb) / 1024;
+    if (!isFinite(gb)) {
+      return '-';
+    }
+    if (gb < 10) {
+      return gb.toFixed(1);
+    }
+    return Number(gb.toFixed(1)).toString();
+  }
+
+  function percent(value) {
+    var number = Number(value);
+    if (!isFinite(number)) {
+      return null;
+    }
+    return Math.max(0, Math.min(100, Math.round(number)));
+  }
+
+  function updateBlocks(line, gpuPercent) {
+    blocks.forEach(function (block) {
+      var lineNode = block.querySelector('.sfm-station-line');
+      var bar = block.querySelector('.sfm-station-gpu-bar');
+      if (lineNode) {
+        lineNode.textContent = line;
+      }
+      if (bar) {
+        var width = gpuPercent === null ? 0 : gpuPercent;
+        bar.style.width = width + '%';
+        bar.setAttribute('aria-valuenow', String(width));
+      }
+    });
+  }
+
+  function formatMetrics(data) {
+    var gpu = data && data.gpu ? data.gpu : {};
+    var cpu = data && data.cpu ? data.cpu : {};
+    var memory = data && data.memory ? data.memory : {};
+    var gpuPercent = percent(gpu.utilization_percent);
+    if (gpuPercent === null) {
+      return { line: 'GrafikStation: GPU unavailable', gpuPercent: null };
+    }
+
+    var parts = [
+      'GrafikStation: GPU ' + shortGpuName(gpu.name),
+      'GPU ' + gpuPercent + '%'
+    ];
+    if (gpu.temperature_c !== undefined && gpu.temperature_c !== null) {
+      parts.push('Temp ' + Math.round(Number(gpu.temperature_c)) + '°C');
+    }
+    if (gpu.power_draw_w !== undefined && gpu.power_draw_w !== null) {
+      parts.push('Power ' + Math.round(Number(gpu.power_draw_w)) + ' W');
+    }
+    if (gpu.memory_used_mb !== undefined && gpu.memory_total_mb !== undefined) {
+      parts.push('VRAM ' + compactGb(gpu.memory_used_mb) + '/' + compactGb(gpu.memory_total_mb) + ' GB');
+    }
+    var cpuPercent = percent(cpu.usage_percent);
+    if (cpuPercent !== null) {
+      parts.push('CPU ' + cpuPercent + '%');
+    }
+    if (memory.used_mb !== undefined && memory.total_mb !== undefined) {
+      parts.push('RAM ' + compactGb(memory.used_mb) + '/' + compactGb(memory.total_mb) + ' GB');
+    }
+    if (data && (data.stale || Number(data.cache_age_sec) > 30)) {
+      parts.push('stale ' + Math.round(Number(data.cache_age_sec) || 0) + 's');
+    }
+    return { line: parts.join(' | '), gpuPercent: gpuPercent };
+  }
+
+  function loadMetrics() {
+    fetch('/api/sfm_station_metrics.php?ts=' + Date.now(), { cache: 'no-store' })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (!data || data.ok === false) {
+          updateBlocks('GrafikStation: metrics unavailable', null);
+          return;
+        }
+        var formatted = formatMetrics(data);
+        updateBlocks(formatted.line, formatted.gpuPercent);
+      })
+      .catch(function () {
+        updateBlocks('GrafikStation: metrics unavailable', null);
+      });
+  }
+
+  loadMetrics();
+  window.setInterval(loadMetrics, 3000);
+})();
+</script>
+{/literal}
 </main>
 {include file="maklertour_footer.html"}
