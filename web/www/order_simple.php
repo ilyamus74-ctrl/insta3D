@@ -17,6 +17,75 @@ function osv_video_has_imu_sidecar(int $orderId, array $session, array $video): 
 function osv_video_label(array $v): string { $label=trim((string)($v['label'] ?? '')); if($label!=='')return $label; $comment=trim((string)($v['comment'] ?? '')); return $comment!==''?$comment:(string)($v['filename'] ?? ('Video #'.(int)($v['id'] ?? 0))); }
 function osv_job_title(array $j): string { $t=(string)$j['job_type']; $mid=$j['ui_model_id'] ?? null; $model=$mid!==null?' — Model '.(int)$mid:''; if($t==='COLMAP_RECONSTRUCTION_PREVIEW')return 'Preview reconstruction'.$model; if($t==='COLMAP_RECONSTRUCTION_HQ')return 'High quality reconstruction'.$model; if($t==='COLMAP_MESH')return 'Mesh generation'.$model; if($t==='MAKLERTOUR_SYNCED_DENSE')return 'Synced stereo dense'; return $t; }
 function osv_pipeline_modes(): array { return ['preview'=>['label'=>'Preview','start'=>'Start preview 640'],'standard'=>['label'=>'Standard','start'=>'Start standard'],'fullhd'=>['label'=>'FullHD','start'=>'Start fullhd']]; }
+function osv_sfm_run_ui_progress(array $run): array {
+  $status=strtoupper((string)($run['status'] ?? ''));
+  $stage=(string)($run['stage'] ?? '');
+  $progress=(int)($run['progress_percent'] ?? 0);
+  $params=osv_json_array($run['parameters_json'] ?? '{}');
+  $autoAll=!empty($params['auto_process_all_components']);
+  $auto=is_array($params['auto_components'] ?? null) ? $params['auto_components'] : [];
+  $primaryDenseReady=!empty($run['artifacts']['dense']['available']);
+
+  if($status==='CANCELLING'){
+    return [
+      'stage'=>'CANCELLING',
+      'progress_percent'=>min(99,$progress),
+      'note'=>'Cancellation requested',
+    ];
+  }
+
+  $active=in_array($status,[
+    'QUEUED',
+    'RUNNING',
+    'RUNNING_CHUNKS',
+    'PLANNING',
+    'MERGING',
+    'STARTED',
+    'PROCESSING'
+  ],true);
+
+  $combinedReady=!empty($auto['combined_model_available']);
+  $alignedMerge=(string)($auto['aligned_merge'] ?? '');
+
+  if($autoAll && $active && !$combinedReady){
+    $selected=max(0,(int)($auto['selected_useful_models'] ?? 0));
+    $done=max(0,(int)($auto['previews_done'] ?? 0));
+
+    if($selected>0){
+      if(!$primaryDenseReady){
+        return [
+          'stage'=>$stage !== '' ? $stage : 'PROCESSING',
+          'progress_percent'=>min(99,$progress),
+          'note'=>'Primary dense model processing; combined model pending',
+        ];
+      }
+
+      $displayDone=max(1,$done);
+      $autoProgress=(int)round(min(99,max(0,($displayDone / $selected) * 90)));
+      if($alignedMerge==='running'){
+        $autoProgress=max($autoProgress,95);
+      }
+
+      return [
+        'stage'=>'AUTO COMPONENTS',
+        'progress_percent'=>$autoProgress,
+        'note'=>'Primary dense model ready; building combined model '.$displayDone.'/'.$selected,
+      ];
+    }
+
+    return [
+      'stage'=>$stage !== '' ? $stage : 'PROCESSING',
+      'progress_percent'=>min(99,$progress),
+      'note'=>'Primary dense model processing; combined model pending',
+    ];
+  }
+
+  return [
+    'stage'=>$stage,
+    'progress_percent'=>$progress,
+    'note'=>'',
+  ];
+}
 function osv_pipeline_artifacts(array $run,array $jobs): array { $rid=(int)$run['id']; $out=['dense'=>['available'=>false,'viewer_url'=>'','download_url'=>'','vertices'=>0,'size_human'=>'','job_id'=>0,'remote_job_id'=>0,'model_id'=>null,'sparse_remote_job_id'=>0],'mesh'=>['available'=>false,'viewer_url'=>'','download_url'=>'','vertices'=>0,'faces'=>0,'size_human'=>''],'result_json'=>['available'=>false,'download_url'=>'']]; $recon=null; $mesh=null; foreach($jobs as $j){ if((int)($j['pipeline_run_id'] ?? 0)!==$rid)continue; $jt=(string)($j['job_type'] ?? ''); if(in_array($jt,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'],true) && strtoupper((string)($j['status'] ?? ''))==='DONE')$recon=$j; if($jt==='COLMAP_MESH' && strtoupper((string)($j['status'] ?? ''))==='DONE')$mesh=$j; }
   $videoParam=((int)($run['video_scan_id'] ?? 0)>0)?'&video_scan_id='.(int)$run['video_scan_id']:'';
   if($recon){ $reconParams=osv_json_array($recon['parameters_json'] ?? ''); $modelId=$reconParams['model_id'] ?? null; $sparseRemote=(int)($reconParams['sparse_remote_job_id'] ?? ($reconParams['sparse_job_id'] ?? ($recon['parent_remote_job_id'] ?? 0))); $pi=osv_ply_info(osv_remote_dir((int)$recon['remote_job_id']).'/merged/merged_fused.ply'); if($pi['valid']){ $out['dense']=['available'=>true,'viewer_url'=>'/sfm_3d_viewer.php?order_id='.(int)$run['order_id'].'&session_id='.(int)$run['capture_session_id'].$videoParam.'&pipeline_run_id='.$rid.'&artifact=dense','download_url'=>'/api/sfm_pipeline_artifact.php?pipeline_run_id='.$rid.'&artifact=dense'.$videoParam,'vertices'=>$pi['vertices'],'size_human'=>$pi['size_human'],'job_id'=>(int)$recon['id'],'remote_job_id'=>(int)$recon['remote_job_id'],'model_id'=>$modelId,'sparse_remote_job_id'=>$sparseRemote]; }}
@@ -71,7 +140,7 @@ $videoScans=[]; $labelCol=''; $stmt=$dbcnx->prepare('SELECT vs.*, cs.app_session
 $captureBundlesBySession=[]; $tbl=$dbcnx->query("SHOW TABLES LIKE 'capture_bundles'"); if($tbl && $tbl->num_rows>0){ $stmt=$dbcnx->prepare('SELECT * FROM capture_bundles WHERE order_id=? ORDER BY created_at DESC, id DESC'); $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($b=$rs->fetch_assoc()){ $sid=(int)$b['capture_session_id']; $b['size_human']=osv_bytes((float)($b['size_bytes'] ?? 0)); $b['download_url']='/api/capture_bundle_file.php?capture_bundle_id='.(int)$b['id']; $b['inspect_url']=$b['download_url'].'&sidecar=manifest'; $captureBundlesBySession[$sid][]=$b; } $stmt->close(); }
 $runsBySession=[];$runsBySVM=[]; $stmt=$dbcnx->prepare('SELECT r.*, vs.filename source_filename FROM sfm_pipeline_runs r LEFT JOIN video_scans vs ON vs.id=r.video_scan_id WHERE r.order_id=? ORDER BY r.created_at DESC, r.id DESC'); $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($r=$rs->fetch_assoc()){ $sid=(int)$r['capture_session_id']; $vid=(int)($r['video_scan_id'] ?? 0); $mode=(string)($r['pipeline_mode'] ?? ''); $r['log_url']='/api/sfm_pipeline_log.php?pipeline_run_id='.(int)$r['id']; $r['source_label']=''; $runsBySession[$sid][]=$r; if($vid>0&&$mode!=='')$runsBySVM[$sid][$vid][$mode][]=$r; } $stmt->close();
 $jobsBySession=[];$denseJobsByBundle=[]; $stmt=$dbcnx->prepare('SELECT * FROM sfm_remote_jobs WHERE order_id=? ORDER BY created_at DESC, id DESC'); $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($j=$rs->fetch_assoc()){ $sid=(int)$j['capture_session_id']; $j['status_url']='/api/sfm_remote_job_status.php?job_id='.(int)$j['id']; $j['result_json_url']='/api/sfm_remote_job_file.php?job_id='.(int)$j['id'].'&type=result'; $params=osv_json_array($j['parameters_json'] ?? ''); $j['ui_model_id']=$params['model_id'] ?? null; if((string)$j['job_type']==='MAKLERTOUR_SYNCED_DENSE'){ $base=(string)($j['output_path'] ?: osv_remote_dir((int)$j['remote_job_id'])); foreach(['preview'=>'dense/contact_dense_depth.jpg','debug'=>'dense/dense_depth_debug.json','summary'=>'dense/dense_depth_summary.csv'] as $k=>$rel){ $j[$k.'_url']='/api/sfm_remote_job_artifact.php?job_id='.(int)$j['id'].'&file='.$rel; $j['has_'.$k]=is_file(rtrim($base,'/').'/'.$rel); } if(!empty($params['capture_bundle_id']))$denseJobsByBundle[$sid][(int)$params['capture_bundle_id']][]=$j; } $jobsBySession[$sid][]=$j; } $stmt->close();
-foreach($captureSessions as $i=>$s){ $sid=(int)$s['id']; $videos=[]; foreach(($s['videos'] ?? []) as $v){ $v['imu_available']=osv_video_has_imu_sidecar($orderId,$s,$v); $v['sfm_pipeline_cards']=[]; foreach(osv_pipeline_modes() as $mode=>$preset){ $hist=$runsBySVM[$sid][(int)$v['id']][$mode] ?? []; $run=$hist[0] ?? null; if($run){ $run['artifacts']=osv_pipeline_artifacts($run,$jobsBySession[$sid] ?? []); } $v['sfm_pipeline_cards'][$mode]=['mode'=>$mode,'preset'=>$preset,'run'=>$run,'history'=>$hist]; } $videos[]=$v; } $captureSessions[$i]['sfm_disk_videos']=$videos; $bundles=$captureBundlesBySession[$sid] ?? []; foreach($bundles as $bi=>$b){$bundles[$bi]['synced_dense_jobs']=$denseJobsByBundle[$sid][(int)$b['id']] ?? [];} $captureSessions[$i]['capture_bundles']=$bundles; $captureSessions[$i]['sfm_remote_jobs']=$jobsBySession[$sid] ?? []; }
+foreach($captureSessions as $i=>$s){ $sid=(int)$s['id']; $videos=[]; foreach(($s['videos'] ?? []) as $v){ $v['imu_available']=osv_video_has_imu_sidecar($orderId,$s,$v); $v['sfm_pipeline_cards']=[]; foreach(osv_pipeline_modes() as $mode=>$preset){ $hist=$runsBySVM[$sid][(int)$v['id']][$mode] ?? []; $run=$hist[0] ?? null; if($run){ $run['artifacts']=osv_pipeline_artifacts($run,$jobsBySession[$sid] ?? []); $run['ui_progress']=osv_sfm_run_ui_progress($run); } $v['sfm_pipeline_cards'][$mode]=['mode'=>$mode,'preset'=>$preset,'run'=>$run,'history'=>$hist]; } $videos[]=$v; } $captureSessions[$i]['sfm_disk_videos']=$videos; $bundles=$captureBundlesBySession[$sid] ?? []; foreach($bundles as $bi=>$b){$bundles[$bi]['synced_dense_jobs']=$denseJobsByBundle[$sid][(int)$b['id']] ?? [];} $captureSessions[$i]['capture_bundles']=$bundles; $captureSessions[$i]['sfm_remote_jobs']=$jobsBySession[$sid] ?? []; }
 $generatedMerges=[]; $tbl=$dbcnx->query("SHOW TABLES LIKE 'sfm_generated_model_merges'"); if($tbl && $tbl->num_rows>0){ $stmt=$dbcnx->prepare('SELECT * FROM sfm_generated_model_merges WHERE order_id=? ORDER BY created_at DESC, id DESC'); $stmt->bind_param('i',$orderId); $stmt->execute(); $rs=$stmt->get_result(); while($m=$rs->fetch_assoc()){$generatedMerges[]=$m;} $stmt->close(); }
 $generatedModels=osv_build_generated($captureSessions,$generatedMerges); $anchorOptions=[]; $defaultSparseRemoteJobId=0; foreach($generatedModels as $gm){ $mid=(int)($gm['model_id'] ?? 0); if($mid>0){ $anchorOptions[$mid]='Model '.$mid; } if($defaultSparseRemoteJobId<=0 && (int)($gm['sparse_remote_job_id'] ?? 0)>0){ $defaultSparseRemoteJobId=(int)$gm['sparse_remote_job_id']; } } ksort($anchorOptions); $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),'videos'=>count($videoScans),'capture_bundles'=>array_sum(array_map(fn($s)=>count($s['capture_bundles'] ?? []),$captureSessions)),'generated_models'=>count($generatedModels)];
 $smarty->assign('anchor_options',$anchorOptions); $smarty->assign('default_sparse_remote_job_id',$defaultSparseRemoteJobId); $smarty->assign('current_user',$user); $smarty->assign('order',$order); $smarty->assign('captureSessions',$captureSessions); $smarty->assign('videoScans',$videoScans); $smarty->assign('generated_models',$generatedModels); $smarty->assign('mediaTotals',$mediaTotals); $smarty->assign('canDeleteMedia',$canDeleteMedia); $smarty->display('maklertour_order_simple.html');
