@@ -1098,6 +1098,13 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
      }
      $requestOverride=[];
      if($bridgeRaw!==null){ $requestOverride=['extract'=>['bridge_overlap_sampling'=>filter_var($bridgeRaw,FILTER_VALIDATE_BOOLEAN)]]; }
+     $autoAll=filter_var($_POST['auto_process_all_components']??false,FILTER_VALIDATE_BOOLEAN);
+     $requestOverride['auto_process_all_components']=$autoAll;
+     $requestOverride['component_min_registered_images']=10;
+     $requestOverride['component_min_sparse_points']=1000;
+     $requestOverride['component_max_count']=12;
+     $requestOverride['auto_aligned_merge']=true;
+     $requestOverride['auto_aligned_merge_anchor']='largest';
      start_sfm_pipeline_run($dbcnx,$orderId,$captureSessionId,$videoScanId>0?$videoScanId:null,$mode,$userId,null,null,$requestOverride ?: null);
      header('Location: /order.php?id='.$orderId.'&sfm_job_queued=1'); exit;
    }catch(Throwable $e){ $error=$e->getMessage(); }

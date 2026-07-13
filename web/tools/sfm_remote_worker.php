@@ -43,6 +43,57 @@ const MIN_REGISTERED_IMAGES_HQ = 20;
 define('SFM_DENSE_STALE_TIMEOUT_SECONDS', max(60, (int)(getenv('SFM_DENSE_STALE_TIMEOUT_SECONDS') ?: 900)));
 
 
+
+function sfm_worker_generated_merges_ensure_schema(mysqli $db): void {
+    $db->query("CREATE TABLE IF NOT EXISTS sfm_generated_model_merges (id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, capture_session_id BIGINT NULL, created_by_user_id BIGINT NULL, status VARCHAR(32) NOT NULL DEFAULT 'DONE', merge_type VARCHAR(64) NOT NULL, source_jobs_json JSON NULL, output_path TEXT NOT NULL, result_json_path TEXT NULL, total_points BIGINT NOT NULL DEFAULT 0, message TEXT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), KEY idx_sfm_generated_model_merges_order (order_id, created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+}
+function sfm_auto_component_selection(array $components, array $params): array {
+    $minImages=max(1,(int)($params['component_min_registered_images'] ?? 10)); $minPoints=max(0,(int)($params['component_min_sparse_points'] ?? 1000)); $max=max(1,min(50,(int)($params['component_max_count'] ?? 12))); $models=[];
+    foreach(($components['models'] ?? []) as $c){ $mid=(int)($c['model_id'] ?? -1); if($mid<0)continue; $ri=(int)($c['registered_images'] ?? 0); $pts=(int)($c['points3D_count'] ?? ($c['points'] ?? 0)); if($ri >= $minImages && $pts >= $minPoints){ $c['model_id']=$mid; $c['registered_images']=$ri; $c['points3D_count']=$pts; $models[]=$c; } }
+    usort($models, fn($a,$b)=>((int)$b['registered_images'] <=> (int)$a['registered_images']) ?: ((int)$b['points3D_count'] <=> (int)$a['points3D_count']));
+    return array_slice($models,0,$max);
+}
+function sfm_dense_preview_exists(mysqli $db,int $pipelineRunId,int $sparseRemote,int $modelId): bool {
+    $st=$db->prepare("SELECT parameters_json,status FROM sfm_remote_jobs WHERE pipeline_run_id=? AND parent_remote_job_id=? AND job_type='COLMAP_RECONSTRUCTION_PREVIEW' AND status IN ('QUEUED','RUNNING','PLANNING','RUNNING_CHUNKS','MERGING','DONE')"); if(!$st)return false; $st->bind_param('ii',$pipelineRunId,$sparseRemote); $st->execute(); $rs=$st->get_result(); while($j=$rs->fetch_assoc()){ $p=json_decode((string)($j['parameters_json']??'{}'),true)?:[]; if((int)($p['model_id']??-1)===$modelId){$st->close(); return true;} } $st->close(); return false;
+}
+function sfm_auto_components_update(mysqli $db, int $pipelineRunId, array $params, array $auto): void {
+    $params['auto_components']=array_replace($params['auto_components'] ?? [], $auto);
+    $json=json_encode($params, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+    $st=$db->prepare('UPDATE sfm_pipeline_runs SET parameters_json=? WHERE id=?');
+    if($st){$st->bind_param('si',$json,$pipelineRunId);$st->execute();$st->close();}
+}
+function sfm_auto_components_maybe_merge(mysqli $db,int $pipelineRunId): void {
+    $st=$db->prepare('SELECT parameters_json,order_id,capture_session_id FROM sfm_pipeline_runs WHERE id=? LIMIT 1'); if(!$st)return; $st->bind_param('i',$pipelineRunId); $st->execute(); $run=$st->get_result()->fetch_assoc() ?: []; $st->close();
+    $rp=json_decode((string)($run['parameters_json'] ?? '{}'),true)?:[]; if(empty($rp['auto_process_all_components']) || empty($rp['auto_aligned_merge']))return;
+    $auto=is_array($rp['auto_components'] ?? null) ? $rp['auto_components'] : [];
+    $sparse=(int)($auto['sparse_remote_job_id'] ?? 0); $selected=array_values(array_unique(array_map('intval', is_array($auto['selected_model_ids'] ?? null) ? $auto['selected_model_ids'] : []))); if($sparse<=0 || !$selected)return;
+    sfm_worker_generated_merges_ensure_schema($db);
+    $message='Auto aligned merge from sparse components pipeline_run_id='.$pipelineRunId.' sparse_remote_job_id='.$sparse;
+    $st=$db->prepare("SELECT id FROM sfm_generated_model_merges WHERE order_id=? AND merge_type='aligned_shared_images_dense_ply' AND message=? ORDER BY id DESC LIMIT 1"); if($st){$oid=(int)$run['order_id']; $st->bind_param('is',$oid,$message); $st->execute(); $exists=$st->get_result()->fetch_assoc(); $st->close(); if($exists)return;}
+
+    $st=$db->prepare("SELECT * FROM sfm_remote_jobs WHERE pipeline_run_id=? AND parent_remote_job_id=? AND job_type='COLMAP_RECONSTRUCTION_PREVIEW' AND status IN ('QUEUED','RUNNING','PLANNING','RUNNING_CHUNKS','MERGING','DONE')"); if(!$st)return; $st->bind_param('ii',$pipelineRunId,$sparse); $st->execute(); $rs=$st->get_result(); $jobsByModel=[]; while($j=$rs->fetch_assoc()){ $p=json_decode((string)($j['parameters_json']??'{}'),true)?:[]; $mid=(int)($p['model_id']??-1); if(in_array($mid,$selected,true) && !isset($jobsByModel[$mid])){$jobsByModel[$mid]=$j;} } $st->close();
+    $minDensePoints=1000; $src=[]; $ready=[]; $waiting=[]; $excluded=[];
+    foreach($selected as $mid){
+        if(!isset($jobsByModel[$mid])){ $waiting[]=$mid; continue; }
+        $j=$jobsByModel[$mid]; $status=strtoupper((string)($j['status'] ?? ''));
+        if($status!=='DONE'){ $waiting[]=$mid; continue; }
+        $path=remote_output_dir((int)$j['remote_job_id']).'/merged/merged_fused.ply'; $pi=ply_header_info($path); $vertices=(int)($pi['vertices'] ?? 0);
+        if(!$pi['ok'] || $vertices<$minDensePoints){ $excluded[]=['model_id'=>$mid,'remote_job_id'=>(int)$j['remote_job_id'],'points'=>$vertices,'min_points'=>$minDensePoints]; continue; }
+        $ready[]=$mid; $src[]=['db_job_id'=>(int)$j['id'],'remote_job_id'=>(int)$j['remote_job_id'],'model_id'=>$mid,'mode'=>'preview','points'=>$vertices,'path'=>$path,'capture_session_id'=>(int)$j['capture_session_id'],'sparse_remote_job_id'=>$sparse];
+    }
+    $auto['previews_done']=count($ready)+count($excluded); $auto['ready_models']=$ready; $auto['waiting_models']=$waiting; $auto['excluded_tiny_models']=$excluded; $auto['aligned_merge']='not started'; $auto['combined_model_available']=false; sfm_auto_components_update($db,$pipelineRunId,$rp,$auto);
+    if($waiting){ pipeline_log($pipelineRunId,'INFO','AUTO_COMPONENTS','previews done '.$auto['previews_done'].'/'.count($selected).'; waiting_models='.implode(',',$waiting)); return; }
+    if(!$src){ pipeline_log($pipelineRunId,'WARNING','AUTO_COMPONENTS','aligned merge skipped: no ready dense sources after tiny exclusion'); return; }
+
+    $dir=SFM_REMOTE_OUTPUT.'/merged_order_'.(int)$run['order_id'].'_aligned_auto_'.date('Ymd_His').'_'.bin2hex(random_bytes(4)); if(!mkdir($dir,0775,true)&&!is_dir($dir)){ $auto['aligned_merge']='error'; $auto['last_error']='Cannot create aligned merge output directory'; sfm_auto_components_update($db,$pipelineRunId,$rp,$auto); pipeline_log($pipelineRunId,'ERROR','AUTO_COMPONENTS','aligned merge error: cannot create output dir'); return; }
+    $poses=$dir.'/sparse_component_poses.json'; $spec=$dir.'/aligned_merge_spec.json'; $ply=$dir.'/aligned_merged_dense_cloud.ply'; $json=$dir.'/merge_result.json'; file_put_contents($spec,json_encode(['sources'=>$src,'result_json'=>$json,'excluded_tiny_models'=>$excluded],JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)); $anchor=(int)($ready[0] ?? $selected[0]); $script=SFM_REMOTE_BASE.'/scripts/sparse_component_pose_export.py';
+    $auto['aligned_merge']='running'; sfm_auto_components_update($db,$pipelineRunId,$rp,$auto);
+    $cmd='python3 '.escapeshellarg($script).' --sparse-dir '.escapeshellarg(remote_output_dir($sparse).'/colmap/sparse').' --output-json '.escapeshellarg($poses).' --merge-spec-json '.escapeshellarg($spec).' --output-ply '.escapeshellarg($ply).($anchor>=0?' --anchor-model-id '.$anchor:'').' 2>&1'; pipeline_log($pipelineRunId,'INFO','AUTO_COMPONENTS','aligned merge running'); exec($cmd,$out,$code); if($code!==0){ $err=substr(implode("\n",$out),0,1000); $auto['aligned_merge']='error'; $auto['combined_model_available']=false; $auto['last_error']=$err; sfm_auto_components_update($db,$pipelineRunId,$rp,$auto); pipeline_log($pipelineRunId,'ERROR','AUTO_COMPONENTS','aligned merge error: '.str_replace("\n",' | ',$err)); return; }
+    $payload=json_decode((string)@file_get_contents($json),true)?:[]; $total=(int)($payload['total_points']??ply_vertex_count($ply)??0); $payload=array_merge(['pipeline_run_id'=>$pipelineRunId,'order_id'=>(int)$run['order_id'],'sparse_remote_job_id'=>$sparse,'merge_type'=>'aligned_shared_images_dense_ply','aligned'=>true,'excluded_tiny_models'=>$excluded],$payload); file_put_contents($json,json_encode($payload,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+    $sj=json_encode($payload['source_jobs']??$src,JSON_UNESCAPED_SLASHES); $mt='aligned_shared_images_dense_ply'; $oid=(int)$run['order_id']; $sid=(int)$run['capture_session_id']; $st=$db->prepare('INSERT INTO sfm_generated_model_merges (order_id,capture_session_id,created_by_user_id,status,merge_type,source_jobs_json,output_path,result_json_path,total_points,message) VALUES (?,?,0,\'DONE\',?,?,?,?,?,?)'); if($st){$st->bind_param('iissssis',$oid,$sid,$mt,$sj,$ply,$json,$total,$message); $st->execute(); $st->close();}
+    $auto['aligned_merge']='done'; $auto['combined_model_available']=true; $auto['previews_done']=count($ready)+count($excluded); $auto['ready_models']=$ready; $auto['waiting_models']=[]; $auto['excluded_tiny_models']=$excluded; unset($auto['last_error']); sfm_auto_components_update($db,$pipelineRunId,$rp,$auto); pipeline_log($pipelineRunId,'INFO','AUTO_COMPONENTS','aligned merge done; combined model available: yes; previews done '.$auto['previews_done'].'/'.count($selected));
+}
+
 function ply_vertex_count(string $path): ?int
 {
     if (!is_file($path)) { return null; }
@@ -270,16 +321,18 @@ function auto_chain_after_done(mysqli $db, array $job): void
         if((int)$best['registered_images']<5 || (int)$best['points']<=0){ sfm_pipeline_fail($db,$pipelineRunId,'Sparse reconstruction failed: no model has at least 5 registered images and points',['sparse_remote_job_id'=>$remote]); return; }
         pipeline_log($pipelineRunId,'INFO','SPARSE','Selected model '.$best['model_id'].': registered_images='.$best['registered_images'].' points='.$best['points']);
         $rowRes=$db->query('SELECT extracted_frames FROM sfm_pipeline_runs WHERE id='.(int)$pipelineRunId); $row=$rowRes?$rowRes->fetch_assoc():[]; if($rowRes){$rowRes->close();} $ef=(int)($row['extracted_frames'] ?? 0); $extra=['sparse_model_id'=>(int)$best['model_id'],'registered_images'=>(int)$best['registered_images'],'selected_model_id'=>(int)$best['model_id'],'selected_model_points'=>(int)$best['points'],'sparse_points'=>(int)$best['points'],'sparse_models_count'=>(int)($components['models_count'] ?? 0)]; if($ef>0){$extra['registration_ratio']=(string)round(((int)$best['registered_images'])*100/$ef,2);} $extra += sfm_pipeline_integrate_sparse_artifacts($db,$pipelineRunId,$remote,(int)$best['model_id']); $runScope=(string)($runParams['run_scope'] ?? ($run['run_scope'] ?? 'FULL')); if($runScope==='SPARSE_ONLY'){ sfm_pipeline_update($db,$pipelineRunId,'DONE','SPARSE_COMPLETE',100,'Sparse complete',$extra+['completed_stage'=>'SPARSE','run_scope'=>'SPARSE_ONLY']); pipeline_log($pipelineRunId,'INFO','PIPELINE','Sparse-only completed'); return; } sfm_pipeline_update($db,$pipelineRunId,'RUNNING','DENSE_PLAN',35,'Dense chunk planning queued',$extra);
-        $rid=sfm_job_id($db); $jt='COLMAP_RECONSTRUCTION_PREVIEW'; $out=remote_output_dir($rid).'/merged/merged_fused.ply'; $result=remote_output_dir($rid).'/merged/result.json'; $log=remote_output_dir($rid).'/logs'; $msg='pipeline dense reconstruction queued';
-        $params=json_encode(['sparse_job_id'=>$remote,'model_id'=>(int)$best['model_id'],'settings'=>worker_run_parameters($db,$job),'target_images_per_chunk'=>(int)($dense['target_images_per_chunk'] ?? $preset['target_images_per_chunk']),'max_images_per_chunk'=>(int)($dense['max_images_per_chunk'] ?? $preset['max_images_per_chunk']),'overlap_images'=>(int)($dense['chunk_overlap'] ?? $preset['overlap_images'])]+$preset, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+        $selectedComponents=!empty($runParams['auto_process_all_components']) ? sfm_auto_component_selection($components,$runParams) : []; if(!$selectedComponents){ $selectedComponents=[['model_id'=>(int)$best['model_id'],'registered_images'=>(int)$best['registered_images'],'points3D_count'=>(int)$best['points']]]; }
+        $selectedIds=array_map(fn($c)=>(int)$c['model_id'],$selectedComponents); if(!in_array((int)$best['model_id'],$selectedIds,true)){ array_unshift($selectedComponents,['model_id'=>(int)$best['model_id'],'registered_images'=>(int)$best['registered_images'],'points3D_count'=>(int)$best['points']]); $selectedIds=array_map(fn($c)=>(int)$c['model_id'],$selectedComponents); }
+        if(!empty($runParams['auto_process_all_components'])){ $rp=$runParams; $rp['auto_components']=['sparse_remote_job_id'=>$remote,'sparse_models_detected'=>(int)($components['models_count'] ?? count($components['models'] ?? [])),'selected_useful_models'=>count($selectedIds),'selected_model_ids'=>$selectedIds,'previews_done'=>0,'aligned_merge'=>'not started','combined_model_available'=>false]; $json=json_encode($rp,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $ust=$db->prepare('UPDATE sfm_pipeline_runs SET parameters_json=? WHERE id=?'); if($ust){$ust->bind_param('si',$json,$pipelineRunId);$ust->execute();$ust->close();} pipeline_log($pipelineRunId,'INFO','AUTO_COMPONENTS','sparse models detected: '.(int)$rp['auto_components']['sparse_models_detected'].'; selected useful models: '.count($selectedIds).'; previews done: 0/'.count($selectedIds).'; aligned merge: not started; combined model available: no'); }
         $settingsHash=substr(hash('sha256', json_encode($runSettings, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)),0,16); pipeline_log($pipelineRunId,'INFO','DENSE','Dense source sparse_job_id='.$remote.' settings_hash='.$settingsHash);
-        $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,parameters_json) VALUES (?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)");
-        if($st){ $st->bind_param('iiisiissssss',$orderId,$sessionId,$pipelineRunId,$jt,$rid,$remote,$out,$msg,$result,$log,$mode,$params); $st->execute(); $st->close(); pipeline_log($pipelineRunId,'INFO','DENSE_PLAN','Queued dense planning max_image_size='.$preset['max_image_size']); }
+        foreach($selectedComponents as $component){ $modelId=(int)$component['model_id']; if(sfm_dense_preview_exists($db,$pipelineRunId,$remote,$modelId)){ continue; } $rid=sfm_job_id($db); $jt='COLMAP_RECONSTRUCTION_PREVIEW'; $out=remote_output_dir($rid).'/merged/merged_fused.ply'; $result=remote_output_dir($rid).'/merged/result.json'; $log=remote_output_dir($rid).'/logs'; $msg=$modelId===(int)$best['model_id']?'pipeline dense reconstruction queued':'auto component preview queued'; $params=json_encode(['sparse_job_id'=>$remote,'sparse_remote_job_id'=>$remote,'model_id'=>$modelId,'auto_process_all_components'=>!empty($runParams['auto_process_all_components']),'settings'=>worker_run_parameters($db,$job),'target_images_per_chunk'=>(int)($dense['target_images_per_chunk'] ?? $preset['target_images_per_chunk']),'max_images_per_chunk'=>(int)($dense['max_images_per_chunk'] ?? $preset['max_images_per_chunk']),'overlap_images'=>(int)($dense['chunk_overlap'] ?? $preset['overlap_images'])]+$preset, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,parameters_json) VALUES (?,?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)"); if($st){ $st->bind_param('iiisiissssss',$orderId,$sessionId,$pipelineRunId,$jt,$rid,$remote,$out,$msg,$result,$log,$mode,$params); $st->execute(); $st->close(); pipeline_log($pipelineRunId,'INFO','DENSE_PLAN','Queued preview for sparse model '.$modelId.' max_image_size='.$preset['max_image_size']); } if(empty($runParams['auto_process_all_components'])){ break; } }
         return;
     }
 
     if (in_array($type, ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) {
         $mode = (string)($job['reconstruction_mode'] ?: (str_contains($type, 'HQ') ? 'hq' : 'preview'));
+        $pipelineRunId = pipeline_run_for_job($job);
+        if ($pipelineRunId > 0) { sfm_auto_components_maybe_merge($db, $pipelineRunId); }
         $inputPly = remote_output_dir($remote) . '/merged/merged_fused.ply';
         $ply = ply_header_info($inputPly);
         if (!$ply['ok'] || (int)$ply['vertices'] <= 0) {
@@ -299,7 +352,6 @@ function auto_chain_after_done(mysqli $db, array $job): void
         $log = $out . '/logs';
         $jt = 'COLMAP_MESH';
         $msg = 'Auto queued mesh after dense merge';
-        $pipelineRunId = pipeline_run_for_job($job);
         $preset = in_array($mode, ['preview','standard','fullhd'], true) ? sfm_pipeline_preset($mode) : ['mesh_depth'=>($mode === 'hq' ? 9 : 7),'target_faces'=>($mode === 'hq' ? 500000 : 100000)];
         $mesh=(worker_run_parameters($db,$job)['mesh'] ?? []);
         $poissonDepth = (int)($mesh['depth'] ?? $preset['mesh_depth']);
