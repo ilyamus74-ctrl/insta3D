@@ -156,20 +156,76 @@ def transform_ply_sources(sources,out):
             f.close()
     return total
 
+
+
+def source_result_item(src, status=None, reason=None, path_value=None):
+    item={
+        'job': src.get('db_job_id', src.get('job')),
+        'remote_job_id': src.get('remote_job_id'),
+        'model': int(src.get('model_id', src.get('model', -1))),
+        'points': int(src.get('points') or 0),
+    }
+    if status is not None:
+        item['status']=status
+    if path_value is not None:
+        item['path']=path_value
+    if reason is not None:
+        item['reason']=reason
+    return item
+
+def ply_vertex_count(path):
+    try:
+        with open(path,'rb') as f:
+            while True:
+                line=f.readline()
+                if not line: return None
+                txt=line.decode('ascii','replace').strip()
+                if txt.startswith('element vertex '):
+                    return int(txt.split()[2])
+                if txt=='end_header': break
+    except Exception:
+        return None
+    return None
+
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--sparse-dir',required=True); ap.add_argument('--output-json',required=True); ap.add_argument('--merge-spec-json'); ap.add_argument('--output-ply'); ap.add_argument('--anchor-model-id',type=int)
     a=ap.parse_args(); poses=export_poses(a.sparse_dir,a.output_json)
     if a.merge_spec_json:
         spec=json.loads(Path(a.merge_spec_json).read_text()); anchor,trs,path,edges=build_alignment(poses,a.anchor_model_id)
-        inc=[]; exc=[]
+        inc=[]; exc=[]; merge_sources=[]
         for src in spec['sources']:
             mid=int(src['model_id'])
-            if mid in trs:
-                src['transform_to_anchor']=trs[mid]; src['shared_path_to_anchor']=path[mid]; src['alignment_status']='anchor' if mid==anchor else ('direct to anchor' if len(path[mid])==2 else 'via model '+str(path[mid][-2])); inc.append(src)
+            src_points=int(src.get('points') or 0)
+            if not src.get('path') or not Path(src['path']).is_file():
+                src['alignment_status']='missing_ply'; exc.append(source_result_item(src, reason='missing_ply')); continue
+            actual_points=ply_vertex_count(src['path'])
+            if actual_points is None:
+                src['alignment_status']='missing_ply'; exc.append(source_result_item(src, reason='missing_ply')); continue
+            if actual_points < 1:
+                src['alignment_status']='too_few_points'; exc.append(source_result_item(src, reason='too_few_points')); continue
+            src['points']=actual_points
+            if mid not in trs:
+                src['alignment_status']='no_shared_image_path'; exc.append(source_result_item(src, reason='no_shared_image_path')); continue
+            src['transform_to_anchor']=trs[mid]; src['shared_path_to_anchor']=path[mid]
+            src['alignment_status']='anchor' if mid==anchor else ('direct to anchor' if len(path[mid])==2 else 'via model '+str(path[mid][-2]))
+            merge_sources.append(src)
+            if mid==anchor:
+                inc.append(source_result_item(src, status='anchor'))
             else:
-                src['alignment_status']='no_shared_image_path'; exc.append(src)
-        if not inc: raise RuntimeError('No selected dense clouds have a shared-image path to anchor')
-        total=transform_ply_sources(inc,a.output_ply)
-        result={'anchor_model_id':anchor,'alignment_method':'shared_colmap_image_camera_centers_umeyama','edges':edges,'source_jobs':inc,'excluded_jobs':exc,'total_points':total,'output_ply':a.output_ply}
+                inc.append(source_result_item(src, status='aligned', path_value=path[mid]))
+        if not merge_sources: raise RuntimeError('No selected dense clouds have a shared-image path to anchor')
+        try:
+            total=transform_ply_sources(merge_sources,a.output_ply)
+        except Exception:
+            for src in merge_sources:
+                mid=int(src['model_id'])
+                if mid != anchor and not any(int(e.get('model',-1)) == mid for e in exc):
+                    exc.append(source_result_item(src, reason='transform_failed'))
+            inc=[source_result_item(src, status='anchor') for src in merge_sources if int(src['model_id']) == anchor]
+            merge_sources=[src for src in merge_sources if int(src['model_id']) == anchor]
+            if not merge_sources:
+                raise
+            total=transform_ply_sources(merge_sources,a.output_ply)
+        result={'anchor_model_id':anchor,'alignment_method':'shared_colmap_image_camera_centers_umeyama','edges':edges,'included':inc,'excluded':exc,'source_jobs':merge_sources,'excluded_jobs':exc,'total_points':total,'output_ply':a.output_ply}
         Path(spec['result_json']).write_text(json.dumps(result,indent=2,ensure_ascii=False),encoding='utf-8')
 if __name__=='__main__': main()
