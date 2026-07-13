@@ -30,6 +30,8 @@ function can_view_order(array $order, int $userId, string $role): bool {
 $pipelineRunId = filter_var((string)($_GET['pipeline_run_id'] ?? ''), FILTER_VALIDATE_INT, ['options'=>['min_range'=>1]]);
 $artifact = (string)($_GET['artifact'] ?? 'sparse');
 $requestedVideoScanId = (int)($_GET['video_scan_id'] ?? 0);
+$denseRemoteJobId = (int)($_GET['dense_remote_job_id'] ?? 0);
+$denseRemoteDbJobId = 0;
 if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     if (!in_array($artifact, ['sparse','dense','mesh'], true)) api3d_json(['ok'=>false,'error'=>'bad_artifact'],400);
     require_once dirname(__DIR__, 2) . '/remote_station/sfm_pipeline.php'; ensure_sfm_pipeline_tables($dbcnx);
@@ -50,6 +52,15 @@ if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     foreach(['sparse_ply','dense_ply','mesh_ply','camera_trajectory','sparse_diagnostics','world_alignment'] as $atype){
         $resolved[$atype]=sfm_debug_public_artifact_path($dbcnx,$resolverLink,$pid,$atype);
     }
+    if($artifact==='dense' && $denseRemoteJobId>0){
+        $st=$dbcnx->prepare("SELECT id, remote_job_id, output_path FROM sfm_remote_jobs WHERE order_id=? AND capture_session_id=? AND pipeline_run_id=? AND remote_job_id=? AND job_type IN ('COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ') AND status='DONE' LIMIT 1");
+        if(!$st) api3d_json(['ok'=>false,'error'=>'db_prepare_dense_job_failed'],500);
+        $oid=(int)$run['order_id']; $sid=(int)$run['capture_session_id']; $drid=(int)$denseRemoteJobId; $st->bind_param('iiii',$oid,$sid,$pid,$drid); $st->execute(); $dj=$st->get_result()->fetch_assoc(); $st->close();
+        if(!$dj) api3d_json(['ok'=>false,'error'=>'dense_remote_job_not_found_for_pipeline'],404);
+        $denseRemoteDbJobId=(int)$dj['id'];
+        $densePath='/home/makler/web/remote_station/output/job_'.$drid.'/merged/merged_fused.ply';
+        $resolved['dense_ply']=['path'=>$densePath];
+    }
     $selected=$resolved[$artifactTypes[$artifact]] ?? null;
     $selectedInfo=$selected ? api3d_ply_info($selected['path']) : ['valid'=>false,'vertices'=>0,'faces'=>0];
     if(!$selectedInfo['valid'] || ($artifact==='mesh' && $selectedInfo['faces']<=0)) {
@@ -62,7 +73,7 @@ if ($pipelineRunId !== false && $pipelineRunId !== null && $pipelineRunId > 0) {
     $trajPath=(string)(($resolved['camera_trajectory']['path'] ?? ''));
     $poses=0; if($trajPath!=='' && is_file($trajPath)){ $tj=json_decode((string)file_get_contents($trajPath),true); if(is_array($tj)){$poses=count($tj['poses'] ?? []);} }
     $runParams=json_decode((string)($run['parameters_json'] ?? '{}'),true); if(!is_array($runParams)){$runParams=[];} $sourceVideoFilename=(string)($runParams['source_video']['filename'] ?? '');
-    $artifactUrl=function($atype) use($debugPublic,$debugToken,$pid){ if($debugPublic){return '/debug_share_file.php?token='.rawurlencode($debugToken).'&pipeline_run_id='.$pid.'&artifact_type='.$atype;} $m=['sparse_ply'=>'sparse','dense_ply'=>'dense','mesh_ply'=>'mesh']; return '/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact='.($m[$atype] ?? $atype); };
+    $artifactUrl=function($atype) use($debugPublic,$debugToken,$pid,$denseRemoteJobId,$denseRemoteDbJobId){ if($debugPublic){return '/debug_share_file.php?token='.rawurlencode($debugToken).'&pipeline_run_id='.$pid.'&artifact_type='.$atype;} $m=['sparse_ply'=>'sparse','dense_ply'=>'dense','mesh_ply'=>'mesh']; if($atype==='dense_ply' && $denseRemoteJobId>0){ return '/api/sfm_remote_job_status.php?job_id='.$denseRemoteDbJobId.'&file=ply'; } return '/api/sfm_pipeline_artifact.php?pipeline_run_id='.$pid.'&artifact='.($m[$atype] ?? $atype); };
     api3d_json(['ok'=>true,'pipeline_run_id'=>$pid,'video_scan_id'=>(int)($run['video_scan_id'] ?? 0),'source_video_filename'=>$sourceVideoFilename,'pipeline_mode'=>(string)($run['pipeline_mode'] ?? ''),'status'=>(string)($run['status'] ?? ''),'artifact'=>$artifact,'summary'=>['points_count'=>$sparseInfo['vertices'],'camera_poses_count'=>$poses,'keyframe_points_count'=>$poses,'camera_trajectory_available'=>$trajPath!=='' && is_file($trajPath)], 'artifacts'=>['sparse_points_ply_url'=>$artifactUrl('sparse_ply'),'camera_trajectory_url'=>$artifactUrl('camera_trajectory'),'sparse_diagnostics_url'=>$artifactUrl('sparse_diagnostics'),'world_alignment_url'=>$artifactUrl('world_alignment'),'keyframe_points_url'=>$artifactUrl('camera_trajectory')], 'sparse'=>['available'=>$sparseInfo['valid'],'points'=>$sparseInfo['vertices'],'sparse_ply_url'=>$artifactUrl('sparse_ply')], 'dense'=>['available'=>$denseInfo['valid'],'fused_ply_url'=>$artifactUrl('dense_ply'),'points'=>$denseInfo['vertices']], 'mesh'=>['available'=>$meshInfo['valid']&&$meshInfo['faces']>0,'mesh_ply_url'=>$artifactUrl('mesh_ply'),'vertices'=>$meshInfo['vertices'],'faces'=>$meshInfo['faces']], 'selected'=>['artifact'=>$artifact,'vertices'=>$selectedInfo['vertices'],'faces'=>$selectedInfo['faces']]]);
 }
 

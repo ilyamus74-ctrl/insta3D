@@ -15,6 +15,7 @@ $sessionId = (int)($_GET['session_id'] ?? ($debugPublic['capture_session_id'] ??
 $pipelineRunId = (int)($_GET['pipeline_run_id'] ?? 0);
 $mergeId = (int)($_GET['merge_id'] ?? 0);
 $videoScanId = (int)($_GET['video_scan_id'] ?? 0);
+$denseRemoteJobId = (int)($_GET['dense_remote_job_id'] ?? 0);
 $artifact = in_array((string)($_GET['artifact'] ?? ($mergeId > 0 ? 'dense' : 'sparse')), ['sparse','dense','mesh'], true) ? (string)($_GET['artifact'] ?? ($mergeId > 0 ? 'dense' : 'sparse')) : 'sparse';
 $mergeViewerData = null;
 function sfm_viewer_can_view_order(array $order, int $userId, string $role): bool {
@@ -55,11 +56,20 @@ if ($mergeId > 0) {
         http_response_code(403);
         exit('Forbidden');
     }
-    $isAlignedMerge = (string)($merge['merge_type'] ?? '') === 'aligned_shared_images_dense_ply';
-    $mergeTitle = ($isAlignedMerge ? 'Aligned merged dense cloud #' : 'Diagnostic merged dense cloud #') . (int)$merge['id'];
-    $mergeWarning = $isAlignedMerge
-        ? 'Aligned by shared COLMAP image poses. Disconnected components may be excluded.'
-        : 'Diagnostic merge only: point clouds are concatenated without alignment.';
+    $mergeType = (string)($merge['merge_type'] ?? '');
+    $isManualMerge = $mergeType === 'manual_correspondences_sim3_dense_ply';
+    $isAlignedMerge = $mergeType === 'aligned_shared_images_dense_ply' || $isManualMerge;
+    if ($isManualMerge) {
+        $mergeTitle = 'Manual aligned dense cloud #' . (int)$merge['id'];
+        $mergeWarning = 'Aligned manually from selected 3D correspondence points using Umeyama Sim(3).';
+        $mergeMode = 'manual Sim(3) correspondences';
+    } else {
+        $mergeTitle = ($isAlignedMerge ? 'Aligned merged dense cloud #' : 'Diagnostic merged dense cloud #') . (int)$merge['id'];
+        $mergeWarning = $isAlignedMerge
+            ? 'Aligned by shared COLMAP image poses. Disconnected components may be excluded.'
+            : 'Diagnostic merge only: point clouds are concatenated without alignment.';
+        $mergeMode = $isAlignedMerge ? 'aligned shared images' : 'diagnostic merge';
+    }
     $mergeViewerData = [
         'ok' => true,
         'is_merge' => true,
@@ -70,7 +80,7 @@ if ($mergeId > 0) {
         'source_video_filename' => $mergeTitle,
         'video_scan_id' => null,
         'pipeline_run_id' => null,
-        'pipeline_mode' => $isAlignedMerge ? 'aligned shared images' : 'diagnostic merge',
+        'pipeline_mode' => $mergeMode,
         'status' => (string)($merge['status'] ?? 'DONE'),
         'summary' => [
             'points_count' => (int)($merge['total_points'] ?? 0),
@@ -208,7 +218,7 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 
-const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,videoScanId=<?php echo json_encode($videoScanId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,mergeId=<?php echo json_encode($mergeId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
+const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,videoScanId=<?php echo json_encode($videoScanId); ?>,denseRemoteJobId=<?php echo json_encode($denseRemoteJobId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,mergeId=<?php echo json_encode($mergeId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
 const mergeViewerData=<?php echo json_encode($mergeViewerData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 const urlParams=new URLSearchParams(window.location.search);
 const autoLevelUrlOverride=urlParams.get('auto_level');
@@ -216,7 +226,7 @@ const statusEl=document.getElementById('viewerStatus');
 function showError(msg){ statusEl.className='text-danger p-3'; statusEl.textContent=msg; if(!statusEl.isConnected) document.getElementById('viewer').prepend(statusEl); }
 let data=mergeViewerData;
 if(!data){
-  const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&video_scan_id=${videoScanId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${videoScanId>0?'&video_scan_id='+videoScanId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
+  const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&video_scan_id=${videoScanId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${denseRemoteJobId>0?'&dense_remote_job_id='+denseRemoteJobId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${videoScanId>0?'&video_scan_id='+videoScanId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
   const r=await fetch(apiUrl);
   const apiContentType=(r.headers.get('Content-Type')||'').toLowerCase();
   data=(r.ok && apiContentType.includes('application/json')) ? await r.json().catch(()=>({ok:false,error:'Bad API JSON response'})) : {ok:false,error:`API returned HTTP ${r.status}`};
