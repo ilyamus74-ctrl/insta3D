@@ -15,7 +15,7 @@ object RoomDatabaseProvider {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "maklertour-local.db",
-            ).addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13).build().also { instance = it }
+            ).addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).build().also { instance = it }
         }
     }
 
@@ -50,6 +50,12 @@ object RoomDatabaseProvider {
             db.execSQL("ALTER TABLE upload_items ADD COLUMN localFilePath TEXT")
             db.execSQL("ALTER TABLE upload_items ADD COLUMN displayName TEXT")
             db.execSQL("ALTER TABLE upload_items ADD COLUMN mimeType TEXT")
+        }
+    }
+
+    private val MIGRATION_13_14 = object : Migration(13, 14) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE upload_items ADD COLUMN appBundleUuid TEXT")
         }
     }
 }

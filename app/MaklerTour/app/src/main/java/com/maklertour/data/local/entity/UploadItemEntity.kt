@@ -20,6 +20,7 @@ data class UploadItemEntity(
     val orderAddress: String? = null,
     val bindingId: String? = null,
     val uploadAppSessionUuid: String? = null,
+    val appBundleUuid: String? = null,
     val serverCaptureSessionId: Long? = null,
     val status: String,
     val retryCount: Int,

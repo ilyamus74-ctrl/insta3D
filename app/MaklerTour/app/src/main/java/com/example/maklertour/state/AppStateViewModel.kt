@@ -633,6 +633,7 @@ class AppStateViewModel(
                     orderTitle = session?.orderTitle ?: selectedOrder.value?.title,
                     orderAddress = session?.orderAddress ?: selectedOrder.value?.address,
                     uploadAppSessionUuid = orderId?.let { "${session?.id ?: "pending"}_$it" },
+                    appBundleUuid = null,
                     serverCaptureSessionId = session?.serverCaptureSessionId,
                     captureType = "synced_depth_frames",
                     localFilePath = packageFile.absolutePath,
@@ -670,6 +671,7 @@ class AppStateViewModel(
                     orderTitle = session?.orderTitle ?: selectedOrder.value?.title,
                     orderAddress = session?.orderAddress ?: selectedOrder.value?.address,
                     uploadAppSessionUuid = orderId?.let { "${session?.id ?: "pending"}_$it" },
+                    appBundleUuid = null,
                     serverCaptureSessionId = session?.serverCaptureSessionId,
                     captureType = "stereo_video_legacy",
                     localFilePath = packageFile.absolutePath,
@@ -678,6 +680,44 @@ class AppStateViewModel(
                 )
             } catch (e: Exception) {
                 Log.e("CaptureBundle", "packaging failed", e)
+            }
+        }
+    }
+
+
+    fun enqueueAutomaticPhotoSessionBundle(
+        context: android.content.Context,
+        sessionId: String?,
+        captureDir: File,
+    ) {
+        val session = uiState.value.sessions.firstOrNull { it.id == sessionId }
+        viewModelScope.launch {
+            try {
+                Log.i("AutoPhotoCapture", "packaging auto photo captureDir=${captureDir.absolutePath}")
+                val packageFile = CaptureBundlePackager(context.applicationContext).packageAutomaticPhotoSession(
+                    captureDir = captureDir,
+                    outputRoot = File(context.filesDir, "upload_packages"),
+                )
+                val manifest = JSONObject(File(captureDir, "manifest.json").readText())
+                val captureUuid = manifest.optString("capture_uuid").takeIf { it.isNotBlank() } ?: captureDir.name
+                val orderId = session?.serverOrderId ?: selectedOrder.value?.id
+                uploadQueueRepository.enqueueCaptureBundle(
+                    sessionId = session?.id ?: "pending_auto_photo_bundle",
+                    sessionTitle = session?.name,
+                    orderId = orderId,
+                    orderTitle = session?.orderTitle ?: selectedOrder.value?.title,
+                    orderAddress = session?.orderAddress ?: selectedOrder.value?.address,
+                    uploadAppSessionUuid = orderId?.let { "${session?.id ?: "pending"}_$it" },
+                    appBundleUuid = captureUuid,
+                    serverCaptureSessionId = session?.serverCaptureSessionId,
+                    captureType = "auto_photo_session",
+                    localFilePath = packageFile.absolutePath,
+                    displayName = "Auto photo capture bundle",
+                    mimeType = "application/gzip",
+                )
+                Log.i("AutoPhotoCapture", "queued auto photo bundle path=${packageFile.absolutePath} capture_uuid=$captureUuid orderId=$orderId")
+            } catch (e: Exception) {
+                Log.e("AutoPhotoCapture", "auto photo packaging failed", e)
             }
         }
     }
@@ -846,7 +886,7 @@ class AppStateViewModel(
                     Log.e("UploadQueue", "capture bundle file missing uploadId=$uploadId path=${item.localFilePath}")
                     return
                 }
-                val ok = uploader.uploadCaptureBundle(orderId, captureSessionId, bundleFile, item.captureType ?: "synced_depth_frames", item.uploadAppSessionUuid ?: appSessionUuid) { progress ->
+                val ok = uploader.uploadCaptureBundle(orderId, captureSessionId, bundleFile, item.captureType ?: "synced_depth_frames", item.appBundleUuid ?: item.uploadAppSessionUuid ?: appSessionUuid) { progress ->
                     val percent = if (progress.bytesTotal > 0) ((progress.bytesUploaded * 100L) / progress.bytesTotal).toInt().coerceIn(0, 100) else 0
                     uploadQueueRepository.updateProgress(uploadId, percent, progress.bytesUploaded, progress.bytesTotal, bundleFile.name, "Uploading Capture bundle ${item.captureType ?: ""}")
                 }

@@ -105,6 +105,8 @@ import com.maklertour.data.phonecamera.StereoCalibrationFramePair
 import com.maklertour.data.phonecamera.PhoneCameraBindResult
 import com.maklertour.data.phonecamera.PhoneCameraLensOption
 import com.maklertour.data.phonecamera.PhoneCameraLensRepository
+import com.maklertour.data.phonecamera.AutoPhotoCaptureManager
+import com.maklertour.data.phonecamera.AutoPhotoState
 import com.maklertour.data.phonecamera.PhoneCalibrationResolutionInfo
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
@@ -650,6 +652,7 @@ private fun MaklerTourApp() {
                         onRequeueVideo = viewModel::requeueVideo,
                         onEnqueueSyncedDepthCaptureBundle = viewModel::enqueueSyncedDepthCaptureBundle,
                         onEnqueueLegacyStereoVideoBundle = viewModel::enqueueLegacyStereoVideoBundle,
+                        onEnqueueAutomaticPhotoSessionBundle = viewModel::enqueueAutomaticPhotoSessionBundle,
                         debugMode = debugMode,
                         selectedOrder = selectedOrder,
                     )
@@ -687,6 +690,7 @@ private fun MaklerTourApp() {
                         onRequeueVideo = viewModel::requeueVideo,
                         onEnqueueSyncedDepthCaptureBundle = viewModel::enqueueSyncedDepthCaptureBundle,
                         onEnqueueLegacyStereoVideoBundle = viewModel::enqueueLegacyStereoVideoBundle,
+                        onEnqueueAutomaticPhotoSessionBundle = viewModel::enqueueAutomaticPhotoSessionBundle,
                         debugMode = debugMode,
                     )
                 }
@@ -1467,6 +1471,7 @@ private fun CameraScreen(
     onRequeueVideo: (String) -> EnqueueUploadResult,
     onEnqueueSyncedDepthCaptureBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
     onEnqueueLegacyStereoVideoBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
+    onEnqueueAutomaticPhotoSessionBundle: (android.content.Context, String?, File) -> Unit,
     debugMode: Boolean,
     selectedOrder: MobileOrder?,
 ) {
@@ -1476,6 +1481,7 @@ private fun CameraScreen(
     var showNoSessionDialog by remember { mutableStateOf(false) }
     var showPhoneCameraScan by remember { mutableStateOf(false) }
     var showStereoCapture by remember { mutableStateOf(false) }
+    var showAutoPhotoCapture by remember { mutableStateOf(false) }
     val videoScanBusy = videoScanUiState in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.RECORDING, VideoScanUiState.STOPPING)
     val defaultPointName = stringResource(R.string.point_default_format, selectedSessionPointsCount + 1)
     val defaultScanName = stringResource(R.string.scan_video_default_name_format, scanVideos.size + 1)
@@ -1576,6 +1582,10 @@ private fun CameraScreen(
                         onClick = { if (selectedSessionName == null) showNoSessionDialog = true else showStereoCapture = true },
                         enabled = selectedSessionName != null && !isCapturing && !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING,
                     ) { Text("Stereo Capture Experimental") }
+                    Button(
+                        onClick = { if (selectedSessionName == null) showNoSessionDialog = true else showAutoPhotoCapture = true },
+                        enabled = selectedSessionName != null && !isCapturing && !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING,
+                    ) { Text("Автоматические фото") }
                     when (videoScanUiState) {
                         VideoScanUiState.SWITCHING_MODE, VideoScanUiState.RECORDING, VideoScanUiState.STOPPING -> {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1622,6 +1632,20 @@ private fun CameraScreen(
                 )
             }
         }
+        if (showAutoPhotoCapture) {
+            Dialog(
+                onDismissRequest = { /* AutoPhotoCaptureScreen blocks RUNNING dismiss; use Cancel/Finish. */ },
+                properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+            ) {
+                AutoPhotoCaptureScreen(
+                    selectedSessionId = selectedSessionId,
+                    selectedSessionName = selectedSessionName ?: "local",
+                    selectedOrder = selectedOrder,
+                    onEnqueueBundle = onEnqueueAutomaticPhotoSessionBundle,
+                    onClose = { showAutoPhotoCapture = false },
+                )
+            }
+        }
         if (showPhoneCameraScan) {
             Dialog(
                 onDismissRequest = {
@@ -1664,6 +1688,131 @@ private fun CameraScreen(
         )
     }
 
+}
+
+
+@Composable
+private fun AutoPhotoCaptureScreen(
+    selectedSessionId: String?,
+    selectedSessionName: String,
+    selectedOrder: MobileOrder?,
+    onEnqueueBundle: (android.content.Context, String?, File) -> Unit,
+    onClose: () -> Unit,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var hasCameraPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
+    val scope = rememberCoroutineScope()
+    val lensRepository = remember(context) { PhoneCameraLensRepository(context) }
+    val lens = remember { lensRepository.selectedOrDefault().first }
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasCameraPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    if (!hasCameraPermission) {
+        Surface(Modifier.fillMaxSize(), color = Color.Black) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("Нет доступа к камере", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Text("Разрешите CAMERA permission для автоматической фотосъёмки.", color = Color.White)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { (context as? ComponentActivity)?.let { ActivityCompat.requestPermissions(it, arrayOf(Manifest.permission.CAMERA), 13032) } }) { Text("Разрешить") }
+                    Button(onClick = onClose) { Text("Отмена") }
+                }
+            }
+        }
+        return
+    }
+    val manager = remember(context, lifecycleOwner) { AutoPhotoCaptureManager(context.applicationContext, lifecycleOwner) }
+    val state by manager.uiState.collectAsState()
+    var captureDir by remember { mutableStateOf<File?>(null) }
+    var flash by remember { mutableStateOf(false) }
+    LaunchedEffect(state.lastSavedSequence) {
+        if (state.lastSavedSequence > 0) {
+            flash = true
+            Toast.makeText(context, state.lastSavedMessage ?: "Photo saved", Toast.LENGTH_SHORT).show()
+            delay(140)
+            flash = false
+        }
+    }
+    DisposableEffect(Unit) { onDispose { manager.release() } }
+    Surface(Modifier.fillMaxSize(), color = Color.Black) {
+        Box(Modifier.fillMaxSize()) {
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).also { preview ->
+                        preview.scaleType = PreviewView.ScaleType.FILL_CENTER
+                        scope.launch { manager.bindPreview(preview, lens.cameraId, lensRepository.getSelectedZoomRatio()) }
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (flash) Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.35f)).zIndex(2f))
+            Column(
+                modifier = Modifier.align(Alignment.TopStart).padding(16.dp).background(Color.Black.copy(alpha = 0.55f)).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("Auto Photo Capture", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Text("Сессия: $selectedSessionName", color = Color.White)
+                Text("Заявка: ${selectedOrder?.title ?: selectedOrder?.id ?: "не выбрана"}", color = Color.White)
+                Text("Объектив: ${lens.lensLabel} (${lens.cameraId})", color = Color.White)
+                Text("Состояние: ${state.state}", color = Color.White)
+                Text("Фото: ${state.photosCount}; отклонено: ${state.rejectedCount}", color = Color.White)
+                Text("Причина: ${state.lastReason}", color = Color.White)
+                Text("Gyro: ${"%.1f".format(state.angularVelocityDegSec)} deg/s; sharpness: ${"%.1f".format(state.sharpness)}", color = Color.White)
+                Text("Свободно: ${context.filesDir.freeSpace / (1024 * 1024)} MB", color = Color.White)
+                state.lastSavedMessage?.let { Text(it, color = Color(0xFFB8FFB8)) }
+                state.error?.let { Text("Ошибка: $it", color = Color(0xFFFFB0B0)) }
+            }
+            Row(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).background(Color.Black.copy(alpha = 0.55f)).padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val terminalBusy = state.state == AutoPhotoState.FINISHING || state.state == AutoPhotoState.CANCELLING
+                Button(
+                    enabled = !terminalBusy && (state.state == AutoPhotoState.IDLE || state.state == AutoPhotoState.CANCELLED || state.state == AutoPhotoState.FINISHED),
+                    onClick = {
+                        val sid = selectedSessionId ?: return@Button
+                        manager.start(sid, selectedOrder?.id, context.filesDir)
+                    },
+                ) { Text("Начать") }
+                Button(
+                    enabled = !terminalBusy && (state.state == AutoPhotoState.RUNNING || state.state == AutoPhotoState.PAUSED),
+                    onClick = { if (state.state == AutoPhotoState.RUNNING) manager.pause() else manager.resume() },
+                ) { Text(if (state.state == AutoPhotoState.PAUSED) "Продолжить" else "Пауза") }
+                Button(
+                    enabled = !terminalBusy && state.photosCount > 0 && (state.state == AutoPhotoState.RUNNING || state.state == AutoPhotoState.PAUSED),
+                    onClick = {
+                        scope.launch {
+                            val dir = manager.finish(selectedSessionId ?: "local", selectedOrder?.id)
+                            captureDir = dir
+                            if (dir != null) onEnqueueBundle(context, selectedSessionId, dir)
+                        }
+                    },
+                ) { Text("Завершить") }
+                Button(
+                    enabled = !terminalBusy,
+                    onClick = {
+                        scope.launch {
+                            if (state.state == AutoPhotoState.RUNNING || state.state == AutoPhotoState.PAUSED) {
+                                manager.cancel(selectedSessionId ?: "local", selectedOrder?.id)
+                            }
+                            onClose()
+                        }
+                    },
+                ) { Text("Отмена") }
+            }
+        }
+    }
 }
 
 @Composable
@@ -2078,6 +2227,7 @@ private fun DraftScreen(
     onRequeueVideo: (String) -> EnqueueUploadResult,
     onEnqueueSyncedDepthCaptureBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
     onEnqueueLegacyStereoVideoBundle: (android.content.Context, String?, File, File?, JSONObject?) -> Unit,
+    onEnqueueAutomaticPhotoSessionBundle: (android.content.Context, String?, File) -> Unit,
     debugMode: Boolean,
 ) {
     val unassignedPoints = points.filter { it.roomId == null }

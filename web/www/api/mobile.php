@@ -1058,7 +1058,7 @@ if ($action === 'upload_capture_bundle') {
         api_json(['ok' => false, 'error' => 'missing required fields'], 400);
     }
 
-    if (!in_array($captureType, ['synced_depth_frames', 'stereo_video_legacy'], true)) {
+    if (!in_array($captureType, ['synced_depth_frames', 'stereo_video_legacy', 'auto_photo_session'], true)) {
         api_json(['ok' => false, 'error' => 'invalid capture_type'], 400);
     }
 

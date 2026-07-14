@@ -35,6 +35,48 @@ class CaptureBundlePackager(private val context: Context) {
         packageCaptureBundle("stereo_video_legacy", videoSessionDir, calibrationSessionDir, activeRigProfileJson, outputRoot)
     }
 
+
+    suspend fun packageAutomaticPhotoSession(
+        captureDir: File,
+        outputRoot: File,
+    ): File = withContext(Dispatchers.IO) {
+        packageAutomaticPhotoBundle(captureDir, outputRoot)
+    }
+
+    private fun packageAutomaticPhotoBundle(captureDir: File, outputRoot: File): File {
+        require(captureDir.exists() && captureDir.isDirectory) { "auto photo capture dir not found: ${captureDir.absolutePath}" }
+        val manifestFile = File(captureDir, "manifest.json")
+        require(manifestFile.exists()) { "auto photo manifest not found: ${manifestFile.absolutePath}" }
+        val manifest = JSONObject(manifestFile.readText())
+        require(manifest.optString("capture_type") == "auto_photo_session") { "unexpected capture_type=${manifest.optString("capture_type")}" }
+        val photosDir = File(captureDir, "photos")
+        val photos = photosDir.listFiles { file -> file.isFile && file.extension.equals("jpg", ignoreCase = true) }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+        require(photos.size == manifest.optInt("photos_count")) { "manifest photos_count=${manifest.optInt("photos_count")} actual=${photos.size}" }
+        photos.forEach { photo -> require(photo.length() > 0L) { "empty JPEG: ${photo.absolutePath}" } }
+        outputRoot.mkdirs()
+        val captureUuid = manifest.optString("capture_uuid", System.currentTimeMillis().toString())
+        val out = File(outputRoot, "maklertour_capture_bundle_auto_photo_session_$captureUuid.tgz")
+        val bundleManifest = JSONObject()
+            .put("bundle_schema_version", 1)
+            .put("bundle_type", "maklertour_capture_bundle")
+            .put("capture_type", "auto_photo_session")
+            .put("app_bundle_uuid", captureUuid)
+            .put("created_at_utc", Instant.now().toString())
+            .put("app_package", context.packageName)
+            .put("app_version", BuildConfig.VERSION_NAME)
+            .put("photos_count", photos.size)
+            .put("source_capture_dir", captureDir.absolutePath)
+        TarGzWriter(out).use { tar ->
+            tar.addBytes("bundle_manifest.json", bundleManifest.toString(2).toByteArray(StandardCharsets.UTF_8))
+            tar.addDirectoryContents(captureDir, "capture")
+        }
+        require(out.exists() && out.length() > 0L) { "archive was not created" }
+        Log.i(TAG, "auto photo packaging complete path=${out.absolutePath} size=${out.length()} photos=${photos.size}")
+        return out
+    }
+
     private fun packageCaptureBundle(
         captureType: String,
         captureDir: File,
