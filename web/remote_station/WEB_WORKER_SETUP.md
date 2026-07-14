@@ -20,6 +20,17 @@ cp web/remote_station/makler-sfm-worker.service.example /etc/systemd/system/makl
 systemctl daemon-reload
 systemctl enable --now makler-sfm-worker.service
 ```
+
+## Установка cleanup worker
+
+Перед запуском примените обе migration в порядке: `web/migrations/20260714_sfm_remote_cleanup_runs.sql`, затем `web/migrations/20260714_sfm_remote_cleanup_runs_v2.sql`. После этого установите отдельный worker для безопасной очистки GrafikStation:
+
+```bash
+cp web/remote_station/makler-sfm-cleanup-worker.service /etc/systemd/system/makler-sfm-cleanup-worker.service
+systemctl daemon-reload
+systemctl enable --now makler-sfm-cleanup-worker.service
+journalctl -u makler-sfm-cleanup-worker.service -f
+```
 ## Установка metrics timer
 
 Метрики собирает root-side updater в JSON cache, а PHP API только читает готовый файл.
@@ -44,7 +55,9 @@ chmod +x /home/makler/web/remote_station/scripts/process_colmap_dense.sh
 /home/makler/web/remote_station/get_station_metrics.sh /home/makler/web/remote_station/stations.conf
 php -l /home/makler/web/tools/sfm_remote_worker.php
 systemctl restart makler-sfm-worker.service
+systemctl restart makler-sfm-cleanup-worker.service
 journalctl -u makler-sfm-worker.service -f
+journalctl -u makler-sfm-cleanup-worker.service -f
 ```
 
 ## Логи

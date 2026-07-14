@@ -3,16 +3,32 @@ declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { fwrite(STDERR, "CLI only\n"); exit(1); }
 function usage(): void {
     echo "Usage:\n";
+    echo "  php cleanup_sfm_artifacts.php --remote-station-cleanup --pipeline-run-id <id> [--dry-run|--delete] [--force]\n";
     echo "  php cleanup_sfm_artifacts.php --pipeline-run-id <id> [--dry-run|--delete] [--include-logs] [--force-recent] [--force-latest]\n";
     echo "  php cleanup_sfm_artifacts.php --remote-job-id <id[,id2]> [--dry-run|--delete] [--include-logs] [--force-recent] [--force-latest]\n";
     echo "  php cleanup_sfm_artifacts.php --scan-orphans --older-than YYYY-MM-DD [--dry-run|--delete] [--include-logs] [--force-recent] [--force-latest]\n";
     echo "  php cleanup_sfm_artifacts.php --older-than YYYY-MM-DD [--dry-run|--delete] [--video-scan-id <id>] [--mode preview|standard|fullhd] [--include-logs] [--force-recent] [--force-latest]\n";
 }
-$opts=getopt('', ['pipeline-run-id:','remote-job-id:','scan-orphans','older-than:','dry-run','delete','video-scan-id:','mode:','include-logs','force-recent','force-latest','help']);
+$opts=getopt('', ['pipeline-run-id:','remote-job-id:','scan-orphans','older-than:','dry-run','delete','video-scan-id:','mode:','include-logs','force-recent','force-latest','help','remote-station-cleanup','force']);
 if(isset($opts['help'])){usage();exit(0);} if(isset($opts['pipeline-run-id'])&&!preg_match('/^[1-9][0-9]*$/',(string)$opts['pipeline-run-id'])){fwrite(STDERR,"ERROR: bad --pipeline-run-id\n");exit(2);} if(isset($opts['older-than'])&&!preg_match('/^\d{4}-\d{2}-\d{2}$/',(string)$opts['older-than'])){fwrite(STDERR,"ERROR: bad --older-than, expected YYYY-MM-DD\n");exit(2);} if(isset($opts['mode'])&&!in_array((string)$opts['mode'],['preview','standard','fullhd'],true)){fwrite(STDERR,"ERROR: bad --mode\n");exit(2);} if(isset($opts['scan-orphans'])&&!isset($opts['older-than'])){fwrite(STDERR,"ERROR: --scan-orphans requires --older-than\n");exit(2);} if(!isset($opts['pipeline-run-id'])&&!isset($opts['older-than'])&&!isset($opts['remote-job-id'])&&!isset($opts['scan-orphans'])){usage();exit(2);} 
 $remoteIds=[]; if(isset($opts['remote-job-id'])){ foreach(explode(',',(string)$opts['remote-job-id']) as $id){$id=trim($id); if(!preg_match('/^[1-9][0-9]*$/',$id)){fwrite(STDERR,"ERROR: bad --remote-job-id\n");exit(2);} $remoteIds[]=(int)$id;} }
 $connectCandidates=['/home/makler/web/configs/connectDB.php', dirname(__DIR__).'/configs/connectDB.php']; foreach($connectCandidates as $connectFile){ if(is_file($connectFile)){ require_once $connectFile; break; } }
 if(!isset($dbcnx)||!($dbcnx instanceof mysqli)){fwrite(STDERR,"ERROR: failed to initialize mysqli via connectDB.php\n");exit(1);} require_once __DIR__.'/sfm_pipeline.php'; require_once __DIR__.'/sfm_cleanup.php'; ensure_sfm_pipeline_tables($dbcnx);
+if(isset($opts['remote-station-cleanup'])){
+    if(!isset($opts['pipeline-run-id'])){fwrite(STDERR,"ERROR: --remote-station-cleanup requires --pipeline-run-id\n");exit(2);}
+    $pid=(int)$opts['pipeline-run-id']; $dry=isset($opts['dry-run']) || !isset($opts['delete']);
+    if($dry){
+        try{ $res=sfm_remote_cleanup_run_once($dbcnx,$pid,true,isset($opts['force'])); echo json_encode($res,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n"; exit(0); }
+        catch(Throwable $e){ fwrite(STDERR,"ERROR: ".$e->getMessage()."\n"); exit(1); }
+    }
+    sfm_remote_cleanup_require_schema($dbcnx);
+    $existing=$dbcnx->prepare("SELECT remote_cleanup_status,remote_cleanup_result_json,remote_cleanup_freed_bytes FROM sfm_remote_cleanup_runs WHERE pipeline_run_id=? LIMIT 1");
+    if($existing){$existing->bind_param('i',$pid);$existing->execute();$row=$existing->get_result()->fetch_assoc();$existing->close(); if($row && strtoupper((string)$row['remote_cleanup_status'])==='DONE' && !isset($opts['force'])){ $saved=json_decode((string)($row['remote_cleanup_result_json'] ?? ''),true); if(!is_array($saved))$saved=['ok'=>true,'pipeline_run_id'=>$pid,'freed_bytes'=>(int)($row['remote_cleanup_freed_bytes'] ?? 0),'remote_cleanup_status'=>'DONE']; echo json_encode($saved,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n"; exit(0); }}
+    $q=$dbcnx->prepare("INSERT IGNORE INTO sfm_remote_cleanup_runs (pipeline_run_id,remote_cleanup_status,next_attempt_at) VALUES (?, 'PENDING', NOW(6))"); if($q){$q->bind_param('i',$pid);$q->execute();$q->close();}
+    if(!sfm_remote_cleanup_claim($dbcnx,$pid,isset($opts['force']))){ fwrite(STDERR,"ERROR: cleanup is already running, skipped, or waiting for backoff\n"); exit(1); }
+    try{ $res=sfm_remote_cleanup_run_once($dbcnx,$pid,false,isset($opts['force'])); $json=json_encode($res,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $freed=(int)($res['freed_bytes']??0); $final='DONE'; $q=$dbcnx->prepare('UPDATE sfm_remote_cleanup_runs SET remote_cleanup_status=?, remote_cleanup_finished_at=NOW(6), remote_cleanup_freed_bytes=?, remote_cleanup_result_json=?, remote_cleanup_last_error=NULL WHERE pipeline_run_id=?'); if($q){$q->bind_param('sisi',$final,$freed,$json,$pid);$q->execute();$q->close();} echo json_encode($res,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n"; exit(0); }
+    catch(Throwable $e){ $err=$e->getMessage(); $q=$dbcnx->prepare("UPDATE sfm_remote_cleanup_runs SET remote_cleanup_status='ERROR', remote_cleanup_finished_at=NOW(6), remote_cleanup_last_error=?, next_attempt_at=DATE_ADD(NOW(6), INTERVAL 300 SECOND) WHERE pipeline_run_id=?"); if($q){$q->bind_param('si',$err,$pid);$q->execute();$q->close();} fwrite(STDERR,"ERROR: ".$err."\n"); exit(1); }
+}
 $delete=isset($opts['delete']); if(isset($opts['dry-run']))$delete=false; $options=['pipeline_run_id'=>isset($opts['pipeline-run-id'])?(int)$opts['pipeline-run-id']:null,'older_than'=>isset($opts['older-than'])?(string)$opts['older-than']:null,'video_scan_id'=>isset($opts['video-scan-id'])?(string)$opts['video-scan-id']:null,'mode'=>isset($opts['mode'])?(string)$opts['mode']:null,'delete'=>$delete,'include_logs'=>isset($opts['include-logs']),'force_recent'=>isset($opts['force-recent']),'force_latest'=>isset($opts['force-latest'])];
 echo ($delete?'DELETE':'DRY-RUN')." SfM artifact cleanup; logs ".($options['include_logs']?'included':'preserved')."\n";
 $total=0; $hadErrors=false; $activeIds=[];

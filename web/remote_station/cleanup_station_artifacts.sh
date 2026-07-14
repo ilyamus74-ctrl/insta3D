@@ -29,17 +29,18 @@ def size(p):
             except OSError: pass
     return total
 def safe(p,jid):
-    exact={f"{base}/input/job_{jid}",f"{base}/output/job_{jid}",f"{base}/logs/job_{jid}.log",f"{base}/logs/job_{jid}.nohup.log"}
-    prefixes=[f"{base}/incoming/job_{jid}_", f"{base}/status/job_{jid}"]
+    exact={f"{base}/input/job_{jid}",f"{base}/output/job_{jid}",f"{base}/work/job_{jid}",f"{base}/status/job_{jid}.json"}
+    if logs_mode == "--include-logs":
+        exact.update({f"{base}/logs/job_{jid}.log",f"{base}/logs/job_{jid}.nohup.log"})
+    prefixes=[f"{base}/incoming/job_{jid}_"]
     return (p in exact or any(p.startswith(a) for a in prefixes)) and os.path.normpath(p)==p and not p.startswith("/home/storage/orders")
 for jid in ids:
     if not jid.isdigit() or jid.startswith("0"):
         errors.append({"remote_job_id":jid,"message":"bad id"}); continue
-    candidates=[f"{base}/input/job_{jid}", f"{base}/output/job_{jid}"]
+    candidates=[f"{base}/input/job_{jid}", f"{base}/output/job_{jid}", f"{base}/work/job_{jid}"]
     candidates += glob.glob(f"{base}/incoming/job_{jid}_*")
-    candidates += [f"{base}/logs/job_{jid}.log"]
-    if logs_mode == "--include-logs": candidates += [f"{base}/logs/job_{jid}.nohup.log"]
-    candidates += glob.glob(f"{base}/status/job_{jid}*")
+    if logs_mode == "--include-logs": candidates += [f"{base}/logs/job_{jid}.log", f"{base}/logs/job_{jid}.nohup.log"]
+    candidates += [f"{base}/status/job_{jid}.json"]
     for p in sorted(set(candidates)):
         if not safe(p,jid): errors.append({"path":p,"message":"unsafe path rejected"}); continue
         if not os.path.lexists(p): paths.append({"remote_job_id":int(jid),"path":p,"missing":True,"size_bytes":0}); continue

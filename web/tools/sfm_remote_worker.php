@@ -28,6 +28,7 @@ if (!defined('APP_STORAGE_DIR')) {
     define('APP_STORAGE_DIR', __DIR__ . '/../storage');
 }
 require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
+require_once dirname(__DIR__) . '/remote_station/sfm_cleanup.php';
 require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
 require_once dirname(__DIR__) . '/libs/source_storage_lib.php';
 require_once __DIR__ . '/sfm_dense_merge_contract.php';
@@ -1450,7 +1451,7 @@ function sync_running_jobs(mysqli $db): void
                 }
                 $rd = json_decode((string)file_get_contents($resultPath), true) ?: [];
                 $engine = strtoupper((string)($rd['engine'] ?? 'COLMAP')) === 'OPEN3D' ? 'Open3D' : 'COLMAP';
-                $pidRun=pipeline_run_for_job($job); if($pidRun>0){ $pdir=sfm_pipeline_output_dir($pidRun); @mkdir($pdir,0775,true); @copy(remote_output_dir($remote).'/mesh/mesh_final.ply',$pdir.'/mesh.ply'); $parent=(int)($job['parent_remote_job_id'] ?? 0); @copy(remote_output_dir($parent).'/merged/merged_fused.ply',$pdir.'/point_cloud.ply'); $resultPath=$pdir.'/pipeline_result.json'; $runRes=$db->query('SELECT * FROM sfm_pipeline_runs WHERE id='.(int)$pidRun); $runRow=$runRes?$runRes->fetch_assoc():[]; if($runRes){$runRes->close();} $resultData=['status'=>'DONE','pipeline_run_id'=>$pidRun,'pipeline_mode'=>$runRow['pipeline_mode'] ?? '', 'label'=>sfm_pipeline_preset((string)($runRow['pipeline_mode'] ?? 'preview'))['label'],'max_image_size'=>(int)($runRow['max_image_size'] ?? 0),'video_scan_id'=>(int)($runRow['video_scan_id'] ?? 0),'source_video_filename'=>(string)((json_decode((string)($runRow['parameters_json'] ?? '{}'),true)['source_video']['filename'] ?? '')),'source_video_duration_sec'=>(float)((json_decode((string)($runRow['parameters_json'] ?? '{}'),true)['source_video']['duration_sec'] ?? 0)),'sparse_model_id'=>(int)($runRow['sparse_model_id'] ?? 0),'registered_images'=>(int)($runRow['registered_images'] ?? 0),'sparse_points'=>(int)($runRow['sparse_points'] ?? 0),'dense_points'=>(int)($runRow['dense_points'] ?? 0),'mesh_vertices'=>(int)$meshInfo['vertices'],'mesh_faces'=>(int)$meshInfo['faces'],'point_cloud_path'=>$pdir.'/point_cloud.ply','mesh_path'=>$pdir.'/mesh.ply']; @file_put_contents($resultPath,json_encode($resultData,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)); $meshStatsPath=remote_output_dir($remote).'/mesh/mesh_stats.json'; $meshStats=is_file($meshStatsPath)?(json_decode((string)file_get_contents($meshStatsPath),true)?:[]):[]; if($meshStats){ pipeline_log($pidRun,'INFO','MESH','Raw Poisson faces='.(int)($meshStats['raw_poisson_faces']??($meshStats['poisson_faces_before_filter']??0))); pipeline_log($pidRun,'INFO','MESH','Density filtered faces='.(int)($meshStats['density_filtered_faces']??0)); pipeline_log($pidRun,'INFO','MESH','Long-edge filtered faces='.(int)($meshStats['edge_filtered_faces']??0)); pipeline_log($pidRun,'INFO','MESH','Component filtered faces='.(int)($meshStats['component_filtered_faces']??0)); pipeline_log($pidRun,'INFO','MESH','Component fallback used='.(empty($meshStats['component_filter_fallback_used'])?'false':'true')); pipeline_log($pidRun,'INFO','MESH','Final stage='.(string)($meshStats['selected_final_stage']??'')); } pipeline_log($pidRun,'INFO','MESH','Done vertices='.(int)$meshInfo['vertices'].' faces='.(int)$meshInfo['faces']); pipeline_log($pidRun,'INFO','PIPELINE','Completed'); sfm_pipeline_update($db,$pidRun,'DONE','DONE',100,'Result ready',['mesh_vertices'=>(int)$meshInfo['vertices'],'mesh_faces'=>(int)$meshInfo['faces'],'output_point_cloud_path'=>$pdir.'/point_cloud.ply','output_mesh_path'=>$pdir.'/mesh.ply','output_result_json_path'=>$resultPath]); } set_job($db, $id, 'DONE', 100, 'Mesh completed');
+                $pidRun=pipeline_run_for_job($job); if($pidRun>0){ $pdir=sfm_pipeline_output_dir($pidRun); @mkdir($pdir,0775,true); @copy(remote_output_dir($remote).'/mesh/mesh_final.ply',$pdir.'/mesh.ply'); $parent=(int)($job['parent_remote_job_id'] ?? 0); @copy(remote_output_dir($parent).'/merged/merged_fused.ply',$pdir.'/point_cloud.ply'); $resultPath=$pdir.'/pipeline_result.json'; $runRes=$db->query('SELECT * FROM sfm_pipeline_runs WHERE id='.(int)$pidRun); $runRow=$runRes?$runRes->fetch_assoc():[]; if($runRes){$runRes->close();} $resultData=['status'=>'DONE','pipeline_run_id'=>$pidRun,'pipeline_mode'=>$runRow['pipeline_mode'] ?? '', 'label'=>sfm_pipeline_preset((string)($runRow['pipeline_mode'] ?? 'preview'))['label'],'max_image_size'=>(int)($runRow['max_image_size'] ?? 0),'video_scan_id'=>(int)($runRow['video_scan_id'] ?? 0),'source_video_filename'=>(string)((json_decode((string)($runRow['parameters_json'] ?? '{}'),true)['source_video']['filename'] ?? '')),'source_video_duration_sec'=>(float)((json_decode((string)($runRow['parameters_json'] ?? '{}'),true)['source_video']['duration_sec'] ?? 0)),'sparse_model_id'=>(int)($runRow['sparse_model_id'] ?? 0),'registered_images'=>(int)($runRow['registered_images'] ?? 0),'sparse_points'=>(int)($runRow['sparse_points'] ?? 0),'dense_points'=>(int)($runRow['dense_points'] ?? 0),'mesh_vertices'=>(int)$meshInfo['vertices'],'mesh_faces'=>(int)$meshInfo['faces'],'point_cloud_path'=>$pdir.'/point_cloud.ply','mesh_path'=>$pdir.'/mesh.ply']; @file_put_contents($resultPath,json_encode($resultData,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)); $meshStatsPath=remote_output_dir($remote).'/mesh/mesh_stats.json'; $meshStats=is_file($meshStatsPath)?(json_decode((string)file_get_contents($meshStatsPath),true)?:[]):[]; if($meshStats){ pipeline_log($pidRun,'INFO','MESH','Raw Poisson faces='.(int)($meshStats['raw_poisson_faces']??($meshStats['poisson_faces_before_filter']??0))); pipeline_log($pidRun,'INFO','MESH','Density filtered faces='.(int)($meshStats['density_filtered_faces']??0)); pipeline_log($pidRun,'INFO','MESH','Long-edge filtered faces='.(int)($meshStats['edge_filtered_faces']??0)); pipeline_log($pidRun,'INFO','MESH','Component filtered faces='.(int)($meshStats['component_filtered_faces']??0)); pipeline_log($pidRun,'INFO','MESH','Component fallback used='.(empty($meshStats['component_filter_fallback_used'])?'false':'true')); pipeline_log($pidRun,'INFO','MESH','Final stage='.(string)($meshStats['selected_final_stage']??'')); } pipeline_log($pidRun,'INFO','MESH','Done vertices='.(int)$meshInfo['vertices'].' faces='.(int)$meshInfo['faces']); pipeline_log($pidRun,'INFO','PIPELINE','Completed'); sfm_pipeline_update($db,$pidRun,'DONE','DONE',100,'Result ready',['mesh_vertices'=>(int)$meshInfo['vertices'],'mesh_faces'=>(int)$meshInfo['faces'],'output_point_cloud_path'=>$pdir.'/point_cloud.ply','output_mesh_path'=>$pdir.'/mesh.ply','output_result_json_path'=>$resultPath]); try { sfm_remote_cleanup_maybe_schedule($db,$pidRun); } catch (Throwable $cleanupError) { worker_log('WARNING cleanup schedule failed pipeline_run_id='.$pidRun.': '.$cleanupError->getMessage()); } } set_job($db, $id, 'DONE', 100, 'Mesh completed');
                 auto_chain_after_done($db, $job);
                 continue;
             }
@@ -1547,7 +1548,7 @@ function process_cancel_requests(mysqli $db): void
                     $err = $db->query("SELECT COUNT(*) AS c FROM sfm_remote_jobs WHERE pipeline_run_id=".(int)$pid." AND status='CANCEL_ERROR'");
                     $ec = $err ? (int)($err->fetch_assoc()['c'] ?? 0) : 0; if($err){$err->close();}
                     if ($ec > 0) { sfm_pipeline_update($db,$pid,'ERROR','CANCELLING',0,'Cancellation failed'); }
-                    else { sfm_pipeline_update($db,$pid,'CANCELLED','CANCELLED',100,'Cancelled by worker'); }
+                    else { sfm_pipeline_update($db,$pid,'CANCELLED','CANCELLED',100,'Cancelled by worker'); try { sfm_remote_cleanup_maybe_schedule($db,$pid); } catch (Throwable $cleanupError) { worker_log('WARNING cleanup schedule failed pipeline_run_id='.$pid.': '.$cleanupError->getMessage()); } }
                 }
             }
         } catch (Throwable $e) {
@@ -1557,6 +1558,16 @@ function process_cancel_requests(mysqli $db): void
         }
     }
     $res->close();
+}
+
+
+function schedule_terminal_remote_cleanups(mysqli $db): void
+{
+    sfm_remote_cleanup_require_schema($db);
+    $res = $db->query("SELECT p.id FROM sfm_pipeline_runs p WHERE p.status IN ('DONE','FAILED','CANCELLED','ERROR') AND NOT EXISTS (SELECT 1 FROM sfm_remote_jobs r WHERE r.pipeline_run_id=p.id AND r.status='CANCEL_ERROR') AND NOT EXISTS (SELECT 1 FROM sfm_remote_cleanup_runs c WHERE c.pipeline_run_id=p.id AND c.remote_cleanup_status IN ('PENDING','RUNNING','ERROR','DONE','SKIPPED')) ORDER BY p.id ASC LIMIT 20");
+    if ($res) { while ($row = $res->fetch_assoc()) { $pid = (int)($row['id'] ?? 0); if ($pid > 0) { sfm_remote_cleanup_maybe_schedule($db, $pid); } } $res->close(); }
+    $jobs = $db->query("SELECT r.remote_job_id FROM sfm_remote_jobs r WHERE r.pipeline_run_id IS NULL AND r.status IN ('DONE','ERROR','ERROR_EMPTY','ERROR_EMPTY_MESH','ERROR_OOM','ERROR_STALE','FAILED','CANCELLED') AND (r.job_type IN ('MAKLERTOUR_SYNCED_DENSE','EXPORT_PLY') OR (r.job_type IN ('EXTRACT_FRAMES','COLMAP_SPARSE','COLMAP_DENSE','COLMAP_DENSE_CHUNK') AND r.parameters_json IS NOT NULL AND JSON_VALID(r.parameters_json) AND JSON_UNQUOTE(JSON_EXTRACT(r.parameters_json,'$.cleanup_scope'))='standalone')) AND NOT EXISTS (SELECT 1 FROM sfm_remote_cleanup_runs c WHERE c.remote_job_id=r.remote_job_id AND c.remote_cleanup_status IN ('PENDING','RUNNING','ERROR','DONE','SKIPPED')) ORDER BY r.updated_at ASC LIMIT 20");
+    if ($jobs) { while ($row = $jobs->fetch_assoc()) { $rid = (int)($row['remote_job_id'] ?? 0); if ($rid > 0) { sfm_remote_cleanup_maybe_schedule_remote_job($db, $rid); } } $jobs->close(); }
 }
 
 function reconcile_pipeline_runs(mysqli $db): void
@@ -1589,6 +1600,15 @@ function reconcile_pipeline_runs(mysqli $db): void
 ensure_sfm_remote_jobs_table($dbcnx);
 ensure_sfm_remote_jobs_chunk_columns($dbcnx);
 ensure_sfm_pipeline_tables($dbcnx);
+if (in_array('--cleanup-worker', $argv, true)) {
+    sfm_remote_cleanup_require_schema($dbcnx);
+    worker_log('MaklerTour SfM remote cleanup worker started');
+    while (true) {
+        try { schedule_terminal_remote_cleanups($dbcnx); sfm_remote_cleanup_worker_tick($dbcnx, 1); }
+        catch (Throwable $e) { worker_log('ERROR cleanup ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine()); }
+        sleep(10);
+    }
+}
 worker_log('MaklerTour SfM remote worker started');
 worker_log('SFM_REMOTE_BASE=' . SFM_REMOTE_BASE);
 worker_log('SFM_REMOTE_CONF=' . SFM_REMOTE_CONF);

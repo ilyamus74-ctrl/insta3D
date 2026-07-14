@@ -1,0 +1,17 @@
+[Unit]
+Description=MaklerTour SfM remote station cleanup worker
+After=network-online.target mariadb.service mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/makler/web
+ExecStart=/usr/bin/env php /home/makler/web/tools/sfm_remote_worker.php --cleanup-worker
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/makler-sfm-cleanup-worker.log
+StandardError=append:/var/log/makler-sfm-cleanup-worker.log
+
+[Install]
+WantedBy=multi-user.target
