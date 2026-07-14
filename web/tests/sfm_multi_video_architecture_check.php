@@ -26,6 +26,7 @@ $checks = [
   'cleanup scheduler filters standalone scope in SQL' => ["web/tools/sfm_remote_worker.php", "JSON_UNQUOTE(JSON_EXTRACT(parameters_json,'$.cleanup_scope'))='standalone'", true],
   'cleanup docs mention v2 migration' => ["web/remote_station/WEB_WORKER_SETUP.md", "20260714_sfm_remote_cleanup_runs_v2.sql", true],
   'cleanup cli done returns saved result' => ["web/remote_station/cleanup_sfm_artifacts.php", "remote_cleanup_status'])==='DONE'", true],
+  'cleanup sparse result json under colmap' => ["web/remote_station/sfm_cleanup.php", "\$base.'/colmap/result.json'", true],
   'cleanup dense chunk strict fused and result' => ["web/remote_station/sfm_cleanup.php", "missing dense chunk required artifacts", true],
   'cleanup rejects order source media paths' => ["web/remote_station/sfm_cleanup.php", "str_starts_with(\$p,'/home/storage/orders/')", true],
   'viewer no silent multi fallback' => ["web/www/api/sfm_3d.php", 'Multiple source videos found. Select a video.', true],

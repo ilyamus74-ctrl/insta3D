@@ -76,6 +76,7 @@ function sfm_remote_cleanup_result_json_path(array $job): ?string {
     $candidates=[]; $declared=(string)($job['result_json_path'] ?? ''); if($declared!=='')$candidates[]=$declared;
     if($type==='COLMAP_MESH')$candidates[]=$base.'/mesh/mesh_result.json';
     elseif(in_array($type,['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ','COLMAP_DENSE'],true))$candidates[]=$base.'/merged/result.json';
+    elseif($type==='COLMAP_SPARSE'){$candidates[]=$base.'/colmap/result.json';$candidates[]=$base.'/result.json';}
     elseif($type==='COLMAP_DENSE_CHUNK') { $owner=(int)($job['parent_remote_job_id'] ?? 0); if($owner>0 && ($job['chunk_index'] ?? null)!==null)$candidates[]=SFM_CLEANUP_WEB_OUTPUT_BASE.'/job_'.$owner.'/chunks/chunk_'.(int)$job['chunk_index'].'/result.json'; }
     else $candidates[]=$base.'/result.json';
     foreach(array_values(array_unique($candidates)) as $path){ if($path!=='' && is_file($path) && filesize($path)>0)return $path; }
