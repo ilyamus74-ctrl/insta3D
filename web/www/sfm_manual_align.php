@@ -10,9 +10,9 @@ $anchorId = max(0, (int)($_GET['anchor_id'] ?? 0));
 $sourceKind = (string)($_GET['source_kind'] ?? 'remote');
 $sourceId = max(0, (int)($_GET['source_id'] ?? 0));
 
-if ($anchorKind !== 'remote' || $sourceKind !== 'remote') {
+if (!in_array($anchorKind, ['remote','merge'], true) || $sourceKind !== 'remote') {
     http_response_code(400);
-    exit('Manual alignment currently supports remote dense jobs only');
+    exit('Manual alignment supports anchor_kind=remote|merge and source_kind=remote');
 }
 
 if ($orderId <= 0 || $anchorId <= 0 || $sourceId <= 0) {

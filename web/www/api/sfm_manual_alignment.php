@@ -18,12 +18,11 @@ $action = (string)($_GET['action'] ?? 'meta');
 if ($orderId <= 0 || $anchorId <= 0 || $sourceId <= 0) {
     json_response(['ok' => false, 'error' => 'Missing alignment identifiers'], 400);
 }
-if ($anchorId === $sourceId) {
-    json_response(['ok' => false, 'error' => 'Anchor and source must be different remote jobs'], 400);
+if ($anchorKind === $sourceKind && $anchorId === $sourceId) {
+    json_response(['ok' => false, 'error' => 'Anchor and source must be different models'], 400);
 }
-
-if ($anchorKind !== 'remote' || $sourceKind !== 'remote') {
-    json_response(['ok' => false, 'error' => 'Manual alignment currently supports remote dense jobs only'], 400);
+if (!in_array($anchorKind, ['remote','merge'], true) || $sourceKind !== 'remote') {
+    json_response(['ok' => false, 'error' => 'Manual alignment supports anchor_kind=remote|merge and source_kind=remote'], 400);
 }
 
 function json_response(array $payload, int $status = 200): never
@@ -115,34 +114,19 @@ function resolve_model(mysqli $dbcnx, int $orderId, string $kind, int $id): arra
     $root = dirname(__DIR__, 2);
 
     if ($kind === 'merge') {
-        $stmt = $dbcnx->prepare(
-            'SELECT id, order_id, output_path, total_points, merge_type, status
-             FROM sfm_generated_model_merges
-             WHERE id=? AND order_id=?
-             LIMIT 1'
-        );
-        if (!$stmt) {
-            json_response(['ok' => false, 'error' => 'DB prepare error'], 500);
+        try {
+            $resolved = sfm_manual_resolve_merge_anchor($dbcnx, $orderId, $id);
+        } catch (Throwable $e) {
+            json_response(['ok' => false, 'error' => $e->getMessage()], 400);
         }
-        $stmt->bind_param('ii', $id, $orderId);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$row) {
-            json_response(['ok' => false, 'error' => "Merge model $id not found"], 404);
-        }
-
-        $ply = safe_existing_ply([
-            (string)($row['output_path'] ?? ''),
-        ]);
-
         return [
             'kind' => 'merge',
             'id' => $id,
             'label' => 'merge #' . $id,
-            'ply' => $ply,
-            'db' => $row,
+            'ply' => $resolved['ply'],
+            'db' => $resolved['row'],
+            'leaf_source_jobs' => $resolved['leaf_source_jobs'] ?? [],
+            'leaf_transforms' => $resolved['leaf_transforms'] ?? [],
         ];
     }
 
@@ -228,6 +212,7 @@ function stream_file(string $path, string $contentType, string $downloadName): n
 ensure_order_access($dbcnx, $orderId);
 $anchor = resolve_model($dbcnx, $orderId, $anchorKind, $anchorId);
 $source = resolve_model($dbcnx, $orderId, $sourceKind, $sourceId);
+if ($anchorKind === 'merge') { foreach (($anchor['leaf_source_jobs'] ?? []) as $leaf) { if ((int)($leaf['remote_job_id'] ?? 0) === (int)$sourceId) { json_response(['ok'=>false,'error'=>'Source model is already included in this assembly'],400); } } }
 if ((int)($anchor['db']['capture_session_id'] ?? 0) !== (int)($source['db']['capture_session_id'] ?? 0)) {
     json_response(['ok' => false, 'error' => 'Anchor and source must belong to the same capture session'], 400);
 }
@@ -275,10 +260,12 @@ if ($action === 'meta') {
                 $pairs = $draftDir . '/correspondence_pairs.json';
                 $out = $draftDir . '/manual_merged_dense_cloud.ply';
                 if (is_file($pairs) && is_file($out)) {
-                    $a = sfm_manual_resolve_remote_model($dbcnx, $orderId, $anchorKind, $anchorId);
+                    $a = sfm_manual_resolve_alignment_input($dbcnx, $orderId, $anchorKind, $anchorId);
                     $s = sfm_manual_resolve_remote_model($dbcnx, $orderId, $sourceKind, $sourceId);
                     $pairsHash = sfm_manual_pairs_hash($pairs);
-                    $fp = sfm_manual_fingerprint($orderId, $a, $s, $pairsHash, md5_file($out), md5_file($a['ply']), md5_file($s['ply']));
+                    $fp = $anchorKind === 'merge'
+                        ? sfm_manual_incremental_fingerprint($orderId, $a, $s, $pairsHash, md5_file($out), md5_file($a['ply']), md5_file($s['ply']))
+                        : sfm_manual_fingerprint($orderId, $a, $s, $pairsHash, md5_file($out), md5_file($a['ply']), md5_file($s['ply']));
                     return sfm_manual_find_existing_merge($dbcnx, $orderId, $fp);
                 }
             } catch (Throwable $e) {
@@ -288,6 +275,7 @@ if ($action === 'meta') {
         })(),
     ]);
 }
+
 
 if ($action === 'finalize') {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') { json_response(['ok'=>false,'error'=>'Finalize requires POST'],405); }
@@ -387,6 +375,9 @@ $payload = [
     'order_id' => $orderId,
     'anchor' => ['kind' => $anchorKind, 'id' => $anchorId, 'ply' => $anchor['ply']],
     'source' => ['kind' => $sourceKind, 'id' => $sourceId, 'ply' => $source['ply']],
+    'operation' => $anchorKind === 'merge' ? 'incremental_add_model' : 'base_manual_merge',
+    'anchor_merge_id' => $anchorKind === 'merge' ? $anchorId : null,
+    'source_remote_job_id' => $sourceId,
     'pairs' => $normalized,
 ];
 
@@ -460,6 +451,11 @@ $result['anchor_md5'] = md5_file($anchor['ply']);
 $result['source_md5'] = md5_file($source['ply']);
 $result['merged_md5'] = md5_file($stagingMergedPath);
 $result['pairs_count'] = count($normalized);
+$result['operation'] = $anchorKind === 'merge' ? 'incremental_add_model' : 'base_manual_merge';
+$result['anchor_kind'] = $anchorKind;
+$result['anchor_merge_id'] = $anchorKind === 'merge' ? $anchorId : null;
+$result['source_kind'] = $sourceKind;
+$result['source_remote_job_id'] = $sourceId;
 try {
     sfm_manual_atomic_write_json($stagingResultPath, $result);
     @unlink($publishedResultPath);
