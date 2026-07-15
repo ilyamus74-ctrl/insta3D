@@ -10,7 +10,7 @@ NOT VERIFIED — the Codex checkout had no configured origin remote.
 
 ## Scope
 
-This is the Stage 0 baseline report for `docs/AUTO_PHOTO_SFM_STAGED_IMPLEMENTATION.md`.
+This is the Stage 0 baseline report for `docs/baseline/AUTO_PHOTO_SFM_STAGED_IMPLEMENTATION.md`.
 No production code was changed. The report records the current Video SfM architecture and the current evidence available in this checkout for the known Auto Photo bundle UUID `b8b55de2-87ec-4665-912b-b1ee906e9569`.
 
 ## Repository state checks
