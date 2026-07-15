@@ -1,8 +1,12 @@
-# Auto Photo SfM Stage 0 Baseline
+# Auto Photo SfM Stage 0 — Partial Code Baseline
 
 Date: 2026-07-15
 
-Base SHA: `67325c0c06bd91d02a3f8aa6433d2cbd263fffb7`
+Local Codex checkout SHA:
+`67325c0c06bd91d02a3f8aa6433d2cbd263fffb7`
+
+Origin/main freshness:
+NOT VERIFIED — the Codex checkout had no configured origin remote.
 
 ## Scope
 
@@ -120,7 +124,8 @@ Because the TGZ is absent in this environment and no database connection credent
 - JPEG filename sequence/pattern
 - manifests content
 
-Expected bundle structure from the staged implementation document remains:
+Expected bundle structure, based on the Android packager and staged
+implementation document, but not verified against the real server-side TGZ:
 
 ```text
 bundle_manifest.json
@@ -143,4 +148,36 @@ capture/photos/frame_000002.jpg
 
 ## Readiness for Stage 1
 
-The current architecture supports adding a new initial remote job type before sparse reconstruction. Stage 1 should add `MAKLERTOUR_AUTO_PHOTO_PREPARE` as a standalone prepare job that publishes a `frames/` directory compatible with the existing `COLMAP_SPARSE` input contract, without creating `COLMAP_SPARSE` automatically during Stage 1.
+The code architecture baseline is sufficient to design Stage 1.
+
+Stage 0 runtime acceptance is NOT complete because the real database row
+and TGZ were not available in this environment.
+
+Stage 1 implementation may be prepared as a diff, but it must not be
+deployed or accepted until the following server-side checks are completed:
+
+- capture_bundle_id is confirmed;
+- order_id and capture_session_id are confirmed;
+- capture_bundles.status is confirmed;
+- storage_path and size_bytes are confirmed;
+- the real TGZ is listed with tar -tzf;
+- bundle_manifest.json is inspected;
+- capture/manifest.json is inspected;
+- capture/camera_info.json is inspected;
+- actual JPEG count and filename pattern are confirmed;
+- actual sidecar list is confirmed.
+
+
+## Pending server-side verification
+
+- [ ] Configure or verify the repository origin remote.
+- [ ] Compare the deployed checkout with origin/main.
+- [ ] Query the capture_bundles row for the known UUID.
+- [ ] Confirm the real bundle storage path.
+- [ ] Confirm the real bundle file size.
+- [ ] Run tar -tzf against the real TGZ.
+- [ ] Read bundle_manifest.json.
+- [ ] Read capture/manifest.json.
+- [ ] Read capture/camera_info.json.
+- [ ] Confirm photos_count equals the number of JPEG files.
+- [ ] Confirm photos_metadata.jsonl sequence coverage.
