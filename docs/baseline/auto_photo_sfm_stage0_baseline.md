@@ -181,3 +181,19 @@ deployed or accepted until the following server-side checks are completed:
 - [ ] Read capture/camera_info.json.
 - [ ] Confirm photos_count equals the number of JPEG files.
 - [ ] Confirm photos_metadata.jsonl sequence coverage.
+
+## Stage 0B server-side verification attempt
+
+Stage 0 runtime acceptance: BLOCKED
+
+Server-side verification was not completed in the Codex environment because:
+
+- `/home/makler/web` is not present;
+- the production database is not available;
+- the real Auto Photo TGZ is not present;
+- `git ls-remote` could not be completed because the remote returned HTTP 403.
+
+Missing checks are limited to the production repository/database/bundle verification items listed above.
+
+These results describe only the Codex sandbox limitations.
+They do not describe the actual production server state.
