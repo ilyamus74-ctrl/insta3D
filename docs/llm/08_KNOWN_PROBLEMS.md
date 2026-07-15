@@ -148,6 +148,7 @@ ID:
 | KP-038 | Нет централизованного runtime inventory                                      |      MEDIUM | OPEN            | CONFIRMED   |
 | KP-039 | Политика удаления raw media не формализована                                 |        HIGH | OPEN            | CONFIRMED   |
 | KP-040 | Точное production topology не зафиксировано                                  |      MEDIUM | OPEN            | CONFIRMED   |
+| KP-041 | Stereo audit проверяет app-local dense script, а production использует другую копию | HIGH | OPEN | CONFIRMED |
 
 ---
 
@@ -1822,6 +1823,66 @@ LLM или разработчик может неверно проверить �
 * для legacy local SfM использовать `PROCESSED`;
 * для `sfm_pipeline_runs` использовать `DONE`;
 * для generic conceptual flow явно указывать, что фактический status зависит от таблицы.
+
+---
+
+# KP-041 — Stereo audit проверяет не production dense script
+
+## Статус
+
+```text
+OPEN
+```
+
+## Критичность
+
+```text
+HIGH
+```
+
+## Уверенность
+
+```text
+CONFIRMED
+```
+
+## Подтверждённый факт
+
+`app/MaklerTour/tools/stereo_contract_audit.py` проверяет app-local файл:
+
+```text
+app/MaklerTour/tools/dense_depth_from_synced_capture.py
+```
+
+Production remote pipeline запускает отдельную копию:
+
+```text
+web/remote_station/scripts/dense_depth_from_synced_capture.py
+```
+
+## Влияние
+
+Audit может вернуть `PASS`, даже если production dense implementation разошлась с проверяемой app-local копией.
+
+## Временный обход
+
+При изменении dense logic вручную сравнивать оба файла и отдельно проверять production path.
+
+## Предлагаемое направление
+
+Выбрать один вариант:
+
+```text
+A. один canonical dense script;
+B. controlled copy при deployment;
+C. временная проверка обеих копий одним audit.
+```
+
+## Критерии исправления
+
+- production pipeline и audit используют один canonical source либо проверяемую синхронизацию;
+- расхождение двух копий обнаруживается автоматически;
+- dense runtime fixture проходит после изменения.
 
 ---
 

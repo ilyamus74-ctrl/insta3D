@@ -335,6 +335,12 @@ minSdk = 26
 
 # 7. Android static contract audit
 
+Нормативный документ:
+
+```text
+app/MaklerTour/docs/APP_CAMERA_STEREO_CONTRACT.md
+```
+
 Canonical audit:
 
 ```bash
@@ -391,7 +397,8 @@ Audit в основном анализирует текст исходников
 * корректность actual frames;
 * реальную depth accuracy;
 * CameraX lifecycle;
-* работу на конкретном устройстве.
+* работу на конкретном устройстве;
+* соответствие production dense script `web/remote_station/scripts/dense_depth_from_synced_capture.py` app-local проверяемой копии.
 
 ---
 

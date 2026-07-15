@@ -1156,6 +1156,7 @@ KP-030
 KP-033
 KP-034
 KP-036
+KP-041
 ```
 
 ## Цель
@@ -1252,6 +1253,30 @@ active viewer;
 legacy viewer;
 artifact versions;
 fallback policy.
+```
+
+### R10.8 — Устранение расхождения dense script copies
+
+Проверяемые файлы:
+
+```text
+app/MaklerTour/tools/dense_depth_from_synced_capture.py
+web/remote_station/scripts/dense_depth_from_synced_capture.py
+```
+
+Необходимо выбрать один вариант:
+
+```text
+A. оставить один canonical script;
+B. выполнять controlled copy при deployment;
+C. временно проверять обе копии одним audit.
+```
+
+Acceptance:
+
+```text
+app test copy и production remote script
+не могут расходиться незаметно.
 ```
 
 ## Критерии завершения

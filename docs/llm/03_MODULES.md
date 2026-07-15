@@ -2397,6 +2397,13 @@ docs/llm/00_PROJECT_OVERVIEW.md
 docs/llm/01_REQUIREMENTS.md
 docs/llm/02_ARCHITECTURE.md
 docs/llm/03_MODULES.md
+docs/llm/04_CONTRACTS.md
+docs/llm/05_DATA_FLOWS.md
+docs/llm/06_DEPENDENCIES.md
+docs/llm/07_BUILD_AND_TEST.md
+docs/llm/08_KNOWN_PROBLEMS.md
+docs/llm/09_REFACTORING_ROADMAP.md
+docs/llm/10_LLM_WORK_RULES.md
 CAMERA_OSC_X4.md
 TESTING.md
 TZ.md

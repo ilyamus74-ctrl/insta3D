@@ -56,6 +56,62 @@ UI
 
 ---
 
+# 2.1. Исполняемый контракт Android stereo/capture
+
+Нормативное описание Android stereo/capture contract:
+
+```text
+app/MaklerTour/docs/APP_CAMERA_STEREO_CONTRACT.md
+```
+
+Canonical static enforcement:
+
+```text
+app/MaklerTour/tools/stereo_contract_audit.py
+```
+
+Compatibility wrapper:
+
+```text
+app/MaklerTour/stereo_contract_audit.py
+```
+
+Запуск:
+
+```bash
+cd app/MaklerTour
+python3 tools/stereo_contract_audit.py
+```
+
+Распределение ответственности:
+
+```text
+APP_CAMERA_STEREO_CONTRACT.md:
+    определяет требуемые инварианты.
+
+tools/stereo_contract_audit.py:
+    статически проверяет выбранные инварианты
+    и известные regression patterns.
+
+runtime/device tests:
+    подтверждают фактическую работу CameraX,
+    USB UVC, timestamps, memory, calibration и depth.
+```
+
+Audit не является единственным источником истины и не заменяет runtime.
+
+Если намеренно меняется contract:
+
+1. сначала изменить нормативный документ;
+2. изменить implementation;
+3. изменить audit в той же contract-задаче;
+4. выполнить audit;
+5. выполнить необходимые runtime tests.
+
+Запрещено ослаблять audit только для получения `PASS`.
+
+---
+
 # 3. Общие правила контрактов
 
 ## CONTRACT-RULE-001

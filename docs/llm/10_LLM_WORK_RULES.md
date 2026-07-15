@@ -706,6 +706,22 @@ stale /osc/state.
 
 Это критическая математическая область.
 
+Перед изменением Android stereo, calibration, IMU metadata, capture bundle или native UVC LLM обязана прочитать:
+
+```text
+app/MaklerTour/docs/APP_CAMERA_STEREO_CONTRACT.md
+app/MaklerTour/tools/stereo_contract_audit.py
+```
+
+После изменения обязательна команда:
+
+```bash
+cd app/MaklerTour
+python3 tools/stereo_contract_audit.py
+```
+
+LLM запрещено изменять audit только для сокрытия нарушения действующего контракта.
+
 ## 16.1 Raw coordinates
 
 Запрещено применять к saved/detector/calibration frames:

@@ -35,7 +35,9 @@ overlay display rotation only
 rotating saved JPEG
 rotating detector input secretly
 using UI-rotated bitmap for calibration math
-2. cam0 live preview
+```
+
+## 2. cam0 live preview
 
 cam0 использует PreviewView.
 
@@ -46,7 +48,7 @@ implementationMode = PreviewView.ImplementationMode.COMPATIBLE
 
 cam0 не должен вручную поворачиваться через graphicsLayer.
 
-3. cam1 live preview
+## 3. cam1 live preview
 
 cam1 использует TextureView.
 
@@ -80,7 +82,7 @@ graphicsLayer поворачивает слой после Compose layout и м�
 setTransform + cropScale увеличивает/обрезает изображение.
 setTransform без корректного layout даёт странное вписывание.
 Правильнее вращать сам TextureView и вручную считать его layout.
-4. Main Stereo Capture screen
+## 4. Main Stereo Capture screen
 
 На главном экране:
 
@@ -113,7 +115,7 @@ Show phone dual camera probe JSON path
 
 Функции probe можно оставить в коде, но кнопки не должны занимать место на основном экране.
 
-5. Calibration UI
+## 5. Calibration UI
 
 Калибровка использует bitmap preview из ring-buffer / capture buffer.
 
@@ -137,7 +139,7 @@ Overlay ChArUco должен поворачиваться вместе с previe
 повернуть только картинку без overlay
 повернуть overlay отдельно через несовпадающую Canvas-геометрию
 использовать graphicsLayer rotation для bitmap preview, если это ломает bounds
-6. Stereo calibration
+## 6. Stereo calibration
 
 Step 3 должен использовать реальные синхронные пары:
 
@@ -158,7 +160,7 @@ commonIds = cam0.ids ∩ cam1.ids
 Stereo calibration должна использовать intrinsics как fixed:
 
 Calib3d.CALIB_FIX_INTRINSIC
-7. Synced depth
+## 7. Synced depth
 
 Для depth использовать только:
 
@@ -170,7 +172,7 @@ Record stereo video (legacy)
 
 не является источником для нормального stereo depth, потому что cam0.mp4 и cam1.mjpeg не гарантируют корректные frame pairs.
 
-8. Что проверять после изменений
+## 8. Что проверять после изменений
 
 Перед commit запускать:
 
