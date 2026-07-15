@@ -17,12 +17,12 @@ function auto_photo_bundle_cli_main(array $args): int
         fwrite(STDERR, "usage: php web/tools/auto_photo_bundle_index.php --capture-bundle-id=ID [--dry-run]\n");
         return 1;
     }
-    if (!isset($GLOBALS['dbcnx']) || !($GLOBALS['dbcnx'] instanceof mysqli)) {
-        fwrite(STDERR, "DB connection not found\n");
-        return 1;
-    }
+if (!isset($dbcnx) || !($dbcnx instanceof mysqli)) {
+    fwrite(STDERR, "DB connection not found\n");
+    return 1;
+}
     try {
-        $row = auto_photo_bundle_load_row($GLOBALS['dbcnx'], $id);
+        $row = auto_photo_bundle_load_row($dbcnx, $id);
         $archive = auto_photo_bundle_resolve_archive_path($row);
         $index = auto_photo_bundle_build_index_from_row($row);
         if (auto_photo_bundle_cli_should_write($args)) {
