@@ -21,6 +21,8 @@ Date: 2026-07-21
 * Dry-run now validates existing materialization after the full TAR/JPEG scan and final archive SHA-256 check: it reports `idempotent=true` for a matching state and rejects a mismatching state without creating a lock or changing files.
 * JPEG members are counted during streaming before extraction, including unexpected members; exceeding `max_jpeg_count` now returns `jpeg_count_limit_exceeded` for dry-run and normal materialization.
 * Added dry-run existing-state preservation and `max_jpeg_count` limit/boundary regression coverage.
+* JPEG validation now locates the last `FF D9` marker, accepts up to 16 trailing NUL bytes, and rejects non-NUL trailers or excessive NUL padding with dedicated errors. The extracted JPEG bytes are not modified.
+* Added JPEG regression coverage for end-of-file EOI, 1/5/6/8/16 NUL trailers, excessive padding, non-NUL trailers, missing EOI, an earlier EXIF-thumbnail EOI, and full-byte preservation through dry-run, materialization, and idempotent validation.
 
 ## Checks run
 
@@ -35,7 +37,7 @@ Date: 2026-07-21
 | `php -d memory_limit=128M web/tests/auto_photo_bundle_lib_test.php` | 0 |
 | `php -d memory_limit=128M web/tests/auto_photo_bundle_materialize_test.php` | 0 |
 | `git diff --check` | 0 |
-| `git status --short` | 0 (only unrelated ignored runtime state may be present) |
+| `git status --short` | 0 (the unrelated untracked `app/MaklerTour/.gradle/` runtime state remains present) |
 
 ## Not run
 

@@ -297,7 +297,11 @@ function auto_photo_bundle_validate_jpeg_file(string $path): array
 function auto_photo_bundle_validate_jpeg_bytes(string $bytes, string $name): array
 {
     if (strlen($bytes) < 4 || substr($bytes, 0, 2) !== "\xFF\xD8") throw new RuntimeException('invalid_jpeg_soi:' . $name);
-    if (substr($bytes, -2) !== "\xFF\xD9") throw new RuntimeException('missing_jpeg_eoi:' . $name);
+    $lastEoi = strrpos($bytes, "\xFF\xD9");
+    if ($lastEoi === false) throw new RuntimeException('missing_jpeg_eoi:' . $name);
+    $trailing = substr($bytes, $lastEoi + 2);
+    if (strlen($trailing) > 16) throw new RuntimeException('jpeg_trailing_padding_exceeded:' . $name);
+    if ($trailing !== '' && trim($trailing, "\0") !== '') throw new RuntimeException('invalid_jpeg_trailing_bytes:' . $name);
     $sof = auto_photo_bundle_parse_jpeg_sof($bytes);
     if ($sof === null) throw new RuntimeException('jpeg_sof_not_found:' . $name);
     if ((int)$sof['width'] <= 0 || (int)$sof['height'] <= 0) throw new RuntimeException('jpeg_dimensions_invalid:' . $name);
