@@ -31,6 +31,8 @@ require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
 require_once dirname(__DIR__) . '/remote_station/sfm_cleanup.php';
 require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
 require_once dirname(__DIR__) . '/libs/source_storage_lib.php';
+require_once dirname(__DIR__) . '/libs/sfm_remote_job_lib.php';
+require_once dirname(__DIR__) . '/libs/auto_photo_prepare_lib.php';
 require_once __DIR__ . '/sfm_dense_merge_contract.php';
 
 const SFM_REMOTE_BASE = '/home/makler/web/remote_station';
@@ -186,22 +188,6 @@ function ensure_sfm_remote_jobs_chunk_columns(mysqli $db): void
     }
 }
 
-function sfm_job_id(mysqli $db): int
-{
-    do {
-        $id = random_int(10000, 999999999);
-        $st = $db->prepare('SELECT id FROM sfm_remote_jobs WHERE remote_job_id=? LIMIT 1');
-        if (!$st) {
-            return $id;
-        }
-        $st->bind_param('i', $id);
-        $st->execute();
-        $exists = $st->get_result()->fetch_assoc();
-        $st->close();
-    } while ($exists);
-    return $id;
-}
-
 function remote_output_dir(int $remoteJobId): string
 {
     return rtrim(SFM_REMOTE_OUTPUT, '/') . '/job_' . $remoteJobId;
@@ -289,6 +275,8 @@ function auto_chain_after_done(mysqli $db, array $job): void
     if ($remote <= 0 || $orderId <= 0 || $sessionId <= 0) {
         return;
     }
+    // AUTO-B02 intentionally terminates here: it must not enqueue COLMAP_SPARSE.
+    if ($type === AUTO_PHOTO_PREPARE_JOB_TYPE) return;
 
     if ($type === 'EXTRACT_FRAMES') {
         $pipelineRunId = pipeline_run_for_job($job);
@@ -1117,6 +1105,7 @@ function claim_next_job(mysqli $db): ?array
 function worker_run_parameters(mysqli $db,array $job): array { $pid=pipeline_run_for_job($job); if($pid>0){ $st=$db->prepare('SELECT parameters_json,pipeline_mode FROM sfm_pipeline_runs WHERE id=? LIMIT 1'); if($st){$st->bind_param('i',$pid);$st->execute();$run=$st->get_result()->fetch_assoc() ?: [];$st->close(); $all=sfm_json_array((string)($run['parameters_json'] ?? '{}')); $mode=(string)($run['pipeline_mode'] ?? ($all['pipeline_mode'] ?? ($job['reconstruction_mode'] ?? 'preview'))); if(isset($all['mode_parameters']) && is_array($all['mode_parameters'])){return $all['mode_parameters'];} if(isset($all[$mode])){return sfm_mode_parameters(sfm_merge_settings(sfm_system_defaults(),[],[],$all),$mode);} }} $jp=sfm_json_array((string)($job['parameters_json'] ?? '{}')); return $jp['settings'] ?? []; }
 function launch_job(mysqli $db, array $job): void
 {
+    $launchTemp = null;
     $id = (int)$job['id'];
     $remoteJobId = (int)$job['remote_job_id'];
     $type = (string)$job['job_type'];
@@ -1173,6 +1162,16 @@ function launch_job(mysqli $db, array $job): void
             return;
         }
         $rs=worker_run_parameters($db,$job); $ex=$rs['extract'] ?? []; $imuCfg=$rs['imu_frame_selection'] ?? []; $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: []; $localImu=safe_session_imu_path($db,$job); $localCameraInfo=safe_session_metadata_path($db,$job,'_camera_info.json'); $localManifest=safe_session_metadata_path($db,$job,'_manifest.json'); $sourceVideo=$params['source_video'] ?? []; $extractPayload=['extract'=>$ex,'imu_frame_selection'=>$imuCfg]; if(!is_array($sourceVideo)){$sourceVideo=[];} if($localCameraInfo){$sourceVideo['camera_info_path']=$localCameraInfo; worker_log('CAMERA_METADATA | camera_info sidecar found: '.$localCameraInfo);} if($localManifest){$sourceVideo['manifest_path']=$localManifest; worker_log('CAMERA_METADATA | manifest sidecar found: '.$localManifest);} if($sourceVideo){$extractPayload['source_video']=$sourceVideo;} if($localImu){$extractPayload['imu_jsonl_path']=$localImu; worker_log('IMU | Source sidecar found: '.$localImu);} else { worker_log('IMU | No source IMU sidecar found for video '.basename($input)); } $extractJson=json_encode($extractPayload, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $args = [SFM_REMOTE_BASE . '/run_extract_frames_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, $input, (string)($ex['fps'] ?? ''), (string)($ex['max_frames'] ?? ''), (string)($ex['scale_width'] ?? ''), (string)($ex['jpeg_quality'] ?? ''), $extractJson, (string)($localImu ?? '')];
+    } elseif ($type === AUTO_PHOTO_PREPARE_JOB_TYPE) {
+        $params=json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: [];
+        $bundleId=(int)($params['capture_bundle_id'] ?? 0);
+        if($bundleId<=0){ set_job($db,$id,'ERROR',0,'capture_bundle_id_missing'); return; }
+        $q=$db->prepare('SELECT * FROM capture_bundles WHERE id=? LIMIT 1'); if(!$q){set_job($db,$id,'ERROR',0,'capture_bundle_query_failed');return;} $q->bind_param('i',$bundleId); $q->execute(); $row=$q->get_result()->fetch_assoc(); $q->close();
+        try { if(!$row) throw new RuntimeException('capture_bundle_missing'); $plan=auto_photo_prepare_plan($row); } catch(Throwable $e) { set_job($db,$id,'ERROR',0,'source_validation_failed: '.$e->getMessage()); return; }
+        if((string)($params['app_bundle_uuid']??'') !== $plan['app_bundle_uuid'] || (int)($params['input_images']??0) !== count($plan['frames'])) { set_job($db,$id,'ERROR',0,'parameters_source_mismatch'); return; }
+        $manifest=['capture_bundle_id'=>$bundleId,'app_bundle_uuid'=>$plan['app_bundle_uuid'],'frames'=>$plan['frames'],'sidecars'=>$plan['sidecars']];
+        $tmp=tempnam(sys_get_temp_dir(),'auto_photo_prepare_'); if($tmp===false){set_job($db,$id,'ERROR',0,'prepare_manifest_create_failed');return;} $launchTemp=$tmp; if(file_put_contents($tmp,json_encode($manifest,JSON_UNESCAPED_SLASHES))===false){@unlink($tmp);set_job($db,$id,'ERROR',0,'prepare_manifest_write_failed');return;}
+        $args=[SFM_REMOTE_BASE.'/run_auto_photo_prepare_job.sh',SFM_REMOTE_CONF,(string)$remoteJobId,$plan['photos_dir'],$tmp];
     } elseif ($type === 'COLMAP_SPARSE') {
         $parent = (int)($job['parent_remote_job_id'] ?? 0);
         $rs=worker_run_parameters($db,$job); $sp=$rs['sparse'] ?? []; $pipelineRunId=pipeline_run_for_job($job); $run=[]; $settingsHash=substr(hash('sha256', json_encode($rs, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)),0,16); $mode=(string)($job['reconstruction_mode'] ?? 'preview');
@@ -1217,7 +1216,7 @@ function launch_job(mysqli $db, array $job): void
         set_job($db, $id, 'ERROR', (int)($job['progress_percent'] ?? 0), $e->getMessage());
         worker_log("ERROR launch {$type} id={$id} remote={$remoteJobId}: " . $e->getMessage());
         return;
-    }
+    } finally { if ($launchTemp !== null) @unlink($launchTemp); }
     if ($code !== 0) {
         $failure = format_command_failure($cmd, $code, $output);
         if ($type === 'EXTRACT_FRAMES') {
@@ -1493,6 +1492,14 @@ try {
                 worker_log("ERROR fetch id={$id} remote={$remote}: " . $e->getMessage());
             }
             if ($fetchCode === 0) {
+                if ($type === AUTO_PHOTO_PREPARE_JOB_TYPE) {
+                    $resultPath=remote_output_dir($remote).'/result.json'; $prepared=json_decode((string)@file_get_contents($resultPath),true);
+                    $pp=json_decode((string)($job['parameters_json']??'{}'),true)?:[]; $bools=['camera_metadata_present','scan_imu_present','photos_metadata_present','manifest_present','bundle_manifest_present','idempotent'];
+                    $valid=is_array($prepared) && ($prepared['schema_version']??null)===1 && ($prepared['job_type']??'')===AUTO_PHOTO_PREPARE_JOB_TYPE && (int)($prepared['remote_job_id']??0)===$remote && (int)($prepared['capture_bundle_id']??0)===(int)($pp['capture_bundle_id']??0) && ($prepared['app_bundle_uuid']??'')===($pp['app_bundle_uuid']??'') && ($prepared['status']??'')==='DONE' && (int)($prepared['frames_count']??-1)===(int)($pp['input_images']??-2) && ($prepared['frames_directory']??'')==='frames' && is_array($prepared['warnings']??null);
+                    foreach($bools as $k)$valid=$valid&&is_bool($prepared[$k]??null);
+                    if(!$valid){set_job($db,$id,'ERROR',$progress,'prepare_result_invalid_after_fetch');continue;}
+                    set_job($db,$id,'DONE',100,$fetchMessage); auto_chain_after_done($db,$job); continue;
+                }
                 if ($type === 'COLMAP_DENSE_CHUNK') {
                     $vertices = chunk_result_vertices((int)($job['parent_remote_job_id'] ?? 0), (int)($job['chunk_index'] ?? 0));
                     if ($vertices <= 0) { set_job($db, $id, 'ERROR_EMPTY', 100, 'Dense fusion produced zero vertices'); continue; }
