@@ -4,15 +4,16 @@ set -Eeuo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  ./deploy_web_changes.sh [--dry-run] [--from REF] [--to REF] [--target USER@HOST:/path/]
-  ./deploy_web_changes.sh --apply [--from REF] [--to REF] [--target USER@HOST:/path/]
+  ./deploy_web_changes.sh [--dry-run] [--from REF] [--to REF] [--target USER@HOST:/path/] [--ssh-port PORT]
+  ./deploy_web_changes.sh --apply [--from REF] [--to REF] [--target USER@HOST:/path/] [--ssh-port PORT]
   ./deploy_web_changes.sh --list-only [--from REF] [--to REF]
 
 Defaults:
   mode:   --dry-run
   from:   HEAD^
   to:     HEAD
-  target: root@IlyamusWWW:/home/makler/web/
+  target: root@makler.cargocells.com:/home/makler/web/
+  SSH port: 3322
 
 The script deploys only changed tracked files below web/. It never uses --delete,
 never deploys docs/, and excludes production configuration and runtime data.
@@ -22,7 +23,9 @@ USAGE
 MODE="dry-run"
 FROM_REF="${DEPLOY_FROM:-HEAD^}"
 TO_REF="${DEPLOY_TO:-HEAD}"
-TARGET="${DEPLOY_TARGET:-root@IlyamusWWW:/home/makler/web/}"
+SERVER="${DEPLOY_SERVER:-makler.cargocells.com}"
+SSH_PORT="${DEPLOY_SSH_PORT:-3322}"
+TARGET="${DEPLOY_TARGET:-root@${SERVER}:/home/makler/web/}"
 BACKUP_ROOT="${DEPLOY_BACKUP_ROOT:-/home/makler/deploy_backups}"
 
 while (($#)); do
@@ -54,6 +57,12 @@ while (($#)); do
             TARGET="$2"
             shift 2
             ;;
+        --ssh-port)
+            [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+            [[ "$2" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid SSH port: $2" >&2; exit 2; }
+            SSH_PORT="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -67,17 +76,23 @@ while (($#)); do
 done
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+
+# Root may operate inside a repository owned by another user. Apply safe.directory
+# only to this invocation; do not modify global Git configuration.
+REPO_ROOT="$(
+    git -c "safe.directory=$SCRIPT_DIR"         -C "$SCRIPT_DIR"         rev-parse --show-toplevel 2>/dev/null || true
+)"
 if [[ -z "$REPO_ROOT" ]]; then
     echo "ERROR: script must be inside the Insta3D Git repository" >&2
     exit 1
 fi
 
+GIT=(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT")
 SOURCE_ROOT="$REPO_ROOT/web"
 [[ -d "$SOURCE_ROOT" ]] || { echo "ERROR: missing source directory: $SOURCE_ROOT" >&2; exit 1; }
 
-git -C "$REPO_ROOT" rev-parse --verify "${FROM_REF}^{commit}" >/dev/null
-git -C "$REPO_ROOT" rev-parse --verify "${TO_REF}^{commit}" >/dev/null
+"${GIT[@]}" rev-parse --verify "${FROM_REF}^{commit}" >/dev/null
+"${GIT[@]}" rev-parse --verify "${TO_REF}^{commit}" >/dev/null
 
 is_excluded() {
     local path="$1"
@@ -111,13 +126,13 @@ DELETE_LIST="$TMP_DIR/delete.zlist"
 : > "$DEPLOY_LIST"
 : > "$DELETE_LIST"
 
-git -C "$REPO_ROOT" diff \
+"${GIT[@]}" diff \
     --no-renames \
     --diff-filter=ACMRTUXB \
     --name-only -z \
     "$FROM_REF" "$TO_REF" -- web/ > "$ALL_LIST"
 
-git -C "$REPO_ROOT" diff \
+"${GIT[@]}" diff \
     --no-renames \
     --diff-filter=D \
     --name-only -z \
@@ -161,6 +176,7 @@ echo "Range:      $FROM_REF..$TO_REF"
 echo "Mode:       $MODE"
 if [[ "$MODE" != "list-only" ]]; then
     echo "Target:     $TARGET"
+    echo "SSH port:   $SSH_PORT"
 fi
 echo "Files:"
 while IFS= read -r -d '' relative; do
@@ -193,10 +209,13 @@ PY
 done < "$DEPLOY_LIST"
 
 echo "Local syntax validation: PASS"
+echo "Rsync metadata policy: preserve remote owner/group; do not alter directory timestamps"
 
 RSYNC_ARGS=(
     -a
-    -r
+    --no-owner
+    --no-group
+    --omit-dir-times
     --relative
     --protect-args
     --itemize-changes
@@ -215,7 +234,8 @@ else
     )
 fi
 
-rsync "${RSYNC_ARGS[@]}" "$SOURCE_ROOT/" "$TARGET"
+RSYNC_RSH="ssh -p ${SSH_PORT} -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+    rsync "${RSYNC_ARGS[@]}" "$SOURCE_ROOT/" "$TARGET"
 
 if [[ "$MODE" == "dry-run" ]]; then
     echo "Dry-run complete. Re-run with --apply after reviewing the rsync list."
