@@ -33,6 +33,7 @@ require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
 require_once dirname(__DIR__) . '/libs/source_storage_lib.php';
 require_once dirname(__DIR__) . '/libs/sfm_remote_job_lib.php';
 require_once dirname(__DIR__) . '/libs/auto_photo_prepare_lib.php';
+require_once dirname(__DIR__) . '/libs/auto_photo_sparse_lib.php';
 require_once __DIR__ . '/sfm_dense_merge_contract.php';
 
 const SFM_REMOTE_BASE = '/home/makler/web/remote_station';
@@ -269,6 +270,10 @@ function pipeline_log_camera_metadata(mysqli $db, int $pipelineRunId, string $jo
 function auto_chain_after_done(mysqli $db, array $job): void
 {
     $type = (string)$job['job_type'];
+    if (auto_photo_sparse_is_standalone_job($job)) {
+        worker_log('AUTO-B03 standalone COLMAP_SPARSE completed; automatic export/dense chain skipped');
+        return;
+    }
     $remote = (int)$job['remote_job_id'];
     $orderId = (int)$job['order_id'];
     $sessionId = (int)$job['capture_session_id'];
