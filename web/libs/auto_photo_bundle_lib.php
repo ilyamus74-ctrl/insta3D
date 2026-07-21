@@ -510,3 +510,48 @@ function auto_photo_bundle_index_cache_path(array $bundleRow, string $archivePat
     $sessionDir = dirname(dirname($archivePath));
     return $sessionDir . '/auto_photo_bundles/' . (int)$bundleRow['id'] . '/index.json';
 }
+
+
+function auto_photo_bundle_stream_tgz_members(string $archivePath, array $limits, callable $onMember): void
+{
+    $limits = array_replace(auto_photo_bundle_default_limits(), $limits);
+    $gz = gzopen($archivePath, 'rb');
+    if (!$gz) throw new RuntimeException('unreadable_tgz');
+    $members = [];
+    $memberCount = 0;
+    $totalBytes = 0;
+    $zeroBlocks = 0;
+    try {
+        while (!gzeof($gz)) {
+            $header = auto_photo_bundle_gzread_exact($gz, 512);
+            if ($header === '') break;
+            if (strlen($header) !== 512) throw new RuntimeException('truncated_tar_header');
+            if ($header === str_repeat("\0", 512)) {
+                $zeroBlocks++;
+                if ($zeroBlocks >= 2) break;
+                continue;
+            }
+            $zeroBlocks = 0;
+            $memberCount++;
+            if ($memberCount > (int)$limits['max_member_count']) throw new RuntimeException('member_count_limit_exceeded');
+            if (!auto_photo_bundle_tar_checksum_valid($header)) throw new RuntimeException('invalid_tar_checksum');
+            $name = auto_photo_bundle_tar_name($header);
+            $size = auto_photo_bundle_tar_octal(substr($header, 124, 12));
+            $type = substr($header, 156, 1);
+            if ($size < 0) throw new RuntimeException('invalid_tar_size:' . $name);
+            $totalBytes += $size;
+            if ($totalBytes > (int)$limits['max_declared_unpacked_bytes']) throw new RuntimeException('unpacked_bytes_limit_exceeded');
+            if ($size > (int)$limits['max_member_bytes']) throw new RuntimeException('member_size_limit_exceeded:' . $name);
+            $errors = [];
+            $safe = auto_photo_bundle_validate_tar_member($name, $type, $members, $errors);
+            if (!$safe) throw new RuntimeException($errors[0] ?? ('unsafe_archive_member:' . $name));
+            $consumed = $onMember($name, $size, $type, $gz);
+            if (!$consumed && !auto_photo_bundle_gzskip_exact($gz, $size)) throw new RuntimeException('truncated_member:' . $name);
+            $padding = (512 - ($size % 512)) % 512;
+            if ($padding > 0 && !auto_photo_bundle_gzskip_exact($gz, $padding)) throw new RuntimeException('truncated_member_padding:' . $name);
+            $members[$name] = true;
+        }
+    } finally {
+        gzclose($gz);
+    }
+}
