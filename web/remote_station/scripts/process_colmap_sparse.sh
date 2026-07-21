@@ -533,7 +533,10 @@ done
 generate_sparse_components
 
 CAMERA_METADATA_RESULT="{}"
-if META_PATH="$(find_camera_metadata_json || true)"; then CAMERA_METADATA_RESULT="$(cat "$META_PATH")"; fi
+META_PATH="$(find_camera_metadata_json || true)"
+if [[ -n "$META_PATH" && -f "$META_PATH" ]]; then
+  CAMERA_METADATA_RESULT="$(cat "$META_PATH")"
+fi
 SPARSE_COMPONENTS_JSON="{}"
 if [[ -f "$OUTPUT_DIR/sparse_components.json" ]]; then SPARSE_COMPONENTS_JSON="$(cat "$OUTPUT_DIR/sparse_components.json")"; fi
 cat > "$OUTPUT_DIR/result.json" <<JSON
