@@ -44,24 +44,7 @@ function auto_photo_prepare_plan(array $row, array $options = []): array {
     $photosDir = $base . '/photos';
     $ds = @lstat($photosDir);
     if (is_link($photosDir) || $ds === false || (($ds['mode'] & 0170000) !== 0040000) || realpath($photosDir) !== $photosDir) auto_photo_prepare_fail('unsafe_photos_directory');
-    if (!is_array($index['photos'] ?? null) || !is_array($mat['photos'] ?? null)) {
-        auto_photo_prepare_fail('photos_count_mismatch');
-    }
-
-    $indexPhotosCount = count($index['photos']);
-    $materializationPhotosCount = count($mat['photos']);
-
-    if (
-        (int)($index['photos_count_actual'] ?? -1) !== $indexPhotosCount
-        || (
-            array_key_exists('photos_count_manifest', $index)
-            && (int)$index['photos_count_manifest'] !== $indexPhotosCount
-        )
-        || (int)($mat['photos_count'] ?? -1) !== $materializationPhotosCount
-        || $indexPhotosCount !== $materializationPhotosCount
-    ) {
-        auto_photo_prepare_fail('photos_count_mismatch');
-    }
+    if (!is_array($index['photos'] ?? null) || !is_array($mat['photos'] ?? null) || (int)($index['photos_count'] ?? -1) !== count($index['photos']) || (int)($index['photos_count_actual'] ?? -1) !== count($index['photos']) || (int)($mat['photos_count'] ?? -1) !== count($mat['photos']) || count($index['photos']) !== count($mat['photos'])) auto_photo_prepare_fail('photos_count_mismatch');
     $byName=[]; foreach ($mat['photos'] as $p) { if (!is_array($p) || !isset($p['filename']) || isset($byName[$p['filename']])) auto_photo_prepare_fail('duplicate_filename'); $byName[$p['filename']]=$p; }
     $frames=[]; $seen=[];
     foreach ($index['photos'] as $p) {
@@ -69,22 +52,8 @@ function auto_photo_prepare_plan(array $row, array $options = []): array {
         if (isset($seen[$name])) auto_photo_prepare_fail('duplicate_filename'); $seen[$name]=true;
         $m=$byName[$name] ?? null; if (!is_array($m)) auto_photo_prepare_fail('jpeg_list_mismatch');
         foreach (['archive_path','size_bytes','width','height'] as $k) { $iv=$k==='size_bytes'?(int)($p['file_size_bytes']??-1):(int)($p[$k]??0); $mv=(int)($m[$k]??-1); if ($k==='archive_path') { if (($p[$k]??'') !== ($m[$k]??'')) auto_photo_prepare_fail('jpeg_list_mismatch'); } elseif ($iv !== $mv) auto_photo_prepare_fail('jpeg_list_mismatch'); }
-        $materializationSha = (string)($m['sha256'] ?? '');
-
-        if (!preg_match('/^[a-f0-9]{64}$/', $materializationSha)) {
-            auto_photo_prepare_fail('jpeg_sha256_list_mismatch');
-        }
-
-        if (array_key_exists('sha256', $p)) {
-            $indexSha = (string)$p['sha256'];
-
-            if (
-                !preg_match('/^[a-f0-9]{64}$/', $indexSha)
-                || !hash_equals($indexSha, $materializationSha)
-            ) {
-                auto_photo_prepare_fail('jpeg_sha256_list_mismatch');
-            }
-        }
+        $indexSha=(string)($p['sha256'] ?? ''); $materializationSha=(string)($m['sha256'] ?? '');
+        if (!preg_match('/^[a-f0-9]{64}$/', $indexSha) || !preg_match('/^[a-f0-9]{64}$/', $materializationSha) || !hash_equals($indexSha,$materializationSha)) auto_photo_prepare_fail('jpeg_sha256_list_mismatch');
         if ((int)($m['width']??0)<=0 || (int)($m['height']??0)<=0) auto_photo_prepare_fail('photo_dimensions_invalid');
         $file=$photosDir.'/'.$name; auto_photo_prepare_regular($file,'photo_not_regular'); if (!auto_photo_prepare_inside($file,$photosDir)) auto_photo_prepare_fail('photo_realpath_escape');
         if ((int)filesize($file)!==(int)$m['size_bytes']) auto_photo_prepare_fail('photo_size_mismatch');
