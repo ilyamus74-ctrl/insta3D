@@ -1076,3 +1076,13 @@ YES / NO
 Не применяй изменения автоматически.
 Не переходи дальше без фактического runtime acceptance.
 ```
+## Delivery sequence
+
+```text
+SFM-C01
+AUTO-B02
+AUTO-B03
+AUTO-B04
+AUTO-B05
+AUTO-B06
+```

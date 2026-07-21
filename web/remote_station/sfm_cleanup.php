@@ -4,6 +4,7 @@ declare(strict_types=1);
 const SFM_CLEANUP_WEB_OUTPUT_BASE = '/home/makler/web/remote_station/output';
 const SFM_CLEANUP_STATION_BASE_DEFAULT = '/home/makler_storage';
 const SFM_CLEANUP_ACTIVE_STATUSES = ['RUNNING','QUEUED','STARTED','PROCESSING','ACTIVE','PLANNING','RUNNING_CHUNKS','MERGING','CANCELLING','RESTARTING'];
+function sfm_remote_cleanup_web_output_base(): string { $testBase=getenv('SFM_CLEANUP_TEST_WEB_OUTPUT_BASE'); if(getenv('SFM_CLEANUP_TEST_MODE')==='true' && is_string($testBase) && str_starts_with($testBase,'/'))return rtrim($testBase,'/'); return SFM_CLEANUP_WEB_OUTPUT_BASE; }
 
 
 const SFM_REMOTE_CLEANUP_PIPELINE_TERMINAL_STATUSES = ['DONE','FAILED','CANCELLED','ERROR'];
@@ -151,6 +152,48 @@ function sfm_remote_cleanup_validate_station_response(int $code,string $text,arr
     $json['freed_bytes']=(int)($json['freed_bytes'] ?? 0);
     return $json;
 }
+function sfm_remote_cleanup_local_normalized_video_plan(array $jobs): array {
+    $base=sfm_remote_cleanup_web_output_base(); $baseReal=realpath($base);
+    if($baseReal!==$base || !is_dir($base) || is_link($base))throw new RuntimeException('unsafe_local_normalized_video');
+    $plans=[]; $seen=[];
+    foreach($jobs as $job){
+        if((string)($job['job_type'] ?? '')!=='EXTRACT_FRAMES')continue;
+        $rid=(int)($job['remote_job_id'] ?? 0); if($rid<=0 || isset($seen[$rid]))continue; $seen[$rid]=true;
+        $jobDir=$base.'/job_'.$rid; $normalized=$jobDir.'/normalized'; $file=$normalized.'/source_safe.mp4';
+        $jobStat=@lstat($jobDir); if($jobStat===false){$plans[]=['remote_job_id'=>$rid,'path'=>$file,'status'=>'ALREADY_ABSENT','size_bytes'=>0,'deleted'=>false];continue;}
+        if(is_link($jobDir) || (($jobStat['mode'] & 0170000)!==0040000))throw new RuntimeException('unsafe_local_normalized_video');
+        $normalizedStat=@lstat($normalized); if($normalizedStat===false){$plans[]=['remote_job_id'=>$rid,'path'=>$file,'status'=>'ALREADY_ABSENT','size_bytes'=>0,'deleted'=>false];continue;}
+        if(is_link($normalized) || (($normalizedStat['mode'] & 0170000)!==0040000))throw new RuntimeException('unsafe_local_normalized_video');
+        $fileStat=@lstat($file); if($fileStat===false){$plans[]=['remote_job_id'=>$rid,'path'=>$file,'status'=>'ALREADY_ABSENT','size_bytes'=>0,'deleted'=>false];continue;}
+        if(is_link($file) || (($fileStat['mode'] & 0170000)!==0100000))throw new RuntimeException('unsafe_local_normalized_video');
+        $jobReal=realpath($jobDir); $normalizedReal=realpath($normalized); $fileReal=realpath($file);
+        if($jobReal!==$jobDir || $normalizedReal!==$normalized || $fileReal!==$file || !str_starts_with($fileReal,$base.'/'))throw new RuntimeException('unsafe_local_normalized_video');
+        $st=lstat($file); $plans[]=['remote_job_id'=>$rid,'path'=>$file,'status'=>'PLANNED','size_bytes'=>(int)$st['size'],'deleted'=>false,'stat'=>[$st['dev'],$st['ino'],$st['size'],$st['mtime'],$st['ctime']],'normalized_directory'=>$normalized];
+    }
+    return $plans;
+}
+function sfm_remote_cleanup_local_normalized_video_execute(array $plan,bool $dryRun): array {
+    if(getenv('SFM_CLEANUP_TEST_MODE')==='true' && isset($GLOBALS['sfm_cleanup_test_after_local_plan']) && is_callable($GLOBALS['sfm_cleanup_test_after_local_plan']))($GLOBALS['sfm_cleanup_test_after_local_plan'])($plan);
+    $result=['dry_run'=>$dryRun,'freed_bytes'=>0,'would_free_bytes'=>0,'paths'=>[]];
+    foreach($plan as $entry){
+        if($entry['status']==='ALREADY_ABSENT'){$result['paths'][]=$entry;continue;}
+        $file=$entry['path']; $normalized=$entry['normalized_directory']; $jobDir=dirname($normalized); $base=sfm_remote_cleanup_web_output_base();
+        foreach([[$jobDir,true],[$normalized,true],[$file,false]] as [$path,$directory]){ $st=@lstat($path); $type=$st===false?0:($st['mode'] & 0170000); if($st===false || is_link($path) || ($directory ? $type!==0040000 : $type!==0100000) || realpath($path)!==$path || !str_starts_with($path,$base.'/'))throw new RuntimeException('unsafe_local_normalized_video'); }
+        $st=lstat($file); if([$st['dev'],$st['ino'],$st['size'],$st['mtime'],$st['ctime']]!==$entry['stat'])throw new RuntimeException('local_normalized_video_changed');
+        $out=['remote_job_id'=>$entry['remote_job_id'],'path'=>$file,'status'=>$dryRun?'WOULD_DELETE':'DELETED','size_bytes'=>$entry['size_bytes'],'deleted'=>!$dryRun];
+        $result['would_free_bytes']+=(int)$entry['size_bytes'];
+        if(!$dryRun){ if(!@unlink($file))throw new RuntimeException('local_normalized_video_changed'); $result['freed_bytes']+=(int)$entry['size_bytes']; if(@is_dir($normalized) && !(new FilesystemIterator($normalized,FilesystemIterator::SKIP_DOTS))->valid())@rmdir($normalized); }
+        $result['paths'][]=$out;
+    }
+    return $result;
+}
+function sfm_remote_cleanup_local_normalized_video(array $jobs,bool $dryRun): array { return sfm_remote_cleanup_local_normalized_video_execute(sfm_remote_cleanup_local_normalized_video_plan($jobs),$dryRun); }
+function sfm_remote_cleanup_run_station_and_local_cleanup(array $jobs,array $remoteJobIds,bool $dryRun): array {
+    $plan=sfm_remote_cleanup_local_normalized_video_plan($jobs); $callback=getenv('SFM_CLEANUP_TEST_MODE')==='true' ? ($GLOBALS['sfm_cleanup_test_station_callback'] ?? null) : null;
+    $station=is_callable($callback) ? $callback($remoteJobIds,$dryRun) : sfm_remote_cleanup_run_station_script($remoteJobIds,$dryRun);
+    return ['station'=>$station,'local'=>sfm_remote_cleanup_local_normalized_video_execute($plan,$dryRun)];
+}
+function sfm_remote_cleanup_result(array $station,array $local,array $remoteJobIds,array $diagnostics,bool $dryRun): array { $remote=(int)($station['freed_bytes']??0); return ['ok'=>true,'freed_bytes'=>$remote,'remote_freed_bytes'=>$remote,'local_normalized_video_freed_bytes'=>(int)$local['freed_bytes'],'total_freed_bytes'=>$remote+(int)$local['freed_bytes'],'local_normalized_video_cleanup'=>$local,'remote_job_ids'=>$remoteJobIds,'diagnostics'=>$diagnostics,'deleted_paths'=>$station['paths']??[],'script_result'=>$station,'dry_run'=>$dryRun]; }
 function sfm_remote_cleanup_remote_lock_name(int $remoteJobId): string { return 'sfm_remote_job_cleanup:'.$remoteJobId; }
 function sfm_remote_cleanup_lock_remote_ids(mysqli $db,array $remoteJobIds): array {
     $ids=array_values(array_unique(array_map('intval',$remoteJobIds))); sort($ids,SORT_NUMERIC); $locks=[];
@@ -163,8 +206,8 @@ function sfm_remote_cleanup_run_once(mysqli $db,int $pipelineRunId,bool $dryRun=
     $st=$db->prepare('SELECT * FROM sfm_pipeline_runs WHERE id=? LIMIT 1'); if(!$st)throw new RuntimeException($db->error); $st->bind_param('i',$pipelineRunId);$st->execute();$run=$st->get_result()->fetch_assoc();$st->close(); if(!$run)throw new RuntimeException('pipeline_run not found');
     $status=strtoupper((string)$run['status']); if(!in_array($status,SFM_REMOTE_CLEANUP_PIPELINE_TERMINAL_STATUSES,true))throw new RuntimeException('pipeline not terminal'); if(!$force && sfm_remote_cleanup_active_jobs_count($db,$pipelineRunId)>0)throw new RuntimeException('pipeline has active jobs');
     $v=sfm_remote_cleanup_verify_jobs($db,$pipelineRunId); if(!$v['ok'])throw new RuntimeException(implode('; ',$v['errors'])); if(!$v['remote_job_ids'])return ['ok'=>true,'freed_bytes'=>0,'remote_job_ids'=>[],'diagnostics'=>$v['diagnostics'],'script'=>null];
-    $locks=[]; try { if(!$dryRun)$locks=sfm_remote_cleanup_lock_remote_ids($db,$v['remote_job_ids']); $json=sfm_remote_cleanup_run_station_script($v['remote_job_ids'],$dryRun); } finally { if($locks)sfm_remote_cleanup_unlock_locks($db,$locks); }
-    return ['ok'=>true,'freed_bytes'=>(int)($json['freed_bytes']??0),'remote_job_ids'=>$v['remote_job_ids'],'diagnostics'=>$v['diagnostics'],'deleted_paths'=>$json['paths'] ?? [],'script_result'=>$json,'dry_run'=>$dryRun];
+    $locks=[]; try { if(!$dryRun)$locks=sfm_remote_cleanup_lock_remote_ids($db,$v['remote_job_ids']); $cleanup=sfm_remote_cleanup_run_station_and_local_cleanup($v['jobs'],$v['remote_job_ids'],$dryRun); } finally { if($locks)sfm_remote_cleanup_unlock_locks($db,$locks); }
+    return sfm_remote_cleanup_result($cleanup['station'],$cleanup['local'],$v['remote_job_ids'],$v['diagnostics'],$dryRun);
 }
 function sfm_remote_cleanup_job_row_for_remote(mysqli $db,int $remoteJobId): array { $st=$db->prepare('SELECT r.remote_job_id,r.job_type,r.status,r.parent_remote_job_id,r.chunk_index,r.chunk_count,r.output_path,r.parameters_json,r.result_json_path,r.capture_session_id,NULL AS video_scan_id,NULL AS pipeline_mode FROM sfm_remote_jobs r WHERE r.remote_job_id=? AND r.pipeline_run_id IS NULL ORDER BY r.id DESC LIMIT 1'); if(!$st)throw new RuntimeException('prepare failed: '.$db->error); $st->bind_param('i',$remoteJobId); $st->execute(); $row=$st->get_result()->fetch_assoc() ?: []; $st->close(); if($row){$params=json_decode((string)($row['parameters_json']??''),true); if(is_array($params)&&isset($params['model_id'])){$row['model_id']=(int)$params['model_id'];}} return $row; }
 function sfm_remote_cleanup_verify_remote_job(mysqli $db,int $remoteJobId): array { $job=sfm_remote_cleanup_job_row_for_remote($db,$remoteJobId); if(!$job)return ['ok'=>false,'errors'=>['remote_job_id='.$remoteJobId.' not found'],'remote_job_ids'=>[],'jobs'=>[],'diagnostics'=>[]]; if(!sfm_remote_cleanup_is_true_standalone_job($db,$job))return ['ok'=>false,'errors'=>['remote_job_id='.$remoteJobId.' is not eligible for standalone cleanup'],'remote_job_ids'=>[],'jobs'=>[$job],'diagnostics'=>[]]; $errors=[]; $diagnostics=[]; $ids=[]; $rid=(int)$job['remote_job_id']; $type=(string)$job['job_type']; $status=strtoupper((string)$job['status']); $contract=sfm_remote_cleanup_artifact_contract($job); $path=null; $depCount=sfm_remote_cleanup_dependency_count($db,0,$rid); $eligible=false; if(!in_array($status,sfm_remote_job_terminal_statuses(),true)){$errors[]='remote_job_id='.$rid.' not terminal: '.$status;} elseif($depCount>0){$errors[]='remote_job_id='.$rid.' has active dependencies';} elseif($status==='DONE'){ if($type==='COLMAP_DENSE_CHUNK'){ foreach($contract['paths'] as $requiredPath){ if($requiredPath==='' || !is_file($requiredPath) || filesize($requiredPath)<=0){$errors[]='remote_job_id='.$rid.' missing dense chunk required artifact: '.$requiredPath;} } $path=$contract['paths'][0] ?? null; } else { $path=sfm_remote_cleanup_first_existing_artifact($job); $result=sfm_remote_cleanup_result_json_path($job); if($result===null && !in_array($type,['EXPORT_PLY'],true))$errors[]='remote_job_id='.$rid.' result JSON missing/empty'; if($path===null)$errors[]='remote_job_id='.$rid.' required local artifact missing/empty'; } if(!$errors){$eligible=true;$ids[]=$rid;} } else {$eligible=true;$ids[]=$rid;} $diagnostics[]=['pipeline_run_id'=>null,'remote_job_id'=>$rid,'job_type'=>$type,'status'=>$status,'effective_artifact_owner_id'=>(int)$contract['owner_remote_job_id'],'local_verification_path'=>$path,'dependency_status'=>$depCount>0?'blocked':'clear','cleanup_eligibility'=>$eligible?'eligible':'blocked']; return ['ok'=>empty($errors),'errors'=>$errors,'remote_job_ids'=>$ids,'jobs'=>[$job],'diagnostics'=>$diagnostics]; }
@@ -172,8 +215,8 @@ function sfm_remote_cleanup_run_remote_job_once(mysqli $db,int $remoteJobId,bool
     if(!$dryRun)sfm_remote_cleanup_require_schema($db); sfm_remote_cleanup_validate_owner_fields(null,$remoteJobId);
     if(sfm_remote_cleanup_job_attached_to_pipeline($db,$remoteJobId))throw new RuntimeException('remote_job_id='.$remoteJobId.' is attached to a pipeline; standalone cleanup skipped');
     $v=sfm_remote_cleanup_verify_remote_job($db,$remoteJobId); if(!$v['ok'])throw new RuntimeException(implode('; ',$v['errors'])); if(!$v['remote_job_ids'])return ['ok'=>true,'freed_bytes'=>0,'remote_job_ids'=>[],'diagnostics'=>$v['diagnostics'],'script'=>null];
-    $locks=[]; try { if(!$dryRun)$locks=sfm_remote_cleanup_lock_remote_ids($db,$v['remote_job_ids']); $json=sfm_remote_cleanup_run_station_script($v['remote_job_ids'],$dryRun); } finally { if($locks)sfm_remote_cleanup_unlock_locks($db,$locks); }
-    return ['ok'=>true,'freed_bytes'=>(int)($json['freed_bytes']??0),'remote_job_ids'=>$v['remote_job_ids'],'diagnostics'=>$v['diagnostics'],'deleted_paths'=>$json['paths'] ?? [],'script_result'=>$json,'dry_run'=>$dryRun];
+    $locks=[]; try { if(!$dryRun)$locks=sfm_remote_cleanup_lock_remote_ids($db,$v['remote_job_ids']); $cleanup=sfm_remote_cleanup_run_station_and_local_cleanup($v['jobs'],$v['remote_job_ids'],$dryRun); } finally { if($locks)sfm_remote_cleanup_unlock_locks($db,$locks); }
+    return sfm_remote_cleanup_result($cleanup['station'],$cleanup['local'],$v['remote_job_ids'],$v['diagnostics'],$dryRun);
 }
 function sfm_remote_cleanup_mysql_lock(mysqli $db,string $name): bool { $st=$db->prepare('SELECT GET_LOCK(?,0) got'); if(!$st)return false; $st->bind_param('s',$name); $st->execute(); $got=(int)($st->get_result()->fetch_assoc()['got'] ?? 0); $st->close(); return $got===1; }
 function sfm_remote_cleanup_mysql_unlock(mysqli $db,string $name): void { $st=$db->prepare('SELECT RELEASE_LOCK(?)'); if($st){$st->bind_param('s',$name);$st->execute();$st->close();} }
