@@ -15,16 +15,26 @@ AUTO-B03 reuses:
 - the existing `COLMAP_SPARSE` worker branch;
 - `run_colmap_sparse_job.sh`;
 - existing remote status polling and result fetch;
-- settings generated from `sfm_settings_lib.php` system defaults.
+- `sfm_settings_lib.php` system defaults and `sfm_mode_parameters()`.
 
-No worker, shell, Python, service, scheduler, schema, GUI, dense, preview, mesh,
-or export changes are introduced.
+It adds no shell or Python processor, service, scheduler, schema, GUI, dense,
+preview, mesh, or new job type.
 
 ## Terminal behavior
 
-The queued sparse job has no `pipeline_run_id`. Existing worker behavior only
-auto-chains completed `COLMAP_SPARSE` jobs attached to a pipeline run, so this
-standalone job ends after sparse fetch and `DONE`.
+The queued job stores:
+
+```json
+{
+  "source_type": "auto_photo_prepare",
+  "standalone_sparse": true
+}
+```
+
+The worker has one narrow guard for that exact marker. After the existing sparse
+fetch completes, the DB job is marked `DONE` and automatic `EXPORT_PLY`, dense,
+preview, mesh, and other chain stages are skipped. Ordinary video
+`COLMAP_SPARSE` jobs retain their existing behavior.
 
 ## Paths
 
@@ -35,7 +45,7 @@ The parent local contract is:
 /home/makler/web/remote_station/output/job_<PREPARE_REMOTE_ID>/result.json
 ```
 
-The sparse worker input is the already published remote directory:
+The sparse worker input is resolved from the existing parent contract:
 
 ```text
 /home/makler_storage/output/job_<PREPARE_REMOTE_ID>/frames
