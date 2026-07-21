@@ -1049,7 +1049,29 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
-}
+ }
+
+ if (
+    $action === 'auto_photo_sparse_retry_exhaustive'
+    && $canDeleteMedia
+) {
+    try {
+        auto_photo_sparse_web_enqueue_exhaustive(
+            $dbcnx,
+            $orderId,
+            $_POST['sparse_db_job_id'] ?? null
+        );
+
+        header(
+            'Location: /order_simple.php?id='
+            . $orderId
+            . '&photo_retry_queued=1'
+        );
+        exit;
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+    }
+ }
 
  if($action==='create_capture_bundle_dense_job' && $canDeleteMedia){
    try{

@@ -190,9 +190,12 @@ function auto_photo_sparse_settings_snapshot(): array
     return sfm_mode_parameters($effective, 'preview');
 }
 
-function auto_photo_sparse_parameters(array $plan): array
+function auto_photo_sparse_parameters(
+    array $plan,
+    bool $exhaustiveRetry = false
+): array
 {
-    return [
+    $parameters = [
         'source_type' => 'auto_photo_prepare',
         'standalone_sparse' => true,
         'prepare_job_id' => (int) $plan['prepare_job_id'],
@@ -201,6 +204,79 @@ function auto_photo_sparse_parameters(array $plan): array
         'app_bundle_uuid' => (string) $plan['app_bundle_uuid'],
         'input_images' => (int) $plan['input_images'],
         'settings' => auto_photo_sparse_settings_snapshot(),
+    ];
+
+    if ($exhaustiveRetry) {
+        $parameters['retry_mode'] = 'exhaustive';
+        $parameters['settings']['sparse']['matcher'] = 'exhaustive';
+        $parameters['settings']['sparse']['loop_detection'] = true;
+    }
+
+    return $parameters;
+}
+
+function auto_photo_sparse_retry_policy(
+    array $sourceJob,
+    array $relatedJobs
+): array {
+    $denied = [
+        'allowed' => false,
+        'active' => false,
+        'done' => false,
+        'reason' => 'source_not_retryable',
+    ];
+    $sourceParameters = json_decode(
+        (string) ($sourceJob['parameters_json'] ?? ''),
+        true
+    );
+    if (!is_array($sourceParameters)
+        || ($sourceParameters['retry_mode'] ?? null) === 'exhaustive'
+        || !in_array(
+            strtoupper((string) ($sourceJob['status'] ?? '')),
+            ['DONE', 'ERROR', 'FAILED'],
+            true
+        )) {
+        return $denied;
+    }
+
+    $active = false;
+    $done = false;
+    foreach ($relatedJobs as $relatedJob) {
+        $parameters = json_decode(
+            (string) ($relatedJob['parameters_json'] ?? ''),
+            true
+        );
+        if (!is_array($parameters)
+            || ($parameters['retry_mode'] ?? null) !== 'exhaustive') {
+            continue;
+        }
+        $status = strtoupper((string) ($relatedJob['status'] ?? ''));
+        $active = $active || in_array($status, ['QUEUED', 'RUNNING'], true);
+        $done = $done || $status === 'DONE';
+    }
+
+    if ($active) {
+        return [
+            'allowed' => false,
+            'active' => true,
+            'done' => $done,
+            'reason' => 'exhaustive_active',
+        ];
+    }
+    if ($done) {
+        return [
+            'allowed' => false,
+            'active' => false,
+            'done' => true,
+            'reason' => 'exhaustive_done',
+        ];
+    }
+
+    return [
+        'allowed' => true,
+        'active' => false,
+        'done' => false,
+        'reason' => 'allowed',
     ];
 }
 
