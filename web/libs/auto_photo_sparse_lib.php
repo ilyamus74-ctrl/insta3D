@@ -204,6 +204,155 @@ function auto_photo_sparse_parameters(array $plan): array
     ];
 }
 
+function auto_photo_sparse_parse_model_id(mixed $value, bool $allowMissing = false): ?int
+{
+    if ($allowMissing && $value === null) {
+        return null;
+    }
+    if (is_int($value) && $value >= 0) {
+        return $value;
+    }
+    if (is_string($value) && preg_match('/^(0|[1-9][0-9]*)$/', $value)) {
+        return (int) $value;
+    }
+    auto_photo_sparse_fail('invalid_model_id');
+}
+
+function auto_photo_sparse_components(int $remoteJobId): array
+{
+    $path = auto_photo_sparse_output_path($remoteJobId)
+        . '/colmap/sparse_components.json';
+    auto_photo_sparse_regular_file($path, 'sparse_components_invalid');
+    $components = json_decode((string) file_get_contents($path), true);
+    if (!is_array($components) || !is_array($components['models'] ?? null)) {
+        auto_photo_sparse_fail('sparse_components_invalid');
+    }
+    return $components;
+}
+
+function auto_photo_sparse_manifest_model_id(mixed $value): ?int
+{
+    if (is_int($value) && $value >= 0) {
+        return $value;
+    }
+    if (is_string($value) && preg_match('/^(0|[1-9][0-9]*)$/', $value)) {
+        return (int) $value;
+    }
+    return null;
+}
+
+function auto_photo_sparse_validate_model_id(array $components, int $modelId): array
+{
+    foreach ($components['models'] ?? [] as $model) {
+        if (is_array($model)
+            && auto_photo_sparse_manifest_model_id($model['model_id'] ?? null) === $modelId) {
+            return $model;
+        }
+    }
+    auto_photo_sparse_fail('sparse_model_not_found');
+}
+
+function auto_photo_sparse_validate_job_scope(
+    mysqli $db,
+    int $orderId,
+    array $sparseJob
+): array {
+    $parameters = json_decode((string) ($sparseJob['parameters_json'] ?? ''), true);
+    if (!is_array($parameters)) {
+        auto_photo_sparse_fail('sparse_job_scope_invalid');
+    }
+    if ((int) ($sparseJob['order_id'] ?? 0) !== $orderId
+        || (int) ($sparseJob['capture_session_id'] ?? 0) <= 0
+        || !auto_photo_sparse_is_standalone_job($sparseJob)) {
+        auto_photo_sparse_fail('standalone_photo_sparse_job_not_found');
+    }
+
+    $bundleId = $parameters['capture_bundle_id'] ?? null;
+    $bundleUuid = $parameters['app_bundle_uuid'] ?? null;
+    if (!is_int($bundleId) || $bundleId <= 0
+        || !is_string($bundleUuid) || $bundleUuid === '') {
+        auto_photo_sparse_fail('sparse_job_scope_invalid');
+    }
+
+    $sessionId = (int) ($sparseJob['capture_session_id'] ?? 0);
+    $statement = $db->prepare(
+        'SELECT * FROM capture_bundles WHERE id=? AND order_id=? AND capture_session_id=? LIMIT 1'
+    );
+    if (!$statement || !$statement->bind_param('iii', $bundleId, $orderId, $sessionId)
+        || !$statement->execute()) {
+        auto_photo_sparse_fail('capture_bundle_query_failed');
+    }
+    $result = $statement->get_result();
+    $bundle = $result ? $result->fetch_assoc() : null;
+    $statement->close();
+    if (!is_array($bundle) || !hash_equals(
+        (string) ($bundle['app_bundle_uuid'] ?? ''),
+        $bundleUuid
+    )) {
+        auto_photo_sparse_fail('sparse_job_scope_invalid');
+    }
+
+    return ['parameters' => $parameters, 'bundle' => $bundle];
+}
+
+function auto_photo_sparse_validate_prepare_chain(
+    mysqli $db,
+    int $orderId,
+    array $sparseJob,
+    array $scope
+): array {
+    $parameters = $scope['parameters'] ?? null;
+    $bundle = $scope['bundle'] ?? null;
+    if (!is_array($parameters) || !is_array($bundle)) {
+        auto_photo_sparse_fail('sparse_job_scope_invalid');
+    }
+    $prepareDbJobId = $parameters['prepare_job_id'] ?? null;
+    $prepareRemoteJobId = $parameters['prepare_remote_job_id'] ?? null;
+    if (!is_int($prepareDbJobId) || $prepareDbJobId <= 0
+        || !is_int($prepareRemoteJobId) || $prepareRemoteJobId <= 0) {
+        auto_photo_sparse_fail('prepare_chain_invalid');
+    }
+
+    $sessionId = (int) ($sparseJob['capture_session_id'] ?? 0);
+    $type = AUTO_PHOTO_PREPARE_JOB_TYPE;
+    $statement = $db->prepare(
+        'SELECT * FROM sfm_remote_jobs WHERE id=? AND order_id=? AND capture_session_id=? AND job_type=? LIMIT 1'
+    );
+    if (!$statement || !$statement->bind_param(
+        'iiis', $prepareDbJobId, $orderId, $sessionId, $type
+    ) || !$statement->execute()) {
+        auto_photo_sparse_fail('prepare_job_query_failed');
+    }
+    $result = $statement->get_result();
+    $prepareJob = $result ? $result->fetch_assoc() : null;
+    $statement->close();
+    if (!is_array($prepareJob)
+        || (int) ($prepareJob['id'] ?? 0) !== $prepareDbJobId
+        || (int) ($prepareJob['order_id'] ?? 0) !== $orderId
+        || (int) ($prepareJob['capture_session_id'] ?? 0) !== $sessionId
+        || (string) ($prepareJob['job_type'] ?? '') !== $type
+        || (int) ($prepareJob['remote_job_id'] ?? 0) !== $prepareRemoteJobId
+        || (int) ($sparseJob['parent_remote_job_id'] ?? 0) !== $prepareRemoteJobId) {
+        auto_photo_sparse_fail('prepare_chain_invalid');
+    }
+
+    $plan = auto_photo_sparse_plan($prepareJob);
+    if ((int) $plan['capture_bundle_id'] !== (int) $bundle['id']
+        || !hash_equals(
+            (string) $bundle['app_bundle_uuid'],
+            (string) $plan['app_bundle_uuid']
+        )) {
+        auto_photo_sparse_fail('prepare_chain_invalid');
+    }
+
+    return [
+        'parameters' => $parameters,
+        'bundle' => $bundle,
+        'prepare_job' => $prepareJob,
+        'plan' => $plan,
+    ];
+}
+
 function auto_photo_sparse_parse_cli(array $argv): array
 {
     $values = [];

@@ -6,6 +6,7 @@ require_once dirname(__DIR__) . '/remote_station/sfm_cleanup.php';
 require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
 require_once dirname(__DIR__) . '/libs/sfm_debug_public_lib.php';
 require_once dirname(__DIR__) . '/libs/source_storage_lib.php';
+require_once dirname(__DIR__) . '/libs/auto_photo_sparse_web_lib.php';
 auth_require_login();
 $user = auth_current_user(); $userId=(int)$user['id']; $role=$user['role'] ?? 'BROKER';
 $orderId=(int)($_GET['id']??0); if($orderId<=0){http_response_code(400);exit('Bad order id');}
@@ -1026,6 +1027,29 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
  }
 
 
+
+ if (
+    $action === 'auto_photo_sparse_select_model'
+    && $canDeleteMedia
+) {
+    try {
+        auto_photo_sparse_web_select_model(
+            $dbcnx,
+            $orderId,
+            $_POST['sparse_db_job_id'] ?? null,
+            $_POST['model_id'] ?? null
+        );
+
+        header(
+            'Location: /order_simple.php?id='
+            . $orderId
+            . '&photo_model_selected=1'
+        );
+        exit;
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+    }
+}
 
  if($action==='create_capture_bundle_dense_job' && $canDeleteMedia){
    try{
