@@ -1,248 +1,266 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-usage() {
-    cat <<'USAGE'
-Usage:
-  ./deploy_web_changes.sh [--dry-run] [--from REF] [--to REF] [--target USER@HOST:/path/] [--ssh-port PORT]
-  ./deploy_web_changes.sh --apply [--from REF] [--to REF] [--target USER@HOST:/path/] [--ssh-port PORT]
-  ./deploy_web_changes.sh --list-only [--from REF] [--to REF]
+LOCAL_WEB="/home/ilyamus/Документы/Insta3D/web"
 
-Defaults:
-  mode:   --dry-run
-  from:   HEAD^
-  to:     HEAD
-  target: root@makler.cargocells.com:/home/makler/web/
-  SSH port: 3322
+REMOTE_USER="root"
+REMOTE_HOST="makler.cargocells.com"
+REMOTE_PORT="3322"
+REMOTE_WEB="/home/makler/web"
+REMOTE_BACKUPS="/home/makler/deploy_backups"
 
-The script deploys only changed tracked files below web/. It never uses --delete,
-never deploys docs/, and excludes production configuration and runtime data.
-USAGE
-}
+MODE="${1:---dry-run}"
+RESTART_WORKER="${2:-}"
 
-MODE="dry-run"
-FROM_REF="${DEPLOY_FROM:-HEAD^}"
-TO_REF="${DEPLOY_TO:-HEAD}"
-SERVER="${DEPLOY_SERVER:-makler.cargocells.com}"
-SSH_PORT="${DEPLOY_SSH_PORT:-3322}"
-TARGET="${DEPLOY_TARGET:-root@${SERVER}:/home/makler/web/}"
-BACKUP_ROOT="${DEPLOY_BACKUP_ROOT:-/home/makler/deploy_backups}"
+case "$MODE" in
+    --dry-run|--apply)
+        ;;
+    *)
+        echo "Usage:"
+        echo "  $0 --dry-run"
+        echo "  $0 --apply"
+        echo "  $0 --apply --restart-worker"
+        exit 2
+        ;;
+esac
 
-while (($#)); do
-    case "$1" in
-        --dry-run)
-            MODE="dry-run"
-            shift
+FILES=(
+    "libs/auto_photo_sparse_lib.php"
+    "libs/auto_photo_sparse_web_lib.php"
+    "libs/auto_photo_export_worker_lib.php"
+
+    "tools/sfm_remote_worker.php"
+
+    "remote_station/export_sparse_ply.sh"
+
+    "tests/auto_photo_export_worker_test.php"
+    "tests/auto_photo_export_shell_test.sh"
+    "tests/auto_photo_sparse_review_test.php"
+    "tests/auto_photo_sparse_web_test.php"
+
+    "www/order.php"
+)
+
+SSH=(
+    ssh
+    -p "$REMOTE_PORT"
+    -o BatchMode=yes
+    -o StrictHostKeyChecking=accept-new
+    "${REMOTE_USER}@${REMOTE_HOST}"
+)
+
+echo "Local:  $LOCAL_WEB"
+echo "Remote: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_WEB}/"
+echo "Mode:   $MODE"
+echo
+echo "Files:"
+printf '  web/%s\n' "${FILES[@]}"
+
+#
+# Проверка локальных файлов
+#
+
+echo
+echo "==> Local validation"
+
+for FILE in "${FILES[@]}"; do
+    PATH_LOCAL="${LOCAL_WEB}/${FILE}"
+
+    if [[ ! -f "$PATH_LOCAL" ]]; then
+        echo "ERROR: missing local file:"
+        echo "  $PATH_LOCAL"
+        exit 1
+    fi
+
+    case "$FILE" in
+        *.php)
+            php -l "$PATH_LOCAL" >/dev/null
             ;;
-        --apply)
-            MODE="apply"
-            shift
-            ;;
-        --list-only)
-            MODE="list-only"
-            shift
-            ;;
-        --from)
-            [[ $# -ge 2 ]] || { usage >&2; exit 2; }
-            FROM_REF="$2"
-            shift 2
-            ;;
-        --to)
-            [[ $# -ge 2 ]] || { usage >&2; exit 2; }
-            TO_REF="$2"
-            shift 2
-            ;;
-        --target)
-            [[ $# -ge 2 ]] || { usage >&2; exit 2; }
-            TARGET="$2"
-            shift 2
-            ;;
-        --ssh-port)
-            [[ $# -ge 2 ]] || { usage >&2; exit 2; }
-            [[ "$2" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid SSH port: $2" >&2; exit 2; }
-            SSH_PORT="$2"
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            echo "ERROR: unknown argument: $1" >&2
-            usage >&2
-            exit 2
+        *.sh)
+            bash -n "$PATH_LOCAL"
             ;;
     esac
 done
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-# Root may operate inside a repository owned by another user. Apply safe.directory
-# only to this invocation; do not modify global Git configuration.
-REPO_ROOT="$(
-    git -c "safe.directory=$SCRIPT_DIR"         -C "$SCRIPT_DIR"         rev-parse --show-toplevel 2>/dev/null || true
-)"
-if [[ -z "$REPO_ROOT" ]]; then
-    echo "ERROR: script must be inside the Insta3D Git repository" >&2
-    exit 1
+php "$LOCAL_WEB/tests/auto_photo_export_worker_test.php"
+bash "$LOCAL_WEB/tests/auto_photo_export_shell_test.sh"
+php "$LOCAL_WEB/tests/auto_photo_sparse_review_test.php"
+if php -r 'exit(class_exists("mysqli_result") ? 0 : 1);'; then
+    php "$LOCAL_WEB/tests/auto_photo_sparse_web_test.php"
+else
+    echo "WARN: local PHP has no mysqli extension; sparse web test skipped locally"
 fi
 
-GIT=(git -c "safe.directory=$REPO_ROOT" -C "$REPO_ROOT")
-SOURCE_ROOT="$REPO_ROOT/web"
-[[ -d "$SOURCE_ROOT" ]] || { echo "ERROR: missing source directory: $SOURCE_ROOT" >&2; exit 1; }
+echo "Local validation: PASS"
 
-"${GIT[@]}" rev-parse --verify "${FROM_REF}^{commit}" >/dev/null
-"${GIT[@]}" rev-parse --verify "${TO_REF}^{commit}" >/dev/null
+#
+# Резервная копия сервера
+#
 
-is_excluded() {
-    local path="$1"
-    case "$path" in
-        configs|configs/*|\
-        storage|storage/*|\
-        cache|cache/*|\
-        templates_c|templates_c/*|\
-        MySqlDump|MySqlDump/*|\
-        remote_station/output|remote_station/output/*|\
-        remote_station/stations.conf|\
-        www/tmp|www/tmp/*|\
-        www/.well-known|www/.well-known/*|\
-        .venv-*|.venv-*/*|\
-        tools/colmap_src|tools/colmap_src/*|\
-        */build|*/build/*|\
-        *.bak|*.bak.*|*.bkp|*.bkp.*|*.before_*|\
-        *.sql|*.sql.gz)
-            return 0
-            ;;
-    esac
-    return 1
-}
+if [[ "$MODE" == "--apply" ]]; then
+    echo
+    echo "==> Remote backup"
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-ALL_LIST="$TMP_DIR/all.zlist"
-DEPLOY_LIST="$TMP_DIR/deploy.zlist"
-DELETE_LIST="$TMP_DIR/delete.zlist"
-: > "$ALL_LIST"
-: > "$DEPLOY_LIST"
-: > "$DELETE_LIST"
+    "${SSH[@]}" bash -s -- \
+        "$REMOTE_WEB" \
+        "$REMOTE_BACKUPS" \
+        "${FILES[@]}" <<'REMOTE_BACKUP'
+set -Eeuo pipefail
 
-"${GIT[@]}" diff \
-    --no-renames \
-    --diff-filter=ACMRTUXB \
-    --name-only -z \
-    "$FROM_REF" "$TO_REF" -- web/ > "$ALL_LIST"
+REMOTE_WEB="$1"
+REMOTE_BACKUPS="$2"
+shift 2
 
-"${GIT[@]}" diff \
-    --no-renames \
-    --diff-filter=D \
-    --name-only -z \
-    "$FROM_REF" "$TO_REF" -- web/ > "$DELETE_LIST"
+BACKUP="${REMOTE_BACKUPS}/manual_$(date +%Y%m%d_%H%M%S)"
 
-if [[ -s "$DELETE_LIST" ]]; then
-    echo "ERROR: deleted web files exist in ${FROM_REF}..${TO_REF}." >&2
-    echo "This deploy script intentionally never deletes production files:" >&2
-    while IFS= read -r -d '' path; do
-        printf '  %s\n' "$path" >&2
-    done < "$DELETE_LIST"
-    exit 1
-fi
+mkdir -p "$BACKUP"
 
-while IFS= read -r -d '' path; do
-    [[ "$path" == web/* ]] || continue
-    relative="${path#web/}"
-    [[ -n "$relative" ]] || continue
+for FILE in "$@"; do
+    SOURCE="${REMOTE_WEB}/${FILE}"
 
-    if is_excluded "$relative"; then
-        printf 'SKIP protected: web/%s\n' "$relative" >&2
-        continue
+    if [[ -e "$SOURCE" || -L "$SOURCE" ]]; then
+        DESTINATION="${BACKUP}/${FILE}"
+
+        mkdir -p "$(dirname "$DESTINATION")"
+        cp -a -- "$SOURCE" "$DESTINATION"
     fi
+done
 
-    source_path="$SOURCE_ROOT/$relative"
-    if [[ ! -e "$source_path" && ! -L "$source_path" ]]; then
-        echo "ERROR: changed source is missing: web/$relative" >&2
-        exit 1
-    fi
-
-    printf '%s\0' "$relative" >> "$DEPLOY_LIST"
-done < "$ALL_LIST"
-
-if [[ ! -s "$DEPLOY_LIST" ]]; then
-    echo "No deployable web files in ${FROM_REF}..${TO_REF}."
-    exit 0
+echo "Backup: $BACKUP"
+REMOTE_BACKUP
 fi
 
-echo "Repository: $REPO_ROOT"
-echo "Range:      $FROM_REF..$TO_REF"
-echo "Mode:       $MODE"
-if [[ "$MODE" != "list-only" ]]; then
-    echo "Target:     $TARGET"
-    echo "SSH port:   $SSH_PORT"
-fi
-echo "Files:"
-while IFS= read -r -d '' relative; do
-    printf '  web/%s\n' "$relative"
-done < "$DEPLOY_LIST"
+#
+# Синхронизация
+#
 
-if [[ "$MODE" == "list-only" ]]; then
-    exit 0
-fi
-
-# Validate deployable source files before transfer.
-while IFS= read -r -d '' relative; do
-    source_path="$SOURCE_ROOT/$relative"
-    case "$relative" in
-        *.php)
-            php -l "$source_path" >/dev/null
-            ;;
-        *.sh)
-            bash -n "$source_path"
-            ;;
-        *.py)
-            python3 - "$source_path" <<'PY'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-compile(path.read_text(encoding="utf-8"), str(path), "exec")
-PY
-            ;;
-    esac
-done < "$DEPLOY_LIST"
-
-echo "Local syntax validation: PASS"
-echo "Rsync metadata policy: preserve remote owner/group; do not alter directory timestamps"
+echo
+echo "==> Rsync"
 
 RSYNC_ARGS=(
     -a
+    -c
+    --relative
     --no-owner
     --no-group
     --omit-dir-times
-    --relative
     --protect-args
     --itemize-changes
     --human-readable
-    --from0
-    --files-from="$DEPLOY_LIST"
 )
 
-if [[ "$MODE" == "dry-run" ]]; then
+if [[ "$MODE" == "--dry-run" ]]; then
     RSYNC_ARGS+=(--dry-run)
-else
-    timestamp="$(date +%Y%m%d_%H%M%S)"
-    RSYNC_ARGS+=(
-        --backup
-        --backup-dir="${BACKUP_ROOT}/${timestamp}"
-    )
 fi
 
-RSYNC_RSH="ssh -p ${SSH_PORT} -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
-    rsync "${RSYNC_ARGS[@]}" "$SOURCE_ROOT/" "$TARGET"
+(
+    cd "$LOCAL_WEB"
 
-if [[ "$MODE" == "dry-run" ]]; then
-    echo "Dry-run complete. Re-run with --apply after reviewing the rsync list."
-else
-    echo "Deploy complete. Overwritten remote files were backed up under:"
-    echo "  ${BACKUP_ROOT}/${timestamp}"
-    if grep -zqx 'tools/sfm_remote_worker.php' "$DEPLOY_LIST"; then
-        echo "NOTICE: sfm_remote_worker.php changed. Restart makler-sfm-worker.service manually after remote lint."
+    RSYNC_RSH="ssh -p ${REMOTE_PORT} -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+        rsync \
+        "${RSYNC_ARGS[@]}" \
+        "${FILES[@]/#/./}" \
+        "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_WEB}/"
+)
+
+if [[ "$MODE" == "--dry-run" ]]; then
+    echo
+    echo "Dry-run complete."
+    echo "Для применения:"
+    echo "  $0 --apply"
+    exit 0
+fi
+
+#
+# Проверка сервера
+#
+
+echo
+echo "==> Remote validation"
+
+"${SSH[@]}" bash -s -- "$REMOTE_WEB" <<'REMOTE_VERIFY'
+set -Eeuo pipefail
+
+REMOTE_WEB="$1"
+
+cd "$REMOTE_WEB"
+
+REQUIRED=(
+    "libs/auto_photo_sparse_lib.php"
+    "libs/auto_photo_sparse_web_lib.php"
+    "libs/auto_photo_export_worker_lib.php"
+
+    "tools/sfm_remote_worker.php"
+
+    "remote_station/export_sparse_ply.sh"
+
+    "tests/auto_photo_export_worker_test.php"
+    "tests/auto_photo_export_shell_test.sh"
+    "tests/auto_photo_sparse_review_test.php"
+    "tests/auto_photo_sparse_web_test.php"
+
+    "www/order.php"
+)
+
+for FILE in "${REQUIRED[@]}"; do
+    if [[ ! -f "$FILE" ]]; then
+        echo "ERROR: remote file missing:"
+        echo "  ${REMOTE_WEB}/${FILE}"
+        exit 1
     fi
+done
+
+chmod 755 \
+    remote_station/export_sparse_ply.sh \
+    tests/auto_photo_export_shell_test.sh
+
+php -l libs/auto_photo_sparse_lib.php
+php -l libs/auto_photo_sparse_web_lib.php
+php -l libs/auto_photo_export_worker_lib.php
+php -l tools/sfm_remote_worker.php
+php -l www/order.php
+
+bash -n remote_station/export_sparse_ply.sh
+bash -n tests/auto_photo_export_shell_test.sh
+
+php tests/auto_photo_export_worker_test.php
+bash tests/auto_photo_export_shell_test.sh
+php tests/auto_photo_sparse_review_test.php
+php tests/auto_photo_sparse_web_test.php
+
+if grep -n \
+    "photo_export_shell_not_ready" \
+    tools/sfm_remote_worker.php
+then
+    echo "ERROR: temporary photo export guard is still present"
+    exit 1
 fi
+
+echo "Remote validation: PASS"
+REMOTE_VERIFY
+
+#
+# Необязательный перезапуск worker
+#
+
+if [[ "$RESTART_WORKER" == "--restart-worker" ]]; then
+    echo
+    echo "==> Restart worker"
+
+    "${SSH[@]}" '
+set -Eeuo pipefail
+
+systemctl restart makler-sfm-worker.service
+systemctl status makler-sfm-worker.service --no-pager
+journalctl -u makler-sfm-worker.service -n 50 --no-pager
+'
+else
+    echo
+    echo "Worker не перезапущен."
+    echo "После проверки запусти:"
+    echo "  $0 --apply --restart-worker"
+fi
+
+echo
+echo "Deploy complete."
+
