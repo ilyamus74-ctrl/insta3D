@@ -283,8 +283,16 @@ try {
         'worker plans photo export'
     );
     apew_assert(
-        str_contains($workerSource, 'photo_export_shell_not_ready'),
-        'worker has photo shell guard'
+        str_contains($workerSource, 'auto_photo_export_worker_prepare_paths'),
+        'worker prepares photo export paths'
+    );
+    apew_assert(
+        str_contains($workerSource, '$args = $photoExportPlan[\'args\'];'),
+        'worker uses photo export plan arguments'
+    );
+    apew_assert(
+        !str_contains($workerSource, 'photo_export_shell_not_ready'),
+        'worker removes temporary photo shell guard'
     );
     apew_assert(
         !preg_match('/function\\s+photo_export_integer\\s*\\(/', $workerSource),
@@ -313,36 +321,39 @@ try {
         $exportBranchStart,
         $denseBranchStart - $exportBranchStart
     );
-    $photoGuardStart = strpos($exportBranch, "if (\$photoExportPlan['is_photo_export'] === true)");
+    $photoBranchStart = strpos($exportBranch, "if (\$photoExportPlan['is_photo_export'] === true)");
     apew_assert(
-        $photoGuardStart !== false && $exportBranchStart + $photoGuardStart < $runCommandStart,
-        'photo guard precedes run_command'
+        $photoBranchStart !== false && $exportBranchStart + $photoBranchStart < $runCommandStart,
+        'photo branch precedes run_command'
     );
     $legacyBranchStart = strpos(
         $exportBranch,
-        '$parent = (int)($job[\'parent_remote_job_id\'] ?? $remoteJobId);',
-        $photoGuardStart
+        '} else {',
+        $photoBranchStart
     );
     apew_assert($legacyBranchStart !== false, 'legacy export branch present');
-    $photoGuard = substr(
+    $photoBranch = substr(
         $exportBranch,
-        $photoGuardStart,
-        $legacyBranchStart - $photoGuardStart
+        $photoBranchStart,
+        $legacyBranchStart - $photoBranchStart
     );
     apew_assert(
-        preg_match(
-            "/photo_export_shell_not_ready[\\s\\S]*?return\\s*;/",
-            $photoGuard
-        ) === 1,
-        'photo guard returns after setting error'
+        str_contains($photoBranch, 'auto_photo_export_worker_prepare_paths'),
+        'photo branch prepares paths through helper'
     );
     apew_assert(
-        !str_contains($photoGuard, 'auto_photo_export_worker_prepare_paths'),
-        'photo guard must not prepare paths'
+        str_contains($photoBranch, '$args = $photoExportPlan[\'args\'];'),
+        'photo branch takes arguments from helper plan'
     );
     apew_assert(
-        !str_contains($photoGuard, 'model_id_from_job'),
-        'photo guard must not use legacy model parsing'
+        !str_contains($photoBranch, 'model_id_from_job'),
+        'photo branch must not use legacy model parsing'
+    );
+    apew_assert(
+        !str_contains($photoBranch, 'remote_output_dir')
+            && !str_contains($photoBranch, 'output_path')
+            && !str_contains($photoBranch, 'log_path'),
+        'photo branch must not calculate output paths'
     );
 
     $normalizedExportBranch = preg_replace('/\\s+/', '', $exportBranch);
@@ -351,8 +362,75 @@ try {
             && str_contains(
                 $normalizedExportBranch,
                 "[SFM_REMOTE_BASE.'/export_sparse_ply.sh',SFM_REMOTE_CONF,(string)\$parent,(string)\$modelId,SFM_REMOTE_OUTPUT]"
-            ),
+        ),
         'legacy export arguments remain compatible'
+    );
+
+    $completionStart = strpos(
+        $workerSource,
+        'if (' . "\n"
+            . "        \$type === 'EXPORT_PLY'" . "\n"
+            . "        && is_array(\$photoExportPlan)",
+        $runCommandStart
+    );
+    $commandFailureStart = strpos($workerSource, 'if ($code !== 0)', $runCommandStart);
+    $photoLogStart = strpos(
+        $workerSource,
+        'write_job_text_log(',
+        $completionStart
+    );
+    $helperCompletionStart = strpos(
+        $workerSource,
+        'auto_photo_export_worker_completion(',
+        $completionStart
+    );
+    $completionSetJobStart = strpos(
+        $workerSource,
+        'set_job(',
+        $helperCompletionStart
+    );
+    $completionReturnStart = strpos(
+        $workerSource,
+        'return;',
+        $completionSetJobStart
+    );
+    apew_assert(
+        $completionStart !== false
+            && $completionStart > $runCommandStart
+            && $completionStart < $commandFailureStart,
+        'photo completion is between command execution and generic failure'
+    );
+    apew_assert(
+        $photoLogStart !== false
+            && $photoLogStart < $helperCompletionStart
+            && $helperCompletionStart < $completionSetJobStart,
+        'photo output log precedes helper completion and status update'
+    );
+    apew_assert(
+        $completionReturnStart !== false
+            && $completionReturnStart < $commandFailureStart,
+        'photo completion returns before legacy completion'
+    );
+
+    $legacyBranch = substr($exportBranch, $legacyBranchStart);
+    apew_assert(
+        str_contains($legacyBranch, 'model_id_from_job($job)'),
+        'legacy branch retains model resolver'
+    );
+    $legacyCompletionStart = strpos(
+        $workerSource,
+        "if (\$type === 'EXPORT_PLY') {\n        write_job_text_log",
+        $commandFailureStart
+    );
+    $legacyCompletion = substr($workerSource, $legacyCompletionStart);
+    apew_assert(
+        $legacyCompletionStart !== false
+            && str_contains($legacyCompletion, 'model_id_from_job($job)')
+            && str_contains(
+                $legacyCompletion,
+                "'PLY exported: job_' . \$parent . '/colmap/sparse/' . \$modelId . '/model.ply'"
+            ),
+        'legacy completion remains unchanged'
     );
 
     echo "OK\n";

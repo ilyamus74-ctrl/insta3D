@@ -1212,24 +1212,34 @@ function launch_job(mysqli $db, array $job): void
         }
 
         if ($photoExportPlan['is_photo_export'] === true) {
-            set_job(
-                $db,
-                $id,
-                'ERROR',
-                0,
-                'photo_export_shell_not_ready'
-            );
+            try {
+                auto_photo_export_worker_prepare_paths(
+                    $photoExportPlan,
+                    SFM_REMOTE_OUTPUT
+                );
+            } catch (Throwable $e) {
+                set_job(
+                    $db,
+                    $id,
+                    'ERROR',
+                    0,
+                    $e->getMessage()
+                );
 
-            worker_log(
-                'ERROR photo EXPORT_PLY is validated but shell v2 is not installed'
-            );
+                worker_log(
+                    'ERROR photo EXPORT_PLY path preparation: '
+                    . $e->getMessage()
+                );
 
-            return;
+                return;
+            }
+
+            $args = $photoExportPlan['args'];
+        } else {
+            $parent = (int)($job['parent_remote_job_id'] ?? $remoteJobId);
+            $modelId = model_id_from_job($job);
+            $args = [SFM_REMOTE_BASE . '/export_sparse_ply.sh', SFM_REMOTE_CONF, (string)$parent, (string)$modelId, SFM_REMOTE_OUTPUT];
         }
-
-        $parent = (int)($job['parent_remote_job_id'] ?? $remoteJobId);
-        $modelId = model_id_from_job($job);
-        $args = [SFM_REMOTE_BASE . '/export_sparse_ply.sh', SFM_REMOTE_CONF, (string)$parent, (string)$modelId, SFM_REMOTE_OUTPUT];
     } elseif ($type === 'COLMAP_DENSE_CHUNK') {
         $parentJobId = (int)($job['parent_remote_job_id'] ?? 0);
         $params = json_decode((string)($job['parameters_json'] ?? '{}'), true) ?: [];
@@ -1265,6 +1275,52 @@ function launch_job(mysqli $db, array $job): void
         worker_log("ERROR launch {$type} id={$id} remote={$remoteJobId}: " . $e->getMessage());
         return;
     } finally { if ($launchTemp !== null) @unlink($launchTemp); }
+    if (
+        $type === 'EXPORT_PLY'
+        && is_array($photoExportPlan)
+        && ($photoExportPlan['is_photo_export'] ?? false) === true
+    ) {
+        write_job_text_log(
+            $remoteJobId,
+            'export_ply_stdout_stderr.log',
+            $output
+        );
+
+        $completion = auto_photo_export_worker_completion(
+            $photoExportPlan,
+            $code
+        );
+
+        set_job(
+            $db,
+            $id,
+            $completion['status'],
+            $completion['progress'],
+            $completion['message']
+        );
+
+        if ($completion['status'] === 'ERROR') {
+            worker_log(
+                'ERROR photo EXPORT_PLY id='
+                . $id
+                . ' remote='
+                . $remoteJobId
+                . ': '
+                . $completion['message']
+            );
+        } else {
+            worker_log(
+                'DONE photo EXPORT_PLY id='
+                . $id
+                . ' remote='
+                . $remoteJobId
+                . ': '
+                . $completion['message']
+            );
+        }
+
+        return;
+    }
     if ($code !== 0) {
         $failure = format_command_failure($cmd, $code, $output);
         if ($type === 'EXTRACT_FRAMES') {
