@@ -56,3 +56,10 @@ Add controls for select model, exhaustive retry, and export PLY using the existi
 5. Baseline sparse job `746` remains unmodified; its output is never an export destination.
 6. Existing video SfM behavior remains unchanged.
 7. The tab shows the requested bundle/prepare/runs/models/export information, and the B05.4 controls obey B04 locking and CSRF/permission contracts.
+
+## Implementation status
+
+- B05.1 — ACCEPTED
+- B05.2 — ACCEPTED / DEPLOYED (commit: `26bdc80`; production deployment date: `2026-07-22`)
+- B05.3 — IMPLEMENTED, PENDING REVIEW/DEPLOYMENT
+- B05.4 — NOT STARTED

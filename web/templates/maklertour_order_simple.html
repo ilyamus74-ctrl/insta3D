@@ -17,8 +17,10 @@
       <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#simple-stereo" type="button">Stereo</button></li>
       <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#simple-generated" type="button">Generated Models</button></li>
       <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#simple-debug" type="button">Debug</button></li>
+      {$autoPhotoSparseUiNav nofilter}
     </ul>
     <div class="tab-content">
+      {$autoPhotoSparseUiPane nofilter}
       <div class="tab-pane fade show active" id="simple-overview">
         <div class="card"><div class="card-body"><h5 class="card-title">Overview</h5>
           <table class="table"><tr><th>Title</th><td>{$order.title|escape}</td></tr><tr><th>Address</th><td>{$order.address|escape}</td></tr><tr><th>Status</th><td><span class="badge {$order.status_meta.class}">{$order.status_meta.label|escape}</span></td></tr><tr><th>Customer</th><td>{$order.customer_name|default:'-'|escape} / {$order.customer_phone|default:'-'|escape}</td></tr><tr><th>Broker</th><td>{$order.broker_name|default:'-'|escape} / {$order.broker_email|default:'-'|escape}</td></tr><tr><th>Operator</th><td>{$order.operator_name|default:'-'|escape} / {$order.operator_email|default:'-'|escape}</td></tr></table>

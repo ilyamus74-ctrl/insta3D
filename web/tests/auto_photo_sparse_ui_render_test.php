@@ -1,0 +1,34 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__ . '/../libs/auto_photo_sparse_ui_render_lib.php';
+function check_render(bool $condition, string $name): void { if (!$condition) { throw new RuntimeException($name); } }
+$model0=['model_id'=>0,'registered_images'=>118,'registered_percent'=>66.3,'points3D_count'=>23230,'first_image'=>'first_image','last_image'=>'last_image','frame_ranges_label'=>'frame_ranges_label','shared_images_label'=>'shared_images_label','selected'=>true,'recommended'=>true,'export'=>['status'=>'DONE','progress_percent'=>100,'db_job_id'=>900,'message'=>'export','download_url'=>'/api/file?x=1&y=2']];
+$model1=['model_id'=>1,'registered_images'=>39,'registered_percent'=>21.9,'points3D_count'=>11784,'first_image'=>'','last_image'=>'','frame_ranges_label'=>'','shared_images_label'=>'','selected'=>false,'recommended'=>false,'export'=>['status'=>'ERROR','progress_percent'=>0,'db_job_id'=>901,'message'=>'','download_url'=>'']];
+$dto=['visible'=>true,'bundle'=>['id'=>7,'capture_session_id'=>63,'photos_count'=>178,'status'=>'UPLOADED','app_bundle_uuid'=>'UUID'], 'prepare'=>['db_job_id'=>745,'remote_job_id'=>857972911,'status'=>'DONE','progress_percent'=>100,'message'=>'prepared'], 'active_jobs'=>true,'runs'=>[['sparse_db_job_id'=>746,'sparse_remote_job_id'=>434136404,'status'=>'DONE','progress_percent'=>100,'matcher'=>'sequential','retry_mode'=>'','models_count'=>2,'input_images'=>178,'message'=>'run','recommended_run'=>true,'merge_warning'=>true,'models'=>[$model0,$model1]],['sparse_db_job_id'=>747,'sparse_remote_job_id'=>0,'status'=>'ERROR','progress_percent'=>0,'matcher'=>'','retry_mode'=>'','models_count'=>0,'input_images'=>0,'message'=>'','recommended_run'=>false,'merge_warning'=>false,'models'=>[]]]];
+$before=serialize($dto); $render=auto_photo_sparse_ui_render($dto); $nav=$render['nav']; $pane=$render['pane']; check_render(serialize($dto)===$before,'stable dto');
+check_render(auto_photo_sparse_ui_render_nav(['visible'=>false])==='' && auto_photo_sparse_ui_render_pane(['visible'=>false])==='','invisible');
+foreach(['Фото 3D','simple-photo-sfm-tab','#simple-photo-sfm'] as $needle) check_render(str_contains($nav,$needle),'nav '.$needle); check_render(!str_contains($nav,' active'),'nav inactive');
+foreach(['>7<','>63<','>178<','UPLOADED','UUID','DONE','745','857972911','100%','Обработка Auto Photo выполняется','Sparse job #746','Sparse job #747','ERROR','Модели для этого запуска отсутствуют','>0<','118 / 178','66.3%','23 230','first_image','last_image','frame_ranges_label','shared_images_label','Выбрана','Рекомендована','Рекомендованный запуск','Компоненты имеют недостаточно общих изображений для надёжного объединения','Скачать PLY','href="/api/file?x=1&amp;y=2"'] as $needle) check_render(str_contains($pane,$needle),'pane '.$needle);
+$withoutDownload=$dto; $withoutDownload['runs'][0]['models'][0]['export']['download_url']=''; check_render(!str_contains(auto_photo_sparse_ui_render_pane($withoutDownload),'Скачать PLY'),'no empty download');
+$bundleOnly=['visible'=>true,'bundle'=>$dto['bundle'],'prepare'=>null,'active_jobs'=>false,'runs'=>[]]; check_render(str_contains(auto_photo_sparse_ui_render_pane($bundleOnly),'Подготовка ещё не запускалась'),'bundle only');
+$bad=$dto; $bad['bundle']['app_bundle_uuid']='<script>alert(1)</script>'; $bad['prepare']['message']='"><img src=x onerror=alert(1)>'; $bad['runs'][0]['matcher']='<script>alert(1)</script>'; $bad['runs'][0]['models'][0]['first_image']='"><img src=x onerror=alert(1)>'; $bad['runs'][0]['models'][0]['frame_ranges_label']='<script>alert(1)</script>'; $bad['runs'][0]['models'][0]['shared_images_label']='"><img src=x onerror=alert(1)>'; $bad['runs'][0]['models'][0]['export']['download_url']='"><img src=x onerror=alert(1)>';
+$badHtml=auto_photo_sparse_ui_render_pane($bad); check_render(!str_contains($badHtml,'<script>')&&!str_contains($badHtml,'<img'),'escaping raw'); check_render(str_contains($badHtml,'&lt;script&gt;alert(1)&lt;/script&gt;')&&str_contains($badHtml,'&quot;&gt;&lt;img'),'escaping encoded');
+foreach(['<form','method="post"','csrf','name="action"','select_model','retry_exhaustive','export_ply'] as $forbidden) check_render(!str_contains(strtolower($pane),strtolower($forbidden)),'no action '.$forbidden);
+$source=(string) file_get_contents(__DIR__.'/../www/order_simple.php');
+foreach(['auto_photo_sparse_ui_render_lib.php','auto_photo_sparse_ui_render($autoPhotoSparseUi)','autoPhotoSparseUiNav','autoPhotoSparseUiPane',"\$smarty->display('maklertour_order_simple.html')"] as $needle) check_render(str_contains($source,$needle),'php integration '.$needle);
+foreach(['$smarty->fetch','str_replace','ob_start'] as $forbidden) check_render(!str_contains($source,$forbidden),'php integration no '.$forbidden);
+$integrationSource=substr($source,strpos($source,'$autoPhotoSparseUi=auto_photo_sparse_ui_web_load')); check_render(!str_contains($integrationSource,'preg_replace'),'php integration no preg_replace');
+$template=(string) file_get_contents(__DIR__.'/../templates/maklertour_order_simple.html');
+$navVariable='{$autoPhotoSparseUiNav nofilter}'; $paneVariable='{$autoPhotoSparseUiPane nofilter}';
+check_render(substr_count($template,$navVariable)===1 && substr_count($template,$paneVariable)===1,'template variables once');
+$navOpen=strpos($template,'<ul class="nav nav-pills mb-3"'); $navInsert=strpos($template,$navVariable); $navClose=strpos($template,'</ul>',$navOpen);
+check_render($navOpen!==false && $navInsert>$navOpen && $navInsert<$navClose,'template nav position');
+$tabOpen=strpos($template,'<div class="tab-content">'); $paneInsert=strpos($template,$paneVariable); $overview=strpos($template,'id="simple-overview"');
+check_render($tabOpen!==false && $paneInsert>$tabOpen && $paneInsert<$overview,'template pane position');
+$fragment='<ul>'.$render['nav'].'</ul><div class="tab-content">'.$render['pane'].'</div>';
+check_render(str_contains($fragment,'simple-photo-sfm-tab') && str_contains($fragment,'data-bs-target="#simple-photo-sfm"') && str_contains($fragment,'id="simple-photo-sfm"'),'runtime composition identifiers');
+check_render(strpos($fragment,'simple-photo-sfm-tab')<strpos($fragment,'id="simple-photo-sfm"'),'runtime nav before pane');
+check_render(substr_count($fragment,'id="simple-photo-sfm-tab"')===1 && substr_count($fragment,'id="simple-photo-sfm"')===1,'runtime identifiers once');
+$invisible=auto_photo_sparse_ui_render(['visible'=>false]); $invisibleFragment='<ul>'.$invisible['nav'].'</ul><div class="tab-content">'.$invisible['pane'].'</div>';
+check_render($invisible['nav']==='' && $invisible['pane']==='' && !str_contains($invisibleFragment,'simple-photo-sfm'),'invisible composition');
+echo "OK\n";
