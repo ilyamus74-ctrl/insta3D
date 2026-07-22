@@ -4,16 +4,23 @@
 
 Документ задаёт последовательную сборку серверной обработки `auto_photo_session` в MaklerTour.
 
-Цель — не создавать отдельную Photo SfM-подсистему, а поэтапно подключить готовые JPEG к существующему SfM/COLMAP pipeline:
+Цель — не создавать отдельную Photo SfM-подсистему, а поэтапно подключать
+готовые JPEG к существующим проверенным границам.
+
+The canonical current task numbering is maintained in
+`docs/llm/tasks/AUTO-PHOTO-EPIC.md`.
+The earlier B04+ roadmap below is superseded.
+
+Current staged registry after the earlier discovery/materialization work:
 
 ```text
-AUTO_PHOTO_PREPARE
-→ COLMAP_SPARSE
-→ COLMAP_RECONSTRUCTION_PREVIEW
-→ COLMAP_MESH
+AUTO-B02 — Prepare
+AUTO-B03 — Sparse
+AUTO-B04 — Sparse review, selection, exhaustive retry, isolated PLY export
+AUTO-B05 — Simple View «Фото 3D»
 ```
 
-После подтверждения Preview отдельно добавляются Standard, FullHD, cleanup и расширенный интерфейс.
+No automatic Preview, dense, or mesh stage follows AUTO-B03.
 
 Один этап означает:
 
@@ -600,7 +607,15 @@ AUTO_PHOTO_PREPARE → существующий COLMAP_SPARSE.
 
 ---
 
-# Этап 3. SPARSE → Preview dense
+# Superseded historical B04+ roadmap
+
+The historical stages below described Preview/dense, mesh, and later UI work.
+They are retained only as historical context and are superseded by the
+canonical registry in `docs/llm/tasks/AUTO-PHOTO-EPIC.md`; they do not assign
+current task IDs or authorize automatic Preview, dense, or mesh work after
+AUTO-B03.
+
+# Этап 3. SPARSE → Preview dense (superseded historical context)
 
 ## Предусловие
 
@@ -1076,13 +1091,15 @@ YES / NO
 Не применяй изменения автоматически.
 Не переходи дальше без фактического runtime acceptance.
 ```
-## Delivery sequence
+## Current delivery sequence
 
 ```text
-SFM-C01
-AUTO-B02
-AUTO-B03
-AUTO-B04
-AUTO-B05
-AUTO-B06
+AUTO-B02 — Prepare
+AUTO-B03 — Sparse
+AUTO-B04 — Sparse review, selection, exhaustive retry, isolated PLY export
+AUTO-B05 — Simple View «Фото 3D»
 ```
+
+The canonical current task numbering is maintained in
+`docs/llm/tasks/AUTO-PHOTO-EPIC.md`. The earlier B04+ roadmap above is
+superseded.

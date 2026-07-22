@@ -320,105 +320,94 @@ COLMAP_SPARSE
 
 ---
 
-## 10. Дочерние задачи
+## 10. Канонический task registry
 
-### AUTO-000 — Discovery
+### AUTO-000-DISCOVERY
 
-Read-only исследование:
+Read-only discovery of the factual bundle, schema, storage, upload behavior,
+existing UI, worker transport, and current pipeline boundaries.
 
-- фактический bundle;
-- schema;
-- storage;
-- upload behavior;
-- existing UI;
-- existing worker transport;
-- existing pipeline chain;
-- минимальный план реализации.
+### AUTO-000R-RUNTIME-BUNDLE
 
-### AUTO-B01 — Safe bundle indexer
+Runtime bundle verification and recorded evidence for the known Auto Photo
+bundle, without widening the implementation scope.
 
-Создать безопасную библиотеку индексации и `index.json`.
+### AUTO-B01A-SAFE-BUNDLE-INDEXER
 
-### AUTO-B02 — JPEG/thumbnail endpoint
+Safe archive inspection and atomic normalized bundle index.
 
-Authenticated file endpoint и thumbnail cache.
+### AUTO-B01B-SAFE-PHOTO-MATERIALIZER
 
-### AUTO-B03 — Gallery
+Safe, atomic JPEG materialization from a validated bundle index.
 
-Страница полной gallery и contact sheet.
+### AUTO-B02-AUTO-PHOTO-PREPARE
 
-### AUTO-B04 — Simple View Photo SfM tab
+Validated Auto Photo prepare staging only.
 
-Отдельная вкладка и bundle cards.
+### AUTO-B03-AUTO-PHOTO-SPARSE
 
-### AUTO-B05 — Pipeline creation endpoint
+Standalone sparse job from a completed prepare result, without automatic
+post-sparse chaining.
 
-Создание `sfm_pipeline_runs` и первого PREPARE job.
+### AUTO-B04-AUTO-PHOTO-SPARSE-REVIEW-EXPORT
 
-### AUTO-B06 — PREPARE runner
+Sparse review, strict model selection, exhaustive retry, and isolated PLY
+export.
 
-Подготовка JPEG frames и result artifacts.
+### AUTO-B05-AUTO-PHOTO-SIMPLE-VIEW
 
-### AUTO-B07 — Worker chaining
+Simple View `Фото 3D` UI in four small slices:
 
-PREPARE `DONE` → `COLMAP_SPARSE`.
+- B05.1 / Patch 4A — pure UI DTO
+- B05.2 / Patch 4B — read-only loader
+- B05.3 / Patch 5A — read-only «Фото 3D» tab
+- B05.4 / Patch 5B — select/retry/export actions
 
-### AUTO-B08 — Processing UI
-
-Preview/Standard/FullHD cards и metrics.
-
-### AUTO-B09 — Generated Models integration
-
-Photo SfM results в существующем model/merge flow.
-
-### AUTO-B10 — End-to-end acceptance
-
-Фактический Preview pipeline и regression существующих flows.
+Future stages are intentionally not assigned task IDs until B05 acceptance.
 
 ---
 
 ## 11. Зависимости задач
 
 ```text
-AUTO-000
+AUTO-000-DISCOVERY
   ↓
-AUTO-B01
+AUTO-000R-RUNTIME-BUNDLE
   ↓
-AUTO-B02 ──→ AUTO-B03
+AUTO-B01A-SAFE-BUNDLE-INDEXER
   ↓
-AUTO-B04
+AUTO-B01B-SAFE-PHOTO-MATERIALIZER
   ↓
-AUTO-B05
+AUTO-B02-AUTO-PHOTO-PREPARE
   ↓
-AUTO-B06
+AUTO-B03-AUTO-PHOTO-SPARSE
   ↓
-AUTO-B07
+AUTO-B04-AUTO-PHOTO-SPARSE-REVIEW-EXPORT
   ↓
-AUTO-B08
-  ↓
-AUTO-B09
-  ↓
-AUTO-B10
+AUTO-B05-AUTO-PHOTO-SIMPLE-VIEW
 ```
-
-Некоторые UI-задачи могут выполняться параллельно после стабилизации `index.json`, но processing нельзя начинать до safe indexing.
-
----
 
 ## 12. Definition of Done epic
 
-Epic считается завершённым, когда:
+Epic reaches the current milestone Definition of Done when:
 
-1. фактический auto-photo bundle безопасно индексируется;
-2. counts и metadata отображаются;
-3. thumbnails защищены access control;
-4. в Simple View есть отдельная вкладка Photo SfM;
-5. auto-photo не отображается как synced stereo dense;
-6. Preview pipeline запускается без `EXTRACT_FRAMES`;
-7. PREPARE передаёт готовые JPEG в `COLMAP_SPARSE`;
-8. sparse metrics отображаются;
-9. dense/mesh flow переиспользован;
-10. результат появляется в Generated Models;
-11. duplicate active start возвращает controlled conflict;
-12. Video SfM и stereo flows проходят regression;
-13. все runtime результаты подтверждены evidence.
+1. AUTO-000-DISCOVERY и AUTO-000R-RUNTIME-BUNDLE зафиксированы.
+2. AUTO-B01A и AUTO-B01B приняты.
+3. AUTO-B02 Prepare принят на реальном bundle.
+4. AUTO-B03 standalone sparse принят без автоматического post-sparse chain.
+5. AUTO-B04 review/select/retry/export backend реализован и regression tests проходят.
+6. Baseline job 746 и его output остаются неизменными.
+7. AUTO-B05.1–B05.4 реализованы и приняты последовательно.
+8. Simple View содержит отдельную вкладку «Фото 3D».
+9. Model ID 0 корректно отображается и обрабатывается.
+10. Select, exhaustive retry и isolated PLY export соблюдают permission, CSRF и locking.
+11. Malformed data не вызывает fatal page error.
+12. Video SfM и legacy flows проходят regression.
+13. Никакой автоматический Preview, dense, mesh или legacy chain не запускается.
+14. Production PLY export acceptance фиксируется отдельным evidence.
+
+## Deferred long-term scope
+
+Preview, dense, mesh and Generated Models integration remain possible
+future product stages, but they are not assigned task IDs and are not
+authorized until B05 acceptance.
