@@ -62,7 +62,8 @@ Add controls for select model, exhaustive retry, and export PLY using the existi
 - B05.1 — ACCEPTED / DEPLOYED
 - B05.2 — ACCEPTED / DEPLOYED (commit: `26bdc80`; production deployment date: `2026-07-22`)
 - B05.3 — ACCEPTED / DEPLOYED (production deployment date: `2026-07-22`)
-- B05.4 — IMPLEMENTED, PENDING REVIEW/DEPLOYMENT
+- B05.4 — ACCEPTED / DEPLOYED
+- B05.5 — BLOCKED until B03.1 is accepted and deployed.
 
 ## B05.4 implementation record
 
@@ -72,3 +73,9 @@ Add controls for select model, exhaustive retry, and export PLY using the existi
 - POST forms use the existing `secCode` CSRF field and successful actions return to `#simple-photo-sfm`.
 - POST redirects use `#simple-photo-sfm`; the Simple View template activates the Bootstrap Photo 3D pill on window load only for the exact `#simple-photo-sfm` URL hash.
 - Overview remains the default active tab for ordinary page loads.
+
+## B05.5 prerequisite evidence
+
+- Bundle 8 materialization completed; its prepare dry-run confirmed 87 frames.
+- No real prepare job was created for bundle 8.
+- B05.5 remains blocked until the B03.1 prepare-DONE to standalone-sparse chain is accepted and deployed.

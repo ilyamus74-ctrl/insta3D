@@ -127,6 +127,8 @@ try {
         str_contains($worker, 'auto_photo_sparse_is_standalone_job($job)'),
         'worker standalone guard integration'
     );
+    aps_assert(str_contains($worker, 'auto_photo_sparse_chain_enqueue_from_prepare'), 'worker prepare chain integration');
+    aps_assert(!str_contains($worker, 'AUTO-B02 intentionally terminates here'), 'worker obsolete prepare stop removed');
 
     $bad = $parent;
     $bad['status'] = 'RUNNING';

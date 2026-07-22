@@ -28,5 +28,12 @@
 - Overview remains the default active tab for ordinary page loads.
 - Production actions were not performed, job `746` was not changed, and real production PLY acceptance remains pending.
 
-This result does not declare the B05 epic complete and does not include
-B05.4 production deployment or real production action acceptance.
+This result does not declare the B05 epic complete. B05.4 is accepted and
+deployed; B05.5 production deployment and real uploaded-bundle action
+acceptance remain pending.
+
+## B05.5 prerequisite
+
+- B05.5 remains blocked until B03.1 is accepted and deployed.
+- Bundle 8 materialization completed and prepare dry-run confirmed 87 frames; no real prepare job was created.
+- B03.1 adds only the missing prepare-DONE → standalone-sparse chain.

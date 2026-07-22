@@ -34,6 +34,7 @@ require_once dirname(__DIR__) . '/libs/source_storage_lib.php';
 require_once dirname(__DIR__) . '/libs/sfm_remote_job_lib.php';
 require_once dirname(__DIR__) . '/libs/auto_photo_prepare_lib.php';
 require_once dirname(__DIR__) . '/libs/auto_photo_sparse_lib.php';
+require_once dirname(__DIR__) . '/libs/auto_photo_sparse_chain_lib.php';
 require_once __DIR__
     . '/../libs/auto_photo_export_worker_lib.php';
 require_once __DIR__ . '/sfm_dense_merge_contract.php';
@@ -282,8 +283,17 @@ function auto_chain_after_done(mysqli $db, array $job): void
     if ($remote <= 0 || $orderId <= 0 || $sessionId <= 0) {
         return;
     }
-    // AUTO-B02 intentionally terminates here: it must not enqueue COLMAP_SPARSE.
-    if ($type === AUTO_PHOTO_PREPARE_JOB_TYPE) return;
+    if ($type === AUTO_PHOTO_PREPARE_JOB_TYPE) {
+        try {
+            $result = auto_photo_sparse_chain_enqueue_from_prepare($db, (int) ($job['id'] ?? 0));
+            worker_log($result['duplicate']
+                ? 'AUTO-B03.1 standalone sparse already exists prepare_db_job_id=' . (int) $result['prepare_db_job_id']
+                : 'AUTO-B03.1 standalone sparse queued prepare_db_job_id=' . (int) $result['prepare_db_job_id'] . ' sparse_remote_job_id=' . (int) $result['sparse_remote_job_id']);
+        } catch (Throwable $e) {
+            worker_log('ERROR AUTO-B03.1 standalone sparse enqueue failed prepare_db_job_id=' . (int) ($job['id'] ?? 0) . ' code=' . $e->getMessage());
+        }
+        return;
+    }
 
     if ($type === 'EXTRACT_FRAMES') {
         $pipelineRunId = pipeline_run_for_job($job);
