@@ -129,6 +129,7 @@ JSON
   scp -i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new "${STATION_USER}@${STATION_HOST}:$REMOTE_PLY" "$TMP_DEST"
   test -s "$TMP_DEST"
   mv -- "$TMP_DEST" "$EXACT_DESTINATION"
+  chmod 0644 -- "$EXACT_DESTINATION"
   TMP_DEST=""
   test -s "$EXACT_DESTINATION"
   echo "==> Done"

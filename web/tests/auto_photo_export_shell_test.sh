@@ -50,6 +50,7 @@ done
 run_photo success || fail valid_photo
 FINAL="$TMP/out/job_34/sparse_0.ply"
 [[ -s "$FINAL" ]] || fail final_artifact
+[[ "$(stat -c '%a' "$FINAL")" == "644" ]] || fail final_permissions
 ! compgen -G "$(dirname "$FINAL")/.sparse_0.ply.tmp.*" >/dev/null || fail local_temp
 grep -F -- '--input_path /remote/base/output/job_12/colmap/sparse/0' "$LOG" >/dev/null || fail source_input
 grep -F -- '--output_path /remote/base/output/job_34/photo_export_tmp/sparse_0.ply' "$LOG" >/dev/null || fail photo_output
