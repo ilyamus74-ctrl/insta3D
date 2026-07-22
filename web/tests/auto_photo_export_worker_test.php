@@ -270,6 +270,91 @@ try {
         'legacy failure'
     );
 
+    $workerSource = file_get_contents(
+        __DIR__ . '/../tools/sfm_remote_worker.php'
+    );
+    apew_assert($workerSource !== false, 'worker source readable');
+    apew_assert(
+        str_contains($workerSource, 'auto_photo_export_worker_lib.php'),
+        'worker requires export helper'
+    );
+    apew_assert(
+        str_contains($workerSource, 'auto_photo_export_worker_plan'),
+        'worker plans photo export'
+    );
+    apew_assert(
+        str_contains($workerSource, 'photo_export_shell_not_ready'),
+        'worker has photo shell guard'
+    );
+    apew_assert(
+        !preg_match('/function\\s+photo_export_integer\\s*\\(/', $workerSource),
+        'worker must not implement an inline photo ID parser'
+    );
+
+    $exportBranchStart = strpos($workerSource, "} elseif (\$type === 'EXPORT_PLY') {");
+    $denseBranchStart = strpos(
+        $workerSource,
+        "} elseif (\$type === 'COLMAP_DENSE_CHUNK') {",
+        $exportBranchStart
+    );
+    $runCommandStart = strpos(
+        $workerSource,
+        'run_command($args)',
+        $denseBranchStart
+    );
+    apew_assert(
+        $exportBranchStart !== false
+            && $denseBranchStart !== false
+            && $runCommandStart !== false,
+        'worker export branch boundaries'
+    );
+    $exportBranch = substr(
+        $workerSource,
+        $exportBranchStart,
+        $denseBranchStart - $exportBranchStart
+    );
+    $photoGuardStart = strpos($exportBranch, "if (\$photoExportPlan['is_photo_export'] === true)");
+    apew_assert(
+        $photoGuardStart !== false && $exportBranchStart + $photoGuardStart < $runCommandStart,
+        'photo guard precedes run_command'
+    );
+    $legacyBranchStart = strpos(
+        $exportBranch,
+        '$parent = (int)($job[\'parent_remote_job_id\'] ?? $remoteJobId);',
+        $photoGuardStart
+    );
+    apew_assert($legacyBranchStart !== false, 'legacy export branch present');
+    $photoGuard = substr(
+        $exportBranch,
+        $photoGuardStart,
+        $legacyBranchStart - $photoGuardStart
+    );
+    apew_assert(
+        preg_match(
+            "/photo_export_shell_not_ready[\\s\\S]*?return\\s*;/",
+            $photoGuard
+        ) === 1,
+        'photo guard returns after setting error'
+    );
+    apew_assert(
+        !str_contains($photoGuard, 'auto_photo_export_worker_prepare_paths'),
+        'photo guard must not prepare paths'
+    );
+    apew_assert(
+        !str_contains($photoGuard, 'model_id_from_job'),
+        'photo guard must not use legacy model parsing'
+    );
+
+    $normalizedExportBranch = preg_replace('/\\s+/', '', $exportBranch);
+    apew_assert(
+        $normalizedExportBranch !== null
+            && str_contains(
+                $normalizedExportBranch,
+                "[SFM_REMOTE_BASE.'/export_sparse_ply.sh',SFM_REMOTE_CONF,(string)\$parent,(string)\$modelId,SFM_REMOTE_OUTPUT]"
+            ),
+        'legacy export arguments remain compatible'
+    );
+
     echo "OK\n";
 } finally {
     apew_remove_tree($base);

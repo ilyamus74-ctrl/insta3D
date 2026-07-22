@@ -34,6 +34,8 @@ require_once dirname(__DIR__) . '/libs/source_storage_lib.php';
 require_once dirname(__DIR__) . '/libs/sfm_remote_job_lib.php';
 require_once dirname(__DIR__) . '/libs/auto_photo_prepare_lib.php';
 require_once dirname(__DIR__) . '/libs/auto_photo_sparse_lib.php';
+require_once __DIR__
+    . '/../libs/auto_photo_export_worker_lib.php';
 require_once __DIR__ . '/sfm_dense_merge_contract.php';
 
 const SFM_REMOTE_BASE = '/home/makler/web/remote_station';
@@ -1111,6 +1113,7 @@ function worker_run_parameters(mysqli $db,array $job): array { $pid=pipeline_run
 function launch_job(mysqli $db, array $job): void
 {
     $launchTemp = null;
+    $photoExportPlan = null;
     $id = (int)$job['id'];
     $remoteJobId = (int)$job['remote_job_id'];
     $type = (string)$job['job_type'];
@@ -1184,6 +1187,46 @@ function launch_job(mysqli $db, array $job): void
         $stationParams=json_encode(['pipeline_run_id'=>$pipelineRunId,'video_scan_id'=>(int)($run['video_scan_id'] ?? 0),'render_mode'=>$mode,'settings_source'=>'ui_snapshot','settings_hash'=>$settingsHash,'settings'=>$rs], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
         $args = [SFM_REMOTE_BASE . '/run_colmap_sparse_job.sh', SFM_REMOTE_CONF, (string)$remoteJobId, frames_path_for_parent($parent), (string)($sp['matcher'] ?? 'sequential'), (string)($sp['sequential_overlap'] ?? 60), !empty($sp['loop_detection'])?'1':'0', $stationParams];
     } elseif ($type === 'EXPORT_PLY') {
+        try {
+            $photoExportPlan = auto_photo_export_worker_plan(
+                $job,
+                SFM_REMOTE_OUTPUT,
+                SFM_REMOTE_BASE . '/export_sparse_ply.sh',
+                SFM_REMOTE_CONF
+            );
+        } catch (Throwable $e) {
+            set_job(
+                $db,
+                $id,
+                'ERROR',
+                0,
+                $e->getMessage()
+            );
+
+            worker_log(
+                'ERROR photo EXPORT_PLY validation: '
+                . $e->getMessage()
+            );
+
+            return;
+        }
+
+        if ($photoExportPlan['is_photo_export'] === true) {
+            set_job(
+                $db,
+                $id,
+                'ERROR',
+                0,
+                'photo_export_shell_not_ready'
+            );
+
+            worker_log(
+                'ERROR photo EXPORT_PLY is validated but shell v2 is not installed'
+            );
+
+            return;
+        }
+
         $parent = (int)($job['parent_remote_job_id'] ?? $remoteJobId);
         $modelId = model_id_from_job($job);
         $args = [SFM_REMOTE_BASE . '/export_sparse_ply.sh', SFM_REMOTE_CONF, (string)$parent, (string)$modelId, SFM_REMOTE_OUTPUT];
