@@ -59,7 +59,16 @@ Add controls for select model, exhaustive retry, and export PLY using the existi
 
 ## Implementation status
 
-- B05.1 — ACCEPTED
+- B05.1 — ACCEPTED / DEPLOYED
 - B05.2 — ACCEPTED / DEPLOYED (commit: `26bdc80`; production deployment date: `2026-07-22`)
-- B05.3 — IMPLEMENTED, PENDING REVIEW/DEPLOYMENT
-- B05.4 — NOT STARTED
+- B05.3 — ACCEPTED / DEPLOYED (production deployment date: `2026-07-22`)
+- B05.4 — IMPLEMENTED, PENDING REVIEW/DEPLOYMENT
+
+## B05.4 implementation record
+
+- Repository base HEAD before the patch: `ba8376d26c6324a613e74f2340a6a56d02108887`.
+- B04 isolated export parity was restored and deployed on `2026-07-22`.
+- B05.4 uses the existing B04 select, exhaustive retry, and isolated export services; it adds no backend service.
+- POST forms use the existing `secCode` CSRF field and successful actions return to `#simple-photo-sfm`.
+- POST redirects use `#simple-photo-sfm`; the Simple View template activates the Bootstrap Photo 3D pill on window load only for the exact `#simple-photo-sfm` URL hash.
+- Overview remains the default active tab for ordinary page loads.

@@ -13,6 +13,14 @@ $orderId=(int)($_GET['id']??0); if($orderId<=0){http_response_code(400);exit('Ba
 
 function status_meta(string $status): array { $m=['NEW'=>['bg-secondary','bi-circle','Новая'],'ASSIGNED'=>['bg-primary','bi-person-check','В работе'],'IN_PROGRESS'=>['bg-info','bi-camera','Съемка'],'CAPTURED'=>['bg-warning','bi-check2-square','Отснята'],'UPLOADING'=>['bg-warning','bi-cloud-upload','Загружается'],'UPLOADED'=>['bg-success','bi-cloud-check','Загружена'],'PROCESSING'=>['bg-info','bi-gear','Обработка'],'READY'=>['bg-success','bi-check-circle','Готова'],'COMPLETED'=>['bg-dark','bi-check2-all','Завершена'],'CLOSED'=>['bg-dark','bi-lock','Закрыта']]; $x=$m[$status]??['bg-secondary','bi-circle',$status]; return ['class'=>$x[0],'icon'=>$x[1],'label'=>$x[2]]; }
 function load_order(mysqli $dbcnx,int $orderId): ?array { $stmt=$dbcnx->prepare("SELECT o.*,b.full_name broker_name,b.email broker_email,op.full_name operator_name,op.email operator_email FROM tour_orders o LEFT JOIN users b ON b.id=o.broker_id LEFT JOIN users op ON op.id=o.operator_id WHERE o.id=? LIMIT 1"); if(!$stmt){return null;} $stmt->bind_param('i',$orderId); $stmt->execute(); $o=$stmt->get_result()->fetch_assoc()?:null; $stmt->close(); return $o; }
+function order_auto_photo_sparse_require_csrf(): void
+{
+  $expected = (string) ($_SESSION['secCode'] ?? '');
+  $provided = (string) ($_POST['secCode'] ?? '');
+  if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
+    throw new RuntimeException('invalid_csrf');
+  }
+}
 
 const MIN_REGISTERED_IMAGES_PREVIEW = 10;
 const MIN_REGISTERED_IMAGES_HQ = 20;
@@ -1033,6 +1041,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     && $canDeleteMedia
 ) {
     try {
+        order_auto_photo_sparse_require_csrf();
         auto_photo_sparse_web_select_model(
             $dbcnx,
             $orderId,
@@ -1043,7 +1052,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         header(
             'Location: /order_simple.php?id='
             . $orderId
-            . '&photo_model_selected=1'
+            . '&photo_model_selected=1#simple-photo-sfm'
         );
         exit;
     } catch (Throwable $e) {
@@ -1056,6 +1065,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     && $canDeleteMedia
 ) {
     try {
+        order_auto_photo_sparse_require_csrf();
         auto_photo_sparse_web_enqueue_exhaustive(
             $dbcnx,
             $orderId,
@@ -1065,7 +1075,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         header(
             'Location: /order_simple.php?id='
             . $orderId
-            . '&photo_retry_queued=1'
+            . '&photo_retry_queued=1#simple-photo-sfm'
         );
         exit;
     } catch (Throwable $e) {
@@ -1078,6 +1088,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     && $canDeleteMedia
 ) {
     try {
+        order_auto_photo_sparse_require_csrf();
         $result = auto_photo_sparse_web_enqueue_export(
             $dbcnx,
             $orderId,
@@ -1085,8 +1096,8 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
             $_POST['model_id'] ?? null
         );
         $flag = ($result['duplicate'] ?? false) === true
-            ? 'photo_export_exists=1'
-            : 'photo_export_queued=1';
+            ? 'photo_export_exists=1#simple-photo-sfm'
+            : 'photo_export_queued=1#simple-photo-sfm';
         header('Location: /order_simple.php?id=' . $orderId . '&' . $flag);
         exit;
     } catch (Throwable $e) {

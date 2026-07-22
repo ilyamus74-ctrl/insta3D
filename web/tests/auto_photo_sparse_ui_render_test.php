@@ -6,6 +6,7 @@ $model0=['model_id'=>0,'registered_images'=>118,'registered_percent'=>66.3,'poin
 $model1=['model_id'=>1,'registered_images'=>39,'registered_percent'=>21.9,'points3D_count'=>11784,'first_image'=>'','last_image'=>'','frame_ranges_label'=>'','shared_images_label'=>'','selected'=>false,'recommended'=>false,'export'=>['status'=>'ERROR','progress_percent'=>0,'db_job_id'=>901,'message'=>'','download_url'=>'']];
 $dto=['visible'=>true,'bundle'=>['id'=>7,'capture_session_id'=>63,'photos_count'=>178,'status'=>'UPLOADED','app_bundle_uuid'=>'UUID'], 'prepare'=>['db_job_id'=>745,'remote_job_id'=>857972911,'status'=>'DONE','progress_percent'=>100,'message'=>'prepared'], 'active_jobs'=>true,'runs'=>[['sparse_db_job_id'=>746,'sparse_remote_job_id'=>434136404,'status'=>'DONE','progress_percent'=>100,'matcher'=>'sequential','retry_mode'=>'','models_count'=>2,'input_images'=>178,'message'=>'run','recommended_run'=>true,'merge_warning'=>true,'models'=>[$model0,$model1]],['sparse_db_job_id'=>747,'sparse_remote_job_id'=>0,'status'=>'ERROR','progress_percent'=>0,'matcher'=>'','retry_mode'=>'','models_count'=>0,'input_images'=>0,'message'=>'','recommended_run'=>false,'merge_warning'=>false,'models'=>[]]]];
 $before=serialize($dto); $render=auto_photo_sparse_ui_render($dto); $nav=$render['nav']; $pane=$render['pane']; check_render(serialize($dto)===$before,'stable dto');
+check_render(!str_contains($pane,'<form'),'default render read-only');
 check_render(auto_photo_sparse_ui_render_nav(['visible'=>false])==='' && auto_photo_sparse_ui_render_pane(['visible'=>false])==='','invisible');
 foreach(['Фото 3D','simple-photo-sfm-tab','#simple-photo-sfm'] as $needle) check_render(str_contains($nav,$needle),'nav '.$needle); check_render(!str_contains($nav,' active'),'nav inactive');
 foreach(['>7<','>63<','>178<','UPLOADED','UUID','DONE','745','857972911','100%','Обработка Auto Photo выполняется','Sparse job #746','Sparse job #747','ERROR','Модели для этого запуска отсутствуют','>0<','118 / 178','66.3%','23 230','first_image','last_image','frame_ranges_label','shared_images_label','Выбрана','Рекомендована','Рекомендованный запуск','Компоненты имеют недостаточно общих изображений для надёжного объединения','Скачать PLY','href="/api/file?x=1&amp;y=2"'] as $needle) check_render(str_contains($pane,$needle),'pane '.$needle);
@@ -15,7 +16,7 @@ $bad=$dto; $bad['bundle']['app_bundle_uuid']='<script>alert(1)</script>'; $bad['
 $badHtml=auto_photo_sparse_ui_render_pane($bad); check_render(!str_contains($badHtml,'<script>')&&!str_contains($badHtml,'<img'),'escaping raw'); check_render(str_contains($badHtml,'&lt;script&gt;alert(1)&lt;/script&gt;')&&str_contains($badHtml,'&quot;&gt;&lt;img'),'escaping encoded');
 foreach(['<form','method="post"','csrf','name="action"','select_model','retry_exhaustive','export_ply'] as $forbidden) check_render(!str_contains(strtolower($pane),strtolower($forbidden)),'no action '.$forbidden);
 $source=(string) file_get_contents(__DIR__.'/../www/order_simple.php');
-foreach(['auto_photo_sparse_ui_render_lib.php','auto_photo_sparse_ui_render($autoPhotoSparseUi)','autoPhotoSparseUiNav','autoPhotoSparseUiPane',"\$smarty->display('maklertour_order_simple.html')"] as $needle) check_render(str_contains($source,$needle),'php integration '.$needle);
+foreach(['auto_photo_sparse_ui_render_lib.php','auto_photo_sparse_ui_render($autoPhotoSparseUi,$autoPhotoSparseUiActionContext)','autoPhotoSparseUiNav','autoPhotoSparseUiPane',"\$smarty->display('maklertour_order_simple.html')"] as $needle) check_render(str_contains($source,$needle),'php integration '.$needle);
 foreach(['$smarty->fetch','str_replace','ob_start'] as $forbidden) check_render(!str_contains($source,$forbidden),'php integration no '.$forbidden);
 $integrationSource=substr($source,strpos($source,'$autoPhotoSparseUi=auto_photo_sparse_ui_web_load')); check_render(!str_contains($integrationSource,'preg_replace'),'php integration no preg_replace');
 $template=(string) file_get_contents(__DIR__.'/../templates/maklertour_order_simple.html');
@@ -25,10 +26,15 @@ $navOpen=strpos($template,'<ul class="nav nav-pills mb-3"'); $navInsert=strpos($
 check_render($navOpen!==false && $navInsert>$navOpen && $navInsert<$navClose,'template nav position');
 $tabOpen=strpos($template,'<div class="tab-content">'); $paneInsert=strpos($template,$paneVariable); $overview=strpos($template,'id="simple-overview"');
 check_render($tabOpen!==false && $paneInsert>$tabOpen && $paneInsert<$overview,'template pane position');
+$footer=strpos($template,'{include file="maklertour_footer.html"}'); $hashCheck=strpos($template,"window.location.hash !== '#simple-photo-sfm'"); $trigger=strpos($template,"getElementById('simple-photo-sfm-tab')"); $instance=strpos($template,'getOrCreateInstance'); $show=strpos($template,'.show()');
+foreach(["window.addEventListener('load'",'window.location.hash','#simple-photo-sfm','simple-photo-sfm-tab','window.bootstrap','bootstrap.Tab','getOrCreateInstance','.show()'] as $needle) check_render(str_contains($template,$needle),'hash activation '.$needle);
+check_render($hashCheck!==false && $trigger>$hashCheck && $instance>$trigger && $show>$instance,'hash activation order'); check_render($footer!==false && $show<$footer,'hash activation before footer');
+check_render(str_contains($template,'class="nav-link active" data-bs-toggle="pill" data-bs-target="#simple-overview"') && str_contains($template,'class="tab-pane fade show active" id="simple-overview"'),'overview default state');
 $fragment='<ul>'.$render['nav'].'</ul><div class="tab-content">'.$render['pane'].'</div>';
 check_render(str_contains($fragment,'simple-photo-sfm-tab') && str_contains($fragment,'data-bs-target="#simple-photo-sfm"') && str_contains($fragment,'id="simple-photo-sfm"'),'runtime composition identifiers');
 check_render(strpos($fragment,'simple-photo-sfm-tab')<strpos($fragment,'id="simple-photo-sfm"'),'runtime nav before pane');
 check_render(substr_count($fragment,'id="simple-photo-sfm-tab"')===1 && substr_count($fragment,'id="simple-photo-sfm"')===1,'runtime identifiers once');
+check_render(!str_contains($nav,' active')&&!str_contains($pane,'show active'),'renderer inactive photo tab');
 $invisible=auto_photo_sparse_ui_render(['visible'=>false]); $invisibleFragment='<ul>'.$invisible['nav'].'</ul><div class="tab-content">'.$invisible['pane'].'</div>';
 check_render($invisible['nav']==='' && $invisible['pane']==='' && !str_contains($invisibleFragment,'simple-photo-sfm'),'invisible composition');
 echo "OK\n";

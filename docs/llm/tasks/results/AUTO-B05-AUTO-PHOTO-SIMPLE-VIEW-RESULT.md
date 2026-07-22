@@ -18,9 +18,15 @@
 
 - Baseline sparse job `746` was not changed.
 - The B05.2 loader remains read-only.
-- B05.3 contains only read-only rendering for the Simple View tab.
+- B05.3 is accepted/deployed; production deployment date: `2026-07-22`.
 - B05.3 uses direct Smarty variable insertion; no post-render HTML replacement.
 - Production export acceptance from B04 remains pending.
-- B05.4 has not started.
+- B04 parity deployment backup: `/home/makler/deploy_backups/rsync_20260722_142404`.
+- Production regression suite passed and the four required web services reported `OK`.
+- B05.4 adds only POST forms, the `secCode` CSRF boundary, and Simple View anchors; it uses existing B04 services.
+- POST redirects use `#simple-photo-sfm`; the Simple View template activates the Bootstrap Photo 3D pill on window load only for the exact `#simple-photo-sfm` URL hash.
+- Overview remains the default active tab for ordinary page loads.
+- Production actions were not performed, job `746` was not changed, and real production PLY acceptance remains pending.
 
-This result does not declare the B05 epic complete and does not include deployment.
+This result does not declare the B05 epic complete and does not include
+B05.4 production deployment or real production action acceptance.

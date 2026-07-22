@@ -65,7 +65,39 @@ function auto_photo_sparse_ui_render_export(mixed $export): string
     return $html;
 }
 
-function auto_photo_sparse_ui_render_pane(array $dto): string
+function auto_photo_sparse_ui_render_action_form(
+    array $actionContext,
+    string $action,
+    array $fields,
+    string $label,
+    string $buttonClass = 'btn-outline-primary',
+    string $confirmation = ''
+): string {
+    $postUrl = (string) ($actionContext['post_url'] ?? '');
+    $csrfName = (string) ($actionContext['csrf_name'] ?? '');
+    $csrfValue = (string) ($actionContext['csrf_value'] ?? '');
+    if ($postUrl === '' || $csrfName === '' || $csrfValue === '') {
+        return '';
+    }
+    $html = '<form method="post" action="' . auto_photo_sparse_ui_render_escape($postUrl) . '"';
+    if ($confirmation !== '') {
+        $html .= ' onsubmit="return confirm(\'' . auto_photo_sparse_ui_render_escape($confirmation) . '\')"';
+    }
+    $html .= '><input type="hidden" name="' . auto_photo_sparse_ui_render_escape($csrfName)
+        . '" value="' . auto_photo_sparse_ui_render_escape($csrfValue) . '">'
+        . '<input type="hidden" name="action" value="' . auto_photo_sparse_ui_render_escape($action) . '">';
+    foreach ($fields as $name => $value) {
+        if (!in_array($name, ['sparse_db_job_id', 'model_id'], true) || !is_int($value)) {
+            continue;
+        }
+        $html .= '<input type="hidden" name="' . auto_photo_sparse_ui_render_escape($name)
+            . '" value="' . $value . '">';
+    }
+    return $html . '<button type="submit" class="btn btn-sm ' . auto_photo_sparse_ui_render_escape($buttonClass)
+        . '">' . auto_photo_sparse_ui_render_escape($label) . '</button></form>';
+}
+
+function auto_photo_sparse_ui_render_pane(array $dto, array $actionContext = []): string
 {
     if (($dto['visible'] ?? false) !== true) {
         return '';
@@ -105,16 +137,40 @@ function auto_photo_sparse_ui_render_pane(array $dto): string
             . '<div class="col-md">Retry mode: ' . auto_photo_sparse_ui_render_value($run['retry_mode'] ?? '') . '</div>'
             . '<div class="col-md">Моделей: ' . (int) ($run['models_count'] ?? 0) . '<br>Входных фото: ' . (int) ($run['input_images'] ?? 0) . '</div></div>'
             . auto_photo_sparse_ui_render_message($run['message'] ?? '');
+        $sparseDbJobId = $run['sparse_db_job_id'] ?? null;
+        if (($run['can_retry_exhaustive'] ?? false) === true
+            && is_int($sparseDbJobId) && $sparseDbJobId > 0) {
+            $html .= '<div class="mt-2">' . auto_photo_sparse_ui_render_action_form(
+                $actionContext,
+                'auto_photo_sparse_retry_exhaustive',
+                ['sparse_db_job_id' => $sparseDbJobId],
+                'Повторить с exhaustive matcher',
+                'btn-outline-warning',
+                'Создать отдельный exhaustive sparse retry? Исходный sparse job изменён не будет.'
+            ) . '</div>';
+        }
         if (($run['merge_warning'] ?? false) === true) { $html .= '<div class="alert alert-warning mt-2 mb-0">Компоненты имеют недостаточно общих изображений для надёжного объединения</div>'; }
         $models = is_array($run['models'] ?? null) ? $run['models'] : [];
         if ($models === []) { $html .= '<div class="text-muted mt-3">Модели для этого запуска отсутствуют</div>'; }
-        else { $html .= '<div class="table-responsive mt-3"><table class="table table-sm align-middle"><thead><tr><th>Модель</th><th>Статус</th><th>Зарегистрировано</th><th>Точки</th><th>Первое изображение</th><th>Последнее изображение</th><th>Диапазоны кадров</th><th>Общие изображения</th><th>Экспорт</th></tr></thead><tbody>';
+        else { $html .= '<div class="table-responsive mt-3"><table class="table table-sm align-middle"><thead><tr><th>Модель</th><th>Статус</th><th>Зарегистрировано</th><th>Точки</th><th>Первое изображение</th><th>Последнее изображение</th><th>Диапазоны кадров</th><th>Общие изображения</th><th>Экспорт</th><th>Действия</th></tr></thead><tbody>';
             foreach ($models as $model) { if (!is_array($model)) { continue; }
                 $registered = (int) ($model['registered_images'] ?? 0);
                 $input = (int) ($run['input_images'] ?? 0);
                 $registeredText = $input > 0 ? $registered . ' / ' . $input . ' (' . number_format((float) ($model['registered_percent'] ?? 0), 1, '.', '') . '%)' : (string) $registered;
                 $status = ''; if (($model['selected'] ?? false) === true) { $status .= '<span class="badge bg-info text-dark">Выбрана</span> '; } if (($model['recommended'] ?? false) === true) { $status .= '<span class="badge bg-primary">Рекомендована</span>'; }
-                $html .= '<tr><td>' . (int) ($model['model_id'] ?? 0) . '</td><td>' . ($status !== '' ? $status : '—') . '</td><td>' . $registeredText . '</td><td>' . number_format((int) ($model['points3D_count'] ?? 0), 0, '.', ' ') . '</td><td>' . auto_photo_sparse_ui_render_value($model['first_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['last_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['frame_ranges_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['shared_images_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_export($model['export'] ?? null) . '</td></tr>';
+                $modelId = $model['model_id'] ?? null;
+                $actions = [];
+                if (is_int($sparseDbJobId) && $sparseDbJobId > 0 && is_int($modelId) && $modelId >= 0) {
+                    if (($model['can_select'] ?? false) === true) {
+                        $actions[] = auto_photo_sparse_ui_render_action_form($actionContext, 'auto_photo_sparse_select_model', ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId], 'Выбрать модель');
+                    }
+                    if (($model['can_export'] ?? false) === true) {
+                        $actions[] = auto_photo_sparse_ui_render_action_form($actionContext, 'auto_photo_sparse_export_ply', ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId], 'Экспортировать PLY');
+                    }
+                }
+                $actions = array_filter($actions, static fn(string $form): bool => $form !== '');
+                $actionsHtml = $actions === [] ? '—' : '<div class="d-flex flex-column gap-1">' . implode('', $actions) . '</div>';
+                $html .= '<tr><td>' . (int) ($model['model_id'] ?? 0) . '</td><td>' . ($status !== '' ? $status : '—') . '</td><td>' . $registeredText . '</td><td>' . number_format((int) ($model['points3D_count'] ?? 0), 0, '.', ' ') . '</td><td>' . auto_photo_sparse_ui_render_value($model['first_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['last_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['frame_ranges_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['shared_images_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_export($model['export'] ?? null) . '</td><td>' . $actionsHtml . '</td></tr>';
             }
             $html .= '</tbody></table></div>';
         }
@@ -123,10 +179,10 @@ function auto_photo_sparse_ui_render_pane(array $dto): string
     return $html . '</div>';
 }
 
-function auto_photo_sparse_ui_render(array $dto): array
+function auto_photo_sparse_ui_render(array $dto, array $actionContext = []): array
 {
     return [
         'nav' => auto_photo_sparse_ui_render_nav($dto),
-        'pane' => auto_photo_sparse_ui_render_pane($dto),
+        'pane' => auto_photo_sparse_ui_render_pane($dto, $actionContext),
     ];
 }

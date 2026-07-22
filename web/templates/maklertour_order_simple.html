@@ -162,5 +162,27 @@
 })();
 </script>
 {/literal}
+{literal}
+<script>
+window.addEventListener('load', function () {
+  if (window.location.hash !== '#simple-photo-sfm') {
+    return;
+  }
+
+  var trigger = document.getElementById('simple-photo-sfm-tab');
+  if (
+    !trigger
+    || !window.bootstrap
+    || !window.bootstrap.Tab
+  ) {
+    return;
+  }
+
+  window.bootstrap.Tab
+    .getOrCreateInstance(trigger)
+    .show();
+});
+</script>
+{/literal}
 </main>
 {include file="maklertour_footer.html"}
