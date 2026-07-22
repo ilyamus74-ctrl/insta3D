@@ -180,6 +180,182 @@ function auto_photo_sparse_web_enqueue_exhaustive(
     }
 }
 
+function auto_photo_sparse_web_find_export_duplicate(
+    mysqli $db,
+    int $orderId,
+    int $captureSessionId,
+    int $sparseRemoteJobId,
+    int $modelId,
+    string $newOutputPath,
+    string $legacyOutputPath
+): ?array {
+    $modelIdText = (string) $modelId;
+    $statement = $db->prepare(
+        "SELECT id, remote_job_id, status, progress_percent, message, output_path
+        FROM sfm_remote_jobs
+        WHERE job_type='EXPORT_PLY'
+          AND order_id=?
+          AND capture_session_id=?
+          AND parent_remote_job_id=?
+          AND status IN ('QUEUED','RUNNING','DONE')
+          AND (
+               (
+                 JSON_VALID(parameters_json)
+                 AND JSON_UNQUOTE(
+                     JSON_EXTRACT(parameters_json, '$.model_id')
+                 )=?
+               )
+               OR output_path=?
+               OR output_path=?
+          )
+        LIMIT 1
+        FOR UPDATE"
+    );
+    if (!$statement || !$statement->bind_param(
+        'iiisss',
+        $orderId,
+        $captureSessionId,
+        $sparseRemoteJobId,
+        $modelIdText,
+        $newOutputPath,
+        $legacyOutputPath
+    ) || !$statement->execute()) {
+        auto_photo_sparse_web_fail('export_duplicate_query_failed');
+    }
+    $result = $statement->get_result();
+    if (!$result) {
+        $statement->close();
+        auto_photo_sparse_web_fail('export_duplicate_query_failed');
+    }
+    $row = $result->fetch_assoc();
+    $statement->close();
+    return is_array($row) ? $row : null;
+}
+
+function auto_photo_sparse_web_enqueue_export(
+    mysqli $db,
+    int $orderId,
+    mixed $rawSparseDbJobId,
+    mixed $rawModelId = null,
+    ?callable $insertIdReader = null,
+    ?callable $remoteJobIdFactory = null
+): array {
+    $sparseDbJobId = auto_photo_sparse_web_parse_sparse_db_id($rawSparseDbJobId);
+    $requestedModelId = auto_photo_sparse_parse_model_id($rawModelId, true);
+    try {
+        if (!$db->begin_transaction()) {
+            auto_photo_sparse_web_fail('export_transaction_failed');
+        }
+        $sparseJob = auto_photo_sparse_web_load_locked_job($db, $orderId, $sparseDbJobId);
+        $scope = auto_photo_sparse_validate_job_scope($db, $orderId, $sparseJob);
+        auto_photo_sparse_validate_prepare_chain($db, $orderId, $sparseJob, $scope);
+        if (strtoupper((string) ($sparseJob['status'] ?? '')) !== 'DONE') {
+            throw new RuntimeException('sparse_job_not_ready');
+        }
+        $sparseRemoteJobId = (int) $sparseJob['remote_job_id'];
+        $components = auto_photo_sparse_components($sparseRemoteJobId);
+        $modelId = auto_photo_sparse_resolve_model_id(
+            $sparseJob,
+            $components,
+            $requestedModelId
+        );
+        $newRemoteJobId = $remoteJobIdFactory !== null
+            ? (int) $remoteJobIdFactory($db)
+            : sfm_job_id($db);
+        if ($newRemoteJobId <= 0 || $newRemoteJobId === $sparseRemoteJobId) {
+            auto_photo_sparse_web_fail('export_remote_job_id_invalid');
+        }
+        $exportRoot = auto_photo_sparse_output_path($newRemoteJobId);
+        $outputPath = $exportRoot . '/sparse_' . $modelId . '.ply';
+        $logPath = $exportRoot . '/logs';
+        $legacyOutputPath = auto_photo_sparse_output_path($sparseRemoteJobId)
+            . '/sparse_' . $modelId . '.ply';
+        $duplicate = auto_photo_sparse_web_find_export_duplicate(
+            $db,
+            $orderId,
+            (int) $sparseJob['capture_session_id'],
+            $sparseRemoteJobId,
+            $modelId,
+            $outputPath,
+            $legacyOutputPath
+        );
+        if ($duplicate !== null) {
+            if (!$db->commit()) {
+                auto_photo_sparse_web_fail('export_commit_failed');
+            }
+            return [
+                'duplicate' => true,
+                'export_db_job_id' => (int) $duplicate['id'],
+                'export_remote_job_id' => (int) $duplicate['remote_job_id'],
+                'sparse_db_job_id' => $sparseDbJobId,
+                'sparse_remote_job_id' => $sparseRemoteJobId,
+                'model_id' => $modelId,
+            ];
+        }
+        $parametersJson = json_encode([
+            'source_type' => 'auto_photo_sparse',
+            'standalone_photo_export' => true,
+            'sparse_job_id' => $sparseRemoteJobId,
+            'model_id' => $modelId,
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (!is_string($parametersJson)) {
+            auto_photo_sparse_web_fail('export_parameters_encode_failed');
+        }
+        $captureSessionId = (int) $sparseJob['capture_session_id'];
+        $jobType = 'EXPORT_PLY';
+        $status = 'QUEUED';
+        $progressPercent = 0;
+        $message = 'Standalone photo sparse PLY export';
+        $statement = $db->prepare(
+            'INSERT INTO sfm_remote_jobs '
+            . '(order_id, capture_session_id, job_type, remote_job_id, '
+            . 'parent_remote_job_id, output_path, status, progress_percent, '
+            . 'message, log_path, parameters_json, pipeline_run_id) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)'
+        );
+        if (!$statement || !$statement->bind_param(
+            'iisiississs',
+            $orderId,
+            $captureSessionId,
+            $jobType,
+            $newRemoteJobId,
+            $sparseRemoteJobId,
+            $outputPath,
+            $status,
+            $progressPercent,
+            $message,
+            $logPath,
+            $parametersJson
+        ) || !$statement->execute()) {
+            auto_photo_sparse_web_fail('export_insert_failed');
+        }
+        $statement->close();
+        $exportDbJobId = $insertIdReader !== null
+            ? (int) $insertIdReader($db)
+            : (int) $db->insert_id;
+        if ($exportDbJobId <= 0) {
+            auto_photo_sparse_web_fail('export_insert_id_invalid');
+        }
+        if (!$db->commit()) {
+            auto_photo_sparse_web_fail('export_commit_failed');
+        }
+        return [
+            'duplicate' => false,
+            'export_db_job_id' => $exportDbJobId,
+            'export_remote_job_id' => $newRemoteJobId,
+            'sparse_db_job_id' => $sparseDbJobId,
+            'sparse_remote_job_id' => $sparseRemoteJobId,
+            'model_id' => $modelId,
+        ];
+    } catch (Throwable $e) {
+        try {
+            $db->rollback();
+        } catch (Throwable) {
+        }
+        throw $e;
+    }
+}
+
 function auto_photo_sparse_web_select_model(mysqli $db, int $orderId, mixed $rawSparseDbJobId, mixed $rawModelId): array
 {
     $sparseDbJobId = auto_photo_sparse_web_parse_sparse_db_id($rawSparseDbJobId);

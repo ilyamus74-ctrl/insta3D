@@ -1073,6 +1073,27 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     }
  }
 
+ if (
+    $action === 'auto_photo_sparse_export_ply'
+    && $canDeleteMedia
+) {
+    try {
+        $result = auto_photo_sparse_web_enqueue_export(
+            $dbcnx,
+            $orderId,
+            $_POST['sparse_db_job_id'] ?? null,
+            $_POST['model_id'] ?? null
+        );
+        $flag = ($result['duplicate'] ?? false) === true
+            ? 'photo_export_exists=1'
+            : 'photo_export_queued=1';
+        header('Location: /order_simple.php?id=' . $orderId . '&' . $flag);
+        exit;
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+    }
+ }
+
  if($action==='create_capture_bundle_dense_job' && $canDeleteMedia){
    try{
      create_capture_bundle_dense_job($dbcnx,$orderId,(int)($_POST['capture_bundle_id']??0),['max_pairs'=>$_POST['max_pairs']??40,'num_disparities'=>$_POST['num_disparities']??128,'block_size'=>$_POST['block_size']??7,'force'=>$_POST['force']??0]);

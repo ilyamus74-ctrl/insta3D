@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../bootstrap.php';
+require_once dirname(__DIR__, 2) . '/libs/auto_photo_sparse_lib.php';
 auth_require_login();
 $user=auth_current_user(); $userId=(int)$user['id']; $role=(string)($user['role'] ?? 'BROKER');
 function srj_json(array $p,int $c=200): void { http_response_code($c); header('Content-Type: application/json; charset=utf-8'); echo json_encode($p,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
@@ -79,9 +80,27 @@ if($file!==''){
     }
     elseif ((string)($job['job_type'] ?? '') !== 'EXPORT_PLY') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
     else {
-    $parent=(int)($job['parent_remote_job_id'] ?? 0); $out=(string)($job['output_path'] ?? ''); $model=0;
-    if (preg_match('/sparse_(\d+)\.ply|model[_-]?(\d+)/', $out, $m)) { $model=(int)(($m[1] ?? '') !== '' ? $m[1] : $m[2]); }
-    if ($parent>0) { $base='/home/makler/web/remote_station/output/job_'.$parent; $realBase=realpath($base) ?: $base; $path=$base.'/colmap/sparse/'.$model.'/model.ply'; $downloadName='job_'.$parent.'_sparse_'.$model.'_model.ply'; }
+    $parameters=json_decode((string)($job['parameters_json'] ?? ''), true);
+    $isStandalonePhoto=is_array($parameters)
+      && ($parameters['source_type'] ?? null) === 'auto_photo_sparse'
+      && ($parameters['standalone_photo_export'] ?? null) === true;
+    if ($isStandalonePhoto) {
+      if ((string)($job['status'] ?? '') !== 'DONE') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_ready'; exit; }
+      $model=auto_photo_sparse_manifest_model_id($parameters['model_id'] ?? null);
+      if ($model === null) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
+      $exportRemoteJobId=(int)($job['remote_job_id'] ?? 0);
+      if ($exportRemoteJobId<=0) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
+      $base='/home/makler/web/remote_station/output/job_'.$exportRemoteJobId;
+      $expectedPath=$base.'/sparse_'.$model.'.ply';
+      if (!hash_equals($expectedPath, (string)($job['output_path'] ?? '')) || !is_file($expectedPath) || is_link($expectedPath) || !is_readable($expectedPath) || filesize($expectedPath)<=0) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
+      $realBase=realpath($base); $realPath=realpath($expectedPath);
+      if (!$realBase || !$realPath || ($realPath !== $realBase && strpos($realPath, $realBase.'/') !== 0)) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_found'; exit; }
+      $path=$expectedPath; $downloadName='job_'.$exportRemoteJobId.'_sparse_'.$model.'.ply';
+    } else {
+      $parent=(int)($job['parent_remote_job_id'] ?? 0); $out=(string)($job['output_path'] ?? ''); $model=0;
+      if (preg_match('/sparse_(\d+)\.ply|model[_-]?(\d+)/', $out, $m)) { $model=(int)(($m[1] ?? '') !== '' ? $m[1] : $m[2]); }
+      if ($parent>0) { $base='/home/makler/web/remote_station/output/job_'.$parent; $realBase=realpath($base) ?: $base; $path=$base.'/colmap/sparse/'.$model.'/model.ply'; $downloadName='job_'.$parent.'_sparse_'.$model.'_model.ply'; }
+    }
     }
     $ctype='application/octet-stream'; $download=true;
   }
