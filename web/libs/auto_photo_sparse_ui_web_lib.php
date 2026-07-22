@@ -20,7 +20,19 @@ function auto_photo_sparse_ui_web_bundle(array $row, int $orderId): ?array {
     $id=auto_photo_sparse_ui_web_positive_id($row['id']??null); $session=auto_photo_sparse_ui_web_positive_id($row['capture_session_id']??null);
     $uuid=trim((string)($row['app_bundle_uuid']??'')); $status=trim((string)($row['status']??''));
     if ((int)($row['order_id']??0)!==$orderId || (string)($row['capture_type']??'')!==AUTO_PHOTO_BUNDLE_CAPTURE_TYPE || $id===null || $session===null || $uuid==='' || $status==='') return null;
-    return ['id'=>$id,'capture_session_id'=>$session,'app_bundle_uuid'=>$uuid,'photos_count'=>0,'status'=>$status];
+    $summary=auto_photo_sparse_ui_web_bundle_index_summary($row);
+    return ['id'=>$id,'capture_session_id'=>$session,'app_bundle_uuid'=>$uuid,'photos_count'=>(int)($summary['photos_count']??0),'photos_count_known'=>$summary!==null,'status'=>$status];
+}
+function auto_photo_sparse_ui_web_bundle_index_summary(array $bundleRow): ?array {
+    try {$archive=auto_photo_bundle_resolve_archive_path($bundleRow);$path=auto_photo_bundle_index_cache_path($bundleRow,$archive);} catch(Throwable) {return null;}
+    $bundleDir=dirname($path);$bundlesDir=dirname($bundleDir);
+    foreach([$bundlesDir,$bundleDir] as $directory){$stat=@lstat($directory);if(is_link($directory)||$stat===false||(($stat['mode']&0170000)!==0040000))return null;}
+    $stat=@lstat($path); if(is_link($path)||$stat===false||(($stat['mode']&0170000)!==0100000)||(int)$stat['size']>4*1024*1024)return null;
+    $realBundleDir=realpath($bundleDir);$realPath=realpath($path);if($realBundleDir===false||$realPath===false||$realBundleDir!==$bundleDir||dirname($realPath)!==$realBundleDir)return null;
+    try {$index=json_decode((string)file_get_contents($realPath),true,512,JSON_THROW_ON_ERROR);} catch(Throwable) {return null;}
+    if(!is_array($index)||($index['schema_version']??null)!==AUTO_PHOTO_BUNDLE_INDEX_SCHEMA_VERSION||(int)($index['capture_bundle_id']??0)!==(int)($bundleRow['id']??0)||(int)($index['order_id']??0)!==(int)($bundleRow['order_id']??0)||(int)($index['capture_session_id']??0)!==(int)($bundleRow['capture_session_id']??0)||(string)($index['app_bundle_uuid']??'')!==(string)($bundleRow['app_bundle_uuid']??'')||($index['capture_type']??null)!==AUTO_PHOTO_BUNDLE_CAPTURE_TYPE||($index['validation_status']??null)!=='VALID'||!empty($index['blocking_errors'])||!is_int($index['photos_count_actual']??null)||(int)$index['photos_count_actual']<0)return null;
+    if(isset($index['photos'])&&(!is_array($index['photos'])||count($index['photos'])!==$index['photos_count_actual']))return null;
+    return ['photos_count'=>$index['photos_count_actual']];
 }
 function auto_photo_sparse_ui_web_prepare_for_bundle(array $row, int $orderId, array $bundle): ?array {
     $id=auto_photo_sparse_ui_web_positive_id($row['id']??null); $remote=auto_photo_sparse_ui_web_positive_id($row['remote_job_id']??null);
@@ -101,7 +113,8 @@ function auto_photo_sparse_ui_web_build_from_rows(int $orderId,bool $canManage,a
         $newestSparse ??= $sparse; $exports=[]; foreach(($exportsBySparse[(int)$sparse['remote_job_id']]??[]) as $exportRow) if(is_array($exportRow)&&($export=auto_photo_sparse_ui_web_export($exportRow,$orderId,$sparse))!==null)$exports[]=$export;
         $components=$componentsReader!==null?$componentsReader((int)$sparse['remote_job_id']):auto_photo_sparse_ui_web_components((int)$sparse['remote_job_id']); $runs[]=['job'=>$sparse,'components'=>is_array($components)?$components:['models'=>[]],'exports'=>$exports];
     }
-    $photosCount=auto_photo_sparse_ui_web_input_images($prepareJob); if($photosCount<=0)$photosCount=auto_photo_sparse_ui_web_input_images($newestSparse); $bundle['photos_count']=max(0,$photosCount);
+    $photosCount=auto_photo_sparse_ui_web_input_images($prepareJob); if($photosCount<=0)$photosCount=auto_photo_sparse_ui_web_input_images($newestSparse); if($photosCount>0){$bundle['photos_count']=$photosCount;$bundle['photos_count_known']=true;}
+    $blocking=false;foreach($prepares as $prepare)if(in_array(auto_photo_sparse_ui_status($prepare['status']??''),['QUEUED','RUNNING','DONE'],true)){$blocking=true;break;}$bundle['can_prepare']=$canManage&&(int)$bundle['id']>0&&in_array((string)$bundle['status'],['UPLOADED','PROCESSING','READY','COMPLETED'],true)&&!$blocking;
     return auto_photo_sparse_ui_build($bundle,$prepareJob,$runs,$canManage);
 }
 function auto_photo_sparse_ui_web_query(mysqli $db,string $sql,string $types,array $values): ?array {
@@ -111,7 +124,7 @@ function auto_photo_sparse_ui_web_load(mysqli $db,int $orderId,bool $canManage):
     if($orderId<=0)return auto_photo_sparse_ui_web_empty($canManage);
     try {
         /* Ranking: valid sparse chain DB id, then valid prepare DB id, then bundle DB id. */
-        $bundles=auto_photo_sparse_ui_web_query($db,'SELECT id, order_id, capture_session_id, app_bundle_uuid, capture_type, status FROM capture_bundles WHERE order_id=? AND capture_type=? ORDER BY id DESC LIMIT 20','is',[$orderId,AUTO_PHOTO_BUNDLE_CAPTURE_TYPE]);
+        $bundles=auto_photo_sparse_ui_web_query($db,'SELECT id, order_id, capture_session_id, app_bundle_uuid, capture_type, filename, storage_path, size_bytes, status FROM capture_bundles WHERE order_id=? AND capture_type=? ORDER BY id DESC LIMIT 20','is',[$orderId,AUTO_PHOTO_BUNDLE_CAPTURE_TYPE]);
         $sparseRows=auto_photo_sparse_ui_web_query($db,"SELECT id, order_id, capture_session_id, job_type, remote_job_id, parent_remote_job_id, status, progress_percent, message, parameters_json, pipeline_run_id FROM sfm_remote_jobs WHERE order_id=? AND job_type='COLMAP_SPARSE' AND pipeline_run_id IS NULL ORDER BY id DESC LIMIT 20",'i',[$orderId]);
         $prepareRows=auto_photo_sparse_ui_web_query($db,'SELECT id, order_id, capture_session_id, job_type, remote_job_id, status, progress_percent, message, parameters_json FROM sfm_remote_jobs WHERE order_id=? AND job_type=? ORDER BY id DESC LIMIT 20','is',[$orderId,AUTO_PHOTO_PREPARE_JOB_TYPE]);
         if($bundles===null||$sparseRows===null||$prepareRows===null)throw new RuntimeException('query_failed');

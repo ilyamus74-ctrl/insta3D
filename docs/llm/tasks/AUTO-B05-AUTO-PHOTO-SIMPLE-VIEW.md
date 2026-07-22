@@ -63,7 +63,7 @@ Add controls for select model, exhaustive retry, and export PLY using the existi
 - B05.2 — ACCEPTED / DEPLOYED (commit: `26bdc80`; production deployment date: `2026-07-22`)
 - B05.3 — ACCEPTED / DEPLOYED (production deployment date: `2026-07-22`)
 - B05.4 — ACCEPTED / DEPLOYED
-- B05.5 — BLOCKED until B03.1 is accepted and deployed.
+- B05.5 — IMPLEMENTED, PENDING REVIEW/DEPLOYMENT.
 
 ## B05.4 implementation record
 
@@ -74,8 +74,10 @@ Add controls for select model, exhaustive retry, and export PLY using the existi
 - POST redirects use `#simple-photo-sfm`; the Simple View template activates the Bootstrap Photo 3D pill on window load only for the exact `#simple-photo-sfm` URL hash.
 - Overview remains the default active tab for ordinary page loads.
 
-## B05.5 prerequisite evidence
+## B05.5 implementation evidence
 
 - Bundle 8 materialization completed; its prepare dry-run confirmed 87 frames.
 - No real prepare job was created for bundle 8.
-- B05.5 remains blocked until the B03.1 prepare-DONE to standalone-sparse chain is accepted and deployed.
+- B03.1 is accepted and deployed; B05.5 is unblocked and pending review/deployment.
+
+**B05.5 — IMPLEMENTED, PENDING REVIEW/DEPLOYMENT.** Production evidence for the unblocking case is order 31 / capture bundle 8 / session 65: 87 valid photos, index and materialization complete, and prepare dry-run successful. No real prepare job was created. B03.1 is deployed, so B05.5 is unblocked; this does not declare the B05 epic complete.

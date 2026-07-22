@@ -52,6 +52,8 @@ function auto_photo_sparse_ui_build(
         'capture_session_id' => (int) ($bundle['capture_session_id'] ?? 0),
         'app_bundle_uuid' => (string) ($bundle['app_bundle_uuid'] ?? ''),
         'photos_count' => (int) ($bundle['photos_count'] ?? 0),
+        'photos_count_known' => ($bundle['photos_count_known'] ?? false) === true,
+        'can_prepare' => ($bundle['can_prepare'] ?? false) === true,
         'status' => auto_photo_sparse_ui_status($bundle['status'] ?? ''),
     ];
     $prepare = is_array($prepareJob) ? auto_photo_sparse_ui_job($prepareJob) : null;

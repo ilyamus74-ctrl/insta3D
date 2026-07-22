@@ -79,6 +79,15 @@ function auto_photo_sparse_ui_render_action_form(
     if ($postUrl === '' || $csrfName === '' || $csrfValue === '') {
         return '';
     }
+    foreach ($fields as $name => $value) {
+        if (($name === 'sparse_db_job_id' || $name === 'capture_bundle_id')
+            && (!is_int($value) || $value <= 0)) {
+            return '';
+        }
+        if ($name === 'model_id' && (!is_int($value) || $value < 0)) {
+            return '';
+        }
+    }
     $html = '<form method="post" action="' . auto_photo_sparse_ui_render_escape($postUrl) . '"';
     if ($confirmation !== '') {
         $html .= ' onsubmit="return confirm(\'' . auto_photo_sparse_ui_render_escape($confirmation) . '\')"';
@@ -87,7 +96,10 @@ function auto_photo_sparse_ui_render_action_form(
         . '" value="' . auto_photo_sparse_ui_render_escape($csrfValue) . '">'
         . '<input type="hidden" name="action" value="' . auto_photo_sparse_ui_render_escape($action) . '">';
     foreach ($fields as $name => $value) {
-        if (!in_array($name, ['sparse_db_job_id', 'model_id'], true) || !is_int($value)) {
+        $valid = ($name === 'sparse_db_job_id' || $name === 'capture_bundle_id')
+            ? is_int($value) && $value > 0
+            : ($name === 'model_id' && is_int($value) && $value >= 0);
+        if (!$valid) {
             continue;
         }
         $html .= '<input type="hidden" name="' . auto_photo_sparse_ui_render_escape($name)
@@ -107,7 +119,7 @@ function auto_photo_sparse_ui_render_pane(array $dto, array $actionContext = [])
     $html .= '<div class="card mb-3"><div class="card-body"><h5 class="card-title">Фото 3D</h5><div class="row g-3">'
         . '<div class="col-md"><div class="text-muted small">Пакет</div><div>' . (int) ($bundle['id'] ?? 0) . '</div></div>'
         . '<div class="col-md"><div class="text-muted small">Сессия</div><div>' . (int) ($bundle['capture_session_id'] ?? 0) . '</div></div>'
-        . '<div class="col-md"><div class="text-muted small">Фотографии</div><div>' . (int) ($bundle['photos_count'] ?? 0) . '</div></div>'
+        . '<div class="col-md"><div class="text-muted small">Фотографии</div><div>' . (($bundle['photos_count_known'] ?? false) === true ? (int) ($bundle['photos_count'] ?? 0) : '—') . '</div></div>'
         . '<div class="col-md"><div class="text-muted small">Статус</div><div>' . auto_photo_sparse_ui_render_status_badge($bundle['status'] ?? '') . '</div></div>'
         . '<div class="col-12"><div class="text-muted small">UUID</div><div class="text-break">' . auto_photo_sparse_ui_render_value($bundle['app_bundle_uuid'] ?? '') . '</div></div>'
         . '</div></div></div>';
@@ -116,7 +128,19 @@ function auto_photo_sparse_ui_render_pane(array $dto, array $actionContext = [])
     }
     $prepare = $dto['prepare'] ?? null;
     $html .= '<div class="card mb-3"><div class="card-body"><h5 class="card-title">Подготовка</h5>';
+    $showPrepareForm = ($bundle['can_prepare'] ?? false) === true;
+    $prepareForm = $showPrepareForm
+        ? auto_photo_sparse_ui_render_action_form(
+            $actionContext,
+            'auto_photo_prepare_bundle',
+            ['capture_bundle_id' => (int) ($bundle['id'] ?? 0)],
+            'Подготовить и запустить обработку',
+            'btn-outline-primary',
+            'Проиндексировать пакет, подготовить фотографии и запустить обработку?'
+        )
+        : '';
     if (!is_array($prepare)) {
+        $html .= $prepareForm;
         $html .= 'Подготовка ещё не запускалась';
     } else {
         $html .= '<div class="row g-3"><div class="col-md">DB job ID<br><strong>' . (int) ($prepare['db_job_id'] ?? 0) . '</strong></div>'
@@ -124,6 +148,7 @@ function auto_photo_sparse_ui_render_pane(array $dto, array $actionContext = [])
             . '<div class="col-md">Статус<br>' . auto_photo_sparse_ui_render_status_badge($prepare['status'] ?? '') . '</div>'
             . '<div class="col-md">Progress' . auto_photo_sparse_ui_render_progress($prepare['progress_percent'] ?? 0) . '</div></div>'
             . auto_photo_sparse_ui_render_message($prepare['message'] ?? '');
+        $html .= $prepareForm;
     }
     $html .= '</div></div>';
     foreach ((is_array($dto['runs'] ?? null) ? $dto['runs'] : []) as $run) {

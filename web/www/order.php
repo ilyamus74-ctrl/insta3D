@@ -7,6 +7,7 @@ require_once dirname(__DIR__) . '/libs/sfm_settings_lib.php';
 require_once dirname(__DIR__) . '/libs/sfm_debug_public_lib.php';
 require_once dirname(__DIR__) . '/libs/source_storage_lib.php';
 require_once dirname(__DIR__) . '/libs/auto_photo_sparse_web_lib.php';
+require_once dirname(__DIR__) . '/libs/auto_photo_prepare_web_lib.php';
 auth_require_login();
 $user = auth_current_user(); $userId=(int)$user['id']; $role=$user['role'] ?? 'BROKER';
 $orderId=(int)($_GET['id']??0); if($orderId<=0){http_response_code(400);exit('Bad order id');}
@@ -1035,6 +1036,21 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
  }
 
 
+
+ if (
+    $action === 'auto_photo_prepare_bundle'
+    && $canDeleteMedia
+) {
+    try {
+        order_auto_photo_sparse_require_csrf();
+        $result = auto_photo_prepare_web_start_bundle($dbcnx, $orderId, $_POST['capture_bundle_id'] ?? null);
+        $flag = ($result['duplicate'] ?? false) === true ? 'photo_prepare_exists=1#simple-photo-sfm' : 'photo_prepare_queued=1#simple-photo-sfm';
+        header('Location: /order_simple.php?id=' . $orderId . '&' . $flag);
+        exit;
+    } catch (Throwable $e) {
+        $error = $e->getMessage();
+    }
+ }
 
  if (
     $action === 'auto_photo_sparse_select_model'

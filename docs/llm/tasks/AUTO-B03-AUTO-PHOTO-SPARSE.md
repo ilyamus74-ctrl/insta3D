@@ -51,8 +51,8 @@ The sparse worker input is resolved from the existing parent contract:
 /home/makler_storage/output/job_<PREPARE_REMOTE_ID>/frames
 ```
 
-## B03.1 implementation status
+## B03.1 status
 
-- B03.1 — IMPLEMENTED, PENDING REVIEW/DEPLOYMENT.
-- This patch adds only the missing completed-prepare to standalone-sparse worker chain; it does not add GUI, dense, mesh, preview, or export chaining.
+- B03.1 — ACCEPTED / DEPLOYED. Production date: 2026-07-22.
+- The deployed chain adds completed-prepare to standalone-sparse only; it does not add GUI, dense, mesh, preview, or export chaining.
 - Verified pre-existing baseline limitation: `web/tests/auto_photo_prepare_test.php` fails identically at base `5f83f33` and this amended B03.1 HEAD (`RuntimeException: wrong expected`, exit `255`); it was not changed in this scope.

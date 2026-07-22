@@ -34,6 +34,8 @@ acceptance remain pending.
 
 ## B05.5 prerequisite
 
-- B05.5 remains blocked until B03.1 is accepted and deployed.
+- B05.5 is IMPLEMENTED, PENDING REVIEW/DEPLOYMENT; B03.1 is ACCEPTED / DEPLOYED (2026-07-22).
 - Bundle 8 materialization completed and prepare dry-run confirmed 87 frames; no real prepare job was created.
 - B03.1 adds only the missing prepare-DONE → standalone-sparse chain.
+
+Implemented, pending review/deployment. Bundle 8 (order 31, session 65) has 87 valid photos; index/materialization were completed and prepare dry-run succeeded without creating a real prepare job. B03.1 was accepted and deployed on 2026-07-22, unblocking this web start flow. The B05 epic remains open.
