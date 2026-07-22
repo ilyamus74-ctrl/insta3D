@@ -317,6 +317,203 @@ function auto_photo_sparse_manifest_model_id(mixed $value): ?int
     return null;
 }
 
+function auto_photo_sparse_selected_model(array $job): ?int
+{
+    $parameters = json_decode(
+        (string) ($job['parameters_json'] ?? ''),
+        true
+    );
+
+    if (!is_array($parameters)) {
+        return null;
+    }
+
+    return auto_photo_sparse_manifest_model_id(
+        $parameters['selected_model_id'] ?? null
+    );
+}
+
+function auto_photo_sparse_recommended_model(array $models): ?array
+{
+    $recommended = null;
+    $recommendedId = null;
+    $metric = static function (mixed $value): int {
+        return is_int($value) || is_float($value) || is_string($value)
+            ? (int) $value
+            : 0;
+    };
+
+    foreach ($models as $model) {
+        $modelId = is_array($model)
+            ? auto_photo_sparse_manifest_model_id($model['model_id'] ?? null)
+            : null;
+        if (!is_array($model) || $modelId === null) {
+            continue;
+        }
+
+        $registeredImages = $metric($model['registered_images'] ?? null);
+        $pointsValue = $model['points3D_count']
+            ?? ($model['sparse_points'] ?? null);
+        $points = $metric($pointsValue);
+        if ($recommended === null || [
+            $registeredImages,
+            $points,
+            -$modelId,
+        ] > [
+            $metric($recommended['registered_images'] ?? null),
+            $metric($recommended['points3D_count']
+                ?? ($recommended['sparse_points'] ?? null)),
+            -$recommendedId,
+        ]) {
+            $recommended = $model;
+            $recommendedId = $modelId;
+        }
+    }
+
+    return $recommended;
+}
+
+function auto_photo_sparse_resolve_model_id(
+    array $job,
+    array $components,
+    ?int $requestedModelId
+): int {
+    if ($requestedModelId !== null) {
+        auto_photo_sparse_validate_model_id($components, $requestedModelId);
+        return $requestedModelId;
+    }
+
+    $selectedModelId = auto_photo_sparse_selected_model($job);
+    if ($selectedModelId !== null) {
+        auto_photo_sparse_validate_model_id($components, $selectedModelId);
+        return $selectedModelId;
+    }
+
+    $recommended = auto_photo_sparse_recommended_model(
+        is_array($components['models'] ?? null) ? $components['models'] : []
+    );
+    if ($recommended === null) {
+        auto_photo_sparse_fail('sparse_models_missing');
+    }
+
+    return (int) auto_photo_sparse_manifest_model_id($recommended['model_id']);
+}
+
+function auto_photo_sparse_recommend_runs(array $runs): array
+{
+    $bestIndex = null;
+    $bestPriority = null;
+
+    foreach ($runs as $index => $run) {
+        if (!is_array($run)
+            || strtoupper((string) ($run['job']['status'] ?? '')) !== 'DONE'
+            || !is_array($run['models'] ?? null)
+            || $run['models'] === []) {
+            continue;
+        }
+
+        $priority = [
+            (int) ($run['largest_registered_images'] ?? 0),
+            (int) ($run['largest_points'] ?? 0),
+            -(int) ($run['models_count'] ?? 0),
+            (int) ($run['job']['id'] ?? 0),
+        ];
+        if ($bestPriority === null || $priority > $bestPriority) {
+            $bestIndex = $index;
+            $bestPriority = $priority;
+        }
+    }
+
+    foreach ($runs as $index => &$run) {
+        if (is_array($run)) {
+            $run['recommended_run'] = $index === $bestIndex;
+        }
+    }
+    unset($run);
+
+    return $runs;
+}
+
+function auto_photo_sparse_has_merge_warning(array $components): bool
+{
+    $models = [];
+    foreach ($components['models'] ?? [] as $model) {
+        if (!is_array($model)) {
+            continue;
+        }
+
+        $modelId = auto_photo_sparse_manifest_model_id(
+            $model['model_id'] ?? null
+        );
+        if ($modelId === null) {
+            continue;
+        }
+
+        $models[] = [
+            'model_id' => $modelId,
+            'shared_images_with' => is_array(
+                $model['shared_images_with'] ?? null
+            ) ? $model['shared_images_with'] : [],
+        ];
+    }
+
+    if (count($models) < 2) {
+        return false;
+    }
+
+    foreach ($models as $model) {
+        foreach ($models as $other) {
+            if ($model['model_id'] === $other['model_id']) {
+                continue;
+            }
+
+            $sharedCount = $model['shared_images_with'][
+                $other['model_id']
+            ] ?? 0;
+            if (!is_int($sharedCount) && !is_float($sharedCount)
+                && !is_string($sharedCount)) {
+                $sharedCount = 0;
+            }
+            if ((int) $sharedCount < 3) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function auto_photo_sparse_export_priority(array $exports): ?array
+{
+    $chosen = null;
+    $chosenPriority = null;
+    $statusPriority = [
+        'DONE' => 3,
+        'QUEUED' => 2,
+        'RUNNING' => 2,
+        'ERROR' => 1,
+        'FAILED' => 1,
+        'CANCELLED' => 1,
+    ];
+
+    foreach ($exports as $export) {
+        if (!is_array($export)) {
+            continue;
+        }
+
+        $priority = [
+            $statusPriority[strtoupper((string) ($export['status'] ?? ''))] ?? 0,
+            (int) ($export['id'] ?? 0),
+        ];
+        if ($chosenPriority === null || $priority > $chosenPriority) {
+            $chosen = $export;
+            $chosenPriority = $priority;
+        }
+    }
+
+    return $chosen;
+}
+
 function auto_photo_sparse_validate_model_id(array $components, int $modelId): array
 {
     foreach ($components['models'] ?? [] as $model) {
