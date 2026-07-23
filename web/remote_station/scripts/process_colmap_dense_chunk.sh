@@ -18,7 +18,7 @@ ARG_NUM_SRC_IMAGES="${9:-}"
 
 BASE="${STATION_BASE:-/home/makler_storage}"; COLMAP_MODE="${COLMAP_MODE:-native}"; COLMAP_BIN="${COLMAP_BIN:-colmap}"; COLMAP_IMAGE="${COLMAP_IMAGE:-}"
 PARENT_DIR="$BASE/output/job_${PARENT_JOB_ID}"; SPARSE_JOB_DIR="$BASE/output/job_${SPARSE_JOB_ID}/colmap"; SPARSE_MODEL_DIR="$SPARSE_JOB_DIR/sparse/${MODEL_ID}"
-CHUNK_DIR="$PARENT_DIR/chunks/chunk_${CHUNK_ID}"; UNDISTORTED_DIR="$CHUNK_DIR/undistorted"; LOG_DIR="$CHUNK_DIR/logs"; FUSED_PLY="$CHUNK_DIR/fused.ply"; STATUS_FILE="$BASE/status/job_${JOB_ID}.json"
+CHUNK_DIR="$PARENT_DIR/chunks/chunk_${CHUNK_ID}"; SANITIZED_IMAGES_DIR="$CHUNK_DIR/sanitized_images"; UNDISTORTED_DIR="$CHUNK_DIR/undistorted"; LOG_DIR="$CHUNK_DIR/logs"; FUSED_PLY="$CHUNK_DIR/fused.ply"; STATUS_FILE="$BASE/status/job_${JOB_ID}.json"
 mkdir -p "$BASE/status" "$BASE/logs" "$CHUNK_DIR" "$LOG_DIR"
 
 TARGET_IMAGE_LIST="$CHUNK_DIR/image_list.txt"
@@ -101,14 +101,23 @@ run_colmap() {
     esac
 }
 
-trap 'ec=$?; st=ERROR; [[ $ec -eq 137 ]] && st=ERROR_OOM; msg="Dense chunk $CHUNK_ID failed exit $ec"; status "$st" 0 "$msg"; result "$st" "$ec" "$msg"; exit $ec' ERR
-AVAIL_BEFORE=$(avail_mb); status RUNNING 5 "Preparing dense chunk $CHUNK_ID"
+trap 'ec=$?; st=ERROR; msg="Dense chunk $CHUNK_ID failed exit $ec"; [[ $ec -eq 124 ]] && { st=ERROR_TIMEOUT; msg="Dense chunk $CHUNK_ID timed out"; }; [[ $ec -eq 137 ]] && { st=ERROR_KILLED; msg="Dense chunk $CHUNK_ID was killed"; }; status "$st" 0 "$msg"; result "$st" "$ec" "$msg"; exit $ec' ERR
+AVAIL_BEFORE=$(avail_mb)
 FRAMES_DIR=$(python3 - "$SPARSE_JOB_DIR/result.json" <<'PY'
 import json,sys; print(json.load(open(sys.argv[1])).get('frames_dir',''))
 PY
 )
 [[ -d "$FRAMES_DIR" ]] || { status ERROR 0 "frames_dir missing"; exit 1; }
-run_colmap image_undistorter --image_path "$FRAMES_DIR" --input_path "$SPARSE_MODEL_DIR" --output_path "$UNDISTORTED_DIR" --output_type COLMAP --image_list_path "$CHUNK_DIR/image_list.txt" --max_image_size "$MAX_IMAGE_SIZE" --num_patch_match_src_images "$SRC" > "$LOG_DIR/image_undistorter.log" 2>&1
+status RUNNING 3 "Sanitizing dense chunk $CHUNK_ID images"
+rm -rf "$SANITIZED_IMAGES_DIR"
+python3 "$(dirname "$0")/sanitize_dense_images.py" \
+  "$FRAMES_DIR" \
+  "$CHUNK_DIR/image_list.txt" \
+  "$SANITIZED_IMAGES_DIR" \
+  "$LOG_DIR/sanitize_images_stats.json" \
+  > "$LOG_DIR/sanitize_images.log" 2>&1
+status RUNNING 5 "Preparing dense chunk $CHUNK_ID"
+run_colmap image_undistorter --image_path "$SANITIZED_IMAGES_DIR" --input_path "$SPARSE_MODEL_DIR" --output_path "$UNDISTORTED_DIR" --output_type COLMAP --image_list_path "$CHUNK_DIR/image_list.txt" --max_image_size "$MAX_IMAGE_SIZE" --num_patch_match_src_images "$SRC" > "$LOG_DIR/image_undistorter.log" 2>&1
 python3 "$(dirname "$0")/filter_patch_match_cfg.py" \
   "$UNDISTORTED_DIR/stereo/patch-match.cfg" \
   "$UNDISTORTED_DIR/images" \

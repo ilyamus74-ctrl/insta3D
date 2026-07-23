@@ -94,6 +94,7 @@ if ! "${SSH[@]}" "
   '$STATION_BASE/venv/bin/python' -c 'import cv2, numpy; print(cv2.__version__, numpy.__version__)'
   test -f '$STATION_BASE/scripts/plan_colmap_dense_chunks.py'
   test -f '$STATION_BASE/scripts/merge_dense_chunks.py'
+  test -x '$STATION_BASE/scripts/sanitize_dense_images.py'
   test -x '$STATION_BASE/scripts/process_colmap_mesh.sh'
   test -x '$STATION_BASE/scripts/process_maklertour_synced_dense.sh'
   test -f '$STATION_BASE/scripts/dense_depth_from_synced_capture.py'
