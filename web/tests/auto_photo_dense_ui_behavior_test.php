@@ -178,8 +178,14 @@ adui_ok($ignored['runs'][0]['models'][0]['can_dense_preview'] === true, 'invalid
 
 $route = (string) file_get_contents(__DIR__ . '/../www/order.php');
 $start = strpos($route, "\$action === 'auto_photo_sparse_build_dense_preview'");
-$end = strpos($route, "\n  if(", $start === false ? 0 : $start + 1);
-$fragment = $start === false ? '' : substr($route, $start, $end === false ? null : $end - $start);
+$end = $start === false
+    ? false
+    : strpos($route, 'create_capture_bundle_dense_job', $start + 1);
+adui_ok(
+    $start !== false && $end !== false && $end > $start,
+    'dense route boundaries'
+);
+$fragment = substr($route, $start, $end - $start);
 foreach ([
     '$canDeleteMedia',
     'order_auto_photo_sparse_require_csrf',
