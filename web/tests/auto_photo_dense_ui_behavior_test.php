@@ -128,7 +128,7 @@ adui_ok(substr_count($eligiblePane, 'auto_photo_sparse_build_dense_preview') ===
 foreach ([
     'name="sparse_db_job_id" value="746"',
     'name="model_id" value="0"',
-    'Построить Dense Preview',
+    'Создать 3D-модель',
 ] as $needle) {
     adui_ok(str_contains($eligiblePane, $needle), 'eligible form ' . $needle);
 }
@@ -153,11 +153,19 @@ adui_ok(
     ($doneModel['dense']['download_url'] ?? '') === '/api/sfm_remote_job_status.php?job_id=981&file=ply',
     'done dense download URL'
 );
+adui_ok(
+    ($doneModel['dense']['viewer_url'] ?? '') ===
+        '/sfm_3d_viewer.php?order_id=30&session_id=63'
+        . '&auto_photo_dense_job_id=981&artifact=dense',
+    'done dense viewer URL'
+);
 $donePane = auto_photo_sparse_ui_render_pane($done, $context);
 foreach ([
     'Dense points: 12 345',
     'Размер: 67890 B',
-    'Скачать merged_fused.ply',
+    'Открыть 3D',
+    'Скачать PLY',
+    'auto_photo_dense_job_id=981',
     'href="/api/sfm_remote_job_status.php?job_id=981&amp;file=ply"',
 ] as $needle) {
     adui_ok(str_contains($donePane, $needle), 'done render ' . $needle);

@@ -163,7 +163,18 @@ function auto_photo_sparse_ui_build(
                 $dto = auto_photo_sparse_ui_job($chosen);
                 $dto['source_sparse_remote_job_id'] = (int)($job['remote_job_id'] ?? 0);
                 $dto['model_id'] = $modelId;
-                $dto['dense_points'] = (int)($chosen['_dense_points'] ?? 0); $dto['file_size_bytes'] = (int)($chosen['_dense_file_size'] ?? 0); $dto['download_url'] = !empty($chosen['_dense_download_ready']) ? '/api/sfm_remote_job_status.php?job_id=' . $dto['db_job_id'] . '&file=ply' : '';
+                $dto['dense_points'] = (int)($chosen['_dense_points'] ?? 0);
+                $dto['file_size_bytes'] = (int)($chosen['_dense_file_size'] ?? 0);
+                $ready = !empty($chosen['_dense_download_ready']);
+                $dto['download_url'] = $ready
+                    ? '/api/sfm_remote_job_status.php?job_id=' . $dto['db_job_id'] . '&file=ply'
+                    : '';
+                $dto['viewer_url'] = $ready
+                    ? '/sfm_3d_viewer.php?order_id=' . (int)($chosen['order_id'] ?? 0)
+                        . '&session_id=' . (int)($chosen['capture_session_id'] ?? 0)
+                        . '&auto_photo_dense_job_id=' . $dto['db_job_id']
+                        . '&artifact=dense'
+                    : '';
                 $modelDto['dense'] = $dto;
             }
             $blocks = false;

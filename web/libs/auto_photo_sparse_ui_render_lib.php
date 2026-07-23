@@ -77,7 +77,17 @@ function auto_photo_sparse_ui_render_dense(mixed $dense): string
         . '<br>Dense points: ' . number_format((int)($dense['dense_points'] ?? 0), 0, '.', ' ')
         . '<br>Размер: ' . (int)($dense['file_size_bytes'] ?? 0) . ' B</div>'
         . auto_photo_sparse_ui_render_message($dense['message'] ?? '');
-    if (($url = (string)($dense['download_url'] ?? '')) !== '') $html .= '<a class="btn btn-sm btn-outline-primary mt-2" href="' . auto_photo_sparse_ui_render_escape($url) . '">Скачать merged_fused.ply</a>';
+    $viewerUrl = (string)($dense['viewer_url'] ?? '');
+    if ($viewerUrl !== '') {
+        $html .= '<a class="btn btn-sm btn-primary mt-2 me-1" href="'
+            . auto_photo_sparse_ui_render_escape($viewerUrl)
+            . '">Открыть 3D</a>';
+    }
+    if (($url = (string)($dense['download_url'] ?? '')) !== '') {
+        $html .= '<a class="btn btn-sm btn-outline-primary mt-2" href="'
+            . auto_photo_sparse_ui_render_escape($url)
+            . '">Скачать PLY</a>';
+    }
     return $html;
 }
 
@@ -200,20 +210,41 @@ function auto_photo_sparse_ui_render_pane(array $dto, array $actionContext = [])
                 $registeredText = $input > 0 ? $registered . ' / ' . $input . ' (' . number_format((float) ($model['registered_percent'] ?? 0), 1, '.', '') . '%)' : (string) $registered;
                 $status = ''; if (($model['selected'] ?? false) === true) { $status .= '<span class="badge bg-info text-dark">Выбрана</span> '; } if (($model['recommended'] ?? false) === true) { $status .= '<span class="badge bg-primary">Рекомендована</span>'; }
                 $modelId = $model['model_id'] ?? null;
-                $actions = [];
+                $primaryActions = [];
+                $secondaryActions = [];
                 if (is_int($sparseDbJobId) && $sparseDbJobId > 0 && is_int($modelId) && $modelId >= 0) {
+                    if (($model['can_dense_preview'] ?? false) === true) {
+                        $primaryActions[] = auto_photo_sparse_ui_render_action_form(
+                            $actionContext,
+                            'auto_photo_sparse_build_dense_preview',
+                            ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId],
+                            'Создать 3D-модель',
+                            'btn-primary',
+                            'Запустить Dense Preview для этой sparse-модели?'
+                        );
+                    }
                     if (($model['can_select'] ?? false) === true) {
-                        $actions[] = auto_photo_sparse_ui_render_action_form($actionContext, 'auto_photo_sparse_select_model', ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId], 'Выбрать модель');
+                        $secondaryActions[] = auto_photo_sparse_ui_render_action_form($actionContext, 'auto_photo_sparse_select_model', ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId], 'Выбрать sparse-модель');
                     }
                     if (($model['can_export'] ?? false) === true) {
-                        $actions[] = auto_photo_sparse_ui_render_action_form($actionContext, 'auto_photo_sparse_export_ply', ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId], 'Экспортировать PLY');
-                    }
-                    if (($model['can_dense_preview'] ?? false) === true) {
-                        $actions[] = auto_photo_sparse_ui_render_action_form($actionContext, 'auto_photo_sparse_build_dense_preview', ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId], 'Построить Dense Preview');
+                        $secondaryActions[] = auto_photo_sparse_ui_render_action_form($actionContext, 'auto_photo_sparse_export_ply', ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId], 'Экспортировать sparse PLY');
                     }
                 }
-                $actions = array_filter($actions, static fn(string $form): bool => $form !== '');
-                $actionsHtml = $actions === [] ? '—' : '<div class="d-flex flex-column gap-1">' . implode('', $actions) . '</div>';
+                $primaryActions = array_filter($primaryActions, static fn(string $form): bool => $form !== '');
+                $secondaryActions = array_filter($secondaryActions, static fn(string $form): bool => $form !== '');
+                $actionsHtml = '';
+                if ($primaryActions !== []) {
+                    $actionsHtml .= '<div class="d-flex flex-column gap-1">'
+                        . implode('', $primaryActions) . '</div>';
+                }
+                if ($secondaryActions !== []) {
+                    $actionsHtml .= '<details class="mt-2"><summary class="small text-muted">Дополнительно</summary>'
+                        . '<div class="d-flex flex-column gap-1 mt-1">'
+                        . implode('', $secondaryActions) . '</div></details>';
+                }
+                if ($actionsHtml === '') {
+                    $actionsHtml = '—';
+                }
                 $html .= '<tr><td>' . (int) ($model['model_id'] ?? 0) . '</td><td>' . ($status !== '' ? $status : '—') . '</td><td>' . $registeredText . '</td><td>' . number_format((int) ($model['points3D_count'] ?? 0), 0, '.', ' ') . '</td><td>' . auto_photo_sparse_ui_render_value($model['first_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['last_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['frame_ranges_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['shared_images_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_export($model['export'] ?? null) . '<hr class="my-2">' . auto_photo_sparse_ui_render_dense($model['dense'] ?? null) . '</td><td>' . $actionsHtml . '</td></tr>';
             }
             $html .= '</tbody></table></div>';

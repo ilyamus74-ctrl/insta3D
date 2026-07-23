@@ -15,8 +15,12 @@ $sessionId = (int)($_GET['session_id'] ?? ($debugPublic['capture_session_id'] ??
 $pipelineRunId = (int)($_GET['pipeline_run_id'] ?? 0);
 $mergeId = (int)($_GET['merge_id'] ?? 0);
 $videoScanId = (int)($_GET['video_scan_id'] ?? 0);
+$autoPhotoDenseJobId = (int)($_GET['auto_photo_dense_job_id'] ?? 0);
 $denseRemoteJobId = (int)($_GET['dense_remote_job_id'] ?? 0);
 $artifact = in_array((string)($_GET['artifact'] ?? ($mergeId > 0 ? 'dense' : 'sparse')), ['sparse','dense','mesh'], true) ? (string)($_GET['artifact'] ?? ($mergeId > 0 ? 'dense' : 'sparse')) : 'sparse';
+if ($autoPhotoDenseJobId > 0) {
+    $artifact = 'dense';
+}
 $mergeViewerData = null;
 function sfm_viewer_can_view_order(array $order, int $userId, string $role): bool {
     return $role === 'ADMIN'
@@ -121,7 +125,10 @@ body{overflow:hidden}
 <div class="container-fluid position-relative">
 <div class="d-flex gap-2 mb-2">
 <?php if (!$debugPublic): ?>
-  <?php if ($mergeId > 0): ?>
+  <?php if ($autoPhotoDenseJobId > 0): ?>
+    <a class="btn btn-outline-secondary btn-sm" href="/order_simple.php?id=<?php echo $orderId; ?>#simple-photo-sfm">← Назад в «Фото 3D»</a>
+    <a class="btn btn-outline-primary btn-sm" href="/api/sfm_remote_job_status.php?job_id=<?php echo $autoPhotoDenseJobId; ?>&amp;file=ply">Скачать PLY</a>
+  <?php elseif ($mergeId > 0): ?>
     <a class="btn btn-outline-secondary btn-sm" href="/order_simple.php?id=<?php echo $orderId; ?>#simple-generated">← Back to Simple Order</a>
     <a class="btn btn-outline-secondary btn-sm" href="/order.php?id=<?php echo $orderId; ?>">Back to Legacy Order</a>
     <?php if ($sessionId > 0): ?><a class="btn btn-outline-primary btn-sm" href="/sfm_tour_viewer.php?order_id=<?php echo $orderId; ?>&session_id=<?php echo $sessionId; ?>">Open SfM tour</a><?php endif; ?>
@@ -218,7 +225,7 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 
-const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,videoScanId=<?php echo json_encode($videoScanId); ?>,denseRemoteJobId=<?php echo json_encode($denseRemoteJobId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,mergeId=<?php echo json_encode($mergeId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
+const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,videoScanId=<?php echo json_encode($videoScanId); ?>,autoPhotoDenseJobId=<?php echo json_encode($autoPhotoDenseJobId); ?>,denseRemoteJobId=<?php echo json_encode($denseRemoteJobId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,mergeId=<?php echo json_encode($mergeId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
 const mergeViewerData=<?php echo json_encode($mergeViewerData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
 const urlParams=new URLSearchParams(window.location.search);
 const autoLevelUrlOverride=urlParams.get('auto_level');
@@ -226,14 +233,18 @@ const statusEl=document.getElementById('viewerStatus');
 function showError(msg){ statusEl.className='text-danger p-3'; statusEl.textContent=msg; if(!statusEl.isConnected) document.getElementById('viewer').prepend(statusEl); }
 let data=mergeViewerData;
 if(!data){
-  const apiUrl=pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&video_scan_id=${videoScanId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${denseRemoteJobId>0?'&dense_remote_job_id='+denseRemoteJobId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${videoScanId>0?'&video_scan_id='+videoScanId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`;
+  const apiUrl=autoPhotoDenseJobId>0
+    ? `/api/auto_photo_dense_3d.php?job_id=${autoPhotoDenseJobId}&order_id=${orderId}&session_id=${sessionId}`
+    : (pipelineRunId>0 ? `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}&video_scan_id=${videoScanId}&pipeline_run_id=${pipelineRunId}&artifact=${initialArtifact}${denseRemoteJobId>0?'&dense_remote_job_id='+denseRemoteJobId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}` : `/api/sfm_3d.php?order_id=${orderId}&session_id=${sessionId}${videoScanId>0?'&video_scan_id='+videoScanId:''}${debugToken?'&debug_token='+encodeURIComponent(debugToken):''}`);
   const r=await fetch(apiUrl);
   const apiContentType=(r.headers.get('Content-Type')||'').toLowerCase();
   data=(r.ok && apiContentType.includes('application/json')) ? await r.json().catch(()=>({ok:false,error:'Bad API JSON response'})) : {ok:false,error:`API returned HTTP ${r.status}`};
 }
 if(!data.ok){ showError(data.error||'Artifact not found'); throw new Error(data.error||'load failed'); }
 if(data.title) document.title = data.title;
-document.getElementById('sourceHeader').innerHTML = data.is_merge
+document.getElementById('sourceHeader').innerHTML = data.is_auto_photo_dense
+  ? `<b>${data.title}</b> · <b>Dense DB job:</b> ${data.dense?.db_job_id||autoPhotoDenseJobId} · <b>Remote:</b> ${data.dense?.remote_job_id||'-'} · <b>Model:</b> ${data.dense?.model_id??'-'} · <b>Status:</b> ${data.status||'-'}${data.warning?`<div class="text-warning mt-1">${data.warning}</div>`:''}`
+  : data.is_merge
   ? `<b>${data.title}</b> · <b>Merge:</b> ${data.merge_id||mergeId||'-'} · <b>Mode:</b> ${data.pipeline_mode||'-'} · <b>Status:</b> ${data.status||'-'}${data.warning?`<div class="text-warning mt-1">${data.warning}</div>`:''}`
   : `<b>Source video:</b> ${data.source_video_filename||'unknown'} · <b>Video scan:</b> ${data.video_scan_id||videoScanId||'-'} · <b>Pipeline run:</b> ${data.pipeline_run_id||pipelineRunId||'-'} · <b>Mode:</b> ${data.pipeline_mode||'-'} · <b>Status:</b> ${data.status||'-'}`;
 statusEl.textContent = initialArtifact==='dense' ? 'Loading dense point cloud...' : (initialArtifact==='mesh' ? 'Loading final mesh...' : 'Loading sparse point cloud...');
