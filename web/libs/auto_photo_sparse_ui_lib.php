@@ -166,7 +166,18 @@ function auto_photo_sparse_ui_build(
                 $dto['dense_points'] = (int)($chosen['_dense_points'] ?? 0); $dto['file_size_bytes'] = (int)($chosen['_dense_file_size'] ?? 0); $dto['download_url'] = !empty($chosen['_dense_download_ready']) ? '/api/sfm_remote_job_status.php?job_id=' . $dto['db_job_id'] . '&file=ply' : '';
                 $modelDto['dense'] = $dto;
             }
-            $blocks=false; foreach($related as $dense) $blocks=$blocks||in_array(auto_photo_sparse_ui_status($dense['status'] ?? ''),['QUEUED','RUNNING','PLANNING','RUNNING_CHUNKS','MERGING','DONE'],true);
+            $blocks = false;
+            foreach ($related as $dense) {
+                $denseStatus = auto_photo_sparse_ui_status(
+                    $dense['status'] ?? ''
+                );
+                $blocks = $blocks || in_array(
+                    $denseStatus,
+                    ['QUEUED','RUNNING','PLANNING','RUNNING_CHUNKS','MERGING','DONE'],
+                    true
+                );
+                $activeJobs = $activeJobs || auto_photo_sparse_ui_active($denseStatus);
+            }
             $modelDto['can_dense_preview'] = $canManage && auto_photo_sparse_ui_status($job['status'] ?? '') === 'DONE' && (int)$modelDto['registered_images'] >= 10 && !$blocks;
         }
         unset($modelDto);
