@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a dense-only image tree while removing unsafe JPEG APP13 metadata."""
+"""Build a dense-only image tree without EXIF/XMP/IPTC text metadata."""
 
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import NoReturn
 
 
+APP1 = 0xE1
 APP13 = 0xED
+COMMENT = 0xFE
+REMOVED_METADATA_MARKERS = {APP1, APP13, COMMENT}
 STANDALONE_MARKERS = {0x01, 0xD8, 0xD9, *range(0xD0, 0xD8)}
 
 
@@ -26,13 +29,13 @@ def is_inside(path: Path, root: Path) -> bool:
         return False
 
 
-def strip_jpeg_app13(data: bytes) -> tuple[bytes, int]:
+def strip_jpeg_metadata(data: bytes) -> tuple[bytes, dict[int, int]]:
     if not data.startswith(b"\xff\xd8"):
         fail("JPEG SOI marker is missing")
 
     out = bytearray(data[:2])
     offset = 2
-    removed = 0
+    removed: dict[int, int] = {}
 
     while offset < len(data):
         marker_start = offset
@@ -76,8 +79,8 @@ def strip_jpeg_app13(data: bytes) -> tuple[bytes, int]:
         if segment_end > len(data):
             fail(f"truncated JPEG segment for marker 0x{marker:02x}")
 
-        if marker == APP13:
-            removed += 1
+        if marker in REMOVED_METADATA_MARKERS:
+            removed[marker] = removed.get(marker, 0) + 1
         else:
             out.extend(data[marker_start:segment_end])
 
@@ -144,7 +147,10 @@ def main(argv: list[str]) -> int:
         "images_total": 0,
         "jpeg_images": 0,
         "jpeg_images_sanitized": 0,
+        "metadata_segments_removed": 0,
+        "app1_segments_removed": 0,
         "app13_segments_removed": 0,
+        "comment_segments_removed": 0,
         "source_bytes": 0,
         "output_bytes": 0,
     }
@@ -161,14 +167,18 @@ def main(argv: list[str]) -> int:
 
         source_data = source.read_bytes()
         output_data = source_data
-        removed = 0
+        removed: dict[int, int] = {}
 
         if source.suffix.lower() in {".jpg", ".jpeg"}:
             stats["jpeg_images"] += 1
-            output_data, removed = strip_jpeg_app13(source_data)
-            if removed > 0:
+            output_data, removed = strip_jpeg_metadata(source_data)
+            removed_total = sum(removed.values())
+            if removed_total > 0:
                 stats["jpeg_images_sanitized"] += 1
-                stats["app13_segments_removed"] += removed
+                stats["metadata_segments_removed"] += removed_total
+                stats["app1_segments_removed"] += removed.get(APP1, 0)
+                stats["app13_segments_removed"] += removed.get(APP13, 0)
+                stats["comment_segments_removed"] += removed.get(COMMENT, 0)
 
         temporary = destination.with_name(destination.name + ".tmp")
         temporary.write_bytes(output_data)
