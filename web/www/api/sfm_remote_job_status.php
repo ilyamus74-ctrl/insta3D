@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../bootstrap.php';
 require_once dirname(__DIR__, 2) . '/libs/auto_photo_sparse_lib.php';
+require_once dirname(__DIR__, 2) . '/libs/auto_photo_dense_download_scope_lib.php';
 auth_require_login();
 $user=auth_current_user(); $userId=(int)$user['id']; $role=(string)($user['role'] ?? 'BROKER');
 function srj_json(array $p,int $c=200): void { http_response_code($c); header('Content-Type: application/json; charset=utf-8'); echo json_encode($p,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
@@ -270,37 +271,20 @@ if($file!==''){
   elseif($file==='ply') {
     if ((string)($job['job_type'] ?? '') === 'COLMAP_DENSE') { $path=$base.'/dense/fused.ply'; $downloadName='job_'.$remote.'_dense_fused.ply'; }
     elseif (in_array((string)($job['job_type'] ?? ''), ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) {
-      $parameters=json_decode((string)($job['parameters_json'] ?? ''),true);
-      $isStandalone=is_array($parameters) && ($parameters['source_type']??null)==='auto_photo_sparse' && ($parameters['standalone_auto_photo_dense']??null)===true && ($parameters['dense_only']??null)===true;
-      if($isStandalone){
-        if(srj_standalone_dense_scope($dbcnx,$job)===null){
+      if(auto_photo_dense_download_is_candidate($job)){
+        $resolved=auto_photo_dense_download_resolve($dbcnx,$job);
+        if($resolved===null){
           http_response_code(404);
           header('Content-Type: text/plain; charset=utf-8');
           exit('file_not_ready');
         }
-        $expected=$base.'/merged/merged_fused.ply';
-        $baseStat=@lstat($base);
-        $fileStat=@lstat($expected);
-        $realBase=realpath($base);
-        $realFile=realpath($expected);
-        if(!hash_equals($expected,(string)($job['output_path']??''))
-          || is_link($base)
-          || is_link($expected)
-          || $baseStat===false
-          || (($baseStat['mode']&0170000)!==0040000)
-          || $fileStat===false
-          || (($fileStat['mode']&0170000)!==0100000)
-          || (int)$fileStat['size']<=0
-          || $realBase===false
-          || $realFile===false
-          || !str_starts_with($realFile,rtrim($realBase,DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR)
-          || !srj_is_valid_ply_file($expected)){
-          http_response_code(404);
-          header('Content-Type: text/plain; charset=utf-8');
-          exit('file_not_found');
-        }
+        $path=(string)$resolved['path'];
+        $base=(string)$resolved['base'];
+        $downloadName=(string)$resolved['download_name'];
+      } else {
+        $path=$base.'/merged/merged_fused.ply';
+        $downloadName='job_'.$remote.'_merged_fused.ply';
       }
-      $path=$base.'/merged/merged_fused.ply'; $downloadName='job_'.$remote.'_merged_fused.ply';
     }
     elseif ((string)($job['job_type'] ?? '') === 'COLMAP_MESH') {
       if ((string)($job['status'] ?? '') !== 'DONE') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_ready'; exit; }
