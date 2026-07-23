@@ -61,6 +61,201 @@ function srj_is_valid_ply_file(string $file): bool {
   return (bool)preg_match('/^format (?:ascii|binary_little_endian) 1\.0\r?$/m',$head)
     && (bool)preg_match('/^element vertex ([1-9][0-9]*)\r?$/m',$head);
 }
+
+function srj_positive_int(mixed $value): ?int {
+  if (is_int($value) && $value > 0) return $value;
+  if (is_string($value) && preg_match('/^[1-9][0-9]*$/', $value) === 1) return (int)$value;
+  return null;
+}
+
+function srj_sparse_components(int $remoteJobId): ?array {
+  try {
+    $jobDirectory=auto_photo_sparse_output_path($remoteJobId);
+    $colmapDirectory=$jobDirectory.'/colmap';
+    $manifestPath=$colmapDirectory.'/sparse_components.json';
+
+    $jobStat=@lstat($jobDirectory);
+    $colmapStat=@lstat($colmapDirectory);
+    $manifestStat=@lstat($manifestPath);
+    if(is_link($jobDirectory)
+      || is_link($colmapDirectory)
+      || is_link($manifestPath)
+      || $jobStat===false
+      || $colmapStat===false
+      || $manifestStat===false
+      || (($jobStat['mode']&0170000)!==0040000)
+      || (($colmapStat['mode']&0170000)!==0040000)
+      || (($manifestStat['mode']&0170000)!==0100000)
+      || (int)$manifestStat['size']<=0
+      || (int)$manifestStat['size']>2097152) {
+      return null;
+    }
+
+    $realJob=realpath($jobDirectory);
+    $realColmap=realpath($colmapDirectory);
+    $realManifest=realpath($manifestPath);
+    if($realJob===false
+      || $realColmap===false
+      || $realManifest===false
+      || dirname($realColmap)!==$realJob
+      || !str_starts_with(
+        $realManifest,
+        rtrim($realColmap,DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR
+      )) {
+      return null;
+    }
+
+    $components=json_decode(
+      (string)file_get_contents($realManifest),
+      true,
+      512,
+      JSON_THROW_ON_ERROR
+    );
+    return is_array($components) && is_array($components['models'] ?? null)
+      ? $components
+      : null;
+  } catch(Throwable) {
+    return null;
+  }
+}
+
+function srj_standalone_dense_scope(mysqli $db, array $job): ?array {
+  try {
+    if ((string)($job['job_type'] ?? '') !== 'COLMAP_RECONSTRUCTION_PREVIEW'
+      || (string)($job['status'] ?? '') !== 'DONE'
+      || ($job['pipeline_run_id'] ?? null) !== null
+      || (string)($job['reconstruction_mode'] ?? '') !== 'preview') {
+      return null;
+    }
+
+    $parameters=json_decode(
+      (string)($job['parameters_json'] ?? ''),
+      true,
+      512,
+      JSON_THROW_ON_ERROR
+    );
+    if (!is_array($parameters)
+      || ($parameters['source_type'] ?? null) !== 'auto_photo_sparse'
+      || ($parameters['standalone_auto_photo_dense'] ?? null) !== true
+      || ($parameters['dense_only'] ?? null) !== true) {
+      return null;
+    }
+
+    $sparseDbJobId=srj_positive_int($parameters['sparse_db_job_id'] ?? null);
+    $sparseJobId=srj_positive_int($parameters['sparse_job_id'] ?? null);
+    $sparseRemoteJobId=srj_positive_int($parameters['sparse_remote_job_id'] ?? null);
+    $modelId=auto_photo_sparse_manifest_model_id($parameters['model_id'] ?? null);
+    $orderId=srj_positive_int($job['order_id'] ?? null);
+    $captureSessionId=srj_positive_int($job['capture_session_id'] ?? null);
+
+    if ($sparseDbJobId===null
+      || $sparseJobId===null
+      || $sparseRemoteJobId===null
+      || $modelId===null
+      || $orderId===null
+      || $captureSessionId===null
+      || (int)($job['remote_job_id'] ?? 0)<=0
+      || (int)($job['parent_remote_job_id'] ?? 0)!==$sparseRemoteJobId
+      || $sparseJobId!==$sparseRemoteJobId) {
+      return null;
+    }
+
+    $statement=$db->prepare('SELECT * FROM sfm_remote_jobs WHERE id=? LIMIT 1');
+    if (!$statement
+      || !$statement->bind_param('i',$sparseDbJobId)
+      || !$statement->execute()) {
+      return null;
+    }
+    $result=$statement->get_result();
+    $sparse=$result ? $result->fetch_assoc() : null;
+    $statement->close();
+
+    if (!is_array($sparse)
+      || (int)($sparse['id'] ?? 0)!==$sparseDbJobId
+      || (int)($sparse['order_id'] ?? 0)!==$orderId
+      || (int)($sparse['capture_session_id'] ?? 0)!==$captureSessionId
+      || (string)($sparse['job_type'] ?? '')!=='COLMAP_SPARSE'
+      || (int)($sparse['remote_job_id'] ?? 0)!==$sparseRemoteJobId
+      || ($sparse['pipeline_run_id'] ?? null)!==null
+      || (string)($sparse['status'] ?? '')!=='DONE'
+      || (string)($sparse['output_path'] ?? '')!==auto_photo_sparse_output_path($sparseRemoteJobId)) {
+      return null;
+    }
+
+    $scope=auto_photo_sparse_validate_job_scope($db,$orderId,$sparse);
+    $sparseParameters=$scope['parameters'] ?? null;
+    $bundle=$scope['bundle'] ?? null;
+    if(!is_array($sparseParameters) || !is_array($bundle)) return null;
+
+    $prepareDbJobId=srj_positive_int($sparseParameters['prepare_job_id'] ?? null);
+    $prepareRemoteJobId=srj_positive_int($sparseParameters['prepare_remote_job_id'] ?? null);
+    if($prepareDbJobId===null
+      || $prepareRemoteJobId===null
+      || (int)($sparse['parent_remote_job_id'] ?? 0)!==$prepareRemoteJobId) {
+      return null;
+    }
+
+    $prepareType=AUTO_PHOTO_PREPARE_JOB_TYPE;
+    $statement=$db->prepare(
+      'SELECT * FROM sfm_remote_jobs '
+      .'WHERE id=? AND order_id=? AND capture_session_id=? AND job_type=? LIMIT 1'
+    );
+    if(!$statement
+      || !$statement->bind_param(
+        'iiis',
+        $prepareDbJobId,
+        $orderId,
+        $captureSessionId,
+        $prepareType
+      )
+      || !$statement->execute()) {
+      return null;
+    }
+    $result=$statement->get_result();
+    $prepare=$result ? $result->fetch_assoc() : null;
+    $statement->close();
+
+    if(!is_array($prepare)
+      || (int)($prepare['id'] ?? 0)!==$prepareDbJobId
+      || (int)($prepare['order_id'] ?? 0)!==$orderId
+      || (int)($prepare['capture_session_id'] ?? 0)!==$captureSessionId
+      || (string)($prepare['job_type'] ?? '')!==$prepareType
+      || (int)($prepare['remote_job_id'] ?? 0)!==$prepareRemoteJobId
+      || ($prepare['pipeline_run_id'] ?? null)!==null
+      || (string)($prepare['status'] ?? '')!=='DONE'
+      || (string)($prepare['output_path'] ?? '')!==auto_photo_sparse_output_path($prepareRemoteJobId)) {
+      return null;
+    }
+
+    $prepareParameters=json_decode(
+      (string)($prepare['parameters_json'] ?? ''),
+      true,
+      512,
+      JSON_THROW_ON_ERROR
+    );
+    if(!is_array($prepareParameters)
+      || ($prepareParameters['source_type'] ?? null)!=='auto_photo_bundle'
+      || ($prepareParameters['pipeline_mode'] ?? null)!=='prepare'
+      || ($prepareParameters['already_selected_frames'] ?? null)!==true
+      || ($prepareParameters['capture_bundle_id'] ?? null)!==(int)$bundle['id']
+      || ($prepareParameters['app_bundle_uuid'] ?? null)!==(string)$bundle['app_bundle_uuid']
+      || (int)($prepareParameters['input_images'] ?? 0)<=0) {
+      return null;
+    }
+
+    $components=srj_sparse_components($sparseRemoteJobId);
+    if($components===null) return null;
+    auto_photo_sparse_validate_model_id($components,$modelId);
+
+    return [
+      'sparse_db_job_id'=>$sparseDbJobId,
+      'sparse_remote_job_id'=>$sparseRemoteJobId,
+      'model_id'=>$modelId,
+    ];
+  } catch(Throwable) {
+    return null;
+  }
+}
 $jobId=(int)($_GET['job_id'] ?? 0); $remoteJobId=(int)($_GET['remote_job_id'] ?? 0); if($jobId<=0 && $remoteJobId<=0) srj_json(['ok'=>false,'error'=>'bad_job_id'],400);
 $sql=$jobId>0?'SELECT * FROM sfm_remote_jobs WHERE id=? LIMIT 1':'SELECT * FROM sfm_remote_jobs WHERE remote_job_id=? ORDER BY id DESC LIMIT 1'; $id=$jobId>0?$jobId:$remoteJobId;
 $st=$dbcnx->prepare($sql); if(!$st) srj_json(['ok'=>false,'error'=>'table_missing'],500); $st->bind_param('i',$id); $st->execute(); $job=$st->get_result()->fetch_assoc(); $st->close(); if(!$job) srj_json(['ok'=>false,'error'=>'job_not_found'],404);
@@ -78,8 +273,32 @@ if($file!==''){
       $parameters=json_decode((string)($job['parameters_json'] ?? ''),true);
       $isStandalone=is_array($parameters) && ($parameters['source_type']??null)==='auto_photo_sparse' && ($parameters['standalone_auto_photo_dense']??null)===true && ($parameters['dense_only']??null)===true;
       if($isStandalone){
-        if((string)($job['status']??'')!=='DONE' || (int)($job['pipeline_run_id']??0)!==0 || (int)($job['parent_remote_job_id']??0)!==(int)($parameters['sparse_remote_job_id']??0) || (int)($parameters['sparse_job_id']??0)!==(int)($parameters['sparse_remote_job_id']??0) || !isset($parameters['sparse_db_job_id']) || auto_photo_sparse_manifest_model_id($parameters['model_id']??null)===null){http_response_code(404);header('Content-Type: text/plain; charset=utf-8');exit('file_not_ready');}
-        $expected=$base.'/merged/merged_fused.ply'; $st=@lstat($expected); if(!hash_equals($expected,(string)($job['output_path']??''))||is_link($base)||is_link($expected)||$st===false||(($st['mode']&0170000)!==0100000)||(int)$st['size']<=0||!srj_is_valid_ply_file($expected)){http_response_code(404);header('Content-Type: text/plain; charset=utf-8');exit('file_not_found');}
+        if(srj_standalone_dense_scope($dbcnx,$job)===null){
+          http_response_code(404);
+          header('Content-Type: text/plain; charset=utf-8');
+          exit('file_not_ready');
+        }
+        $expected=$base.'/merged/merged_fused.ply';
+        $baseStat=@lstat($base);
+        $fileStat=@lstat($expected);
+        $realBase=realpath($base);
+        $realFile=realpath($expected);
+        if(!hash_equals($expected,(string)($job['output_path']??''))
+          || is_link($base)
+          || is_link($expected)
+          || $baseStat===false
+          || (($baseStat['mode']&0170000)!==0040000)
+          || $fileStat===false
+          || (($fileStat['mode']&0170000)!==0100000)
+          || (int)$fileStat['size']<=0
+          || $realBase===false
+          || $realFile===false
+          || !str_starts_with($realFile,rtrim($realBase,DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR)
+          || !srj_is_valid_ply_file($expected)){
+          http_response_code(404);
+          header('Content-Type: text/plain; charset=utf-8');
+          exit('file_not_found');
+        }
       }
       $path=$base.'/merged/merged_fused.ply'; $downloadName='job_'.$remote.'_merged_fused.ply';
     }
