@@ -15,5 +15,12 @@ POST uses the existing order authorization and `secCode` CSRF boundary. Download
 ## Non-goals
 No Android, capture, prepare, sparse, `sfm_pipeline_runs`, schema, remote script, Video SfM, or mesh-chain redesign.
 
-## Required checks
-PHP lint, focused dense contract tests, Auto Photo sparse UI/web regressions, worker regression checks, and `git diff --check`. GrafikStation runtime validation remains manual and separately authorized.
+## Completed focused checks
+The following behavioral tests were applied to the repository, synced to the web server, and returned `OK`:
+
+- `web/tests/auto_photo_dense_preview_enqueue_test.php`
+- `web/tests/auto_photo_dense_worker_contract_test.php`
+- `web/tests/auto_photo_dense_download_scope_test.php`
+- `web/tests/auto_photo_dense_ui_behavior_test.php`
+
+The patch application workflow also completed PHP lint for changed production PHP files. A real GrafikStation `COLMAP_RECONSTRUCTION_PREVIEW` execution and resulting artifact acceptance remain manual and separately authorized.

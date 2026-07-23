@@ -409,11 +409,13 @@ Epic reaches the current milestone Definition of Done when:
 10. Select, exhaustive retry и isolated PLY export соблюдают permission, CSRF и locking.
 11. Malformed data не вызывает fatal page error.
 12. Video SfM и legacy flows проходят regression.
-13. Никакой автоматический Preview, dense, mesh или legacy chain не запускается.
-14. Production PLY export acceptance фиксируется отдельным evidence.
+13. Standalone sparse не запускает Preview, dense или mesh автоматически. AUTO-B06 Dense Preview запускается только вручную для выбранной модели и не запускает automatic mesh.
+14. Production sparse PLY export acceptance фиксируется отдельным evidence.
+15. AUTO-B06 standalone Dense Preview реализован, а focused enqueue, worker, download-scope и UI behavioral tests проходят.
+16. Реальное выполнение Dense Preview на GrafikStation и production dense PLY acceptance фиксируются отдельным evidence.
 
 ## Deferred long-term scope
 
-Preview, dense, mesh and Generated Models integration remain possible
-future product stages, but they are not assigned task IDs and are not
-authorized until B05 acceptance.
+AUTO-B06 implements standalone diagnostic Dense Preview. Automatic dense/mesh
+chaining, production mesh generation, and Generated Models integration remain
+deferred and require separate task authorization.
