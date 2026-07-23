@@ -182,7 +182,7 @@ try {
 
     $route = (string) file_get_contents(__DIR__ . '/../www/order.php'); $start = strpos($route, '$action === \'auto_photo_sparse_export_ply\''); $end = strpos($route, "if(\$action==='create_capture_bundle_dense_job'", $start); $routeFragment = substr($route, $start, $end - $start);
     foreach (['auto_photo_sparse_export_ply', 'auto_photo_sparse_web_enqueue_export', "\$_POST['sparse_db_job_id']", "\$_POST['model_id']", '$canDeleteMedia', 'photo_export_queued=1', 'photo_export_exists=1'] as $needle) apsw_assert(str_contains($routeFragment, $needle), "route {$needle}");
-    foreach (['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'begin_transaction', 'commit', 'rollback', 'dense', 'mesh', 'reconstruction'] as $forbidden) apsw_assert(!str_contains($routeFragment, $forbidden), "route no {$forbidden}");
+    foreach (['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'begin_transaction', 'commit', 'rollback', 'mesh', 'reconstruction'] as $forbidden) apsw_assert(!str_contains($routeFragment, $forbidden), "route no {$forbidden}");
     apsw_assert(str_contains($route, 'sfm_export_ply_web') && !str_contains($routeFragment, 'sfm_export_ply_web'), 'legacy export route remains separate');
     $endpoint = (string) file_get_contents(__DIR__ . '/../www/api/sfm_remote_job_status.php');
     foreach (['source_type', 'auto_photo_sparse', 'standalone_photo_export', 'auto_photo_sparse_manifest_model_id', "\$job['remote_job_id']", '/sparse_', 'output_path', 'hash_equals', 'is_link', 'filesize', 'srj_send_ply_file'] as $needle) apsw_assert(str_contains($endpoint, $needle), "standalone endpoint {$needle}");

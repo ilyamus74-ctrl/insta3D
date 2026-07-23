@@ -3040,3 +3040,7 @@ Processing output
 Success
 разрешён только после фактической записи и проверки.
 ```
+
+## AUTO-B06 dense-only diagnostic flow
+
+`PREPARE → standalone COLMAP_SPARSE → manifest model → standalone COLMAP_RECONSTRUCTION_PREVIEW → COLMAP_DENSE_CHUNK → merge/merged_fused.ply`. The dense parent is not a pipeline run, does not mutate sparse output, and does not automatically queue mesh.

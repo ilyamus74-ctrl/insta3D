@@ -134,6 +134,8 @@ function auto_photo_sparse_ui_build(
                     && $selectedModelId !== $modelId,
                 'can_export' => false,
                 'export' => null,
+                'dense' => null,
+                'can_dense_preview' => false,
             ];
         }
 
@@ -143,6 +145,29 @@ function auto_photo_sparse_ui_build(
             : null;
         foreach ($modelsById as $modelId => &$modelDto) {
             $modelDto['recommended'] = $recommendedModelId === $modelId;
+        }
+        unset($modelDto);
+
+        $denseByModel = [];
+        foreach ((is_array($source['dense'] ?? null) ? $source['dense'] : []) as $dense) {
+            if (!is_array($dense) || (string)($dense['job_type'] ?? '') !== 'COLMAP_RECONSTRUCTION_PREVIEW' || ($dense['pipeline_run_id'] ?? null) !== null || (int)($dense['parent_remote_job_id'] ?? 0) !== (int)($job['remote_job_id'] ?? 0) || (string)($dense['reconstruction_mode'] ?? '') !== 'preview') continue;
+            $parameters = auto_photo_sparse_ui_parameters($dense);
+            $modelId = auto_photo_sparse_manifest_model_id($parameters['model_id'] ?? null);
+            if ($modelId === null || !isset($modelsById[$modelId]) || ($parameters['source_type'] ?? null) !== 'auto_photo_sparse' || ($parameters['standalone_auto_photo_dense'] ?? null) !== true || ($parameters['dense_only'] ?? null) !== true || (int)($parameters['sparse_remote_job_id'] ?? 0) !== (int)($job['remote_job_id'] ?? 0)) continue;
+            $denseByModel[$modelId][] = $dense;
+        }
+        foreach ($modelsById as $modelId => &$modelDto) {
+            $related = $denseByModel[$modelId] ?? [];
+            $chosen = $related[0] ?? null;
+            if (is_array($chosen)) {
+                $dto = auto_photo_sparse_ui_job($chosen);
+                $dto['source_sparse_remote_job_id'] = (int)($job['remote_job_id'] ?? 0);
+                $dto['model_id'] = $modelId;
+                $dto['dense_points'] = (int)($chosen['_dense_points'] ?? 0); $dto['file_size_bytes'] = (int)($chosen['_dense_file_size'] ?? 0); $dto['download_url'] = !empty($chosen['_dense_download_ready']) ? '/api/sfm_remote_job_status.php?job_id=' . $dto['db_job_id'] . '&file=ply' : '';
+                $modelDto['dense'] = $dto;
+            }
+            $blocks=false; foreach($related as $dense) $blocks=$blocks||in_array(auto_photo_sparse_ui_status($dense['status'] ?? ''),['QUEUED','RUNNING','PLANNING','RUNNING_CHUNKS','MERGING','DONE'],true);
+            $modelDto['can_dense_preview'] = $canManage && auto_photo_sparse_ui_status($job['status'] ?? '') === 'DONE' && (int)$modelDto['registered_images'] >= 10 && !$blocks;
         }
         unset($modelDto);
 

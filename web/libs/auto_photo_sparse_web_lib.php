@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/auto_photo_sparse_lib.php';
+require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
 
 function auto_photo_sparse_web_fail(string $code): never
 {
@@ -354,6 +355,50 @@ function auto_photo_sparse_web_enqueue_export(
         }
         throw $e;
     }
+}
+
+/** Queue a diagnostic dense-only preview without altering its standalone sparse source. */
+function auto_photo_sparse_web_enqueue_dense_preview(
+    mysqli $db,
+    int $orderId,
+    mixed $rawSparseDbJobId,
+    mixed $rawModelId,
+    ?callable $insertIdReader = null,
+    ?callable $remoteJobIdFactory = null
+): array {
+    $sparseDbJobId = auto_photo_sparse_web_parse_sparse_db_id($rawSparseDbJobId);
+    $requestedModelId = auto_photo_sparse_parse_model_id($rawModelId, true);
+    try {
+        if (!$db->begin_transaction()) auto_photo_sparse_web_fail('dense_preview_transaction_failed');
+        $sparse = auto_photo_sparse_web_load_locked_job($db, $orderId, $sparseDbJobId);
+        $scope = auto_photo_sparse_validate_job_scope($db, $orderId, $sparse);
+        auto_photo_sparse_validate_prepare_chain($db, $orderId, $sparse, $scope);
+        if (strtoupper((string)($sparse['status'] ?? '')) !== 'DONE') throw new RuntimeException('sparse_job_not_ready');
+        $sparseRemote = (int)$sparse['remote_job_id'];
+        $modelId = auto_photo_sparse_resolve_model_id($sparse, auto_photo_sparse_components($sparseRemote), $requestedModelId);
+        $components = auto_photo_sparse_components($sparseRemote);
+        $component = auto_photo_sparse_validate_model_id($components, $modelId);
+        if ((int)($component['registered_images'] ?? 0) < 10) throw new RuntimeException('sparse_model_insufficient_registered_images');
+
+        $modelText = (string)$modelId;
+        $active = $db->prepare("SELECT id,remote_job_id FROM sfm_remote_jobs WHERE order_id=? AND capture_session_id=? AND parent_remote_job_id=? AND job_type='COLMAP_RECONSTRUCTION_PREVIEW' AND reconstruction_mode='preview' AND status IN ('QUEUED','RUNNING','PLANNING','RUNNING_CHUNKS','MERGING','DONE') AND JSON_VALID(parameters_json) AND JSON_UNQUOTE(JSON_EXTRACT(parameters_json,'$.standalone_auto_photo_dense'))='true' AND JSON_UNQUOTE(JSON_EXTRACT(parameters_json,'$.dense_only'))='true' AND JSON_UNQUOTE(JSON_EXTRACT(parameters_json,'$.model_id'))=? LIMIT 1 FOR UPDATE");
+        if (!$active || !$active->bind_param('iiis', $orderId, $sparse['capture_session_id'], $sparseRemote, $modelText) || !$active->execute()) auto_photo_sparse_web_fail('dense_preview_duplicate_query_failed');
+        $duplicate = $active->get_result()->fetch_assoc(); $active->close();
+        if (is_array($duplicate)) { if (!$db->commit()) auto_photo_sparse_web_fail('dense_preview_commit_failed'); return ['duplicate'=>true,'dense_db_job_id'=>(int)$duplicate['id'],'dense_remote_job_id'=>(int)$duplicate['remote_job_id'],'sparse_db_job_id'=>$sparseDbJobId,'sparse_remote_job_id'=>$sparseRemote,'model_id'=>$modelId]; }
+
+        $remote = $remoteJobIdFactory ? (int)$remoteJobIdFactory($db) : sfm_job_id($db);
+        if ($remote <= 0 || $remote === $sparseRemote) auto_photo_sparse_web_fail('dense_preview_remote_job_id_invalid');
+        $preset = sfm_pipeline_preset('preview');
+        $settings = ['dense'=>['max_image_size'=>$preset['max_image_size'],'num_src_images'=>$preset['num_src_images'],'target_images_per_chunk'=>$preset['target_images_per_chunk'],'max_images_per_chunk'=>$preset['max_images_per_chunk'],'chunk_overlap'=>$preset['overlap_images']]];
+        $params = ['source_type'=>'auto_photo_sparse','standalone_auto_photo_dense'=>true,'dense_only'=>true,'sparse_db_job_id'=>$sparseDbJobId,'sparse_job_id'=>$sparseRemote,'sparse_remote_job_id'=>$sparseRemote,'model_id'=>$modelId,'settings'=>$settings] + $preset;
+        $json = json_encode($params, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); if (!is_string($json)) auto_photo_sparse_web_fail('dense_preview_parameters_encode_failed');
+        $root=auto_photo_sparse_output_path($remote); $out=$root.'/merged/merged_fused.ply'; $result=$root.'/merged/result.json'; $log=$root.'/logs'; $type='COLMAP_RECONSTRUCTION_PREVIEW'; $mode='preview'; $status='QUEUED'; $progress=0; $message='Standalone Auto Photo dense preview queued';
+        $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,output_path,status,progress_percent,message,result_json_path,log_path,reconstruction_mode,parameters_json) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?,?)");
+        if (!$st || !$st->bind_param('iisiissssssss',$orderId,$sparse['capture_session_id'],$type,$remote,$sparseRemote,$out,$status,$progress,$message,$result,$log,$mode,$json) || !$st->execute()) auto_photo_sparse_web_fail('dense_preview_insert_failed');
+        $st->close(); $dbId=$insertIdReader ? (int)$insertIdReader($db) : (int)$db->insert_id; if ($dbId<=0) auto_photo_sparse_web_fail('dense_preview_insert_id_invalid');
+        if (!$db->commit()) auto_photo_sparse_web_fail('dense_preview_commit_failed');
+        return ['duplicate'=>false,'dense_db_job_id'=>$dbId,'dense_remote_job_id'=>$remote,'sparse_db_job_id'=>$sparseDbJobId,'sparse_remote_job_id'=>$sparseRemote,'model_id'=>$modelId];
+    } catch (Throwable $e) { try {$db->rollback();} catch (Throwable) {} throw $e; }
 }
 
 function auto_photo_sparse_web_select_model(mysqli $db, int $orderId, mixed $rawSparseDbJobId, mixed $rawModelId): array

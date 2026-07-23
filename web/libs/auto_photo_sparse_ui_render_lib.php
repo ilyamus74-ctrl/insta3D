@@ -65,6 +65,22 @@ function auto_photo_sparse_ui_render_export(mixed $export): string
     return $html;
 }
 
+function auto_photo_sparse_ui_render_dense(mixed $dense): string
+{
+    if (!is_array($dense)) return 'Не создан';
+    $html = auto_photo_sparse_ui_render_status_badge($dense['status'] ?? '')
+        . auto_photo_sparse_ui_render_progress($dense['progress_percent'] ?? 0)
+        . '<div class="small mt-1">DB job ID: ' . (int)($dense['db_job_id'] ?? 0)
+        . '<br>Remote job ID: ' . (int)($dense['remote_job_id'] ?? 0)
+        . '<br>Sparse remote ID: ' . (int)($dense['source_sparse_remote_job_id'] ?? 0)
+        . '<br>Model ID: ' . (int)($dense['model_id'] ?? 0)
+        . '<br>Dense points: ' . number_format((int)($dense['dense_points'] ?? 0), 0, '.', ' ')
+        . '<br>Размер: ' . (int)($dense['file_size_bytes'] ?? 0) . ' B</div>'
+        . auto_photo_sparse_ui_render_message($dense['message'] ?? '');
+    if (($url = (string)($dense['download_url'] ?? '')) !== '') $html .= '<a class="btn btn-sm btn-outline-primary mt-2" href="' . auto_photo_sparse_ui_render_escape($url) . '">Скачать merged_fused.ply</a>';
+    return $html;
+}
+
 function auto_photo_sparse_ui_render_action_form(
     array $actionContext,
     string $action,
@@ -192,10 +208,13 @@ function auto_photo_sparse_ui_render_pane(array $dto, array $actionContext = [])
                     if (($model['can_export'] ?? false) === true) {
                         $actions[] = auto_photo_sparse_ui_render_action_form($actionContext, 'auto_photo_sparse_export_ply', ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId], 'Экспортировать PLY');
                     }
+                    if (($model['can_dense_preview'] ?? false) === true) {
+                        $actions[] = auto_photo_sparse_ui_render_action_form($actionContext, 'auto_photo_sparse_build_dense_preview', ['sparse_db_job_id' => $sparseDbJobId, 'model_id' => $modelId], 'Построить Dense Preview');
+                    }
                 }
                 $actions = array_filter($actions, static fn(string $form): bool => $form !== '');
                 $actionsHtml = $actions === [] ? '—' : '<div class="d-flex flex-column gap-1">' . implode('', $actions) . '</div>';
-                $html .= '<tr><td>' . (int) ($model['model_id'] ?? 0) . '</td><td>' . ($status !== '' ? $status : '—') . '</td><td>' . $registeredText . '</td><td>' . number_format((int) ($model['points3D_count'] ?? 0), 0, '.', ' ') . '</td><td>' . auto_photo_sparse_ui_render_value($model['first_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['last_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['frame_ranges_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['shared_images_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_export($model['export'] ?? null) . '</td><td>' . $actionsHtml . '</td></tr>';
+                $html .= '<tr><td>' . (int) ($model['model_id'] ?? 0) . '</td><td>' . ($status !== '' ? $status : '—') . '</td><td>' . $registeredText . '</td><td>' . number_format((int) ($model['points3D_count'] ?? 0), 0, '.', ' ') . '</td><td>' . auto_photo_sparse_ui_render_value($model['first_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['last_image'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['frame_ranges_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_value($model['shared_images_label'] ?? '') . '</td><td>' . auto_photo_sparse_ui_render_export($model['export'] ?? null) . '<hr class="my-2">' . auto_photo_sparse_ui_render_dense($model['dense'] ?? null) . '</td><td>' . $actionsHtml . '</td></tr>';
             }
             $html .= '</tbody></table></div>';
         }

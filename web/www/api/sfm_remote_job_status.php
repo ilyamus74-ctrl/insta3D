@@ -58,7 +58,8 @@ function srj_is_valid_ply_file(string $file): bool {
   $head=(string)fread($fh,4096);
   fclose($fh);
   if(!(strncmp($head,"ply\n",4)===0 || strncmp($head,"ply\r\n",5)===0)) return false;
-  return (bool)preg_match('/^format (?:ascii|binary_little_endian) 1\.0\r?$/m',$head);
+  return (bool)preg_match('/^format (?:ascii|binary_little_endian) 1\.0\r?$/m',$head)
+    && (bool)preg_match('/^element vertex ([1-9][0-9]*)\r?$/m',$head);
 }
 $jobId=(int)($_GET['job_id'] ?? 0); $remoteJobId=(int)($_GET['remote_job_id'] ?? 0); if($jobId<=0 && $remoteJobId<=0) srj_json(['ok'=>false,'error'=>'bad_job_id'],400);
 $sql=$jobId>0?'SELECT * FROM sfm_remote_jobs WHERE id=? LIMIT 1':'SELECT * FROM sfm_remote_jobs WHERE remote_job_id=? ORDER BY id DESC LIMIT 1'; $id=$jobId>0?$jobId:$remoteJobId;
@@ -73,7 +74,15 @@ if($file!==''){
   elseif($file==='logs'){ header('Content-Type: text/plain; charset=utf-8'); $logGlob=((string)($job['job_type'] ?? '') === 'COLMAP_MESH') ? $base.'/mesh/logs/*.log' : $base.'/logs/*.log'; foreach(glob($logGlob) ?: [] as $lf){ $rl=realpath($lf); if($rl && (realpath($base)===false || strpos($rl,realpath($base).'/')===0)){ echo "===== ".basename($lf)." =====\n".srj_tail($rl,100)."\n"; } } exit; }
   elseif($file==='ply') {
     if ((string)($job['job_type'] ?? '') === 'COLMAP_DENSE') { $path=$base.'/dense/fused.ply'; $downloadName='job_'.$remote.'_dense_fused.ply'; }
-    elseif (in_array((string)($job['job_type'] ?? ''), ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) { $path=$base.'/merged/merged_fused.ply'; $downloadName='job_'.$remote.'_merged_fused.ply'; }
+    elseif (in_array((string)($job['job_type'] ?? ''), ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) {
+      $parameters=json_decode((string)($job['parameters_json'] ?? ''),true);
+      $isStandalone=is_array($parameters) && ($parameters['source_type']??null)==='auto_photo_sparse' && ($parameters['standalone_auto_photo_dense']??null)===true && ($parameters['dense_only']??null)===true;
+      if($isStandalone){
+        if((string)($job['status']??'')!=='DONE' || (int)($job['pipeline_run_id']??0)!==0 || (int)($job['parent_remote_job_id']??0)!==(int)($parameters['sparse_remote_job_id']??0) || (int)($parameters['sparse_job_id']??0)!==(int)($parameters['sparse_remote_job_id']??0) || !isset($parameters['sparse_db_job_id']) || auto_photo_sparse_manifest_model_id($parameters['model_id']??null)===null){http_response_code(404);header('Content-Type: text/plain; charset=utf-8');exit('file_not_ready');}
+        $expected=$base.'/merged/merged_fused.ply'; $st=@lstat($expected); if(!hash_equals($expected,(string)($job['output_path']??''))||is_link($base)||is_link($expected)||$st===false||(($st['mode']&0170000)!==0100000)||(int)$st['size']<=0||!srj_is_valid_ply_file($expected)){http_response_code(404);header('Content-Type: text/plain; charset=utf-8');exit('file_not_found');}
+      }
+      $path=$base.'/merged/merged_fused.ply'; $downloadName='job_'.$remote.'_merged_fused.ply';
+    }
     elseif ((string)($job['job_type'] ?? '') === 'COLMAP_MESH') {
       if ((string)($job['status'] ?? '') !== 'DONE') { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); echo 'file_not_ready'; exit; }
       $path=$base.'/mesh/mesh_final.ply'; $downloadName='job_'.$remote.'_mesh_final.ply'; $base='/home/makler/web/remote_station/output';

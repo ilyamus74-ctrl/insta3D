@@ -351,6 +351,11 @@ function auto_chain_after_done(mysqli $db, array $job): void
 
     if (in_array($type, ['COLMAP_RECONSTRUCTION_PREVIEW','COLMAP_RECONSTRUCTION_HQ'], true)) {
         $mode = (string)($job['reconstruction_mode'] ?: (str_contains($type, 'HQ') ? 'hq' : 'preview'));
+        $denseMarkers = sfm_json_array((string)($job['parameters_json'] ?? '{}'));
+        if (($denseMarkers['standalone_auto_photo_dense'] ?? null) === true && ($denseMarkers['dense_only'] ?? null) === true) {
+            worker_log("standalone dense-only reconstruction {$remote}: automatic mesh skipped");
+            return;
+        }
         $pipelineRunId = pipeline_run_for_job($job);
         if ($pipelineRunId > 0) { sfm_auto_components_maybe_merge($db, $pipelineRunId); }
         $inputPly = remote_output_dir($remote) . '/merged/merged_fused.ply';
@@ -1382,7 +1387,7 @@ function orchestrate_reconstruction_parents(mysqli $db): void
             if($retryCode !== 0){ $err='Failed to create remote retry image list: '.format_command_failure($retryShellCmd,$retryCode,$retryOutput); worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
             worker_log("created retry image list for parent_remote_job_id={$parentRemote} chunk_index={$failedIdx}: " . $retryOutput);
             $oldId=(int)$failed['id']; $db->query('UPDATE sfm_remote_jobs SET retry_count=1 WHERE id=' . $oldId);
-            $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='retry chunk queued after OOM/error'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$retryList], JSON_UNESCAPED_SLASHES);
+            $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='retry chunk queued after OOM/error'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$retryList,'settings'=>($params['settings'] ?? worker_run_parameters($db,$p))], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
             $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,retry_count,parameters_json) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?,?)"); $retry=1; $orderId=(int)$p['order_id']; $sessionId=(int)$p['capture_session_id'];
             if(!$st){ $err='SQL prepare failed while queuing retry dense chunk: '.$db->error; worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
             if(!$st->bind_param('iiisiissiiis',$orderId,$sessionId,$pipelineRunId,$jt,$rid,$parentRemote,$msg,$mode,$failedIdx,$total,$retry,$pj)){ $err='SQL bind_param failed while queuing retry dense chunk: '.$st->error; worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); $st->close(); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
@@ -1455,7 +1460,7 @@ auto_chain_after_done(
             continue;
         }
         if($pipelineRunId>0){ sfm_pipeline_update($db,$pipelineRunId,'RUNNING','DENSE',sfm_pipeline_progress('DENSE',$done,$total),'Dense reconstruction: chunk '.min($done+1,$total).' of '.$total); }
-        if($active===0){ $next=$chunks[$done]; if($pipelineRunId>0){ pipeline_log($pipelineRunId,'INFO','DENSE_CHUNK','chunk=' . (((int)$next['chunk_id'])+1) . '/' . $total . ' started'); } $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='chunk queued'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$next['image_list_path']], JSON_UNESCAPED_SLASHES); $idx=(int)$next['chunk_id']; $orderId=(int)$p['order_id']; $sessionId=(int)$p['capture_session_id']; $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,parameters_json) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)"); $st->bind_param('iiisiissiis',$orderId,$sessionId,$pipelineRunId,$jt,$rid,$parentRemote,$msg,$mode,$idx,$total,$pj); $st->execute(); $st->close(); }
+        if($active===0){ $next=$chunks[$done]; if($pipelineRunId>0){ pipeline_log($pipelineRunId,'INFO','DENSE_CHUNK','chunk=' . (((int)$next['chunk_id'])+1) . '/' . $total . ' started'); } $rid=sfm_job_id($db); $jt='COLMAP_DENSE_CHUNK'; $msg='chunk queued'; $pj=json_encode(['sparse_job_id'=>$sparse,'model_id'=>$model,'image_list_path'=>$next['image_list_path'],'settings'=>($params['settings'] ?? worker_run_parameters($db,$p))], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); $idx=(int)$next['chunk_id']; $orderId=(int)$p['order_id']; $sessionId=(int)$p['capture_session_id']; $st=$db->prepare("INSERT INTO sfm_remote_jobs (order_id,capture_session_id,pipeline_run_id,job_type,remote_job_id,parent_remote_job_id,status,progress_percent,message,reconstruction_mode,chunk_index,chunk_count,parameters_json) VALUES (?,?,?,?,?,?,'QUEUED',0,?,?,?,?,?)"); $st->bind_param('iiisiissiis',$orderId,$sessionId,$pipelineRunId,$jt,$rid,$parentRemote,$msg,$mode,$idx,$total,$pj); $st->execute(); $st->close(); }
         set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Chunks {$done}/{$total} done");
     }
     $res->close();

@@ -2917,3 +2917,7 @@ P06:
 B05:
 показывает готовые результаты
 ```
+
+## AUTO-B06 standalone Auto Photo dense preview
+
+`web/libs/auto_photo_sparse_web_lib.php`, the Photo 3D DTO/rendering modules, and `sfm_remote_worker.php` own the isolated dense-only job. It reuses existing COLMAP chunk orchestration and does not create an `sfm_pipeline_runs` row.

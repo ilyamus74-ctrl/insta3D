@@ -2697,3 +2697,7 @@ result.json + artifacts
 Raw stereo coordinates
 являются критическим математическим инвариантом
 ```
+
+## AUTO-B06 standalone dense preview contract
+
+A valid completed standalone Auto Photo sparse component can create an independent `COLMAP_RECONSTRUCTION_PREVIEW` with `pipeline_run_id=NULL`, exact `merged/merged_fused.ply` output, server-resolved Preview settings and both dense-only markers. Chunks/retries inherit its settings. Both markers suppress automatic mesh; neither marker alone changes legacy behavior.

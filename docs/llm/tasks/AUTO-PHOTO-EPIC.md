@@ -355,6 +355,7 @@ Sparse review, strict model selection, exhaustive retry, and isolated PLY
 export.
 
 ### AUTO-B05-AUTO-PHOTO-SIMPLE-VIEW
+→ AUTO-B06-AUTO-PHOTO-DENSE-PREVIEW
 
 Simple View `Фото 3D` UI in four small slices:
 
@@ -363,7 +364,11 @@ Simple View `Фото 3D` UI in four small slices:
 - B05.3 / Patch 5A — read-only «Фото 3D» tab
 - B05.4 / Patch 5B — select/retry/export actions
 
-Future stages are intentionally not assigned task IDs until B05 acceptance.
+### AUTO-B06-AUTO-PHOTO-DENSE-PREVIEW
+
+- Standalone dense-only Preview 640 for a completed Auto Photo sparse component; no pipeline run and no automatic mesh.
+
+Future stages are intentionally not assigned task IDs after B06 acceptance.
 
 ---
 
@@ -385,6 +390,7 @@ AUTO-B03-AUTO-PHOTO-SPARSE
 AUTO-B04-AUTO-PHOTO-SPARSE-REVIEW-EXPORT
   ↓
 AUTO-B05-AUTO-PHOTO-SIMPLE-VIEW
+→ AUTO-B06-AUTO-PHOTO-DENSE-PREVIEW
 ```
 
 ## 12. Definition of Done epic

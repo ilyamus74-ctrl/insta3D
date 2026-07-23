@@ -70,6 +70,14 @@ function auto_photo_sparse_ui_web_export_file_ready(int $remoteJobId,int $modelI
     $realJob=realpath($jobDirectory); $realFile=realpath($expected);
     return $realJob!==false && $realFile!==false && str_starts_with($realFile,rtrim($realJob,DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR);
 }
+function auto_photo_sparse_ui_web_dense_ply_info(array $row): array {
+    $remote=auto_photo_sparse_ui_web_positive_id($row['remote_job_id']??null); if($remote===null) return ['points'=>0,'size'=>0,'ready'=>false];
+    $base=auto_photo_sparse_output_path($remote); $path=$base.'/merged/merged_fused.ply';
+    if ((string)($row['status']??'')!=='DONE' || !hash_equals($path,(string)($row['output_path']??'')) || is_link($base)||is_link($path)) return ['points'=>0,'size'=>0,'ready'=>false];
+    $bs=@lstat($base); $fs=@lstat($path); if($bs===false||$fs===false||(($bs['mode']&0170000)!==0040000)||(($fs['mode']&0170000)!==0100000)||(int)$fs['size']<=0) return ['points'=>0,'size'=>0,'ready'=>false];
+    $rb=realpath($base); $rp=realpath($path); if($rb===false||$rp===false||!str_starts_with($rp,rtrim($rb,DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR)) return ['points'=>0,'size'=>0,'ready'=>false];
+    $fh=@fopen($rp,'rb'); if(!$fh)return ['points'=>0,'size'=>0,'ready'=>false]; $points=0;$valid=false; while(($line=fgets($fh))!==false){$line=trim($line);if(preg_match('/^element\\s+vertex\\s+([1-9][0-9]*)$/',$line,$m))$points=(int)$m[1];if($line==='end_header'){$valid=$points>0;break;}if(ftell($fh)>65536)break;}fclose($fh); return ['points'=>$valid?$points:0,'size'=>$valid?(int)$fs['size']:0,'ready'=>$valid];
+}
 function auto_photo_sparse_ui_web_export(array $row, int $orderId, array $sparse): ?array {
     $parameters=auto_photo_sparse_ui_web_parameters($row['parameters_json']??null);
     $remote=auto_photo_sparse_ui_web_positive_id($row['remote_job_id']??null); $parent=auto_photo_sparse_ui_web_positive_id($row['parent_remote_job_id']??null);
@@ -105,13 +113,13 @@ function auto_photo_sparse_ui_web_select_bundle(array $bundles, array $sparseRow
     usort($candidates,static fn(array $a,array $b):int=>[$b['sparse_id'],$b['prepare_id'],$b['bundle']['id']] <=> [$a['sparse_id'],$a['prepare_id'],$a['bundle']['id']]);
     return $candidates[0]['bundle']??null;
 }
-function auto_photo_sparse_ui_web_build_from_rows(int $orderId,bool $canManage,array $bundles,array $sparseRows,array $prepareRows,array $exportsBySparse,?callable $componentsReader=null): array {
+function auto_photo_sparse_ui_web_build_from_rows(int $orderId,bool $canManage,array $bundles,array $sparseRows,array $prepareRows,array $exportsBySparse,?callable $componentsReader=null,array $denseBySparse=[]): array {
     $bundle=auto_photo_sparse_ui_web_select_bundle($bundles,$sparseRows,$prepareRows,$orderId); if($bundle===null) return auto_photo_sparse_ui_web_empty($canManage);
     $prepares=auto_photo_sparse_ui_web_prepares_for_bundle($prepareRows,$orderId,$bundle); $prepareJob=$prepares[0]??null;
     usort($sparseRows,static fn(array $a,array $b):int=>(int)($b['id']??0)<=>(int)($a['id']??0)); $runs=[]; $newestSparse=null;
     foreach($sparseRows as $row) { if(!is_array($row)||($sparse=auto_photo_sparse_ui_web_sparse($row,$orderId,$bundle))===null) continue; $linked=false; foreach($prepares as $prepare) $linked=$linked||auto_photo_sparse_ui_web_sparse_prepare($sparse,$prepare); if(!$linked) continue;
         $newestSparse ??= $sparse; $exports=[]; foreach(($exportsBySparse[(int)$sparse['remote_job_id']]??[]) as $exportRow) if(is_array($exportRow)&&($export=auto_photo_sparse_ui_web_export($exportRow,$orderId,$sparse))!==null)$exports[]=$export;
-        $components=$componentsReader!==null?$componentsReader((int)$sparse['remote_job_id']):auto_photo_sparse_ui_web_components((int)$sparse['remote_job_id']); $runs[]=['job'=>$sparse,'components'=>is_array($components)?$components:['models'=>[]],'exports'=>$exports];
+        $components=$componentsReader!==null?$componentsReader((int)$sparse['remote_job_id']):auto_photo_sparse_ui_web_components((int)$sparse['remote_job_id']); $runs[]=['job'=>$sparse,'components'=>is_array($components)?$components:['models'=>[]],'exports'=>$exports,'dense'=>$denseBySparse[(int)$sparse['remote_job_id']]??[]];
     }
     $photosCount=auto_photo_sparse_ui_web_input_images($prepareJob); if($photosCount<=0)$photosCount=auto_photo_sparse_ui_web_input_images($newestSparse); if($photosCount>0){$bundle['photos_count']=$photosCount;$bundle['photos_count_known']=true;}
     $blocking=false;foreach($prepares as $prepare)if(in_array(auto_photo_sparse_ui_status($prepare['status']??''),['QUEUED','RUNNING','DONE'],true)){$blocking=true;break;}$bundle['can_prepare']=$canManage&&(int)$bundle['id']>0&&in_array((string)$bundle['status'],['UPLOADED','PROCESSING','READY','COMPLETED'],true)&&!$blocking;
@@ -129,7 +137,8 @@ function auto_photo_sparse_ui_web_load(mysqli $db,int $orderId,bool $canManage):
         $prepareRows=auto_photo_sparse_ui_web_query($db,'SELECT id, order_id, capture_session_id, job_type, remote_job_id, status, progress_percent, message, parameters_json FROM sfm_remote_jobs WHERE order_id=? AND job_type=? ORDER BY id DESC LIMIT 20','is',[$orderId,AUTO_PHOTO_PREPARE_JOB_TYPE]);
         if($bundles===null||$sparseRows===null||$prepareRows===null)throw new RuntimeException('query_failed');
         $bundle=auto_photo_sparse_ui_web_select_bundle($bundles,$sparseRows,$prepareRows,$orderId); if($bundle===null)return auto_photo_sparse_ui_web_empty($canManage);
-        $exportsBySparse=[]; foreach($sparseRows as $row) if(is_array($row)&&($sparse=auto_photo_sparse_ui_web_sparse($row,$orderId,$bundle))!==null) { $remote=(int)$sparse['remote_job_id']; $rows=auto_photo_sparse_ui_web_query($db,"SELECT id, order_id, capture_session_id, job_type, remote_job_id, parent_remote_job_id, output_path, status, progress_percent, message, parameters_json FROM sfm_remote_jobs WHERE order_id=? AND capture_session_id=? AND job_type='EXPORT_PLY' AND parent_remote_job_id=? ORDER BY id DESC LIMIT 100",'iii',[$orderId,(int)$sparse['capture_session_id'],$remote]); if($rows===null)throw new RuntimeException('export_query_failed'); $exportsBySparse[$remote]=$rows; }
-        return auto_photo_sparse_ui_web_build_from_rows($orderId,$canManage,$bundles,$sparseRows,$prepareRows,$exportsBySparse);
+        $exportsBySparse=[]; $denseBySparse=[]; foreach($sparseRows as $row) if(is_array($row)&&($sparse=auto_photo_sparse_ui_web_sparse($row,$orderId,$bundle))!==null) { $remote=(int)$sparse['remote_job_id']; $rows=auto_photo_sparse_ui_web_query($db,"SELECT id, order_id, capture_session_id, job_type, remote_job_id, parent_remote_job_id, output_path, status, progress_percent, message, parameters_json FROM sfm_remote_jobs WHERE order_id=? AND capture_session_id=? AND job_type='EXPORT_PLY' AND parent_remote_job_id=? ORDER BY id DESC LIMIT 100",'iii',[$orderId,(int)$sparse['capture_session_id'],$remote]); if($rows===null)throw new RuntimeException('export_query_failed'); $exportsBySparse[$remote]=$rows; $dense=auto_photo_sparse_ui_web_query($db,"SELECT id, order_id, capture_session_id, job_type, remote_job_id, parent_remote_job_id, output_path, status, progress_percent, message, parameters_json, reconstruction_mode, pipeline_run_id FROM sfm_remote_jobs WHERE order_id=? AND capture_session_id=? AND parent_remote_job_id=? AND job_type='COLMAP_RECONSTRUCTION_PREVIEW' AND pipeline_run_id IS NULL ORDER BY id DESC LIMIT 100",'iii',[$orderId,(int)$sparse['capture_session_id'],$remote]); if($dense===null)throw new RuntimeException('dense_query_failed'); $denseBySparse[$remote]=$dense; }
+        foreach($denseBySparse as &$rows) foreach($rows as &$denseRow){$info=auto_photo_sparse_ui_web_dense_ply_info($denseRow);$denseRow['_dense_points']=$info['points'];$denseRow['_dense_file_size']=$info['size'];$denseRow['_dense_download_ready']=$info['ready'];} unset($denseRow,$rows);
+        return auto_photo_sparse_ui_web_build_from_rows($orderId,$canManage,$bundles,$sparseRows,$prepareRows,$exportsBySparse,null,$denseBySparse);
     } catch(Throwable) { auto_photo_sparse_ui_web_log('controlled_failure',$orderId); return auto_photo_sparse_ui_web_empty($canManage); }
 }
