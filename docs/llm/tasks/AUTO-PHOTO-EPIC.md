@@ -411,11 +411,11 @@ Epic reaches the current milestone Definition of Done when:
 12. Video SfM и legacy flows проходят regression.
 13. Standalone sparse не запускает Preview, dense или mesh автоматически. AUTO-B06 Dense Preview запускается только вручную для выбранной модели и не запускает automatic mesh.
 14. Production sparse PLY export acceptance фиксируется отдельным evidence.
-15. AUTO-B06 standalone Dense Preview реализован, а focused enqueue, worker, download-scope и UI behavioral tests проходят.
-16. Реальное выполнение Dense Preview на GrafikStation и production dense PLY acceptance фиксируются отдельным evidence.
+15. AUTO-B06 standalone Dense Preview, JPEG sanitizer, authenticated download и browser viewer реализованы; шесть focused behavioral tests проходят на сервере.
+16. AUTO-B06 принят на GrafikStation: sparse DB `752`, dense DB `759`, dense remote `897481444`, model `0`, PLY `157417` вершин; MeshLab и authenticated web viewer acceptance пройдены.
 
 ## Deferred long-term scope
 
-AUTO-B06 implements standalone diagnostic Dense Preview. Automatic dense/mesh
-chaining, production mesh generation, and Generated Models integration remain
-deferred and require separate task authorization.
+AUTO-B06 is closed. Automatic dense/mesh chaining, production mesh generation,
+Generated Models publication, and Android capture-volume improvements remain
+separate future tasks and require explicit authorization.
