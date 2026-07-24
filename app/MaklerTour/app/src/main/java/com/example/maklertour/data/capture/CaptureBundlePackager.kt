@@ -23,7 +23,19 @@ class CaptureBundlePackager(private val context: Context) {
         activeRigProfileJson: JSONObject?,
         outputRoot: File,
     ): File = withContext(Dispatchers.IO) {
-        packageCaptureBundle("synced_depth_frames", captureDir, calibrationSessionDir, activeRigProfileJson, outputRoot)
+        val preflight = validateSyncedDepthPreflight(
+            captureDir = captureDir,
+            calibrationSessionDir = calibrationSessionDir,
+            activeRigProfileJson = activeRigProfileJson,
+        )
+        packageCaptureBundle(
+            captureType = "synced_depth_frames",
+            captureDir = captureDir,
+            calibrationSessionDir = calibrationSessionDir,
+            activeRigProfileJson = activeRigProfileJson,
+            outputRoot = outputRoot,
+            preflight = preflight,
+        )
     }
 
     suspend fun packageLegacyStereoVideoCapture(
@@ -32,7 +44,14 @@ class CaptureBundlePackager(private val context: Context) {
         activeRigProfileJson: JSONObject?,
         outputRoot: File,
     ): File = withContext(Dispatchers.IO) {
-        packageCaptureBundle("stereo_video_legacy", videoSessionDir, calibrationSessionDir, activeRigProfileJson, outputRoot)
+        packageCaptureBundle(
+            captureType = "stereo_video_legacy",
+            captureDir = videoSessionDir,
+            calibrationSessionDir = calibrationSessionDir,
+            activeRigProfileJson = activeRigProfileJson,
+            outputRoot = outputRoot,
+            preflight = null,
+        )
     }
 
 
@@ -83,9 +102,11 @@ class CaptureBundlePackager(private val context: Context) {
         calibrationSessionDir: File?,
         activeRigProfileJson: JSONObject?,
         outputRoot: File,
+        preflight: StereoCaptureBundlePreflightResult?,
     ): File {
         require(captureDir.exists() && captureDir.isDirectory) { "capture dir not found: ${captureDir.absolutePath}" }
         outputRoot.mkdirs() // files/upload_packages
+        require(outputRoot.isDirectory) { "output directory was not created: ${outputRoot.absolutePath}" }
         val timestamp = System.currentTimeMillis()
         val out = File(outputRoot, "maklertour_capture_bundle_${captureType}_$timestamp.tgz")
         Log.i(TAG, "packaging started captureType=$captureType captureDir=${captureDir.absolutePath} output=${out.absolutePath}")
@@ -93,7 +114,7 @@ class CaptureBundlePackager(private val context: Context) {
         val captureManifest = readJson(File(captureDir, "synced_depth_manifest.json")) ?: JSONObject()
         val pairs = captureManifest.optJSONArray("pairs") ?: JSONArray()
         val hasCalibration = calibrationSessionDir?.isDirectory == true
-        val hasExtrinsics = hasCalibration && File(calibrationSessionDir, "stereo_extrinsics.json").exists()
+        val hasExtrinsics = hasCalibration && File(calibrationSessionDir, "stereo_extrinsics.json").isFile
         val bundleManifest = JSONObject()
             .put("bundle_schema_version", 1)
             .put("bundle_type", "maklertour_capture_bundle")
@@ -114,16 +135,240 @@ class CaptureBundlePackager(private val context: Context) {
             .put("raw_height", captureManifest.optInt("raw_height", 0))
             .put("cam0_rotation_degrees_applied", 0)
             .put("cam1_rotation_degrees_applied", 0)
-        if (!hasCalibration) bundleManifest.put("warning", "calibration session not found")
 
-        TarGzWriter(out).use { tar ->
-            tar.addBytes("bundle_manifest.json", bundleManifest.toString(2).toByteArray(StandardCharsets.UTF_8))
-            tar.addDirectoryContents(captureDir, "capture")
-            calibrationSessionDir?.takeIf { it.isDirectory }?.let { tar.addDirectoryContents(it, "calibration") }
-            activeRigProfileJson?.let { tar.addBytes("rig/active_rig_profile.json", it.toString(2).toByteArray(StandardCharsets.UTF_8)) }
+        if (preflight != null) {
+            bundleManifest
+                .put("preflight_schema_version", preflight.schemaVersion)
+                .put("preflight_status", "passed")
+                .put("validated_pairs_count", preflight.pairsCount)
+                .put("validated_calibration_status", preflight.calibrationStatus)
+                .put("validated_baseline_magnitude", preflight.baselineMagnitude)
+        } else if (!hasCalibration) {
+            bundleManifest.put("warning", "calibration session not found")
         }
-        Log.i(TAG, "packaging complete path=${out.absolutePath} size=${out.length()}")
+
+        try {
+            TarGzWriter(out).use { tar ->
+                tar.addBytes("bundle_manifest.json", bundleManifest.toString(2).toByteArray(StandardCharsets.UTF_8))
+                tar.addDirectoryContents(captureDir, "capture")
+                calibrationSessionDir?.takeIf { it.isDirectory }?.let { tar.addDirectoryContents(it, "calibration") }
+                activeRigProfileJson?.let { tar.addBytes("rig/active_rig_profile.json", it.toString(2).toByteArray(StandardCharsets.UTF_8)) }
+            }
+        } catch (t: Throwable) {
+            out.delete()
+            throw t
+        }
+
+        require(out.isFile && out.length() > 0L) { "capture bundle archive was not created" }
+        Log.i(
+            TAG,
+            "packaging complete path=${out.absolutePath} size=${out.length()} preflight=${preflight != null}",
+        )
         return out
+    }
+
+    private fun validateSyncedDepthPreflight(
+        captureDir: File,
+        calibrationSessionDir: File?,
+        activeRigProfileJson: JSONObject?,
+    ): StereoCaptureBundlePreflightResult {
+        val captureManifestFile = File(captureDir, "synced_depth_manifest.json")
+        val captureManifest = readRequiredJson(
+            captureManifestFile,
+            "synced depth manifest",
+        )
+        val pairsJson = captureManifest.optJSONArray("pairs")
+            ?: throw CaptureBundlePreflightException(
+                "synced_depth_manifest.json has no pairs array",
+            )
+        val pairs = buildList {
+            for (index in 0 until pairsJson.length()) {
+                val pair = pairsJson.optJSONObject(index)
+                    ?: throw CaptureBundlePreflightException(
+                        "pair entry $index is not an object",
+                    )
+                add(
+                    StereoCapturePairInput(
+                        pairIndex = pair.optInt("pair_index", index),
+                        cam0File = pair.optString("cam0_file", ""),
+                        cam1File = pair.optString("cam1_file", ""),
+                    ),
+                )
+            }
+        }
+
+        val calibrationDir = calibrationSessionDir
+            ?: throw CaptureBundlePreflightException(
+                "calibration session is not selected",
+            )
+        val extrinsicsFile = File(calibrationDir, "stereo_extrinsics.json")
+        val extrinsics = readRequiredJson(
+            extrinsicsFile,
+            "stereo extrinsics",
+        )
+
+        val calibration = StereoCalibrationInput(
+            status = extrinsics.optString("status", ""),
+            cam0CameraMatrix = jsonNumberList(
+                extrinsics,
+                "cam0_camera_matrix",
+                "camera_matrix_0",
+                "K0",
+            ),
+            cam0DistCoeffs = jsonNumberList(
+                extrinsics,
+                "cam0_dist_coeffs",
+                "dist_coeffs_0",
+                "D0",
+            ),
+            cam1CameraMatrix = jsonNumberList(
+                extrinsics,
+                "cam1_camera_matrix",
+                "camera_matrix_1",
+                "K1",
+            ),
+            cam1DistCoeffs = jsonNumberList(
+                extrinsics,
+                "cam1_dist_coeffs",
+                "dist_coeffs_1",
+                "D1",
+            ),
+            stereoRotation = jsonNumberList(
+                extrinsics,
+                "stereo_R",
+                "R",
+                "rotation_matrix",
+            ),
+            stereoTranslation = jsonNumberList(
+                extrinsics,
+                "stereo_T",
+                "T",
+                "translation_vector",
+            ),
+            cam0ImageWidth = jsonPositiveInt(
+                extrinsics,
+                "cam0_image_width",
+                "image_width_0",
+            ),
+            cam0ImageHeight = jsonPositiveInt(
+                extrinsics,
+                "cam0_image_height",
+                "image_height_0",
+            ),
+            cam1ImageWidth = jsonPositiveInt(
+                extrinsics,
+                "cam1_image_width",
+                "image_width_1",
+            ),
+            cam1ImageHeight = jsonPositiveInt(
+                extrinsics,
+                "cam1_image_height",
+                "image_height_1",
+            ),
+            rigId = jsonString(
+                extrinsics,
+                "rig_id",
+                "rigId",
+            ),
+        )
+
+        return StereoCaptureBundlePreflight.validate(
+            StereoCaptureBundlePreflightInput(
+                captureDir = captureDir,
+                captureType = captureManifest.optString(
+                    "capture_type",
+                    "synced_depth_frames",
+                ),
+                pairs = pairs,
+                captureRigId = jsonString(
+                    captureManifest,
+                    "rig_id",
+                    "rigId",
+                ),
+                activeRigProfileId = jsonString(
+                    activeRigProfileJson,
+                    "rigId",
+                    "rig_id",
+                ),
+                rawWidth = captureManifest.optInt("raw_width", 0),
+                rawHeight = captureManifest.optInt("raw_height", 0),
+                calibrationSessionDir = calibrationDir,
+                extrinsicsFile = extrinsicsFile,
+                calibration = calibration,
+            ),
+        )
+    }
+
+    private fun readRequiredJson(file: File, label: String): JSONObject {
+        if (!file.isFile || file.length() <= 0L) {
+            throw CaptureBundlePreflightException(
+                "$label file is missing or empty: ${file.absolutePath}",
+            )
+        }
+        return runCatching { JSONObject(file.readText()) }
+            .getOrElse {
+                throw CaptureBundlePreflightException(
+                    "$label JSON is invalid: ${it.message ?: it.javaClass.simpleName}",
+                )
+            }
+    }
+
+    private fun jsonNumberList(
+        json: JSONObject,
+        vararg keys: String,
+    ): List<Double> {
+        for (key in keys) {
+            if (!json.has(key) || json.isNull(key)) continue
+            val values = mutableListOf<Double>()
+            flattenJsonNumbers(json.get(key), key, values)
+            return values
+        }
+        return emptyList()
+    }
+
+    private fun flattenJsonNumbers(
+        value: Any?,
+        path: String,
+        output: MutableList<Double>,
+    ) {
+        when (value) {
+            is Number -> output += value.toDouble()
+            is JSONArray -> {
+                for (index in 0 until value.length()) {
+                    flattenJsonNumbers(
+                        value.get(index),
+                        "$path[$index]",
+                        output,
+                    )
+                }
+            }
+            else -> throw CaptureBundlePreflightException(
+                "$path must contain only numeric values",
+            )
+        }
+    }
+
+    private fun jsonPositiveInt(
+        json: JSONObject,
+        vararg keys: String,
+    ): Int? {
+        for (key in keys) {
+            if (!json.has(key) || json.isNull(key)) continue
+            return json.optInt(key, 0).takeIf { it > 0 }
+        }
+        return null
+    }
+
+    private fun jsonString(
+        json: JSONObject?,
+        vararg keys: String,
+    ): String? {
+        if (json == null) return null
+        for (key in keys) {
+            val value = json.optString(key, "").trim()
+            if (value.isNotBlank()) return value
+        }
+        return null
     }
 
     private fun readJson(file: File): JSONObject? = runCatching { if (file.exists()) JSONObject(file.readText()) else null }.getOrNull()
