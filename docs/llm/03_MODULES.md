@@ -749,17 +749,28 @@ TESTING.md
 
 ```text
 MVP
+CORE-CONTRACT
 ```
 
 ## Ответственность
 
-Модуль отвечает за съёмку встроенной камерой Android-устройства.
+Модуль отвечает за съёмку встроенной камерой Android-устройства:
+
+- phone video scan;
+- Auto Photo capture;
+- CameraX preview, analysis and image capture;
+- lens and zoom selection;
+- IMU/orientation metadata;
+- Auto Photo quality and movement diagnostics;
+- compatible Auto Photo bundle inputs.
 
 ## Основные файлы
 
 ```text
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraScanProvider.kt
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraVideoRecorder.kt
+app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/AutoPhotoCaptureManager.kt
+app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/AutoPhotoMovementTracker.kt
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraLens.kt
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraLensRepository.kt
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraInfoCollector.kt
@@ -768,19 +779,25 @@ app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneSc
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneScanCalibrationMetadata.kt
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/ImuRecorder.kt
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/DeviceOrientationTracker.kt
+app/MaklerTour/docs/AUTO_PHOTO_MOVEMENT_CONTRACT.md
 ```
+
+`AutoPhotoMovementTracker.kt` is introduced by `APP-AUTO-M01`; before that task
+it may not exist.
 
 ## Входы
 
 * CameraX lifecycle;
-* выбранная lens;
-* zoom ratio;
-* start/stop recording;
+* preview and `ImageAnalysis` frames;
+* selected lens and zoom ratio;
+* start/pause/resume/finish/cancel;
 * sensor events;
-* session ID;
-* scan ID.
+* session and order IDs;
+* Auto Photo settings.
 
 ## Выходы
+
+Phone video:
 
 ```text
 video.mp4
@@ -790,10 +807,24 @@ imu.jsonl
 ScanVideo
 ```
 
-## Основной storage path
+Auto Photo:
+
+```text
+manifest.json
+camera_info.json
+photos_metadata.jsonl
+imu.jsonl
+quality.jsonl
+events.jsonl
+photos/frame_000001.jpg
+...
+```
+
+## Основные storage paths
 
 ```text
 sessions/<sessionId>/phone_scans/<scanId>/
+sessions/<sessionId>/auto_photo_sessions/<captureUuid>/
 ```
 
 ## Зависимости
@@ -802,34 +833,47 @@ sessions/<sessionId>/phone_scans/<scanId>/
 CameraX
 Android sensors
 Android filesystem
+OpenCV for bounded movement metrics
 A03 AppStateViewModel
 A05 Room
 A11 Upload
+A12 Capture Bundle
 ```
+
+## Критические правила Auto Photo
+
+- bundle remains compatible with `capture_type=auto_photo_session`;
+- movement is relative to the last successfully saved photo;
+- failed image save must not advance the movement reference;
+- M01 records metrics but does not change capture decisions;
+- do not integrate accelerometer samples into translation;
+- no unbounded frame history;
+- Auto Photo changes must not modify the stereo contract.
 
 ## Риски
 
-* video file может быть пустым;
-* CameraX lifecycle может быть потерян;
-* selected lens может отличаться от реально bound camera;
-* IMU timestamp и video timestamp могут находиться в разных шкалах;
-* metadata может не соответствовать video;
-* recording state может остаться активным после ошибки.
+* video or JPEG may be empty;
+* CameraX lifecycle may be lost;
+* selected lens may differ from the bound camera;
+* IMU and camera timestamps may differ;
+* metadata may not match a saved file;
+* state may remain active after an error;
+* timer-only Auto Photo may create repeated viewpoints;
+* movement reference may advance before `onImageSaved`;
+* tracking may retain too much memory or block the analyzer;
+* guessed thresholds may reduce overlap.
 
 ## Обязательные проверки
 
-* preview bind;
-* start;
-* stop;
-* файл существует;
-* размер больше нуля;
-* metadata создаётся;
-* повторная запись;
-* camera permission denied;
-* app pause/resume;
-* upload phone video;
-* server storage;
-* SfM smoke test.
+```text
+./gradlew :app:testDebugUnitTest
+./gradlew :app:assembleDebug
+python3 tools/stereo_contract_audit.py
+```
+
+Runtime: phone video regression, Auto Photo lifecycle, non-empty files,
+movement diagnostics, bundle upload, Prepare/Sparse/Dense smoke test, and
+unchanged stereo contract.
 
 ---
 
@@ -863,7 +907,6 @@ CORE-CONTRACT
 
 ```text
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/StereoCaptureExperimental.kt
-app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/AutoPhotoCaptureManager.kt
 app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/UsbUvcStatus.kt
 app/MaklerTour/app/src/main/cpp/cam1_uvc.cpp
 app/MaklerTour/app/src/main/cpp/CMakeLists.txt

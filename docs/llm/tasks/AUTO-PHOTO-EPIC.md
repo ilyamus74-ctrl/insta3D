@@ -414,8 +414,24 @@ Epic reaches the current milestone Definition of Done when:
 15. AUTO-B06 standalone Dense Preview, JPEG sanitizer, authenticated download и browser viewer реализованы; шесть focused behavioral tests проходят на сервере.
 16. AUTO-B06 принят на GrafikStation: sparse DB `752`, dense DB `759`, dense remote `897481444`, model `0`, PLY `157417` вершин; MeshLab и authenticated web viewer acceptance пройдены.
 
-## Deferred long-term scope
+## Follow-up boundary
 
-AUTO-B06 is closed. Automatic dense/mesh chaining, production mesh generation,
-Generated Models publication, and Android capture-volume improvements remain
-separate future tasks and require explicit authorization.
+AUTO-B06 is closed.
+
+Android Auto Photo work continues separately under:
+
+```text
+APP-AUTO-M01 — Visual Movement Metrics
+APP-AUTO-M02 — Movement-triggered Capture
+APP-AUTO-M03 — Dense Acceptance
+```
+
+After APP-AUTO-M03, synced stereo may continue under:
+
+```text
+APP-STEREO-F01 — Global Stereo Depth Fusion
+```
+
+These Android tasks must not reopen or silently modify the accepted AUTO-B06
+server contract. Automatic dense/mesh chaining, production mesh generation,
+and Generated Models publication remain separately authorized future work.
