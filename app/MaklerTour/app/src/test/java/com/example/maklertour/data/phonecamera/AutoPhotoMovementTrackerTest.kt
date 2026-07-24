@@ -60,6 +60,8 @@ class AutoPhotoMovementTrackerTest {
         assertEquals(AutoPhotoMovementStatus.OK, result.status)
         assertTrue(abs((result.medianDisplacementPx ?: 0.0) - 6.0) < 0.01)
         assertTrue(abs((result.p90DisplacementPx ?: 0.0) - 6.0) < 0.01)
+        assertTrue(abs((result.medianFlowDxPx ?: 0.0) - 6.0) < 0.01)
+        assertTrue(abs(result.medianFlowDyPx ?: 99.0) < 0.01)
     }
 
     @Test

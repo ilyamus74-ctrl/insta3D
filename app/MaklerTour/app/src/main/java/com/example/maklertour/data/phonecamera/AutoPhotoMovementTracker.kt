@@ -68,6 +68,8 @@ data class AutoPhotoMovementResult(
     val medianDisplacementPx: Double?,
     val p90DisplacementPx: Double?,
     val estimatedRotationDeg: Double?,
+    val medianFlowDxPx: Double? = null,
+    val medianFlowDyPx: Double? = null,
     val detail: String? = null,
 ) {
     fun toMetadataMap(): Map<String, Any?> = linkedMapOf(
@@ -83,6 +85,8 @@ data class AutoPhotoMovementResult(
         "median_displacement_px" to medianDisplacementPx.finiteOrNull(),
         "p90_displacement_px" to p90DisplacementPx.finiteOrNull(),
         "estimated_rotation_deg" to estimatedRotationDeg.finiteOrNull(),
+        "median_flow_dx_px" to medianFlowDxPx.finiteOrNull(),
+        "median_flow_dy_px" to medianFlowDyPx.finiteOrNull(),
         "detail" to detail,
     )
 
@@ -106,6 +110,8 @@ data class AutoPhotoMovementResult(
             medianDisplacementPx = null,
             p90DisplacementPx = null,
             estimatedRotationDeg = null,
+            medianFlowDxPx = null,
+            medianFlowDyPx = null,
             detail = detail,
         )
     }
@@ -255,6 +261,12 @@ class AutoPhotoMovementTracker(
             }
             .sorted()
 
+        val flowDx = validTracks
+            .map { it.currentX - it.previousX }
+            .sorted()
+        val flowDy = validTracks
+            .map { it.currentY - it.previousY }
+            .sorted()
         val rotation = estimateRotationDegrees(
             tracks = validTracks,
             width = frame.width,
@@ -272,6 +284,8 @@ class AutoPhotoMovementTracker(
             medianDisplacementPx = percentile(displacements, 0.50),
             p90DisplacementPx = percentile(displacements, 0.90),
             estimatedRotationDeg = rotation,
+            medianFlowDxPx = percentile(flowDx, 0.50),
+            medianFlowDyPx = percentile(flowDy, 0.50),
             detail = measurement.detail,
         )
     }
@@ -312,6 +326,8 @@ class AutoPhotoMovementTracker(
         medianDisplacementPx: Double? = null,
         p90DisplacementPx: Double? = null,
         estimatedRotationDeg: Double? = null,
+        medianFlowDxPx: Double? = null,
+        medianFlowDyPx: Double? = null,
         detail: String? = null,
     ): AutoPhotoMovementAnalysis = AutoPhotoMovementAnalysis(
         result = AutoPhotoMovementResult(
@@ -327,6 +343,8 @@ class AutoPhotoMovementTracker(
             medianDisplacementPx = medianDisplacementPx.finiteOrNull(),
             p90DisplacementPx = p90DisplacementPx.finiteOrNull(),
             estimatedRotationDeg = estimatedRotationDeg.finiteOrNull(),
+            medianFlowDxPx = medianFlowDxPx.finiteOrNull(),
+            medianFlowDyPx = medianFlowDyPx.finiteOrNull(),
             detail = detail,
         ),
         frame = frame,

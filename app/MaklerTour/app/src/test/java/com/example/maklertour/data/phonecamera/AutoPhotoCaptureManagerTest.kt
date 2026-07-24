@@ -16,9 +16,12 @@ class AutoPhotoCaptureManagerTest {
     fun m02DefaultsIncreaseCaptureOpportunity() {
         val settings = AutoPhotoSettings()
         assertEquals(600L, settings.autoPhotoIntervalMs)
-        assertEquals(150L, settings.stableDwellMs)
+        assertEquals(250L, settings.stableDwellMs)
         assertTrue(settings.movementCaptureEnabled)
-        assertEquals(2_500L, settings.movementMaxCaptureIntervalMs)
+        assertFalse(settings.movementFallbackEnabled)
+        assertEquals(6.0, settings.movementMinMedianDisplacementPx, 0.0)
+        assertEquals(30.0, settings.movementMaxMedianDisplacementPx, 0.0)
+        assertEquals(0.55, settings.movementMinTrackedRatio, 0.0)
     }
 
     @Test
@@ -59,6 +62,7 @@ class AutoPhotoCaptureManagerTest {
 
         assertTrue(decision.shouldCapture)
         assertEquals("accepted_first_reference", decision.reason)
+        assertTrue(decision.commitReference)
     }
 
     @Test
@@ -75,6 +79,8 @@ class AutoPhotoCaptureManagerTest {
 
         assertFalse(decision.shouldCapture)
         assertEquals("move_camera", decision.reason)
+        assertEquals(AutoPhotoGuidancePhase.MOVE, decision.phase)
+        assertTrue(decision.movementProgressPercent in 0..99)
     }
 
     @Test
@@ -91,6 +97,8 @@ class AutoPhotoCaptureManagerTest {
 
         assertTrue(decision.shouldCapture)
         assertEquals("accepted_movement", decision.reason)
+        assertTrue(decision.commitReference)
+        assertEquals(AutoPhotoGuidancePhase.HOLD, decision.phase)
     }
 
     @Test
@@ -109,26 +117,60 @@ class AutoPhotoCaptureManagerTest {
 
         assertFalse(decision.shouldCapture)
         assertEquals("overlap_too_low", decision.reason)
+        assertEquals(AutoPhotoGuidancePhase.RECOVER, decision.phase)
+        assertFalse(decision.commitReference)
     }
 
     @Test
-    fun trackingFailureUsesControlledFallback() {
-        val waiting = decide(
+    fun trackingFailureStaysInRecoverByDefault() {
+        val decision = decide(
             movement = movement(AutoPhotoMovementStatus.TRACKING_FAILED),
-            nowMs = 2_000,
-            lastCaptureMs = 0,
-        )
-        val fallback = decide(
-            movement = movement(AutoPhotoMovementStatus.TRACKING_FAILED),
-            nowMs = 3_000,
+            nowMs = 10_000,
             lastCaptureMs = 0,
         )
 
-        assertFalse(waiting.shouldCapture)
-        assertEquals("movement_tracking_failed", waiting.reason)
-        assertTrue(fallback.shouldCapture)
-        assertEquals("accepted_fallback", fallback.reason)
-        assertTrue(fallback.fallback)
+        assertFalse(decision.shouldCapture)
+        assertEquals("movement_tracking_failed", decision.reason)
+        assertEquals(AutoPhotoGuidancePhase.RECOVER, decision.phase)
+        assertFalse(decision.fallback)
+        assertFalse(decision.commitReference)
+    }
+
+    @Test
+    fun explicitlyEnabledFallbackNeverCommitsReference() {
+        val decision = AutoPhotoMovementCapturePolicy.decide(
+            baseReason = "accepted",
+            movement = movement(AutoPhotoMovementStatus.TRACKING_FAILED),
+            savedCount = 1,
+            nowMs = 3_000,
+            lastCaptureMs = 0,
+            settings = AutoPhotoSettings(
+                storageReserveBytes = 0,
+                movementFallbackEnabled = true,
+            ),
+        )
+
+        assertTrue(decision.shouldCapture)
+        assertTrue(decision.fallback)
+        assertFalse(decision.commitReference)
+    }
+
+    @Test
+    fun recoveryGuidanceUsesFlowDirection() {
+        val decision = decide(
+            movement = movement(
+                status = AutoPhotoMovementStatus.OK,
+                median = 35.0,
+                p90 = 45.0,
+                trackedRatio = 0.8,
+                rotation = 3.0,
+                flowDx = 12.0,
+                flowDy = 2.0,
+            ),
+        )
+
+        assertEquals(AutoPhotoGuidancePhase.RECOVER, decision.phase)
+        assertTrue(decision.guidance.contains("влево"))
     }
 
     @Test
@@ -173,6 +215,8 @@ class AutoPhotoCaptureManagerTest {
         p90: Double? = null,
         trackedRatio: Double? = null,
         rotation: Double? = null,
+        flowDx: Double? = null,
+        flowDy: Double? = null,
     ) = AutoPhotoMovementResult(
         status = status,
         method = "test",
@@ -186,5 +230,7 @@ class AutoPhotoCaptureManagerTest {
         medianDisplacementPx = median,
         p90DisplacementPx = p90,
         estimatedRotationDeg = rotation,
+        medianFlowDxPx = flowDx,
+        medianFlowDyPx = flowDy,
     )
 }

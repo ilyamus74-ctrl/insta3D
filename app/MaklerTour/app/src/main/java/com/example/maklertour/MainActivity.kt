@@ -1764,15 +1764,81 @@ private fun AutoPhotoCaptureScreen(
                 Text("Сессия: $selectedSessionName", color = Color.White)
                 Text("Заявка: ${selectedOrder?.title ?: selectedOrder?.id ?: "не выбрана"}", color = Color.White)
                 Text("Объектив: ${lens.lensLabel} (${lens.cameraId})", color = Color.White)
+                val phaseColor = when (state.guidancePhase.wireValue) {
+                    "captured" -> Color(0xFF7CFC98)
+                    "recover", "error" -> Color(0xFFFF6B6B)
+                    "hold" -> Color(0xFFFFD166)
+                    else -> Color(0xFF80D8FF)
+                }
+                Text(
+                    "Режим: ${state.guidancePhase.wireValue.uppercase()}",
+                    color = phaseColor,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                state.ghostFrame?.let { ghost ->
+                    val ghostBitmap = remember(ghost.sequence) {
+                        val pixels = IntArray(ghost.luma.size) { index ->
+                            val value = ghost.luma[index].toInt() and 0xff
+                            android.graphics.Color.argb(255, value, value, value)
+                        }
+                        Bitmap.createBitmap(
+                            ghost.width,
+                            ghost.height,
+                            Bitmap.Config.ARGB_8888,
+                        ).apply {
+                            setPixels(
+                                pixels,
+                                0,
+                                ghost.width,
+                                0,
+                                0,
+                                ghost.width,
+                                ghost.height,
+                            )
+                        }.asImageBitmap()
+                    }
+                    Card(
+                        modifier = Modifier.fillMaxWidth().height(110.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = phaseColor.copy(alpha = 0.18f),
+                        ),
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Image(
+                                bitmap = ghostBitmap,
+                                contentDescription = "Последний опорный кадр",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit,
+                                alpha = if (state.guidancePhase.wireValue == "recover") 0.55f else 0.30f,
+                            )
+                            Text(
+                                "Ghost опорного кадра #${ghost.sequence}",
+                                modifier = Modifier.align(Alignment.BottomStart)
+                                    .background(Color.Black.copy(alpha = 0.65f))
+                                    .padding(4.dp),
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
                 Text("Состояние: ${state.state}", color = Color.White)
                 Text("Фото: ${state.photosCount}; отклонено: ${state.rejectedCount}", color = Color.White)
                 Text("Причина: ${state.lastReason}", color = Color.White)
-                Text("Подсказка: ${state.guidance}", color = Color(0xFFFFD166))
+                Text("Подсказка: ${state.guidance}", color = phaseColor)
                 Text(
-                    "Движение: ${state.movementStatus}; median="
+                    "До следующего кадра: ${state.movementProgressPercent}% · "
+                        + "движение=${state.movementStatus}; median="
                         + (state.movementMedianDisplacementPx?.let { "%.1f px".format(it) } ?: "—")
                         + "; tracked="
                         + (state.movementTrackedRatio?.let { "%.0f%%".format(it * 100.0) } ?: "—"),
+                    color = Color.White,
+                )
+                Text(
+                    "Flow: dx="
+                        + (state.movementFlowDxPx?.let { "%.1f".format(it) } ?: "—")
+                        + "; dy="
+                        + (state.movementFlowDyPx?.let { "%.1f".format(it) } ?: "—"),
                     color = Color.White,
                 )
                 Text(
