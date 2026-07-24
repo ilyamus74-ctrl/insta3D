@@ -29,4 +29,34 @@ class AutoPhotoCaptureManagerTest {
         val settings = AutoPhotoSettings(storageReserveBytes = 0)
         assertEquals("accepted", AutoPhotoCaptureRules.shouldCapture(true, false, 0.0, 1, 2_000, 0, 99.0, 0, Long.MAX_VALUE, settings))
     }
+
+    @Test
+    fun movementMetricsDoNotChangeExistingCaptureDecision() {
+        val settings = AutoPhotoSettings(
+            storageReserveBytes = 0,
+            visualMovementMetricsEnabled = true,
+        )
+        val reasons = listOf(
+            AutoPhotoCaptureRules.shouldCapture(false, false, 0.0, 1, 2_000, 0, 99.0, 0, Long.MAX_VALUE, settings),
+            AutoPhotoCaptureRules.shouldCapture(true, true, 0.0, 1, 2_000, 0, 99.0, 0, Long.MAX_VALUE, settings),
+            AutoPhotoCaptureRules.shouldCapture(true, false, 99.0, 1, 2_000, 0, 99.0, 0, Long.MAX_VALUE, settings),
+            AutoPhotoCaptureRules.shouldCapture(true, false, 0.0, 1_950, 2_000, 0, 99.0, 0, Long.MAX_VALUE, settings),
+            AutoPhotoCaptureRules.shouldCapture(true, false, 0.0, 1, 500, 0, 99.0, 0, Long.MAX_VALUE, settings),
+            AutoPhotoCaptureRules.shouldCapture(true, false, 0.0, 1, 2_000, 0, 1.0, 0, Long.MAX_VALUE, settings),
+            AutoPhotoCaptureRules.shouldCapture(true, false, 0.0, 1, 2_000, 0, 99.0, 0, Long.MAX_VALUE, settings),
+        )
+
+        assertEquals(
+            listOf(
+                "camera_not_ready",
+                "capture_in_progress",
+                "motion_too_high",
+                "not_stable_long_enough",
+                "minimum_interval",
+                "too_blurry",
+                "accepted",
+            ),
+            reasons,
+        )
+    }
 }

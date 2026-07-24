@@ -51,6 +51,12 @@ data class AutoPhotoSettings(
     val minSharpness: Double = 18.0,
     val maxPhotos: Int = 600,
     val storageReserveBytes: Long = 100L * 1024L * 1024L,
+    val visualMovementMetricsEnabled: Boolean = true,
+    val visualMovementAnalysisWidth: Int = 320,
+    val visualMovementAnalysisHeight: Int = 180,
+    val visualMovementMaxFeatures: Int = 120,
+    val visualMovementMinDetectedFeatures: Int = 12,
+    val visualMovementMinTrackedFeatures: Int = 8,
 )
 
 data class AutoPhotoUiState(
@@ -180,6 +186,8 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
     private var captureExecutor: ExecutorService = newExecutor("AutoPhotoImageCapture")
     private val orientationTracker = DeviceOrientationTracker(context)
     private val imuTracker = AutoPhotoImuTracker(context)
+    private var movementTracker = createMovementTracker(AutoPhotoSettings())
+    @Volatile private var inFlightMovementAnalysis: AutoPhotoMovementAnalysis? = null
     private val _uiState = MutableStateFlow(AutoPhotoUiState())
     val uiState: StateFlow<AutoPhotoUiState> = _uiState
     private var imageAnalysis: ImageAnalysis? = null
@@ -232,6 +240,9 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         if (_uiState.value.state in setOf(AutoPhotoState.RUNNING, AutoPhotoState.FINISHING, AutoPhotoState.CANCELLING)) return
         if (_uiState.value.state == AutoPhotoState.ERROR && _uiState.value.lastReason == "capture_timeout") return
         settings = newSettings
+        movementTracker = createMovementTracker(settings)
+        movementTracker.reset()
+        inFlightMovementAnalysis = null
         captureUuid = UUID.randomUUID().toString()
         startedAt = Instant.now().toString()
         savedSequence = 0
@@ -270,6 +281,8 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         if (!beginTerminalTransition(AutoPhotoState.FINISHING, "finishing")) return null
         return try {
             if (!waitForCaptureInFlight()) {
+                movementTracker.reset()
+                inFlightMovementAnalysis = null
                 _uiState.value = _uiState.value.copy(state = AutoPhotoState.ERROR, lastReason = "capture_timeout", error = "Timeout waiting for ImageCapture")
                 return null
             }
@@ -277,9 +290,13 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
             imuTracker.stop()
             writeEvent("finished")
             writeManifest(localSessionId, orderId, true, false)
+            movementTracker.reset()
+            inFlightMovementAnalysis = null
             _uiState.value = _uiState.value.copy(state = AutoPhotoState.FINISHED, lastReason = "finished")
             sessionDir
         } catch (t: Throwable) {
+            movementTracker.reset()
+            inFlightMovementAnalysis = null
             Log.e(TAG, "terminal transition failed", t)
             _uiState.value = _uiState.value.copy(state = AutoPhotoState.ERROR, lastReason = "finish_error", error = t.message)
             null
@@ -290,6 +307,8 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         if (!beginTerminalTransition(AutoPhotoState.CANCELLING, "cancelling")) return null
         return try {
             if (!waitForCaptureInFlight()) {
+                movementTracker.reset()
+                inFlightMovementAnalysis = null
                 _uiState.value = _uiState.value.copy(state = AutoPhotoState.ERROR, lastReason = "capture_timeout", error = "Timeout waiting for ImageCapture")
                 return null
             }
@@ -297,9 +316,13 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
             imuTracker.stop()
             writeEvent("cancelled")
             writeManifest(localSessionId, orderId, true, true)
+            movementTracker.reset()
+            inFlightMovementAnalysis = null
             _uiState.value = _uiState.value.copy(state = AutoPhotoState.CANCELLED, lastReason = "cancelled")
             sessionDir
         } catch (t: Throwable) {
+            movementTracker.reset()
+            inFlightMovementAnalysis = null
             Log.e(TAG, "terminal transition failed", t)
             _uiState.value = _uiState.value.copy(state = AutoPhotoState.ERROR, lastReason = "cancel_error", error = t.message)
             null
@@ -334,6 +357,8 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         boundCamera = null
         captureInFlight = false
         inFlightDeferred?.complete(Unit)
+        inFlightMovementAnalysis = null
+        movementTracker.reset()
         Log.i(TAG, "released")
     }
 
@@ -343,6 +368,7 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
             val now = SystemClock.elapsedRealtime()
             val angular = imuTracker.angularVelocityDegSec()
             val sharpness = estimateSharpness(image)
+            val movementAnalysis = analyzeMovement(image)
             val running = true
             if (angular <= settings.stableGyroThresholdDegSec && stableSinceMs == 0L) stableSinceMs = now
             if (angular > settings.stableGyroThresholdDegSec) stableSinceMs = 0L
@@ -360,13 +386,14 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
             )
             if (reason == "accepted") {
                 val reservation = reserveCapture() ?: return
-                appendQuality(reservation.root, reason, sharpness, angular, force = true)
+                inFlightMovementAnalysis = movementAnalysis
+                appendQuality(reservation.root, reason, sharpness, angular, movementAnalysis.result, force = true)
                 takePhoto(reservation, sharpness, angular)
             } else {
                 synchronized(terminalTransitionLock) {
                     if (_uiState.value.state != AutoPhotoState.RUNNING) return
                     if (running && reason !in setOf("capture_in_progress", "minimum_interval")) rejectedCount += 1
-                    appendQuality(sessionDir ?: return, reason, sharpness, angular, force = reason !in setOf("capture_in_progress", "minimum_interval", "camera_not_ready"))
+                    appendQuality(sessionDir ?: return, reason, sharpness, angular, movementAnalysis.result, force = reason !in setOf("capture_in_progress", "minimum_interval", "camera_not_ready"))
                     _uiState.value = _uiState.value.copy(rejectedCount = rejectedCount, lastReason = reason, angularVelocityDegSec = angular, sharpness = sharpness)
                 }
             }
@@ -410,9 +437,13 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                             captureUuid == reservation.captureUuid && savedSequence < reservation.sequence
                         ) {
                             savedSequence = reservation.sequence
+                            inFlightMovementAnalysis?.let { analysis ->
+                                movementTracker.commit(analysis, savedSequence)
+                            }
                             _uiState.value = _uiState.value.copy(photosCount = savedSequence, lastSavedSequence = savedSequence, lastSavedMessage = "Photo saved #$savedSequence", lastReason = "accepted")
                         }
                         captureInFlight = false
+                        inFlightMovementAnalysis = null
                     }
                     beepAndVibrate()
                     Log.i(TAG, "photo saved filename=${file.name} size=${file.length()} imu=yes sharpness=$sharpness gyro=$angular")
@@ -436,7 +467,10 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
 
     private fun completeCaptureReservation(reservation: CaptureReservation) {
         synchronized(terminalTransitionLock) {
-            if (inFlightDeferred === reservation.deferred) captureInFlight = false
+            if (inFlightDeferred === reservation.deferred) {
+                captureInFlight = false
+                inFlightMovementAnalysis = null
+            }
         }
         reservation.deferred.complete(Unit)
     }
@@ -503,7 +537,14 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                 .put("stable_dwell_ms", settings.stableDwellMs)
                 .put("min_sharpness", settings.minSharpness)
                 .put("max_photos", settings.maxPhotos)
-                .put("storage_reserve_bytes", settings.storageReserveBytes))
+                .put("storage_reserve_bytes", settings.storageReserveBytes)
+                .put("visual_movement_metrics_enabled", settings.visualMovementMetricsEnabled)
+                .put("visual_movement_method", OpenCvAutoPhotoFlowEngine.METHOD)
+                .put("visual_movement_analysis_width", settings.visualMovementAnalysisWidth)
+                .put("visual_movement_analysis_height", settings.visualMovementAnalysisHeight)
+                .put("visual_movement_max_features", settings.visualMovementMaxFeatures)
+                .put("visual_movement_min_detected_features", settings.visualMovementMinDetectedFeatures)
+                .put("visual_movement_min_tracked_features", settings.visualMovementMinTrackedFeatures))
             .put("photos_metadata", "photos_metadata.jsonl")
             .put("photos", photoFilesJson())
         atomicWrite(File(root, "manifest.json"), manifest.toString(2))
@@ -533,16 +574,30 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         return array
     }
 
-    private fun appendQuality(root: File, reason: String, sharpness: Double, angular: Double, force: Boolean) {
+    private fun appendQuality(root: File, reason: String, sharpness: Double, angular: Double, movement: AutoPhotoMovementResult, force: Boolean) {
         qualityLogSkipCount += 1
         if (!force && qualityLogSkipCount % 30 != 0) return
-        appendJsonl(root, "quality.jsonl", JSONObject().put("t", Instant.now().toString()).put("reason", reason).put("sharpness", sharpness).put("angular_velocity_deg_sec", angular).put("capture_in_flight", captureInFlight))
+        appendJsonl(root, "quality.jsonl", JSONObject().put("t", Instant.now().toString()).put("reason", reason).put("sharpness", sharpness).put("angular_velocity_deg_sec", angular).put("capture_in_flight", captureInFlight).put("visual_movement", JSONObject(movement.toMetadataMap())))
     }
 
     private fun writeEvent(event: String) = sessionDir?.let { appendJsonl(it, "events.jsonl", JSONObject().put("t", Instant.now().toString()).put("event", event)) }
     private fun appendJsonl(root: File, name: String, json: JSONObject) { File(root, name).appendText(json.toString() + "\n") }
     private fun atomicWrite(file: File, text: String) { val tmp = File(file.parentFile, "${file.name}.tmp"); tmp.writeText(text); if (file.exists() && !file.delete()) throw IllegalStateException("failed to replace ${file.absolutePath}"); if (!tmp.renameTo(file)) throw IllegalStateException("failed to rename ${tmp.absolutePath} to ${file.absolutePath}") }
-    private fun estimateSharpness(image: ImageProxy): Double { val b = image.planes[0].buffer; val step = maxOf(1, b.remaining() / 2048); var prev = 0; var sum = 0.0; var count = 0; var i = 0; while (b.hasRemaining()) { val v = b.get().toInt() and 0xff; if (i % step == 0) { sum += abs(v - prev); prev = v; count++ }; i++ }; return if (count == 0) 0.0 else sum / count }
+    private fun analyzeMovement(image: ImageProxy): AutoPhotoMovementAnalysis {
+        val timestampNs = image.imageInfo.timestamp.takeIf { it > 0L } ?: SystemClock.elapsedRealtimeNanos()
+        return runCatching {
+            movementTracker.analyze(
+                frame = AutoPhotoMovementFrameFactory.fromImageProxy(image, settings.visualMovementAnalysisWidth, settings.visualMovementAnalysisHeight),
+                enabled = settings.visualMovementMetricsEnabled,
+            )
+        }.getOrElse { error ->
+            AutoPhotoMovementAnalysis(
+                result = AutoPhotoMovementResult.failure(timestampNs, image.width, image.height, OpenCvAutoPhotoFlowEngine.METHOD, "movement analysis failed: ${error.javaClass.simpleName}"),
+                frame = null,
+            )
+        }
+    }
+    private fun estimateSharpness(image: ImageProxy): Double { val b = image.planes[0].buffer.duplicate(); val step = maxOf(1, b.remaining() / 2048); var prev = 0; var sum = 0.0; var count = 0; var i = 0; while (b.hasRemaining()) { val v = b.get().toInt() and 0xff; if (i % step == 0) { sum += abs(v - prev); prev = v; count++ }; i++ }; return if (count == 0) 0.0 else sum / count }
     private fun getCameraProvider() = ProcessCameraProvider.getInstance(context).get()
     private suspend fun waitForCaptureInFlight(): Boolean {
         val deferred = synchronized(terminalTransitionLock) {
@@ -562,6 +617,13 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
     companion object {
         fun frameName(sequence: Int) = AutoPhotoCaptureRules.nextFrameName(sequence)
         fun targetRotationToDegrees(rotation: Int) = when(rotation){ Surface.ROTATION_90 -> 90; Surface.ROTATION_180 -> 180; Surface.ROTATION_270 -> 270; else -> 0 }
+        private fun createMovementTracker(settings: AutoPhotoSettings) = AutoPhotoMovementTracker(
+            flowEngine = OpenCvAutoPhotoFlowEngine(),
+            methodName = OpenCvAutoPhotoFlowEngine.METHOD,
+            maxFeatures = settings.visualMovementMaxFeatures,
+            minDetectedFeatures = settings.visualMovementMinDetectedFeatures,
+            minTrackedFeatures = settings.visualMovementMinTrackedFeatures,
+        )
         private fun newExecutor(name: String): ExecutorService = Executors.newSingleThreadExecutor { Thread(it, name).apply { isDaemon = true } }
         private fun vec(v: FloatArray?) = v?.let { JSONObject().put("x", it.getOrNull(0)).put("y", it.getOrNull(1)).put("z", it.getOrNull(2)) } ?: JSONObject.NULL
         private fun quat(v: FloatArray?) = v?.let { JSONObject().put("w", it.getOrNull(0)).put("x", it.getOrNull(1)).put("y", it.getOrNull(2)).put("z", it.getOrNull(3)) } ?: JSONObject.NULL
