@@ -103,18 +103,48 @@ function auto_photo_sparse_ui_web_prepares_for_bundle(array $prepareRows, int $o
     $valid=[]; foreach ($prepareRows as $row) if (is_array($row) && ($prepare=auto_photo_sparse_ui_web_prepare_for_bundle($row,$orderId,$bundle))!==null) $valid[]=$prepare;
     usort($valid,static fn(array $a,array $b):int=>(int)$b['id']<=>(int)$a['id']); return $valid;
 }
-function auto_photo_sparse_ui_web_select_bundle(array $bundles, array $sparseRows, array $prepareRows, int $orderId): ?array {
-    $candidates=[];
-    foreach ($bundles as $row) { if (!is_array($row)||($bundle=auto_photo_sparse_ui_web_bundle($row,$orderId))===null) continue;
-        $prepares=auto_photo_sparse_ui_web_prepares_for_bundle($prepareRows,$orderId,$bundle);
-        $sparseId=0; foreach($sparseRows as $sparseRow) if(is_array($sparseRow)&&($sparse=auto_photo_sparse_ui_web_sparse($sparseRow,$orderId,$bundle))!==null) foreach($prepares as $prepare) if(auto_photo_sparse_ui_web_sparse_prepare($sparse,$prepare)) $sparseId=max($sparseId,(int)$sparse['id']);
-        $candidates[]=['bundle'=>$bundle,'sparse_id'=>$sparseId,'prepare_id'=>(int)($prepares[0]['id']??0)];
+function auto_photo_sparse_ui_web_bundle_candidate(array $row,array $sparseRows,array $prepareRows,int $orderId): ?array {
+    $bundle=auto_photo_sparse_ui_web_bundle($row,$orderId); if($bundle===null)return null;
+    $prepares=auto_photo_sparse_ui_web_prepares_for_bundle($prepareRows,$orderId,$bundle);
+    $sparseId=0;$sparseStatus='';
+    foreach($sparseRows as $sparseRow){
+        if(!is_array($sparseRow)||($sparse=auto_photo_sparse_ui_web_sparse($sparseRow,$orderId,$bundle))===null)continue;
+        foreach($prepares as $prepare)if(auto_photo_sparse_ui_web_sparse_prepare($sparse,$prepare)&&(int)$sparse['id']>$sparseId){$sparseId=(int)$sparse['id'];$sparseStatus=auto_photo_sparse_ui_status($sparse['status']??'');}
     }
+    $prepare=$prepares[0]??null;
+    return ['bundle'=>$bundle,'sparse_id'=>$sparseId,'sparse_status'=>$sparseStatus,'prepare_id'=>(int)($prepare['id']??0),'prepare_status'=>is_array($prepare)?auto_photo_sparse_ui_status($prepare['status']??''):''];
+}
+function auto_photo_sparse_ui_web_candidates(array $bundles,array $sparseRows,array $prepareRows,int $orderId): array {
+    $candidates=[];foreach($bundles as $row)if(is_array($row)&&($candidate=auto_photo_sparse_ui_web_bundle_candidate($row,$sparseRows,$prepareRows,$orderId))!==null)$candidates[]=$candidate;
+    return $candidates;
+}
+function auto_photo_sparse_ui_web_select_bundle(array $bundles,array $sparseRows,array $prepareRows,int $orderId,?int $preferredBundleId=null): ?array {
+    $candidates=auto_photo_sparse_ui_web_candidates($bundles,$sparseRows,$prepareRows,$orderId);
+    if($preferredBundleId!==null&&$preferredBundleId>0)foreach($candidates as $candidate)if((int)$candidate['bundle']['id']===$preferredBundleId)return $candidate['bundle'];
     usort($candidates,static fn(array $a,array $b):int=>[$b['sparse_id'],$b['prepare_id'],$b['bundle']['id']] <=> [$a['sparse_id'],$a['prepare_id'],$a['bundle']['id']]);
     return $candidates[0]['bundle']??null;
 }
-function auto_photo_sparse_ui_web_build_from_rows(int $orderId,bool $canManage,array $bundles,array $sparseRows,array $prepareRows,array $exportsBySparse,?callable $componentsReader=null,array $denseBySparse=[]): array {
-    $bundle=auto_photo_sparse_ui_web_select_bundle($bundles,$sparseRows,$prepareRows,$orderId); if($bundle===null) return auto_photo_sparse_ui_web_empty($canManage);
+function auto_photo_sparse_ui_web_bundle_options(array $bundles,array $sparseRows,array $prepareRows,int $orderId,int $selectedBundleId): array {
+    $options=[];
+    foreach(auto_photo_sparse_ui_web_candidates($bundles,$sparseRows,$prepareRows,$orderId) as $candidate){
+        $bundle=$candidate['bundle'];
+        $stage=$candidate['sparse_id']>0?'Sparse '.($candidate['sparse_status']?:'—'):($candidate['prepare_id']>0?'Prepare '.($candidate['prepare_status']?:'—'):'Не обработан');
+        $options[]=[
+            'id'=>(int)$bundle['id'],
+            'capture_session_id'=>(int)$bundle['capture_session_id'],
+            'photos_count'=>(int)($bundle['photos_count']??0),
+            'photos_count_known'=>($bundle['photos_count_known']??false)===true,
+            'status'=>(string)$bundle['status'],
+            'stage'=>$stage,
+            'selected'=>(int)$bundle['id']===$selectedBundleId,
+            'select_url'=>'/order_simple.php?id='.$orderId.'&auto_photo_bundle_id='.(int)$bundle['id'].'#simple-photo-sfm',
+        ];
+    }
+    usort($options,static fn(array $a,array $b):int=>$b['id']<=>$a['id']);
+    return $options;
+}
+function auto_photo_sparse_ui_web_build_from_rows(int $orderId,bool $canManage,array $bundles,array $sparseRows,array $prepareRows,array $exportsBySparse,?callable $componentsReader=null,array $denseBySparse=[],?int $preferredBundleId=null): array {
+    $bundle=auto_photo_sparse_ui_web_select_bundle($bundles,$sparseRows,$prepareRows,$orderId,$preferredBundleId); if($bundle===null) return auto_photo_sparse_ui_web_empty($canManage);
     $prepares=auto_photo_sparse_ui_web_prepares_for_bundle($prepareRows,$orderId,$bundle); $prepareJob=$prepares[0]??null;
     usort($sparseRows,static fn(array $a,array $b):int=>(int)($b['id']??0)<=>(int)($a['id']??0)); $runs=[]; $newestSparse=null;
     foreach($sparseRows as $row) { if(!is_array($row)||($sparse=auto_photo_sparse_ui_web_sparse($row,$orderId,$bundle))===null) continue; $linked=false; foreach($prepares as $prepare) $linked=$linked||auto_photo_sparse_ui_web_sparse_prepare($sparse,$prepare); if(!$linked) continue;
@@ -123,22 +153,24 @@ function auto_photo_sparse_ui_web_build_from_rows(int $orderId,bool $canManage,a
     }
     $photosCount=auto_photo_sparse_ui_web_input_images($prepareJob); if($photosCount<=0)$photosCount=auto_photo_sparse_ui_web_input_images($newestSparse); if($photosCount>0){$bundle['photos_count']=$photosCount;$bundle['photos_count_known']=true;}
     $blocking=false;foreach($prepares as $prepare)if(in_array(auto_photo_sparse_ui_status($prepare['status']??''),['QUEUED','RUNNING','DONE'],true)){$blocking=true;break;}$bundle['can_prepare']=$canManage&&(int)$bundle['id']>0&&in_array((string)$bundle['status'],['UPLOADED','PROCESSING','READY','COMPLETED'],true)&&!$blocking;
-    return auto_photo_sparse_ui_build($bundle,$prepareJob,$runs,$canManage);
+    $dto=auto_photo_sparse_ui_build($bundle,$prepareJob,$runs,$canManage);
+    $dto['bundle_options']=auto_photo_sparse_ui_web_bundle_options($bundles,$sparseRows,$prepareRows,$orderId,(int)$bundle['id']);
+    return $dto;
 }
 function auto_photo_sparse_ui_web_query(mysqli $db,string $sql,string $types,array $values): ?array {
     $statement=$db->prepare($sql); if(!$statement)return null; try { if(!$statement->bind_param($types,...$values)||!$statement->execute())return null; $result=$statement->get_result(); if(!$result)return null; $rows=[]; while($row=$result->fetch_assoc())$rows[]=$row; return $rows; } finally { $statement->close(); }
 }
-function auto_photo_sparse_ui_web_load(mysqli $db,int $orderId,bool $canManage): array {
+function auto_photo_sparse_ui_web_load(mysqli $db,int $orderId,bool $canManage,?int $preferredBundleId=null): array {
     if($orderId<=0)return auto_photo_sparse_ui_web_empty($canManage);
     try {
-        /* Ranking: valid sparse chain DB id, then valid prepare DB id, then bundle DB id. */
+        /* Ranking: explicit valid bundle, then sparse chain DB id, prepare DB id, bundle DB id. */
         $bundles=auto_photo_sparse_ui_web_query($db,'SELECT id, order_id, capture_session_id, app_bundle_uuid, capture_type, filename, storage_path, size_bytes, status FROM capture_bundles WHERE order_id=? AND capture_type=? ORDER BY id DESC LIMIT 20','is',[$orderId,AUTO_PHOTO_BUNDLE_CAPTURE_TYPE]);
         $sparseRows=auto_photo_sparse_ui_web_query($db,"SELECT id, order_id, capture_session_id, job_type, remote_job_id, parent_remote_job_id, status, progress_percent, message, parameters_json, pipeline_run_id FROM sfm_remote_jobs WHERE order_id=? AND job_type='COLMAP_SPARSE' AND pipeline_run_id IS NULL ORDER BY id DESC LIMIT 20",'i',[$orderId]);
         $prepareRows=auto_photo_sparse_ui_web_query($db,'SELECT id, order_id, capture_session_id, job_type, remote_job_id, status, progress_percent, message, parameters_json FROM sfm_remote_jobs WHERE order_id=? AND job_type=? ORDER BY id DESC LIMIT 20','is',[$orderId,AUTO_PHOTO_PREPARE_JOB_TYPE]);
         if($bundles===null||$sparseRows===null||$prepareRows===null)throw new RuntimeException('query_failed');
-        $bundle=auto_photo_sparse_ui_web_select_bundle($bundles,$sparseRows,$prepareRows,$orderId); if($bundle===null)return auto_photo_sparse_ui_web_empty($canManage);
+        $bundle=auto_photo_sparse_ui_web_select_bundle($bundles,$sparseRows,$prepareRows,$orderId,$preferredBundleId); if($bundle===null)return auto_photo_sparse_ui_web_empty($canManage);
         $exportsBySparse=[]; $denseBySparse=[]; foreach($sparseRows as $row) if(is_array($row)&&($sparse=auto_photo_sparse_ui_web_sparse($row,$orderId,$bundle))!==null) { $remote=(int)$sparse['remote_job_id']; $rows=auto_photo_sparse_ui_web_query($db,"SELECT id, order_id, capture_session_id, job_type, remote_job_id, parent_remote_job_id, output_path, status, progress_percent, message, parameters_json FROM sfm_remote_jobs WHERE order_id=? AND capture_session_id=? AND job_type='EXPORT_PLY' AND parent_remote_job_id=? ORDER BY id DESC LIMIT 100",'iii',[$orderId,(int)$sparse['capture_session_id'],$remote]); if($rows===null)throw new RuntimeException('export_query_failed'); $exportsBySparse[$remote]=$rows; $dense=auto_photo_sparse_ui_web_query($db,"SELECT id, order_id, capture_session_id, job_type, remote_job_id, parent_remote_job_id, output_path, status, progress_percent, message, parameters_json, reconstruction_mode, pipeline_run_id FROM sfm_remote_jobs WHERE order_id=? AND capture_session_id=? AND parent_remote_job_id=? AND job_type='COLMAP_RECONSTRUCTION_PREVIEW' AND pipeline_run_id IS NULL ORDER BY id DESC LIMIT 100",'iii',[$orderId,(int)$sparse['capture_session_id'],$remote]); if($dense===null)throw new RuntimeException('dense_query_failed'); $denseBySparse[$remote]=$dense; }
         foreach($denseBySparse as &$rows) foreach($rows as &$denseRow){$info=auto_photo_sparse_ui_web_dense_ply_info($denseRow);$denseRow['_dense_points']=$info['points'];$denseRow['_dense_file_size']=$info['size'];$denseRow['_dense_download_ready']=$info['ready'];} unset($denseRow,$rows);
-        return auto_photo_sparse_ui_web_build_from_rows($orderId,$canManage,$bundles,$sparseRows,$prepareRows,$exportsBySparse,null,$denseBySparse);
+        return auto_photo_sparse_ui_web_build_from_rows($orderId,$canManage,$bundles,$sparseRows,$prepareRows,$exportsBySparse,null,$denseBySparse,$preferredBundleId);
     } catch(Throwable) { auto_photo_sparse_ui_web_log('controlled_failure',$orderId); return auto_photo_sparse_ui_web_empty($canManage); }
 }

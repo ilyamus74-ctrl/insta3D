@@ -9,6 +9,7 @@ require_once dirname(__DIR__)
 auth_require_login();
 $user=auth_current_user(); $userId=(int)$user['id']; $role=(string)($user['role'] ?? 'BROKER');
 $orderId=(int)($_GET['id'] ?? 0); if($orderId<=0){ http_response_code(400); exit('Bad order id'); }
+$autoPhotoBundleId=max(0,(int)($_GET['auto_photo_bundle_id'] ?? 0));
 function osv_status_meta(string $status): array { $m=['NEW'=>['bg-secondary','bi-circle','Новая'],'ASSIGNED'=>['bg-primary','bi-person-check','В работе'],'IN_PROGRESS'=>['bg-info','bi-camera','Съемка'],'CAPTURED'=>['bg-warning','bi-check2-square','Отснята'],'UPLOADING'=>['bg-warning','bi-cloud-upload','Загружается'],'UPLOADED'=>['bg-success','bi-cloud-check','Загружена'],'PROCESSING'=>['bg-info','bi-gear','Обработка'],'READY'=>['bg-success','bi-check-circle','Готова'],'COMPLETED'=>['bg-dark','bi-check2-all','Завершена'],'CLOSED'=>['bg-dark','bi-lock','Закрыта']]; $x=$m[$status]??['bg-secondary','bi-circle',$status]; return ['class'=>$x[0],'icon'=>$x[1],'label'=>$x[2]]; }
 function osv_bytes($bytes): string { $b=(float)$bytes; if($b<=0)return '0 B'; $u=['B','KB','MB','GB','TB']; $i=0; while($b>=1024 && $i<count($u)-1){$b/=1024;$i++;} return round($b,2).' '.$u[$i]; }
 function osv_remote_dir(int $remoteJobId): string { return '/home/makler/web/remote_station/output/job_'.$remoteJobId; }
@@ -165,7 +166,7 @@ function osv_build_generated(array $sessions, array $merges=[]): array {
 $stmt=$dbcnx->prepare("SELECT o.*,b.full_name broker_name,b.email broker_email,op.full_name operator_name,op.email operator_email FROM tour_orders o LEFT JOIN users b ON b.id=o.broker_id LEFT JOIN users op ON op.id=o.operator_id WHERE o.id=? LIMIT 1"); $stmt->bind_param('i',$orderId); $stmt->execute(); $order=$stmt->get_result()->fetch_assoc(); $stmt->close(); if(!$order){http_response_code(404);exit('Order not found');}
 $canView=$role==='ADMIN'||(int)$order['broker_id']===$userId||($role==='OPERATOR'&&((int)$order['operator_id']===$userId||((int)$order['is_published']===1&&(string)$order['status']==='NEW'&&$order['operator_id']===null))); if(!$canView){http_response_code(403);exit('Forbidden');}
 $order['status_meta']=osv_status_meta((string)$order['status']); $canDeleteMedia=$role==='ADMIN'||($role==='OPERATOR'&&(int)$order['operator_id']===$userId);
-$autoPhotoSparseUi=auto_photo_sparse_ui_web_load($dbcnx,$orderId,$canDeleteMedia);
+$autoPhotoSparseUi=auto_photo_sparse_ui_web_load($dbcnx,$orderId,$canDeleteMedia,$autoPhotoBundleId>0?$autoPhotoBundleId:null);
 $autoPhotoSparseUiActionContext = [
   'post_url' => '/order.php?id=' . $orderId,
   'csrf_name' => 'secCode',

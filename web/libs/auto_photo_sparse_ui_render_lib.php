@@ -135,6 +135,32 @@ function auto_photo_sparse_ui_render_action_form(
         . '">' . auto_photo_sparse_ui_render_escape($label) . '</button></form>';
 }
 
+function auto_photo_sparse_ui_render_bundle_selector(array $dto): string
+{
+    $options = is_array($dto['bundle_options'] ?? null) ? $dto['bundle_options'] : [];
+    if (count($options) <= 1) return '';
+    $html = '<div class="card mb-3"><div class="card-body"><h5 class="card-title">Пакеты Auto Photo</h5>'
+        . '<div class="d-flex flex-wrap gap-2">';
+    foreach ($options as $option) {
+        if (!is_array($option)) continue;
+        $photos = ($option['photos_count_known'] ?? false) === true
+            ? (int)($option['photos_count'] ?? 0) . ' фото'
+            : 'фото: —';
+        $label = 'Пакет #' . (int)($option['id'] ?? 0)
+            . ' · ' . $photos
+            . ' · ' . (string)($option['stage'] ?? '—');
+        if (($option['selected'] ?? false) === true) {
+            $html .= '<span class="btn btn-sm btn-primary disabled">'
+                . auto_photo_sparse_ui_render_escape($label) . '</span>';
+        } else {
+            $html .= '<a class="btn btn-sm btn-outline-secondary" href="'
+                . auto_photo_sparse_ui_render_escape($option['select_url'] ?? '')
+                . '">' . auto_photo_sparse_ui_render_escape($label) . '</a>';
+        }
+    }
+    return $html . '</div><div class="form-text mt-2">Выберите пакет, который нужно просмотреть или запустить в обработку.</div></div></div>';
+}
+
 function auto_photo_sparse_ui_render_pane(array $dto, array $actionContext = []): string
 {
     if (($dto['visible'] ?? false) !== true) {
@@ -142,6 +168,7 @@ function auto_photo_sparse_ui_render_pane(array $dto, array $actionContext = [])
     }
     $bundle = is_array($dto['bundle'] ?? null) ? $dto['bundle'] : [];
     $html = '<div class="tab-pane fade" id="simple-photo-sfm" role="tabpanel" aria-labelledby="simple-photo-sfm-tab">';
+    $html .= auto_photo_sparse_ui_render_bundle_selector($dto);
     $html .= '<div class="card mb-3"><div class="card-body"><h5 class="card-title">Фото 3D</h5><div class="row g-3">'
         . '<div class="col-md"><div class="text-muted small">Пакет</div><div>' . (int) ($bundle['id'] ?? 0) . '</div></div>'
         . '<div class="col-md"><div class="text-muted small">Сессия</div><div>' . (int) ($bundle['capture_session_id'] ?? 0) . '</div></div>'
@@ -251,7 +278,13 @@ function auto_photo_sparse_ui_render_pane(array $dto, array $actionContext = [])
         }
         $html .= '</div></div>';
     }
-    return $html . '</div>';
+    return $html
+        . '<script>document.addEventListener("DOMContentLoaded",function(){'
+        . 'if(location.hash==="#simple-photo-sfm"){'
+        . 'var tab=document.getElementById("simple-photo-sfm-tab");'
+        . 'if(tab&&window.bootstrap&&window.bootstrap.Tab){'
+        . 'window.bootstrap.Tab.getOrCreateInstance(tab).show();'
+        . '}}});</script></div>';
 }
 
 function auto_photo_sparse_ui_render(array $dto, array $actionContext = []): array
