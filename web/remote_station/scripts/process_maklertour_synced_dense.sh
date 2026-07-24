@@ -33,16 +33,21 @@ write_status RUNNING 40 "Running synced dense"
 PY="$STATION_BASE/venv/bin/python"
 if [[ ! -x "$PY" ]]; then PY="python3"; fi
 "$PY" "$STATION_BASE/scripts/dense_depth_from_synced_capture.py" "$ROOT/calibration/stereo_extrinsics.json" "$ROOT/capture" "$OUTPUT_DIR/dense" --max-pairs "$MAX_PAIRS" --num-disparities "$NUM_DISPARITIES" --block-size "$BLOCK_SIZE" --min-depth-mm 200 --max-depth-mm 10000 --cloud-stride 2 --cloud-max-points 250000
-write_status RUNNING 78 "Running metric stereo visual odometry"
+write_status RUNNING 74 "Running metric stereo visual odometry"
 "$PY" "$STATION_BASE/scripts/stereo_visual_odometry.py" "$OUTPUT_DIR/dense"   --orb-nfeatures 3500   --orb-fast-threshold 10   --match-ratio 0.75   --max-hamming-distance 64   --depth-search-radius 1   --min-correspondences 20   --min-inliers 15   --min-inlier-ratio 0.35   --ransac-reprojection-error-px 4.0   --max-median-reprojection-error-px 3.5   --max-translation-mm 1500   --max-rotation-deg 35   --min-positive-depth-ratio 0.90   --reference-window 3
-write_status RUNNING 94 "Validating and packaging outputs"
-read -r PAIR_CLOUD_COUNT TRAJECTORY_PAIR_COUNT TRAJECTORY_STATUS ACCEPTED_POSE_COUNT REJECTED_POSE_COUNT < <(
-"$PY" - "$OUTPUT_DIR/dense/pair_cloud_manifest.json" "$OUTPUT_DIR/dense/stereo_trajectory.json" <<'PY'
-import json,sys
-with open(sys.argv[1],encoding='utf-8') as f:
-    clouds=json.load(f)
+write_status RUNNING 88 "Running initial global cloud fusion"
+"$PY" "$STATION_BASE/scripts/stereo_global_fusion.py" "$OUTPUT_DIR/dense" --voxel-size-mm 20
+write_status RUNNING 96 "Validating and packaging outputs"
+read -r PAIR_CLOUD_COUNT TRAJECTORY_PAIR_COUNT TRAJECTORY_STATUS ACCEPTED_POSE_COUNT REJECTED_POSE_COUNT FUSION_STAGE INCLUDED_CLOUD_COUNT EXCLUDED_CLOUD_COUNT FUSED_POINTS_BEFORE_VOXEL FUSED_POINTS_AFTER_VOXEL VOXEL_SIZE_MM FUSED_GLOBAL_PLY_REL < <(
+"$PY" - "$OUTPUT_DIR/dense" "$OUTPUT_DIR/dense/pair_cloud_manifest.json" "$OUTPUT_DIR/dense/stereo_trajectory.json" "$OUTPUT_DIR/dense/global_fusion/global_fusion_manifest.json" <<'PY'
+import json,os,sys
+dense_dir=os.path.realpath(sys.argv[1])
 with open(sys.argv[2],encoding='utf-8') as f:
+    clouds=json.load(f)
+with open(sys.argv[3],encoding='utf-8') as f:
     trajectory=json.load(f)
+with open(sys.argv[4],encoding='utf-8') as f:
+    fusion=json.load(f)
 pair_cloud_count=int(clouds.get('pair_cloud_count',0))
 trajectory_pair_count=int(trajectory.get('pair_count',0))
 accepted=int(trajectory.get('accepted_pose_count',0))
@@ -57,10 +62,39 @@ if pair_cloud_count != trajectory_pair_count:
     raise SystemExit(f'pair count mismatch: clouds={pair_cloud_count} trajectory={trajectory_pair_count}')
 if accepted + rejected != trajectory_pair_count:
     raise SystemExit(f'pose count mismatch: accepted={accepted} rejected={rejected} pairs={trajectory_pair_count}')
-print(pair_cloud_count,trajectory_pair_count,status,accepted,rejected)
+fusion_stage=str(fusion.get('fusion_stage',''))
+if fusion_stage != 'initial_no_icp':
+    raise SystemExit(f'invalid fusion_stage: {fusion_stage}')
+if fusion.get('icp_applied') is not False:
+    raise SystemExit('initial fusion must keep icp_applied=false')
+if fusion.get('global_fusion_complete') is not False:
+    raise SystemExit('initial fusion must keep global_fusion_complete=false')
+included=int(fusion.get('included_cloud_count',0))
+excluded=int(fusion.get('excluded_cloud_count',0))
+before=int(fusion.get('fused_points_before_voxel',0))
+after=int(fusion.get('fused_points_after_voxel',0))
+voxel=float(fusion.get('voxel_size_mm',0))
+if included < 1:
+    raise SystemExit('global fusion included no clouds')
+if included > accepted:
+    raise SystemExit(f'included cloud count {included} exceeds accepted poses {accepted}')
+if before < 1 or after < 1 or after > before:
+    raise SystemExit(f'invalid fused point counts: before={before} after={after}')
+if voxel <= 0:
+    raise SystemExit(f'invalid voxel_size_mm: {voxel}')
+output_rel=str(fusion.get('output_ply',''))
+if not output_rel or os.path.isabs(output_rel):
+    raise SystemExit(f'invalid relative output_ply: {output_rel}')
+output_path=os.path.realpath(os.path.join(dense_dir,output_rel))
+if os.path.commonpath([dense_dir,output_path]) != dense_dir:
+    raise SystemExit(f'output_ply escapes dense_dir: {output_rel}')
+if not os.path.isfile(output_path) or os.path.getsize(output_path) <= 100:
+    raise SystemExit(f'fused global PLY missing or too small: {output_path}')
+print(pair_cloud_count,trajectory_pair_count,status,accepted,rejected,fusion_stage,included,excluded,before,after,voxel,output_rel)
 PY
 )
+FUSED_GLOBAL_PLY="$OUTPUT_DIR/dense/$FUSED_GLOBAL_PLY_REL"
 cat > "$OUTPUT_DIR/result.json" <<JSON
-{"job_id":$JOB_ID,"status":"DONE","job_type":"MAKLERTOUR_SYNCED_DENSE","dense_dir":"$OUTPUT_DIR/dense","contact_dense_depth":"$OUTPUT_DIR/dense/contact_dense_depth.jpg","dense_depth_debug":"$OUTPUT_DIR/dense/dense_depth_debug.json","dense_depth_summary":"$OUTPUT_DIR/dense/dense_depth_summary.csv","pair_cloud_manifest":"$OUTPUT_DIR/dense/pair_cloud_manifest.json","contact_pair_clouds":"$OUTPUT_DIR/dense/contact_pair_clouds.jpg","pair_cloud_count":$PAIR_CLOUD_COUNT,"stereo_trajectory":"$OUTPUT_DIR/dense/stereo_trajectory.json","stereo_odometry_debug":"$OUTPUT_DIR/dense/stereo_odometry_debug.json","trajectory_pair_count":$TRAJECTORY_PAIR_COUNT,"trajectory_status":"$TRAJECTORY_STATUS","accepted_pose_count":$ACCEPTED_POSE_COUNT,"rejected_pose_count":$REJECTED_POSE_COUNT,"global_fusion_complete":false,"finished_at":"$(date -Is)"}
+{"job_id":$JOB_ID,"status":"DONE","job_type":"MAKLERTOUR_SYNCED_DENSE","dense_dir":"$OUTPUT_DIR/dense","contact_dense_depth":"$OUTPUT_DIR/dense/contact_dense_depth.jpg","dense_depth_debug":"$OUTPUT_DIR/dense/dense_depth_debug.json","dense_depth_summary":"$OUTPUT_DIR/dense/dense_depth_summary.csv","pair_cloud_manifest":"$OUTPUT_DIR/dense/pair_cloud_manifest.json","contact_pair_clouds":"$OUTPUT_DIR/dense/contact_pair_clouds.jpg","pair_cloud_count":$PAIR_CLOUD_COUNT,"stereo_trajectory":"$OUTPUT_DIR/dense/stereo_trajectory.json","stereo_odometry_debug":"$OUTPUT_DIR/dense/stereo_odometry_debug.json","trajectory_pair_count":$TRAJECTORY_PAIR_COUNT,"trajectory_status":"$TRAJECTORY_STATUS","accepted_pose_count":$ACCEPTED_POSE_COUNT,"rejected_pose_count":$REJECTED_POSE_COUNT,"global_fusion_manifest":"$OUTPUT_DIR/dense/global_fusion/global_fusion_manifest.json","fused_global_no_icp":"$FUSED_GLOBAL_PLY","fusion_stage":"$FUSION_STAGE","included_cloud_count":$INCLUDED_CLOUD_COUNT,"excluded_cloud_count":$EXCLUDED_CLOUD_COUNT,"fused_points_before_voxel":$FUSED_POINTS_BEFORE_VOXEL,"fused_points_after_voxel":$FUSED_POINTS_AFTER_VOXEL,"voxel_size_mm":$VOXEL_SIZE_MM,"icp_applied":false,"global_fusion_complete":false,"finished_at":"$(date -Is)"}
 JSON
-write_status DONE 100 "Done: trajectory=$TRAJECTORY_STATUS accepted=$ACCEPTED_POSE_COUNT rejected=$REJECTED_POSE_COUNT"
+write_status DONE 100 "Done: trajectory=$TRAJECTORY_STATUS fusion=$FUSION_STAGE clouds=$INCLUDED_CLOUD_COUNT points=$FUSED_POINTS_AFTER_VOXEL"
