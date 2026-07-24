@@ -312,7 +312,10 @@ def audit_orientation_metadata(main: str, docs: str, tracker: str, audit: Audit)
     combined = main + "\n" + tracker
     audit.require("DeviceOrientationTracker" in combined or "Sensor.TYPE_GRAVITY" in combined or "Sensor.TYPE_ACCELEROMETER" in combined, "IMU physical orientation tracker exists")
     audit.require("Sensor.TYPE_GRAVITY" in combined and "Sensor.TYPE_ACCELEROMETER" in combined, "orientation tracker prefers gravity and falls back to accelerometer")
-    audit.require("nearestSample(timestampNs" in tracker or "fun nearestSample(timestampNs" in tracker, "orientation tracker exposes nearestSample(timestampNs)")
+    audit.require(
+        re.search(r"fun\s+nearestSample\s*\(\s*timestampNs\s*:", tracker) is not None,
+        "orientation tracker exposes nearestSample(timestampNs)",
+    )
     audit.require("event.timestamp" in tracker and "timestampNs" in tracker, "orientation tracker stores SensorEvent.timestamp in samples")
     audit.require("pair_orientation_timestamp_ns" in main and "(pair.cam0.timestampNs + pair.cam1.timestampNs) / 2L" in main, "syncedDepthPairMeta writes pair_orientation_timestamp_ns from cam0/cam1 midpoint")
     audit.require("physical_orientation" in main and "syncedDepthPairMeta" in main, "syncedDepthPairMeta writes physical_orientation")
