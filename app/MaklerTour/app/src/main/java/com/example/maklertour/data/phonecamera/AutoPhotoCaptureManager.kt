@@ -45,9 +45,9 @@ private const val TAG = "AutoPhotoCapture"
 enum class AutoPhotoState { IDLE, RUNNING, PAUSED, FINISHING, CANCELLING, FINISHED, CANCELLED, ERROR }
 
 data class AutoPhotoSettings(
-    val autoPhotoIntervalMs: Long = 1200L,
+    val autoPhotoIntervalMs: Long = 600L,
     val stableGyroThresholdDegSec: Double = 30.0,
-    val stableDwellMs: Long = 200L,
+    val stableDwellMs: Long = 150L,
     val minSharpness: Double = 18.0,
     val maxPhotos: Int = 600,
     val storageReserveBytes: Long = 100L * 1024L * 1024L,
@@ -57,6 +57,14 @@ data class AutoPhotoSettings(
     val visualMovementMaxFeatures: Int = 120,
     val visualMovementMinDetectedFeatures: Int = 12,
     val visualMovementMinTrackedFeatures: Int = 8,
+    val movementCaptureEnabled: Boolean = true,
+    val movementMinMedianDisplacementPx: Double = 5.0,
+    val movementMaxMedianDisplacementPx: Double = 55.0,
+    val movementMaxP90DisplacementPx: Double = 85.0,
+    val movementMinTrackedRatio: Double = 0.35,
+    val movementMinRotationDeg: Double = 2.0,
+    val movementMaxRotationDeg: Double = 18.0,
+    val movementMaxCaptureIntervalMs: Long = 2_500L,
 )
 
 data class AutoPhotoUiState(
@@ -65,8 +73,14 @@ data class AutoPhotoUiState(
     val photosCount: Int = 0,
     val rejectedCount: Int = 0,
     val lastReason: String = "idle",
+    val guidance: String = "Нажмите «Начать»",
     val angularVelocityDegSec: Double = 0.0,
     val sharpness: Double = 0.0,
+    val movementStatus: String = "disabled",
+    val movementMedianDisplacementPx: Double? = null,
+    val movementTrackedRatio: Double? = null,
+    val physicalOrientation: String = "unknown",
+    val imageUpDirection: String = "unknown",
     val lastSavedSequence: Int = 0,
     val lastSavedMessage: String? = null,
     val error: String? = null,
@@ -79,22 +93,28 @@ data class OrientationSnapshot(
     val accel: FloatArray? = null,
     val quat: FloatArray? = null,
     val physicalOrientationLabel: String = "unknown",
+    val orientationSource: String = "unknown",
+    val orientationConfidence: Double = 0.0,
+    val orientationSampleDeltaMs: Double? = null,
+    val rollDeg: Float? = null,
+    val pitchDeg: Float? = null,
     val orientationStale: Boolean = true,
 ) {
     fun physicalOrientation(): String {
         if (orientationStale) return "unknown"
         if (physicalOrientationLabel != "unknown") return physicalOrientationLabel
-        val g = accel ?: return "unknown"
-        if (g.size < 3) return "unknown"
-        val ax = abs(g[0]); val ay = abs(g[1]); val az = abs(g[2])
-        return when {
-            az > ax && az > ay && g[2] > 0 -> "face_up"
-            az > ax && az > ay -> "face_down"
-            ay >= ax && g[1] > 0 -> "portrait_upright"
-            ay >= ax -> "portrait_upside_down"
-            g[0] > 0 -> "landscape_right"
-            else -> "landscape_left"
-        }
+        val vector = gravity ?: accel ?: return "unknown"
+        if (vector.size < 3) return "unknown"
+        return DeviceOrientationMath.classify(vector[0], vector[1], vector[2]).physicalOrientation
+    }
+
+    fun imageUp(displayRotationDegrees: Int): DeviceImageUp {
+        val vector = gravity ?: accel
+        return DeviceOrientationMath.imageUp(
+            vector?.getOrNull(0),
+            vector?.getOrNull(1),
+            displayRotationDegrees,
+        )
     }
 }
 
@@ -130,6 +150,8 @@ private data class CaptureReservation(
     val photosDir: File,
     val captureUuid: String,
     val sequence: Int,
+    val movementAnalysis: AutoPhotoMovementAnalysis,
+    val decision: AutoPhotoMovementCaptureDecision,
     val deferred: CompletableDeferred<Unit>,
 )
 
@@ -162,6 +184,11 @@ private class AutoPhotoImuTracker(context: Context) : SensorEventListener {
             accel = accel,
             quat = quat,
             physicalOrientationLabel = if (orientationSample.stale) "unknown" else orientationSample.physicalOrientation,
+            orientationSource = orientationSample.source,
+            orientationConfidence = orientationSample.confidence,
+            orientationSampleDeltaMs = orientationSample.sampleDeltaMs,
+            rollDeg = orientationSample.rollDeg,
+            pitchDeg = orientationSample.pitchDeg,
             orientationStale = orientationSample.stale,
         )
     }
@@ -205,6 +232,8 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
     private var lastCaptureMs = 0L
     private var savedSequence = 0
     private var rejectedCount = 0
+    private var lastRejectedReason = ""
+    private var lastRejectedAtMs = 0L
     private var qualityLogSkipCount = 0
     private var captureUuid: String? = null
     private var settings = AutoPhotoSettings()
@@ -247,6 +276,8 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         startedAt = Instant.now().toString()
         savedSequence = 0
         rejectedCount = 0
+        lastRejectedReason = ""
+        lastRejectedAtMs = 0L
         stableSinceMs = 0L
         lastCaptureMs = 0L
         qualityLogSkipCount = 0
@@ -259,7 +290,12 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         writeManifest(localSessionId, orderId, finished = false, cancelled = false)
         orientationTracker.start()
         imuTracker.start()
-        _uiState.value = AutoPhotoUiState(state = AutoPhotoState.RUNNING, captureUuid = captureUuid, lastReason = "started")
+        _uiState.value = AutoPhotoUiState(
+            state = AutoPhotoState.RUNNING,
+            captureUuid = captureUuid,
+            lastReason = "started",
+            guidance = "Плавно перемещайте камеру",
+        )
         Log.i(TAG, "auto capture started capture_uuid=$captureUuid dir=${root.absolutePath}")
     }
 
@@ -369,10 +405,22 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
             val angular = imuTracker.angularVelocityDegSec()
             val sharpness = estimateSharpness(image)
             val movementAnalysis = analyzeMovement(image)
+            val orientationSample = orientationTracker.nearestSample(
+                movementAnalysis.result.analysisTimestampNs,
+            )
+            val imageUp = if (orientationSample.stale) {
+                DeviceImageUp("unknown", null, null)
+            } else {
+                DeviceOrientationMath.imageUp(
+                    orientationSample.gravityX,
+                    orientationSample.gravityY,
+                    targetRotationToDegrees(targetRotation),
+                )
+            }
             val running = true
             if (angular <= settings.stableGyroThresholdDegSec && stableSinceMs == 0L) stableSinceMs = now
             if (angular > settings.stableGyroThresholdDegSec) stableSinceMs = 0L
-            val reason = AutoPhotoCaptureRules.shouldCapture(
+            val baseReason = AutoPhotoCaptureRules.shouldCapture(
                 running = running,
                 captureInFlight = captureInFlight,
                 angularVelocityDegSec = angular,
@@ -384,17 +432,35 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                 freeBytes = sessionDir?.freeSpace ?: context.filesDir.freeSpace,
                 settings = settings,
             )
-            if (reason == "accepted") {
-                val reservation = reserveCapture() ?: return
-                inFlightMovementAnalysis = movementAnalysis
-                appendQuality(reservation.root, reason, sharpness, angular, movementAnalysis.result, force = true)
+            val decision = AutoPhotoMovementCapturePolicy.decide(
+                baseReason = baseReason,
+                movement = movementAnalysis.result,
+                savedCount = savedSequence,
+                nowMs = now,
+                lastCaptureMs = lastCaptureMs,
+                settings = settings,
+            )
+            if (decision.shouldCapture) {
+                val reservation = reserveCapture(movementAnalysis, decision) ?: return
+                appendQuality(reservation.root, decision, sharpness, angular, movementAnalysis.result, force = true)
                 takePhoto(reservation, sharpness, angular)
             } else {
                 synchronized(terminalTransitionLock) {
                     if (_uiState.value.state != AutoPhotoState.RUNNING) return
-                    if (running && reason !in setOf("capture_in_progress", "minimum_interval")) rejectedCount += 1
-                    appendQuality(sessionDir ?: return, reason, sharpness, angular, movementAnalysis.result, force = reason !in setOf("capture_in_progress", "minimum_interval", "camera_not_ready"))
-                    _uiState.value = _uiState.value.copy(rejectedCount = rejectedCount, lastReason = reason, angularVelocityDegSec = angular, sharpness = sharpness)
+                    if (shouldCountRejection(decision.reason, now)) rejectedCount += 1
+                    appendQuality(sessionDir ?: return, decision, sharpness, angular, movementAnalysis.result, force = false)
+                    _uiState.value = _uiState.value.copy(
+                        rejectedCount = rejectedCount,
+                        lastReason = decision.reason,
+                        guidance = decision.guidance,
+                        angularVelocityDegSec = angular,
+                        sharpness = sharpness,
+                        movementStatus = movementAnalysis.result.status.wireValue,
+                        movementMedianDisplacementPx = movementAnalysis.result.medianDisplacementPx,
+                        movementTrackedRatio = movementAnalysis.result.trackedRatio,
+                        physicalOrientation = if (orientationSample.stale) "unknown" else orientationSample.physicalOrientation,
+                        imageUpDirection = imageUp.direction,
+                    )
                 }
             }
         } finally {
@@ -402,7 +468,10 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         }
     }
 
-    private fun reserveCapture(): CaptureReservation? = synchronized(terminalTransitionLock) {
+    private fun reserveCapture(
+        movementAnalysis: AutoPhotoMovementAnalysis,
+        decision: AutoPhotoMovementCaptureDecision,
+    ): CaptureReservation? = synchronized(terminalTransitionLock) {
         if (_uiState.value.state != AutoPhotoState.RUNNING || captureInFlight) return@synchronized null
         val root = sessionDir ?: return@synchronized null
         val dir = photosDir ?: return@synchronized null
@@ -410,7 +479,15 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         val deferred = CompletableDeferred<Unit>()
         captureInFlight = true
         inFlightDeferred = deferred
-        CaptureReservation(root = root, photosDir = dir, captureUuid = uuid, sequence = savedSequence + 1, deferred = deferred)
+        CaptureReservation(
+            root = root,
+            photosDir = dir,
+            captureUuid = uuid,
+            sequence = savedSequence + 1,
+            movementAnalysis = movementAnalysis,
+            decision = decision,
+            deferred = deferred,
+        )
     }
 
     private fun takePhoto(reservation: CaptureReservation, sharpness: Double, angular: Double) {
@@ -425,10 +502,17 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     val elapsedNs = SystemClock.elapsedRealtimeNanos()
                     lastCaptureMs = SystemClock.elapsedRealtime()
-                    val orientationTimeNs = output.savedUri?.let { elapsedNs } ?: elapsedNs
-                    val snap = imuTracker.snapshot(orientationTracker.nearestSample(orientationTimeNs))
-                    val meta = photoJson(reservation.captureUuid, reservation.sequence, file, sharpness, angular, snap)
-                        .put("image_capture_ms", (elapsedNs - startNs) / 1_000_000.0)
+                    val snap = imuTracker.snapshot(orientationTracker.nearestSample(startNs))
+                    val meta = photoJson(
+                        reservation.captureUuid,
+                        reservation.sequence,
+                        file,
+                        sharpness,
+                        angular,
+                        snap,
+                        reservation.movementAnalysis.result,
+                        reservation.decision,
+                    ).put("image_capture_ms", (elapsedNs - startNs) / 1_000_000.0)
                     appendJsonl(reservation.root, "photos_metadata.jsonl", meta)
                     appendJsonl(reservation.root, "imu.jsonl", meta)
                     synchronized(terminalTransitionLock) {
@@ -437,10 +521,20 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                             captureUuid == reservation.captureUuid && savedSequence < reservation.sequence
                         ) {
                             savedSequence = reservation.sequence
-                            inFlightMovementAnalysis?.let { analysis ->
-                                movementTracker.commit(analysis, savedSequence)
-                            }
-                            _uiState.value = _uiState.value.copy(photosCount = savedSequence, lastSavedSequence = savedSequence, lastSavedMessage = "Photo saved #$savedSequence", lastReason = "accepted")
+                            movementTracker.commit(reservation.movementAnalysis, savedSequence)
+                            val imageUp = snap.imageUp(targetRotationToDegrees(targetRotation))
+                            _uiState.value = _uiState.value.copy(
+                                photosCount = savedSequence,
+                                lastSavedSequence = savedSequence,
+                                lastSavedMessage = "Photo saved #$savedSequence",
+                                lastReason = reservation.decision.reason,
+                                guidance = reservation.decision.guidance,
+                                movementStatus = reservation.movementAnalysis.result.status.wireValue,
+                                movementMedianDisplacementPx = reservation.movementAnalysis.result.medianDisplacementPx,
+                                movementTrackedRatio = reservation.movementAnalysis.result.trackedRatio,
+                                physicalOrientation = snap.physicalOrientation(),
+                                imageUpDirection = imageUp.direction,
+                            )
                         }
                         captureInFlight = false
                         inFlightMovementAnalysis = null
@@ -476,9 +570,19 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
     }
 
 
-    private fun photoJson(captureUuidValue: String, seq: Int, file: File, sharpness: Double, angular: Double, snap: OrientationSnapshot): JSONObject {
+    private fun photoJson(
+        captureUuidValue: String,
+        seq: Int,
+        file: File,
+        sharpness: Double,
+        angular: Double,
+        snap: OrientationSnapshot,
+        movement: AutoPhotoMovementResult,
+        decision: AutoPhotoMovementCaptureDecision,
+    ): JSONObject {
         val dims = jpegDimensions(file)
         val exifOrientation = runCatching { ExifInterface(file.absolutePath).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED) }.getOrDefault(ExifInterface.ORIENTATION_UNDEFINED)
+        val imageUp = snap.imageUp(targetRotationToDegrees(targetRotation))
         return JSONObject()
             .put("photo_uuid", "$captureUuidValue-$seq")
             .put("sequence", seq)
@@ -490,6 +594,13 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
             .put("auto_capture_sequence", seq)
             .put("device_rotation_degrees", targetRotationToDegrees(targetRotation))
             .put("physical_orientation", snap.physicalOrientation())
+            .put("orientation_source", snap.orientationSource)
+            .put("orientation_confidence", snap.orientationConfidence)
+            .put("orientation_sample_delta_ms", snap.orientationSampleDeltaMs ?: JSONObject.NULL)
+            .put("roll_deg", snap.rollDeg ?: JSONObject.NULL)
+            .put("pitch_deg", snap.pitchDeg ?: JSONObject.NULL)
+            .put("image_up_direction", imageUp.direction)
+            .put("image_up_vector", if (imageUp.x != null && imageUp.y != null) JSONObject().put("x", imageUp.x).put("y", imageUp.y) else JSONObject.NULL)
             .put("orientation_stale", snap.orientationStale)
             .put("gravity", vec(snap.gravity))
             .put("gyroscope", vec(snap.gyro))
@@ -506,7 +617,11 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
             .put("duplicate_score", 0)
             .put("angular_velocity_deg_sec", angular)
             .put("acceleration_magnitude", snap.accel?.let { sqrt((it[0] * it[0] + it[1] * it[1] + it[2] * it[2]).toDouble()) } ?: JSONObject.NULL)
-            .put("capture_reason", "automatic")
+            .put("capture_reason", decision.reason)
+            .put("capture_fallback", decision.fallback)
+            .put("capture_guidance", decision.guidance)
+            .put("visual_movement", JSONObject(movement.toMetadataMap()))
+            .put("capture_decision", JSONObject(decision.toMetadataMap()))
             .put("transition_mode", false)
     }
 
@@ -544,7 +659,15 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                 .put("visual_movement_analysis_height", settings.visualMovementAnalysisHeight)
                 .put("visual_movement_max_features", settings.visualMovementMaxFeatures)
                 .put("visual_movement_min_detected_features", settings.visualMovementMinDetectedFeatures)
-                .put("visual_movement_min_tracked_features", settings.visualMovementMinTrackedFeatures))
+                .put("visual_movement_min_tracked_features", settings.visualMovementMinTrackedFeatures)
+                .put("movement_capture_enabled", settings.movementCaptureEnabled)
+                .put("movement_min_median_displacement_px", settings.movementMinMedianDisplacementPx)
+                .put("movement_max_median_displacement_px", settings.movementMaxMedianDisplacementPx)
+                .put("movement_max_p90_displacement_px", settings.movementMaxP90DisplacementPx)
+                .put("movement_min_tracked_ratio", settings.movementMinTrackedRatio)
+                .put("movement_min_rotation_deg", settings.movementMinRotationDeg)
+                .put("movement_max_rotation_deg", settings.movementMaxRotationDeg)
+                .put("movement_max_capture_interval_ms", settings.movementMaxCaptureIntervalMs))
             .put("photos_metadata", "photos_metadata.jsonl")
             .put("photos", photoFilesJson())
         atomicWrite(File(root, "manifest.json"), manifest.toString(2))
@@ -574,10 +697,32 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         return array
     }
 
-    private fun appendQuality(root: File, reason: String, sharpness: Double, angular: Double, movement: AutoPhotoMovementResult, force: Boolean) {
+    private fun appendQuality(root: File, decision: AutoPhotoMovementCaptureDecision, sharpness: Double, angular: Double, movement: AutoPhotoMovementResult, force: Boolean) {
         qualityLogSkipCount += 1
-        if (!force && qualityLogSkipCount % 30 != 0) return
-        appendJsonl(root, "quality.jsonl", JSONObject().put("t", Instant.now().toString()).put("reason", reason).put("sharpness", sharpness).put("angular_velocity_deg_sec", angular).put("capture_in_flight", captureInFlight).put("visual_movement", JSONObject(movement.toMetadataMap())))
+        if (!force && qualityLogSkipCount % 15 != 0) return
+        appendJsonl(
+            root,
+            "quality.jsonl",
+            JSONObject()
+                .put("t", Instant.now().toString())
+                .put("reason", decision.reason)
+                .put("guidance", decision.guidance)
+                .put("sharpness", sharpness)
+                .put("angular_velocity_deg_sec", angular)
+                .put("capture_in_flight", captureInFlight)
+                .put("capture_decision", JSONObject(decision.toMetadataMap()))
+                .put("visual_movement", JSONObject(movement.toMetadataMap())),
+        )
+    }
+
+    private fun shouldCountRejection(reason: String, nowMs: Long): Boolean {
+        if (reason in setOf("capture_in_progress", "minimum_interval", "camera_not_ready")) return false
+        val shouldCount = reason != lastRejectedReason || nowMs - lastRejectedAtMs >= 1_000L
+        if (shouldCount) {
+            lastRejectedReason = reason
+            lastRejectedAtMs = nowMs
+        }
+        return shouldCount
     }
 
     private fun writeEvent(event: String) = sessionDir?.let { appendJsonl(it, "events.jsonl", JSONObject().put("t", Instant.now().toString()).put("event", event)) }

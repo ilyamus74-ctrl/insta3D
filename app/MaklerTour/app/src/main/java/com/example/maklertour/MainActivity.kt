@@ -1767,6 +1767,18 @@ private fun AutoPhotoCaptureScreen(
                 Text("Состояние: ${state.state}", color = Color.White)
                 Text("Фото: ${state.photosCount}; отклонено: ${state.rejectedCount}", color = Color.White)
                 Text("Причина: ${state.lastReason}", color = Color.White)
+                Text("Подсказка: ${state.guidance}", color = Color(0xFFFFD166))
+                Text(
+                    "Движение: ${state.movementStatus}; median="
+                        + (state.movementMedianDisplacementPx?.let { "%.1f px".format(it) } ?: "—")
+                        + "; tracked="
+                        + (state.movementTrackedRatio?.let { "%.0f%%".format(it * 100.0) } ?: "—"),
+                    color = Color.White,
+                )
+                Text(
+                    "Ориентация: ${state.physicalOrientation}; верх кадра: ${state.imageUpDirection}",
+                    color = Color.White,
+                )
                 Text("Gyro: ${"%.1f".format(state.angularVelocityDegSec)} deg/s; sharpness: ${"%.1f".format(state.sharpness)}", color = Color.White)
                 Text("Свободно: ${context.filesDir.freeSpace / (1024 * 1024)} MB", color = Color.White)
                 state.lastSavedMessage?.let { Text(it, color = Color(0xFFB8FFB8)) }
