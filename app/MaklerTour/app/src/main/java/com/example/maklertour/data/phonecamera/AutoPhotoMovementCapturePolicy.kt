@@ -6,6 +6,7 @@ import kotlin.math.max
 enum class AutoPhotoGuidancePhase(val wireValue: String) {
     IDLE("idle"),
     MOVE("move"),
+    SEEK_TEXTURE("seek_texture"),
     HOLD("hold"),
     CAPTURED("captured"),
     RECOVER("recover"),
@@ -84,7 +85,6 @@ object AutoPhotoMovementCapturePolicy {
             }
         }
 
-        val elapsedMs = (nowMs - lastCaptureMs).coerceAtLeast(0L)
         return when (movement.status) {
             AutoPhotoMovementStatus.NO_REFERENCE -> recover(
                 reason = "movement_reference_missing",
@@ -96,18 +96,14 @@ object AutoPhotoMovementCapturePolicy {
                 guidance = "Оценка движения недоступна",
             )
 
-            AutoPhotoMovementStatus.INSUFFICIENT_FEATURES -> fallbackOrRecover(
+            AutoPhotoMovementStatus.INSUFFICIENT_FEATURES -> seekTexture(
                 reason = "movement_features_low",
-                guidance = "Совместите ghost с участком, где больше деталей",
-                elapsedMs = elapsedMs,
-                settings = settings,
+                guidance = "Наведите камеру на участок с деталями",
             )
 
-            AutoPhotoMovementStatus.TRACKING_FAILED -> fallbackOrRecover(
+            AutoPhotoMovementStatus.TRACKING_FAILED -> seekTexture(
                 reason = "movement_tracking_failed",
-                guidance = "Перекрытие потеряно — совместите текущий вид с ghost",
-                elapsedMs = elapsedMs,
-                settings = settings,
+                guidance = "Наведите камеру на контрастный участок и двигайтесь медленнее",
             )
 
             AutoPhotoMovementStatus.OK -> decideTracked(
@@ -125,8 +121,8 @@ object AutoPhotoMovementCapturePolicy {
         "accepted_timer" -> "Фото сохранено по таймеру"
         "move_camera" -> "Плавно перемещайте камеру"
         "overlap_too_low" -> "Перекрытие потеряно — совместите вид с ghost"
-        "movement_features_low" -> "Совместите ghost с участком, где больше деталей"
-        "movement_tracking_failed" -> "Перекрытие потеряно — совместите текущий вид с ghost"
+        "movement_features_low" -> "Наведите камеру на участок с деталями"
+        "movement_tracking_failed" -> "Наведите камеру на контрастный участок и двигайтесь медленнее"
         "movement_reference_missing" -> "Опорный кадр потерян — перезапустите съёмку"
         "movement_unavailable" -> "Оценка движения недоступна"
         "motion_too_high" -> "Достаточное перемещение — держите телефон спокойнее"
@@ -231,25 +227,14 @@ object AutoPhotoMovementCapturePolicy {
             .coerceIn(0, 100)
     }
 
-    private fun fallbackOrRecover(
+    private fun seekTexture(
         reason: String,
         guidance: String,
-        elapsedMs: Long,
-        settings: AutoPhotoSettings,
-    ): AutoPhotoMovementCaptureDecision {
-        if (
-            settings.movementFallbackEnabled
-            && elapsedMs >= settings.movementMaxCaptureIntervalMs
-        ) {
-            return accept(
-                reason = "accepted_fallback",
-                guidance = "Диагностический кадр без смены reference",
-                fallback = true,
-                commitReference = false,
-            )
-        }
-        return recover(reason, guidance)
-    }
+    ): AutoPhotoMovementCaptureDecision = reject(
+        reason = reason,
+        guidance = guidance,
+        phase = AutoPhotoGuidancePhase.SEEK_TEXTURE,
+    )
 
     private fun terminalDecision(
         baseReason: String,

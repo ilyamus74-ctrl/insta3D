@@ -66,7 +66,7 @@ data class AutoPhotoSettings(
     val movementMaxRotationDeg: Double = 12.0,
     val movementMaxCaptureIntervalMs: Long = 2_500L,
     val movementFallbackEnabled: Boolean = false,
-    val captureConfirmationMs: Long = 800L,
+    val captureConfirmationMs: Long = 1_200L,
 )
 
 data class AutoPhotoUiState(
@@ -242,6 +242,7 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
     private var lastRejectedReason = ""
     private var lastRejectedAtMs = 0L
     private var capturedFeedbackUntilMs = 0L
+    private var referenceGhostFrame: AutoPhotoGhostFrame? = null
     private var qualityLogSkipCount = 0
     private var captureUuid: String? = null
     private var settings = AutoPhotoSettings()
@@ -287,6 +288,7 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         lastRejectedReason = ""
         lastRejectedAtMs = 0L
         capturedFeedbackUntilMs = 0L
+        referenceGhostFrame = null
         stableSinceMs = 0L
         lastCaptureMs = 0L
         qualityLogSkipCount = 0
@@ -404,6 +406,7 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         captureInFlight = false
         inFlightDeferred?.complete(Unit)
         inFlightMovementAnalysis = null
+        referenceGhostFrame = null
         movementTracker.reset()
         Log.i(TAG, "released")
     }
@@ -457,6 +460,7 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                     guidance = decision.guidance,
                     guidancePhase = AutoPhotoGuidancePhase.HOLD,
                     movementProgressPercent = decision.movementProgressPercent,
+                    ghostFrame = null,
                     angularVelocityDegSec = angular,
                     sharpness = sharpness,
                     movementStatus = movementAnalysis.result.status.wireValue,
@@ -472,9 +476,22 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
             } else {
                 synchronized(terminalTransitionLock) {
                     if (_uiState.value.state != AutoPhotoState.RUNNING) return
-                    if (shouldCountRejection(decision, now)) rejectedCount += 1
-                    appendQuality(sessionDir ?: return, decision, sharpness, angular, movementAnalysis.result, force = false)
                     val capturedFeedbackActive = now < capturedFeedbackUntilMs
+                    if (!capturedFeedbackActive && shouldCountRejection(decision, now)) {
+                        rejectedCount += 1
+                    }
+                    appendQuality(sessionDir ?: return, decision, sharpness, angular, movementAnalysis.result, force = false)
+                    val visibleGhost = if (
+                        !capturedFeedbackActive
+                        && decision.phase == AutoPhotoGuidancePhase.RECOVER
+                        && movementAnalysis.result.status == AutoPhotoMovementStatus.OK
+                        && movementAnalysis.result.medianFlowDxPx != null
+                        && movementAnalysis.result.medianFlowDyPx != null
+                    ) {
+                        referenceGhostFrame
+                    } else {
+                        null
+                    }
                     _uiState.value = _uiState.value.copy(
                         rejectedCount = rejectedCount,
                         lastReason = if (capturedFeedbackActive) _uiState.value.lastReason else decision.reason,
@@ -488,6 +505,7 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                         movementTrackedRatio = movementAnalysis.result.trackedRatio,
                         movementFlowDxPx = movementAnalysis.result.medianFlowDxPx,
                         movementFlowDyPx = movementAnalysis.result.medianFlowDyPx,
+                        ghostFrame = visibleGhost,
                         physicalOrientation = if (orientationSample.stale) "unknown" else orientationSample.physicalOrientation,
                         imageUpDirection = imageUp.direction,
                     )
@@ -553,8 +571,8 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                             savedSequence = reservation.sequence
                             val referenceCommitted = reservation.decision.commitReference &&
                                 movementTracker.commit(reservation.movementAnalysis, savedSequence)
-                            val ghostFrame = if (referenceCommitted) {
-                                reservation.movementAnalysis.frame?.let { frame ->
+                            if (referenceCommitted) {
+                                referenceGhostFrame = reservation.movementAnalysis.frame?.let { frame ->
                                     AutoPhotoGhostFrame(
                                         width = frame.width,
                                         height = frame.height,
@@ -562,8 +580,6 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                                         sequence = savedSequence,
                                     )
                                 }
-                            } else {
-                                _uiState.value.ghostFrame
                             }
                             capturedFeedbackUntilMs = SystemClock.elapsedRealtime() +
                                 settings.captureConfirmationMs
@@ -581,7 +597,7 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
                                 movementTrackedRatio = reservation.movementAnalysis.result.trackedRatio,
                                 movementFlowDxPx = reservation.movementAnalysis.result.medianFlowDxPx,
                                 movementFlowDyPx = reservation.movementAnalysis.result.medianFlowDyPx,
-                                ghostFrame = ghostFrame,
+                                ghostFrame = null,
                                 physicalOrientation = snap.physicalOrientation(),
                                 imageUpDirection = imageUp.direction,
                             )

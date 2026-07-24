@@ -19,6 +19,7 @@ class AutoPhotoCaptureManagerTest {
         assertEquals(250L, settings.stableDwellMs)
         assertTrue(settings.movementCaptureEnabled)
         assertFalse(settings.movementFallbackEnabled)
+        assertEquals(1_200L, settings.captureConfirmationMs)
         assertEquals(6.0, settings.movementMinMedianDisplacementPx, 0.0)
         assertEquals(30.0, settings.movementMaxMedianDisplacementPx, 0.0)
         assertEquals(0.55, settings.movementMinTrackedRatio, 0.0)
@@ -122,7 +123,23 @@ class AutoPhotoCaptureManagerTest {
     }
 
     @Test
-    fun trackingFailureStaysInRecoverByDefault() {
+    fun insufficientFeaturesRequestsTextureWithoutRecover() {
+        val decision = decide(
+            movement = movement(AutoPhotoMovementStatus.INSUFFICIENT_FEATURES),
+            nowMs = 10_000,
+            lastCaptureMs = 0,
+        )
+
+        assertFalse(decision.shouldCapture)
+        assertEquals("movement_features_low", decision.reason)
+        assertEquals(AutoPhotoGuidancePhase.SEEK_TEXTURE, decision.phase)
+        assertTrue(decision.guidance.contains("участок с деталями"))
+        assertFalse(decision.fallback)
+        assertFalse(decision.commitReference)
+    }
+
+    @Test
+    fun trackingFailureWithoutFlowRequestsTextureWithoutRecover() {
         val decision = decide(
             movement = movement(AutoPhotoMovementStatus.TRACKING_FAILED),
             nowMs = 10_000,
@@ -131,18 +148,18 @@ class AutoPhotoCaptureManagerTest {
 
         assertFalse(decision.shouldCapture)
         assertEquals("movement_tracking_failed", decision.reason)
-        assertEquals(AutoPhotoGuidancePhase.RECOVER, decision.phase)
+        assertEquals(AutoPhotoGuidancePhase.SEEK_TEXTURE, decision.phase)
         assertFalse(decision.fallback)
         assertFalse(decision.commitReference)
     }
 
     @Test
-    fun explicitlyEnabledFallbackNeverCommitsReference() {
+    fun enablingFallbackDoesNotCaptureUnmeasuredFrames() {
         val decision = AutoPhotoMovementCapturePolicy.decide(
             baseReason = "accepted",
             movement = movement(AutoPhotoMovementStatus.TRACKING_FAILED),
             savedCount = 1,
-            nowMs = 3_000,
+            nowMs = 10_000,
             lastCaptureMs = 0,
             settings = AutoPhotoSettings(
                 storageReserveBytes = 0,
@@ -150,8 +167,8 @@ class AutoPhotoCaptureManagerTest {
             ),
         )
 
-        assertTrue(decision.shouldCapture)
-        assertTrue(decision.fallback)
+        assertFalse(decision.shouldCapture)
+        assertEquals(AutoPhotoGuidancePhase.SEEK_TEXTURE, decision.phase)
         assertFalse(decision.commitReference)
     }
 

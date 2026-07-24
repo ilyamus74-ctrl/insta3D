@@ -1767,7 +1767,7 @@ private fun AutoPhotoCaptureScreen(
                 val phaseColor = when (state.guidancePhase.wireValue) {
                     "captured" -> Color(0xFF7CFC98)
                     "recover", "error" -> Color(0xFFFF6B6B)
-                    "hold" -> Color(0xFFFFD166)
+                    "hold", "seek_texture" -> Color(0xFFFFD166)
                     else -> Color(0xFF80D8FF)
                 }
                 Text(
