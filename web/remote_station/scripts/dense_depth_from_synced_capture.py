@@ -25,6 +25,11 @@ def rotate_for_depth_input(img, mode):
     if mode=='rotate_90_cw': return rotate_90_cw(img)
     return img
 
+def undo_depth_input_rotation(img, mode):
+    if mode=='rotate_90_ccw': return rotate_90_cw(img)
+    if mode=='rotate_90_cw': return rotate_90_ccw(img)
+    return img
+
 def axis_from_p2(P2):
     p2_tx=float(P2[0,3]); p2_ty=float(P2[1,3])
     if abs(p2_tx) >= abs(p2_ty): return p2_tx,p2_ty,'horizontal','x','none'
@@ -56,6 +61,59 @@ def fit_h(img,h):
     if img.shape[0]==h: return img
     return cv2.resize(img,(max(1,int(img.shape[1]*h/img.shape[0])),h))
 
+def backproject_pair_cloud(depth_mm, valid_mask, rectified_cam0_bgr, P1, stride=2, max_points=250000):
+    if depth_mm.shape != valid_mask.shape:
+        raise ValueError('depth and valid mask shapes differ')
+    if rectified_cam0_bgr.shape[:2] != depth_mm.shape:
+        raise ValueError('color and depth shapes differ')
+    stride=max(1,int(stride)); max_points=max(1,int(max_points))
+    fx=float(P1[0,0]); fy=float(P1[1,1]); cx=float(P1[0,2]); cy=float(P1[1,2])
+    if not all(math.isfinite(v) and v>0 for v in (fx,fy)):
+        raise ValueError('invalid rectified focal length')
+    sampled=np.zeros(valid_mask.shape,dtype=bool)
+    sampled[::stride,::stride]=True
+    mask=sampled & valid_mask.astype(bool) & np.isfinite(depth_mm) & (depth_mm>0)
+    ys,xs=np.nonzero(mask)
+    if ys.size==0:
+        return np.empty((0,3),np.float32),np.empty((0,3),np.uint8)
+    z=depth_mm[ys,xs].astype(np.float32)
+    x=((xs.astype(np.float32)-cx)*z/fx).astype(np.float32)
+    y=((ys.astype(np.float32)-cy)*z/fy).astype(np.float32)
+    points=np.column_stack((x,y,z)).astype(np.float32,copy=False)
+    rgb=rectified_cam0_bgr[ys,xs][:,::-1].astype(np.uint8,copy=False)
+    finite=np.isfinite(points).all(axis=1) & (points[:,2]>0)
+    points=points[finite]; rgb=rgb[finite]
+    if len(points)>max_points:
+        take=(np.arange(max_points,dtype=np.float64)*(len(points)/max_points)).astype(np.int64)
+        points=points[take]; rgb=rgb[take]
+    return points,rgb
+
+def write_binary_ply(path, points, rgb):
+    path=Path(path); path.parent.mkdir(parents=True,exist_ok=True)
+    points=np.asarray(points,dtype=np.float32); rgb=np.asarray(rgb,dtype=np.uint8)
+    if points.ndim!=2 or points.shape[1]!=3 or rgb.shape!=points.shape:
+        raise ValueError('PLY points/RGB shape mismatch')
+    vertices=np.empty(len(points),dtype=[
+        ('x','<f4'),('y','<f4'),('z','<f4'),
+        ('red','u1'),('green','u1'),('blue','u1'),
+    ])
+    vertices['x']=points[:,0]; vertices['y']=points[:,1]; vertices['z']=points[:,2]
+    vertices['red']=rgb[:,0]; vertices['green']=rgb[:,1]; vertices['blue']=rgb[:,2]
+    header=(
+        'ply\n'
+        'format binary_little_endian 1.0\n'
+        f'element vertex {len(vertices)}\n'
+        'property float x\n'
+        'property float y\n'
+        'property float z\n'
+        'property uchar red\n'
+        'property uchar green\n'
+        'property uchar blue\n'
+        'end_header\n'
+    ).encode('ascii')
+    with path.open('wb') as f:
+        f.write(header); vertices.tofile(f)
+
 def main():
     ap=argparse.ArgumentParser(description='Dense depth from MaklerTour synced depth capture')
     ap.add_argument('stereo_extrinsics_json'); ap.add_argument('synced_depth_capture_dir'); ap.add_argument('out_dir')
@@ -63,8 +121,10 @@ def main():
     ap.add_argument('--num-disparities',type=int,default=128); ap.add_argument('--block-size',type=int,default=7); ap.add_argument('--min-disparity',type=int,default=0)
     ap.add_argument('--alpha',type=float,default=0.0); ap.add_argument('--new-width',type=int,default=0); ap.add_argument('--new-height',type=int,default=0)
     ap.add_argument('--max-depth-mm',type=float,default=10000); ap.add_argument('--min-depth-mm',type=float,default=200)
+    ap.add_argument('--cloud-stride',type=int,default=2); ap.add_argument('--cloud-max-points',type=int,default=250000)
     args=ap.parse_args()
     extr=load_json(Path(args.stereo_extrinsics_json)); cap=Path(args.synced_depth_capture_dir); out=Path(args.out_dir); out.mkdir(parents=True,exist_ok=True)
+    cloud_dir=out/'pair_clouds'; cloud_dir.mkdir(parents=True,exist_ok=True)
     manifest=load_json(cap/'synced_depth_manifest.json'); pairs=manifest.get('pairs',[])
     if args.pair_index is not None: selected=[p for p in pairs if int(p.get('pair_index',-1))==args.pair_index]
     else: selected=pairs[:args.max_pairs]
@@ -84,7 +144,7 @@ def main():
     nd=ensure_disp(args.num_disparities); bs=ensure_odd(args.block_size); ch=1
     mode=getattr(cv2,'STEREO_SGBM_MODE_SGBM_3WAY',cv2.STEREO_SGBM_MODE_SGBM)
     sgbm=cv2.StereoSGBM_create(minDisparity=args.min_disparity,numDisparities=nd,blockSize=bs,P1=8*ch*bs*bs,P2=32*ch*bs*bs,disp12MaxDiff=1,uniquenessRatio=10,speckleWindowSize=100,speckleRange=2,preFilterCap=31,mode=mode)
-    debug_pairs=[]; rows=[]; reviews=[]
+    debug_pairs=[]; rows=[]; reviews=[]; cloud_reviews=[]; pair_clouds=[]
     for n,p in enumerate(selected,1):
         idx=int(p.get('pair_index',n-1)); im0=cv2.imread(str(cap/p['cam0_file'])); im1=cv2.imread(str(cap/p['cam1_file']))
         if im0 is None or im1 is None: continue
@@ -96,19 +156,32 @@ def main():
         depth=np.zeros_like(disp,np.float32); depth[valid_disp]=(focal_for_depth*baseline_magnitude)/disp[valid_disp]
         valid_depth=valid_disp & np.isfinite(depth) & (depth>=args.min_depth_mm) & (depth<=args.max_depth_mm)
         depth[~valid_depth]=0; np.save(out/f'{stem}_depth_mm.npy',depth); cv2.imwrite(str(out/f'{stem}_depth_mm_16u.png'),np.clip(depth,0,65535).astype(np.uint16)); depth_prev=colorize_depth(depth,valid_depth); cv2.imwrite(str(out/f'{stem}_depth_preview.png'),depth_prev)
+        cloud_depth=undo_depth_input_rotation(depth,depth_input_rotation)
+        cloud_mask=undo_depth_input_rotation(valid_depth.astype(np.uint8),depth_input_rotation).astype(bool)
+        points,rgb=backproject_pair_cloud(cloud_depth,cloud_mask,r0,P1,args.cloud_stride,args.cloud_max_points)
+        cloud_rel=f'pair_clouds/{stem}_cloud.ply'; write_binary_ply(out/cloud_rel,points,rgb)
         valid_disparity_ratio=float(valid_disp.mean()); valid_depth_ratio=float(valid_depth.mean()); vals=depth[valid_depth]
         stats=(float(vals.min()),float(np.median(vals)),float(vals.max())) if vals.size else (None,None,None)
-        info={'pair_index':idx,'stereo_capture_delta_ms':p.get('stereo_capture_delta_ms',p.get('delta_ms')),'physical_orientation':p.get('physical_orientation'),'imu_sample_delta_ms':p.get('imu_sample_delta_ms'),'valid_disparity_ratio':valid_disparity_ratio,'valid_depth_ratio':valid_depth_ratio,'depth_min_mm':stats[0],'depth_median_mm':stats[1],'depth_max_mm':stats[2]}
+        cloud_info={'pair_index':idx,'cloud_file':cloud_rel,'point_count':int(len(points)),'valid_depth_ratio':valid_depth_ratio,'stereo_capture_delta_ms':p.get('stereo_capture_delta_ms',p.get('delta_ms')),'physical_orientation':p.get('physical_orientation'),'sampling':{'method':'pixel_stride','stride':max(1,int(args.cloud_stride)),'max_points':max(1,int(args.cloud_max_points))}}
+        pair_clouds.append(cloud_info)
+        info={'pair_index':idx,'stereo_capture_delta_ms':p.get('stereo_capture_delta_ms',p.get('delta_ms')),'physical_orientation':p.get('physical_orientation'),'imu_sample_delta_ms':p.get('imu_sample_delta_ms'),'valid_disparity_ratio':valid_disparity_ratio,'valid_depth_ratio':valid_depth_ratio,'depth_min_mm':stats[0],'depth_median_mm':stats[1],'depth_max_mm':stats[2],'pair_cloud_points':int(len(points))}
         debug_pairs.append(info); rows.append(info)
         panel_h=min(360,d0.shape[0]); panel=np.hstack([fit_h(d0,panel_h),fit_h(d1,panel_h),fit_h(cv2.cvtColor(prev,cv2.COLOR_GRAY2BGR),panel_h),fit_h(depth_prev,panel_h)])
         panel=put_label(panel,[f'baseline axis: {baseline_axis}',f'depth method: {depth_method}',f'input rotation: {depth_input_rotation}',f'pair index: {idx}',f'sync delta: {info["stereo_capture_delta_ms"]} ms',f'physical orientation: {info["physical_orientation"]}',f'valid depth ratio: {valid_depth_ratio:.3f}',f'median depth: {stats[1]}'])
         cv2.imwrite(str(out/f'{stem}_review.jpg'),panel); reviews.append(panel)
+        cloud_reviews.append(put_label(fit_h(r0,panel_h),[f'pair index: {idx}',f'local cloud points: {len(points)}',f'coordinate frame: rectified cam0',f'units: mm',f'global fusion: false']))
     if reviews:
         w=max(x.shape[1] for x in reviews); padded=[cv2.copyMakeBorder(x,0,0,0,w-x.shape[1],cv2.BORDER_CONSTANT,value=(0,0,0)) for x in reviews[:20]]; cv2.imwrite(str(out/'contact_dense_depth.jpg'),np.vstack(padded))
+    if cloud_reviews:
+        w=max(x.shape[1] for x in cloud_reviews); padded=[cv2.copyMakeBorder(x,0,0,0,w-x.shape[1],cv2.BORDER_CONSTANT,value=(0,0,0)) for x in cloud_reviews[:20]]; cv2.imwrite(str(out/'contact_pair_clouds.jpg'),np.vstack(padded))
+    else:
+        cv2.imwrite(str(out/'contact_pair_clouds.jpg'),put_label(np.zeros((140,640,3),np.uint8),['No pair clouds exported','global fusion: false']))
     with (out/'dense_depth_summary.csv').open('w',newline='',encoding='utf-8') as f:
-        fields=['pair_index','stereo_capture_delta_ms','physical_orientation','imu_sample_delta_ms','valid_disparity_ratio','valid_depth_ratio','depth_min_mm','depth_median_mm','depth_max_mm']; wr=csv.DictWriter(f,fieldnames=fields); wr.writeheader(); wr.writerows(rows)
+        fields=['pair_index','stereo_capture_delta_ms','physical_orientation','imu_sample_delta_ms','valid_disparity_ratio','valid_depth_ratio','depth_min_mm','depth_median_mm','depth_max_mm','pair_cloud_points']; wr=csv.DictWriter(f,fieldnames=fields); wr.writeheader(); wr.writerows(rows)
+    cloud_manifest={'schema_version':1,'coordinate_system':'rectified_cam0_pair_local','units':'mm','global_fusion_complete':False,'pair_cloud_count':len(pair_clouds),'sampling':{'method':'pixel_stride','stride':max(1,int(args.cloud_stride)),'max_points_per_pair':max(1,int(args.cloud_max_points))},'pair_clouds':pair_clouds}
+    (out/'pair_cloud_manifest.json').write_text(json.dumps(cloud_manifest,indent=2),encoding='utf-8')
     valid_depth_ratio_mean=float(np.mean([r['valid_depth_ratio'] for r in rows])) if rows else 0.0
     valid_disparity_ratio_mean=float(np.mean([r['valid_disparity_ratio'] for r in rows])) if rows else 0.0
-    debug={'source_capture_dir':str(cap),'samples':debug_pairs,'valid_depth_ratio':valid_depth_ratio_mean,'valid_disparity_ratio':valid_disparity_ratio_mean,'raw_frame_width':raw_w,'raw_frame_height':raw_h,'new_size':list(new_size),'stereo_T':np.ravel(T).tolist(),'baseline_magnitude':baseline_magnitude,'P1':P1.tolist(),'P2':P2.tolist(),'p2_tx':p2_tx,'p2_ty':p2_ty,'rectified_baseline_axis':baseline_axis,'disparity_axis':disparity_axis,'depth_input_rotation':depth_input_rotation,'q_valid_for_rotated_disparity':q_valid_for_rotated_disparity,'depth_method':depth_method,'focal_for_depth':focal_for_depth,'num_disparities':nd,'block_size':bs,'min_disparity':args.min_disparity,'min_depth_mm':args.min_depth_mm,'max_depth_mm':args.max_depth_mm}
+    debug={'source_capture_dir':str(cap),'samples':debug_pairs,'valid_depth_ratio':valid_depth_ratio_mean,'valid_disparity_ratio':valid_disparity_ratio_mean,'raw_frame_width':raw_w,'raw_frame_height':raw_h,'new_size':list(new_size),'stereo_T':np.ravel(T).tolist(),'baseline_magnitude':baseline_magnitude,'P1':P1.tolist(),'P2':P2.tolist(),'p2_tx':p2_tx,'p2_ty':p2_ty,'rectified_baseline_axis':baseline_axis,'disparity_axis':disparity_axis,'depth_input_rotation':depth_input_rotation,'q_valid_for_rotated_disparity':q_valid_for_rotated_disparity,'depth_method':depth_method,'focal_for_depth':focal_for_depth,'num_disparities':nd,'block_size':bs,'min_disparity':args.min_disparity,'min_depth_mm':args.min_depth_mm,'max_depth_mm':args.max_depth_mm,'pair_cloud_count':len(pair_clouds),'global_fusion_complete':False}
     (out/'dense_depth_debug.json').write_text(json.dumps(debug,indent=2),encoding='utf-8')
 if __name__=='__main__': main()

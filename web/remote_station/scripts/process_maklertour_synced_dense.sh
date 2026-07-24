@@ -32,9 +32,15 @@ write_status RUNNING 25 "Validating bundle"
 write_status RUNNING 40 "Running synced dense"
 PY="$STATION_BASE/venv/bin/python"
 if [[ ! -x "$PY" ]]; then PY="python3"; fi
-"$PY" "$STATION_BASE/scripts/dense_depth_from_synced_capture.py" "$ROOT/calibration/stereo_extrinsics.json" "$ROOT/capture" "$OUTPUT_DIR/dense" --max-pairs "$MAX_PAIRS" --num-disparities "$NUM_DISPARITIES" --block-size "$BLOCK_SIZE" --min-depth-mm 200 --max-depth-mm 10000
+"$PY" "$STATION_BASE/scripts/dense_depth_from_synced_capture.py" "$ROOT/calibration/stereo_extrinsics.json" "$ROOT/capture" "$OUTPUT_DIR/dense" --max-pairs "$MAX_PAIRS" --num-disparities "$NUM_DISPARITIES" --block-size "$BLOCK_SIZE" --min-depth-mm 200 --max-depth-mm 10000 --cloud-stride 2 --cloud-max-points 250000
 write_status RUNNING 90 "Packaging outputs"
+PAIR_CLOUD_COUNT=$("$PY" - "$OUTPUT_DIR/dense/pair_cloud_manifest.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding='utf-8') as f:
+    print(int(json.load(f).get('pair_cloud_count',0)))
+PY
+)
 cat > "$OUTPUT_DIR/result.json" <<JSON
-{"job_id":$JOB_ID,"status":"DONE","job_type":"MAKLERTOUR_SYNCED_DENSE","dense_dir":"$OUTPUT_DIR/dense","contact_dense_depth":"$OUTPUT_DIR/dense/contact_dense_depth.jpg","dense_depth_debug":"$OUTPUT_DIR/dense/dense_depth_debug.json","dense_depth_summary":"$OUTPUT_DIR/dense/dense_depth_summary.csv","finished_at":"$(date -Is)"}
+{"job_id":$JOB_ID,"status":"DONE","job_type":"MAKLERTOUR_SYNCED_DENSE","dense_dir":"$OUTPUT_DIR/dense","contact_dense_depth":"$OUTPUT_DIR/dense/contact_dense_depth.jpg","dense_depth_debug":"$OUTPUT_DIR/dense/dense_depth_debug.json","dense_depth_summary":"$OUTPUT_DIR/dense/dense_depth_summary.csv","pair_cloud_manifest":"$OUTPUT_DIR/dense/pair_cloud_manifest.json","contact_pair_clouds":"$OUTPUT_DIR/dense/contact_pair_clouds.jpg","pair_cloud_count":$PAIR_CLOUD_COUNT,"global_fusion_complete":false,"finished_at":"$(date -Is)"}
 JSON
 write_status DONE 100 "Done"
