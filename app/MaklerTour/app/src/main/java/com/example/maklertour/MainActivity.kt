@@ -136,6 +136,8 @@ import com.maklertour.data.sync.LocalOriginalManager
 import com.maklertour.data.sync.MockSyncApi
 import com.maklertour.data.sync.SyncRepository
 import com.maklertour.state.AppStateViewModel
+import com.maklertour.state.CaptureBundleNotice
+import com.maklertour.state.CaptureBundleNoticeCode
 import com.maklertour.domain.VideoScanUiState
 import com.maklertour.state.EnqueueUploadResult
 import com.maklertour.i18n.AppLanguage
@@ -412,6 +414,14 @@ private fun MaklerTourApp() {
     }
 
     CompositionLocalProvider(LocalContext provides localizedContext) {
+        state.captureBundleNotice?.let { notice ->
+            CaptureBundleNoticeDialog(
+                notice = notice,
+                showTechnicalDetail = debugMode,
+                onDismiss = viewModel::dismissCaptureBundleNotice,
+            )
+        }
+
         Scaffold(
             bottomBar = {
                 NavigationBar {
@@ -740,6 +750,72 @@ private fun MaklerTourApp() {
             }
         }
     }
+}
+
+@Composable
+private fun CaptureBundleNoticeDialog(
+    notice: CaptureBundleNotice,
+    showTechnicalDetail: Boolean,
+    onDismiss: () -> Unit,
+) {
+    val title = stringResource(
+        if (notice.isError) {
+            R.string.capture_bundle_notice_error_title
+        } else {
+            R.string.capture_bundle_notice_success_title
+        },
+    )
+    val message = stringResource(
+        when (notice.code) {
+            CaptureBundleNoticeCode.QUEUED ->
+                R.string.capture_bundle_notice_queued
+            CaptureBundleNoticeCode.CALIBRATION_NOT_SELECTED ->
+                R.string.capture_bundle_notice_calibration_not_selected
+            CaptureBundleNoticeCode.CALIBRATION_INVALID ->
+                R.string.capture_bundle_notice_calibration_invalid
+            CaptureBundleNoticeCode.NO_STEREO_PAIRS ->
+                R.string.capture_bundle_notice_no_pairs
+            CaptureBundleNoticeCode.PAIR_FILES_INVALID ->
+                R.string.capture_bundle_notice_pair_files_invalid
+            CaptureBundleNoticeCode.RIG_MISMATCH ->
+                R.string.capture_bundle_notice_rig_mismatch
+            CaptureBundleNoticeCode.RESOLUTION_MISMATCH ->
+                R.string.capture_bundle_notice_resolution_mismatch
+            CaptureBundleNoticeCode.INVALID_CAPTURE ->
+                R.string.capture_bundle_notice_invalid_capture
+            CaptureBundleNoticeCode.PACKAGING_FAILED ->
+                R.string.capture_bundle_notice_packaging_failed
+        },
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(message)
+                if (
+                    showTechnicalDetail &&
+                    !notice.technicalDetail.isNullOrBlank()
+                ) {
+                    Text(
+                        stringResource(
+                            R.string.capture_bundle_notice_technical_detail,
+                            notice.technicalDetail.orEmpty(),
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.capture_bundle_notice_close))
+            }
+        },
+    )
 }
 
 @Composable

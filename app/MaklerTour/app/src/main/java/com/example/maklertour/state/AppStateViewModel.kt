@@ -37,6 +37,7 @@ import com.maklertour.data.phonecamera.PhoneCameraScanProvider
 import com.example.maklertour.auth.MobileOrder
 import com.example.maklertour.auth.MobileUploadApi
 import com.example.maklertour.data.capture.CaptureBundlePackager
+import com.example.maklertour.data.capture.CaptureBundlePreflightException
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,6 +64,7 @@ data class AppUiState(
     val videoScanUiState: VideoScanUiState = VideoScanUiState.IDLE,
     val selectedOrder: MobileOrder? = null,
     val uploadError: String? = null,
+    val captureBundleNotice: CaptureBundleNotice? = null,
     )
 
 sealed interface EnqueueUploadResult {
@@ -86,6 +88,7 @@ private data class RuntimeStateBundle(
     val capturing: Boolean,
     val recordingScanVideo: Boolean,
     val videoScanUiState: VideoScanUiState,
+    val captureBundleNotice: CaptureBundleNotice? = null,
 )
 
 class AppStateViewModel(
@@ -108,6 +111,7 @@ class AppStateViewModel(
     private val videoScanUiState = MutableStateFlow(VideoScanUiState.IDLE)
     private val selectedOrder = MutableStateFlow<MobileOrder?>(null)
     private val uploadError = MutableStateFlow<String?>(null)
+    private val captureBundleNotice = MutableStateFlow<CaptureBundleNotice?>(null)
     private val isAutoUploadRunning = MutableStateFlow(false)
 
     init {
@@ -148,13 +152,15 @@ class AppStateViewModel(
             combine(
                 isRecordingScanVideo,
                 videoScanUiState,
-            ) { recordingScanVideo, scanState ->
-                recordingScanVideo to scanState
+                captureBundleNotice,
+            ) { recordingScanVideo, scanState, bundleNotice ->
+                Triple(recordingScanVideo, scanState, bundleNotice)
             },
         ) { runtimeBase, scanRuntime ->
             runtimeBase.copy(
                 recordingScanVideo = scanRuntime.first,
                 videoScanUiState = scanRuntime.second,
+                captureBundleNotice = scanRuntime.third,
             )
         },
     ) { draft, runtime ->
@@ -176,6 +182,7 @@ class AppStateViewModel(
             videoScanUiState = runtime.videoScanUiState,
             selectedOrder = selectedOrder.value,
             uploadError = uploadError.value,
+            captureBundleNotice = runtime.captureBundleNotice,
         )
     }.stateIn(
         viewModelScope,
@@ -616,6 +623,7 @@ class AppStateViewModel(
         activeRigProfileJson: JSONObject?,
     ) {
         val session = uiState.value.sessions.firstOrNull { it.id == sessionId }
+        captureBundleNotice.value = null
         viewModelScope.launch {
             try {
                 Log.i("CaptureBundle", "packaging started captureDir=${captureDir.absolutePath}")
@@ -640,10 +648,31 @@ class AppStateViewModel(
                     displayName = "Synced depth capture bundle",
                     mimeType = "application/gzip",
                 )
+                captureBundleNotice.value = CaptureBundleNotice(
+                    code = CaptureBundleNoticeCode.QUEUED,
+                )
+            } catch (e: CaptureBundlePreflightException) {
+                captureBundleNotice.value = captureBundleNoticeFor(e)
+                Log.e(
+                    "CaptureBundle",
+                    "synced depth preflight rejected bundle",
+                    e,
+                )
             } catch (e: Exception) {
+                captureBundleNotice.value = CaptureBundleNotice(
+                    code = CaptureBundleNoticeCode.PACKAGING_FAILED,
+                    technicalDetail = e.message
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?: e.javaClass.simpleName,
+                )
                 Log.e("CaptureBundle", "packaging failed", e)
             }
         }
+    }
+
+    fun dismissCaptureBundleNotice() {
+        captureBundleNotice.value = null
     }
 
     fun enqueueLegacyStereoVideoBundle(

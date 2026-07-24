@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="capture_bundle_notice_success_title">Capture package ready</string>
+    <string name="capture_bundle_notice_error_title">Capture package error</string>
+    <string name="capture_bundle_notice_queued">The stereo capture passed validation and was added to the upload queue.</string>
+    <string name="capture_bundle_notice_calibration_not_selected">Select a successful stereo calibration before creating the package.</string>
+    <string name="capture_bundle_notice_calibration_invalid">The selected stereo calibration is missing, incomplete, or unsuccessful. Run calibration again.</string>
+    <string name="capture_bundle_notice_no_pairs">The capture contains no stereo frame pairs. Record the synced-depth sequence again.</string>
+    <string name="capture_bundle_notice_pair_files_invalid">One or more cam0/cam1 frame files are missing, empty, duplicated, or outside the capture folder.</string>
+    <string name="capture_bundle_notice_rig_mismatch">The capture, active rig profile, and calibration belong to different stereo rigs.</string>
+    <string name="capture_bundle_notice_resolution_mismatch">The capture resolution does not match the selected calibration.</string>
+    <string name="capture_bundle_notice_invalid_capture">The stereo capture does not satisfy the package contract. Check the capture and calibration.</string>
+    <string name="capture_bundle_notice_packaging_failed">The capture package could not be created. Check available storage and try again.</string>
+    <string name="capture_bundle_notice_technical_detail">Technical detail: %1$s</string>
+    <string name="capture_bundle_notice_close">OK</string>
+</resources>

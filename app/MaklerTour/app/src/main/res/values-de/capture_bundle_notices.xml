@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="capture_bundle_notice_success_title">Aufnahmepaket bereit</string>
+    <string name="capture_bundle_notice_error_title">Fehler beim Aufnahmepaket</string>
+    <string name="capture_bundle_notice_queued">Die Stereoaufnahme wurde geprüft und zur Upload-Warteschlange hinzugefügt.</string>
+    <string name="capture_bundle_notice_calibration_not_selected">Wählen Sie vor dem Erstellen des Pakets eine erfolgreiche Stereokalibrierung aus.</string>
+    <string name="capture_bundle_notice_calibration_invalid">Die ausgewählte Stereokalibrierung fehlt, ist unvollständig oder fehlgeschlagen. Führen Sie die Kalibrierung erneut aus.</string>
+    <string name="capture_bundle_notice_no_pairs">Die Aufnahme enthält keine Stereo-Bildpaare. Nehmen Sie die synchronisierte Tiefensequenz erneut auf.</string>
+    <string name="capture_bundle_notice_pair_files_invalid">Mindestens eine cam0/cam1-Datei fehlt, ist leer, doppelt oder liegt außerhalb des Aufnahmeordners.</string>
+    <string name="capture_bundle_notice_rig_mismatch">Aufnahme, aktives Rig-Profil und Kalibrierung gehören zu unterschiedlichen Stereo-Rigs.</string>
+    <string name="capture_bundle_notice_resolution_mismatch">Die Aufnahmeauflösung stimmt nicht mit der ausgewählten Kalibrierung überein.</string>
+    <string name="capture_bundle_notice_invalid_capture">Die Stereoaufnahme erfüllt den Paketvertrag nicht. Prüfen Sie Aufnahme und Kalibrierung.</string>
+    <string name="capture_bundle_notice_packaging_failed">Das Aufnahmepaket konnte nicht erstellt werden. Prüfen Sie den freien Speicher und versuchen Sie es erneut.</string>
+    <string name="capture_bundle_notice_technical_detail">Technische Details: %1$s</string>
+    <string name="capture_bundle_notice_close">OK</string>
+</resources>

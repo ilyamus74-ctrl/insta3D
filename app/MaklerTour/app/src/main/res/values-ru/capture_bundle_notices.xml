@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="capture_bundle_notice_success_title">Пакет съёмки готов</string>
+    <string name="capture_bundle_notice_error_title">Ошибка подготовки пакета</string>
+    <string name="capture_bundle_notice_queued">Стереосъёмка прошла проверку и добавлена в очередь загрузки.</string>
+    <string name="capture_bundle_notice_calibration_not_selected">Перед созданием пакета выберите успешную стереокалибровку.</string>
+    <string name="capture_bundle_notice_calibration_invalid">Выбранная стереокалибровка отсутствует, неполная или завершилась ошибкой. Выполните калибровку заново.</string>
+    <string name="capture_bundle_notice_no_pairs">В съёмке нет стереопар кадров. Повторите запись синхронной depth-съёмки.</string>
+    <string name="capture_bundle_notice_pair_files_invalid">Один или несколько файлов cam0/cam1 отсутствуют, пусты, дублируются или находятся вне папки съёмки.</string>
+    <string name="capture_bundle_notice_rig_mismatch">Съёмка, активный профиль рига и калибровка относятся к разным стереоригам.</string>
+    <string name="capture_bundle_notice_resolution_mismatch">Разрешение съёмки не соответствует выбранной калибровке.</string>
+    <string name="capture_bundle_notice_invalid_capture">Стереосъёмка не соответствует контракту пакета. Проверьте съёмку и калибровку.</string>
+    <string name="capture_bundle_notice_packaging_failed">Не удалось создать пакет съёмки. Проверьте свободное место и повторите попытку.</string>
+    <string name="capture_bundle_notice_technical_detail">Технические подробности: %1$s</string>
+    <string name="capture_bundle_notice_close">ОК</string>
+</resources>
