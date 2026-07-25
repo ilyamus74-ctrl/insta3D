@@ -8,6 +8,7 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
+import android.util.Range
 import android.util.Size
 import android.view.Surface
 import androidx.camera.core.Camera
@@ -83,7 +84,9 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         videoWidth: Int? = calibrationWidth,
         videoHeight: Int? = calibrationHeight,
         videoFps: Int? = null,
+        videoMode: PhoneVideoMode? = null,
         enableVideoCapture: Boolean = true,
+        enableCalibrationAnalysis: Boolean = true,
     ): PhoneCameraBindResult {
         requestedZoomRatio = zoomRatio
         requestedProfileWidth = calibrationWidth
@@ -108,8 +111,19 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         val lens = requestedLens ?: fallbackLens
         val selector = lensRepository.cameraSelectorFor(lens.cameraId)
         Log.d(TAG, "Phone camera bind: selected_camera_id=${lens.cameraId} lens=${lens.lensLabel}")
-        selectedVideoInfo = SelectedPhoneVideoInfo(width = videoWidth ?: requestedSize?.width ?: 1280, height = videoHeight ?: requestedSize?.height ?: 720, fps = videoFps)
-        val preparedVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()).also { it.targetRotation = currentTargetRotation } else null
+        val resolvedVideoMode = resolveVideoMode(
+            lens = lens,
+            requestedMode = videoMode,
+            videoWidth = videoWidth,
+            videoHeight = videoHeight,
+            videoFps = videoFps,
+        )
+        selectedVideoInfo = SelectedPhoneVideoInfo(
+            width = resolvedVideoMode.width,
+            height = resolvedVideoMode.height,
+            fps = resolvedVideoMode.fps,
+        )
+        val preparedVideoCapture = if (enableVideoCapture) buildVideoCapture(resolvedVideoMode) else null
         preview.setSurfaceProvider(previewView.surfaceProvider)
         val previousLens = selectedLensOption
         try {
@@ -120,6 +134,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 preview = preview,
                 videoCapture = preparedVideoCapture,
                 requestedSize = requestedSize,
+                enableCalibrationAnalysis = enableCalibrationAnalysis,
             )
             boundCamera = camera
             videoCapture = preparedVideoCapture
@@ -131,7 +146,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             if (previousLens != null && previousLens.cameraId != lens.cameraId) {
                 runCatching {
                     val previousPreview = Preview.Builder().setTargetRotation(currentTargetRotation).build()
-                    val previousVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()).also { it.targetRotation = currentTargetRotation } else null
+                    val previousVideoCapture = if (enableVideoCapture) buildVideoCapture(resolvedVideoMode) else null
                     previousPreview.setSurfaceProvider(previewView.surfaceProvider)
                     val camera = bindWithCalibrationFallbacks(
                         cameraProvider = cameraProvider,
@@ -139,6 +154,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                         preview = previousPreview,
                         videoCapture = previousVideoCapture,
                         requestedSize = requestedSize,
+                        enableCalibrationAnalysis = enableCalibrationAnalysis,
                     )
                     boundCamera = camera
                     videoCapture = previousVideoCapture
@@ -149,7 +165,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             } else if (recoveryLens != null) {
                 runCatching {
                     val fallbackPreview = Preview.Builder().setTargetRotation(currentTargetRotation).build()
-                    val fallbackVideoCapture = if (enableVideoCapture) VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()).also { it.targetRotation = currentTargetRotation } else null
+                    val fallbackVideoCapture = if (enableVideoCapture) buildVideoCapture(resolvedVideoMode) else null
                     fallbackPreview.setSurfaceProvider(previewView.surfaceProvider)
                     val camera = bindWithCalibrationFallbacks(
                         cameraProvider = cameraProvider,
@@ -157,6 +173,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                         preview = fallbackPreview,
                         videoCapture = fallbackVideoCapture,
                         requestedSize = requestedSize,
+                        enableCalibrationAnalysis = enableCalibrationAnalysis,
                     )
                     boundCamera = camera
                     videoCapture = fallbackVideoCapture
@@ -167,8 +184,45 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             }
             throw IllegalStateException("preview bind failed: ${e.message}", e)
         }
-        Log.d(TAG, "bindPreview(): success")
+        Log.d(TAG, "bindPreview(): success video_mode=${resolvedVideoMode.id}")
         return getBindResult(success = true)
+    }
+
+    private fun resolveVideoMode(
+        lens: PhoneCameraLensOption,
+        requestedMode: PhoneVideoMode?,
+        videoWidth: Int?,
+        videoHeight: Int?,
+        videoFps: Int?,
+    ): PhoneVideoMode {
+        requestedMode?.let { return it }
+        if (videoWidth != null && videoHeight != null) {
+            return PhoneVideoMode(
+                width = videoWidth,
+                height = videoHeight,
+                fps = videoFps ?: 30,
+                qualityKey = PhoneVideoModePolicy.qualityKeyFor(videoWidth, videoHeight),
+            )
+        }
+        return lensRepository.getSelectedVideoMode(
+            lens.cameraId,
+            lens.supportedVideoModes,
+        ) ?: PhoneVideoMode(1280, 720, 30, "HD")
+    }
+
+    private fun buildVideoCapture(mode: PhoneVideoMode): VideoCapture<Recorder> {
+        val quality = when (mode.qualityKey) {
+            "UHD" -> Quality.UHD
+            "FHD" -> Quality.FHD
+            else -> Quality.HD
+        }
+        val recorder = Recorder.Builder()
+            .setQualitySelector(QualitySelector.from(quality))
+            .build()
+        return VideoCapture.Builder(recorder)
+            .setTargetRotation(currentTargetRotation)
+            .setTargetFrameRate(Range(mode.fps, mode.fps))
+            .build()
     }
 
     fun getLatestCalibrationFrame(): CalibrationFrame? = synchronized(latestFrameLock) { latestCalibrationFrame }
@@ -181,7 +235,24 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         preview: Preview,
         videoCapture: VideoCapture<Recorder>?,
         requestedSize: Size?,
+        enableCalibrationAnalysis: Boolean,
     ): Camera {
+        if (!enableCalibrationAnalysis) {
+            return if (videoCapture != null) {
+                cameraProvider.bindToLifecycle(
+                    lifecycleOwner,
+                    selector,
+                    preview,
+                    videoCapture,
+                )
+            } else {
+                cameraProvider.bindToLifecycle(
+                    lifecycleOwner,
+                    selector,
+                    preview,
+                )
+            }
+        }
         val sizes = buildList {
             requestedSize?.let { add(it) }
             add(Size(1280, 720))

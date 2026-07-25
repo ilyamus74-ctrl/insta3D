@@ -34,6 +34,7 @@ import com.maklertour.domain.ScanSource
 import com.maklertour.domain.ScanVideoRole
 import com.maklertour.data.phonecamera.PhoneCameraBindResult
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
+import com.maklertour.data.phonecamera.PhoneVideoMode
 import com.example.maklertour.auth.MobileOrder
 import com.example.maklertour.auth.MobileUploadApi
 import com.example.maklertour.data.capture.CaptureBundlePackager
@@ -334,7 +335,13 @@ class AppStateViewModel(
         }
     }
 
-    fun bindPhoneCameraPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float, onResult: (PhoneCameraBindResult) -> Unit = { _ -> }) {
+    fun bindPhoneCameraPreview(
+        previewView: PreviewView,
+        cameraId: String?,
+        zoomRatio: Float,
+        videoMode: PhoneVideoMode?,
+        onResult: (PhoneCameraBindResult) -> Unit = { _ -> },
+    ) {
         val provider = phoneCameraScanProvider
         if (provider == null) {
             onResult(PhoneCameraBindResult(success = false, error = "camera provider unavailable", requestedZoomRatio = zoomRatio))
@@ -342,7 +349,12 @@ class AppStateViewModel(
         }
         viewModelScope.launch {
             try {
-                val result = provider.bindPreview(previewView, cameraId, zoomRatio)
+                val result = provider.bindPreview(
+                    previewView,
+                    cameraId,
+                    zoomRatio,
+                    videoMode,
+                )
                 onResult(result)
             } catch (e: Throwable) {
                 Log.e("AppStateViewModel", "bindPhoneCameraPreview() failed", e)

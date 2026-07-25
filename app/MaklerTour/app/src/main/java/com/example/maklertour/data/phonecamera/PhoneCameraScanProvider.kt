@@ -40,7 +40,22 @@ class PhoneCameraScanProvider(
     override suspend fun disconnect(): CameraStatus = CameraStatus(isConnected = false, model = "Phone Camera")
     override suspend fun getStatus(): CameraStatus = CameraStatus(isConnected = true, model = "Phone Camera")
 
-    suspend fun bindPreview(previewView: PreviewView, cameraId: String?, zoomRatio: Float): PhoneCameraBindResult = videoRecorder.bindPreview(previewView, cameraId, zoomRatio)
+    suspend fun bindPreview(
+        previewView: PreviewView,
+        cameraId: String?,
+        zoomRatio: Float,
+        videoMode: PhoneVideoMode?,
+    ): PhoneCameraBindResult = videoRecorder.bindPreview(
+        previewView = previewView,
+        cameraId = cameraId,
+        zoomRatio = zoomRatio,
+        videoWidth = videoMode?.width,
+        videoHeight = videoMode?.height,
+        videoFps = videoMode?.fps,
+        videoMode = videoMode,
+        enableVideoCapture = true,
+        enableCalibrationAnalysis = false,
+    )
 
     override suspend fun capture(pointName: String): CapturePoint = CapturePoint(
         name = pointName,

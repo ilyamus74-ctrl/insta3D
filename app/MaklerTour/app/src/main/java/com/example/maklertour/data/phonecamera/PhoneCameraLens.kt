@@ -19,6 +19,7 @@ import kotlin.math.atan
 private const val PREFS = "phone_camera_lens"
 private const val KEY_CAMERA_ID = "selected_camera_id"
 private const val KEY_ZOOM_RATIO = "selected_zoom_ratio"
+private const val KEY_VIDEO_MODE_PREFIX = "selected_video_mode_"
 
 data class SelectedPhoneVideoInfo(
     val width: Int?,
@@ -45,6 +46,7 @@ data class PhoneCameraLensOption(
     val activeArraySize: ActiveArraySize?,
     val supportedVideoSizes: List<VideoSizeInfo>,
     val supportedFpsRanges: List<FpsRangeInfo>,
+    val supportedVideoModes: List<PhoneVideoMode>,
     val approximateFovDeg: FovInfo?,
     val logicalMultiCameraCapable: Boolean = false,
     val physicalCameraIds: List<String> = emptyList(),
@@ -121,6 +123,21 @@ class PhoneCameraLensRepository(private val context: Context) {
         prefs.edit().putString(KEY_CAMERA_ID, cameraId).putFloat(KEY_ZOOM_RATIO, zoomRatio).apply()
     }
 
+    fun saveSelectedVideoMode(cameraId: String, mode: PhoneVideoMode) {
+        prefs.edit()
+            .putString(KEY_VIDEO_MODE_PREFIX + cameraId, mode.id)
+            .apply()
+    }
+
+    fun getSelectedVideoMode(
+        cameraId: String,
+        availableModes: List<PhoneVideoMode>,
+    ): PhoneVideoMode? {
+        val savedId = prefs.getString(KEY_VIDEO_MODE_PREFIX + cameraId, null)
+        return availableModes.firstOrNull { it.id == savedId }
+            ?: PhoneVideoModePolicy.defaultMode(availableModes)
+    }
+
     fun lensPresets(): List<PhoneLensPreset> = listOf(PhoneLensPreset("0.5x", 0.5f), PhoneLensPreset("1x", 1.0f), PhoneLensPreset("2x", 2.0f), PhoneLensPreset("3x", 3.0f))
 
     fun selectedOrDefault(): Pair<PhoneCameraLensOption, String?> {
@@ -160,12 +177,56 @@ class PhoneCameraLensRepository(private val context: Context) {
         val focal = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.toList() ?: emptyList()
         val sensor = chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)?.let { SensorPhysicalSize(it.width, it.height) }
         val active = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)?.toActiveArraySize()
-        val sizes = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(android.media.MediaRecorder::class.java)?.map { VideoSizeInfo(it.width, it.height) }?.distinct() ?: emptyList()
+        val streamMap = chars.get(
+            CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP,
+        )
+        val sizes = streamMap
+            ?.getOutputSizes(android.media.MediaRecorder::class.java)
+            ?.map { VideoSizeInfo(it.width, it.height) }
+            ?.distinct()
+            ?: emptyList()
         val fps = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.map { FpsRangeInfo(it.lower, it.upper) } ?: emptyList()
+        val sizeCapabilities = sizes.map { size ->
+            val minFrameDurationNs = runCatching {
+                streamMap?.getOutputMinFrameDuration(
+                    android.media.MediaRecorder::class.java,
+                    android.util.Size(size.width, size.height),
+                ) ?: 0L
+            }.getOrDefault(0L)
+            val maxFps = if (minFrameDurationNs > 0L) {
+                (1_000_000_000L / minFrameDurationNs)
+                    .toInt()
+                    .coerceAtLeast(1)
+            } else {
+                30
+            }
+            PhoneVideoSizeCapability(
+                width = size.width,
+                height = size.height,
+                maxFps = maxFps,
+            )
+        }
+        val videoModes = PhoneVideoModePolicy.availableModes(
+            sizeCapabilities = sizeCapabilities,
+            supportedFpsRanges = fps.map { it.lower..it.upper },
+        )
         val fov = if (sensor != null && focal.minOrNull() != null) FovInfo(fov(sensor.width, focal.minOrNull()!!), fov(sensor.height, focal.minOrNull()!!)) else null
         val logical = isLogicalMultiCamera(chars)
         val physicalIds = physicalCameraIds(chars)
-        return PhoneCameraLensOption(cameraId, facing, friendlyLabel(focal.minOrNull(), listBackFocals(), logical), focal, sensor, active, sizes, fps, fov, logical, physicalIds)
+        return PhoneCameraLensOption(
+            cameraId = cameraId,
+            lensFacing = facing,
+            lensLabel = friendlyLabel(focal.minOrNull(), listBackFocals(), logical),
+            focalLengthsMm = focal,
+            sensorPhysicalSizeMm = sensor,
+            activeArraySize = active,
+            supportedVideoSizes = sizes,
+            supportedFpsRanges = fps,
+            supportedVideoModes = videoModes,
+            approximateFovDeg = fov,
+            logicalMultiCameraCapable = logical,
+            physicalCameraIds = physicalIds,
+        )
     }
 
     private fun listBackFocals(): List<Float> = manager.cameraIdList.mapNotNull { id ->
@@ -210,6 +271,7 @@ fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = nu
     .put("approximate_fov_deg", approximateFovDeg?.let { JSONObject().put("horizontal", it.horizontal).put("vertical", it.vertical) } ?: JSONObject.NULL)
     .put("resolution", JSONObject().put("width", selectedVideoInfo?.width ?: JSONObject.NULL).put("height", selectedVideoInfo?.height ?: JSONObject.NULL))
     .put("fps", selectedVideoInfo?.fps ?: JSONObject.NULL)
+    .put("video_mode_candidates", JSONArray(supportedVideoModes.map { mode -> JSONObject().put("id", mode.id).put("width", mode.width).put("height", mode.height).put("fps", mode.fps).put("quality", mode.qualityKey) }))
     .put("requested_profile_width", calibrationResolutionInfo?.requestedProfileWidth ?: JSONObject.NULL)
     .put("requested_profile_height", calibrationResolutionInfo?.requestedProfileHeight ?: JSONObject.NULL)
     .put("requested_calibration_width", calibrationResolutionInfo?.requestedWidth ?: JSONObject.NULL)
