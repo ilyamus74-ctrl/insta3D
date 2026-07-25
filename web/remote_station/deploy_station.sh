@@ -97,7 +97,15 @@ if ! "${SSH[@]}" "
   test -x '$STATION_BASE/scripts/sanitize_dense_images.py'
   test -x '$STATION_BASE/scripts/process_colmap_mesh.sh'
   test -x '$STATION_BASE/scripts/process_maklertour_synced_dense.sh'
-  test -f '$STATION_BASE/scripts/dense_depth_from_synced_capture.py'
+  test -x '$STATION_BASE/scripts/dense_depth_from_synced_capture.py'
+  test -x '$STATION_BASE/scripts/stereo_visual_odometry.py'
+  test -x '$STATION_BASE/scripts/stereo_global_fusion.py'
+  '$STATION_BASE/venv/bin/python' -m py_compile \
+    '$STATION_BASE/scripts/dense_depth_from_synced_capture.py' \
+    '$STATION_BASE/scripts/stereo_visual_odometry.py' \
+    '$STATION_BASE/scripts/stereo_global_fusion.py'
+  grep -q 'stereo_visual_odometry.py' '$STATION_BASE/scripts/process_maklertour_synced_dense.sh'
+  grep -q 'stereo_global_fusion.py' '$STATION_BASE/scripts/process_maklertour_synced_dense.sh'
   test -x '$STATION_BASE/scripts/process_open3d_mesh.py'
   test -x '$STATION_BASE/open3d-venv/bin/python'
   '$STATION_BASE/open3d-venv/bin/python' -c 'import open3d; print(open3d.__version__)'
