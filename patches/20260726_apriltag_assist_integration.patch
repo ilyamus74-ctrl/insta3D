@@ -127,7 +127,7 @@ index fa0cedb..0000000 100755
 +  FINAL_MESSAGE="$FINAL_MESSAGE. $APRILTAG_WARNING_TEXT"
 +fi
 +write_status "DONE" 100 -1 "$FINAL_MESSAGE"
- diff --git a/web/remote_station/scripts/process_colmap_dense.sh b/web/remote_station/scripts/process_colmap_dense.sh
+diff --git a/web/remote_station/scripts/process_colmap_dense.sh b/web/remote_station/scripts/process_colmap_dense.sh
 index 6be3e30..0000000 100755
 --- a/web/remote_station/scripts/process_colmap_dense.sh
 +++ b/web/remote_station/scripts/process_colmap_dense.sh
