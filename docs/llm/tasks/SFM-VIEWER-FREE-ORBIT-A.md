@@ -1,5 +1,12 @@
 # SFM-VIEWER-FREE-ORBIT-A
 
+## Status
+
+```text
+IMPLEMENTED
+WEB DEPLOYMENT AND RUNTIME ACCEPTANCE PENDING
+```
+
 ## Dependency
 
 ```text
@@ -99,3 +106,28 @@ Fit, reset and directional presets remain available.
 6. Anchor and Source support the same mode.
 7. Mode switching does not reload PLY.
 8. Existing Auto level behavior remains unchanged.
+
+## Implementation
+
+The normal viewer and both manual-alignment viewers now support:
+
+```text
+Horizon locked → OrbitControls
+Free orbit 360° → TrackballControls
+```
+
+Switching controls preserves camera position and target. Entering Horizon
+locked resets camera roll to world-up. Entering Free orbit does not alter the
+cloud or root model transform.
+
+The normal viewer stores one local navigation preference.
+
+The manual page stores:
+
+```text
+Anchor navigation mode
+Source navigation mode
+Apply mode to both viewers
+```
+
+No PLY reload is performed when switching camera-navigation modes.

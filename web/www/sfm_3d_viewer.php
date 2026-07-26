@@ -169,6 +169,12 @@ body{overflow:hidden}
     <label for="backgroundColor" class="form-label mb-1">Background</label><input type="color" class="form-control form-control-color mb-2" id="backgroundColor" value="#252b3f">
     </div>
     <div class="control-section"><div class="mb-2"><b>Camera views</b></div>
+    <label for="navigationMode" class="form-label mb-1">Camera navigation</label>
+    <select class="form-select form-select-sm mb-1" id="navigationMode">
+      <option value="horizon">Horizon locked</option>
+      <option value="free">Free orbit 360°</option>
+    </select>
+    <div id="navigationModeHint" class="text-muted mb-2">World up is locked.</div>
     <div class="d-grid gap-1 mt-2">
       <button class="btn btn-outline-light btn-sm" id="fitAllBtn">Fit all</button>
       <button class="btn btn-outline-light btn-sm" id="fitRouteBtn">Fit route</button>
@@ -223,6 +229,7 @@ body{overflow:hidden}
 <script type="module">
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {TrackballControls} from 'three/addons/controls/TrackballControls.js';
 import {PLYLoader} from 'three/addons/loaders/PLYLoader.js';
 
 const orderId=<?php echo json_encode($orderId); ?>,sessionId=<?php echo json_encode($sessionId); ?>,videoScanId=<?php echo json_encode($videoScanId); ?>,autoPhotoDenseJobId=<?php echo json_encode($autoPhotoDenseJobId); ?>,denseRemoteJobId=<?php echo json_encode($denseRemoteJobId); ?>,pipelineRunId=<?php echo json_encode($pipelineRunId); ?>,mergeId=<?php echo json_encode($mergeId); ?>,initialArtifact=<?php echo json_encode($artifact); ?>,debugToken=<?php echo json_encode($debugToken); ?>;
@@ -266,8 +273,73 @@ renderer.toneMappingExposure = 1.6;
 statusEl.remove();
 el.appendChild(renderer.domElement);
 
-const controls=new OrbitControls(camera, renderer.domElement);
-controls.enableDamping=true;
+const navigationStorageKey='sfm-3d-viewer:navigation-mode:v1';
+let navigationMode='horizon';
+let controls=null;
+
+function normalizeNavigationMode(mode){
+  return mode==='free' ? 'free' : 'horizon';
+}
+
+function createNavigationControls(mode,target){
+  let next;
+  if(mode==='free'){
+    next=new TrackballControls(camera,renderer.domElement);
+    next.noRoll=false;
+    next.rotateSpeed=3.2;
+    next.zoomSpeed=1.2;
+    next.panSpeed=0.8;
+    next.staticMoving=false;
+    next.dynamicDampingFactor=0.18;
+  }else{
+    next=new OrbitControls(camera,renderer.domElement);
+    next.enableDamping=true;
+    next.screenSpacePanning=true;
+  }
+  next.target.copy(target);
+  if(typeof next.handleResize==='function') next.handleResize();
+  next.update();
+  return next;
+}
+
+function setNavigationMode(mode,persist=true){
+  const nextMode=normalizeNavigationMode(mode);
+  const target=controls?.target?.clone() || new THREE.Vector3();
+  const minDistance=Number.isFinite(controls?.minDistance)
+    ? controls.minDistance
+    : 0;
+  const maxDistance=Number.isFinite(controls?.maxDistance)
+    ? controls.maxDistance
+    : Infinity;
+
+  if(controls) controls.dispose();
+  navigationMode=nextMode;
+
+  if(navigationMode==='horizon'){
+    camera.up.set(0,1,0);
+    camera.lookAt(target);
+  }
+
+  controls=createNavigationControls(navigationMode,target);
+  controls.minDistance=minDistance;
+  controls.maxDistance=maxDistance;
+
+  const selector=document.getElementById('navigationMode');
+  const hint=document.getElementById('navigationModeHint');
+  if(selector) selector.value=navigationMode;
+  if(hint){
+    hint.textContent=navigationMode==='free'
+      ? 'Free camera roll; the model transform is unchanged.'
+      : 'World up is locked.';
+  }
+
+  if(persist){
+    try{ localStorage.setItem(navigationStorageKey,navigationMode); }
+    catch(error){ console.warn('Navigation mode persistence failed',error); }
+  }
+}
+
+controls=createNavigationControls('horizon',new THREE.Vector3());
 scene.add(new THREE.AmbientLight(0xffffff,1.0));
 
 const axes = new THREE.AxesHelper(2.0);
@@ -306,6 +378,16 @@ const formatNum=(v)=>typeof v==='number'?v.toLocaleString():v;
 function updateSummary(){
   const selectedText=selected ? selected.userData.keyframe_index : 'none';
   summaryEl.innerHTML=`<b>Summary</b><br>view mode: ${currentViewMode}<br>artifact: ${artifactLabel()}<br>${artifactStatsHtml()}<br>camera_poses_count: ${formatNum(data.summary.camera_poses_count)}<br>keyframe_points_count: ${formatNum(data.summary.keyframe_points_count)}<br>point_size: ${getPointSize().toFixed(2)} px<br>orientation: custom quaternion<br><span class="text-muted">approx Euler: X=${deg(rootGroup.rotation.x)}°, Y=${deg(rootGroup.rotation.y)}°, Z=${deg(rootGroup.rotation.z)}°</span><br>selected keyframe: ${selectedText}<br><span class="text-warning">Raw cloud may include outliers.</span>`;
+}
+
+try{
+  setNavigationMode(
+    localStorage.getItem(navigationStorageKey) || 'horizon',
+    false
+  );
+}catch(error){
+  console.warn('Navigation mode restore failed',error);
+  setNavigationMode('horizon',false);
 }
 
 function artifactLabel(){return initialArtifact==='dense'?'Dense point cloud':(initialArtifact==='mesh'?'Mesh':'Sparse point cloud');}
@@ -415,7 +497,7 @@ function fitBox(box){
 }
 
 function resetCameraUp(){
-  camera.up.set(0,1,0);
+  if(navigationMode==='horizon') camera.up.set(0,1,0);
 }
 
 function setCameraView(directionVector, upVector = new THREE.Vector3(0,1,0), label='Camera view'){
@@ -930,6 +1012,11 @@ function invertLevel(){
   selectionEl.innerHTML='Invert level applied: floor/ceiling swapped after auto-level.<br><span class="text-muted">Use “Save orientation” to save this orientation.</span>';
 }
 
+document.getElementById('navigationMode').addEventListener(
+  'change',
+  event=>setNavigationMode(event.target.value,true)
+);
+
 bindClick('resetViewBtn',resetView);
 bindClick('fitAllBtn',fitAll);
 bindClick('fitRouteBtn',fitRoute);
@@ -956,7 +1043,12 @@ await loadViewerSettings();
 rebuildAfterTransform(false);
 updateSummary();
 await maybeAutoLevelOnLoad();
-addEventListener('resize',()=>{camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix();renderer.setSize(el.clientWidth,el.clientHeight);});
+addEventListener('resize',()=>{
+  camera.aspect=el.clientWidth/el.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(el.clientWidth,el.clientHeight);
+  if(typeof controls.handleResize==='function') controls.handleResize();
+});
 (function anim(){requestAnimationFrame(anim);controls.update();renderer.render(scene,camera);})();
 </script>
 </body></html>

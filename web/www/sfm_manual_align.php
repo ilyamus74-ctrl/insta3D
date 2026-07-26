@@ -72,6 +72,34 @@ body { background: #f5f6f8; }
     Не выбирай все точки на одной линии или на одной маленькой области.
   </div>
 
+  <div class="card mb-3">
+    <div class="card-body py-2">
+      <div class="d-flex flex-wrap gap-3 align-items-end">
+        <label class="form-label small mb-0">
+          Anchor camera
+          <select class="form-select form-select-sm mt-1" id="anchorNavigationMode">
+            <option value="horizon">Horizon locked</option>
+            <option value="free">Free orbit 360°</option>
+          </select>
+        </label>
+        <label class="form-label small mb-0">
+          Source camera
+          <select class="form-select form-select-sm mt-1" id="sourceNavigationMode">
+            <option value="horizon">Horizon locked</option>
+            <option value="free">Free orbit 360°</option>
+          </select>
+        </label>
+        <div class="form-check mb-1">
+          <input class="form-check-input" type="checkbox" id="syncNavigationModes" checked>
+          <label class="form-check-label small" for="syncNavigationModes">Apply mode to both viewers</label>
+        </div>
+        <div id="manualNavigationHint" class="small text-muted mb-1">
+          Camera navigation does not modify either cloud.
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="viewer-grid">
     <div class="card viewer-card">
       <div class="card-header d-flex justify-content-between align-items-center">
@@ -156,6 +184,7 @@ body { background: #f5f6f8; }
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 
 const csrfToken = <?= json_encode((string)($_SESSION['secCode'] ?? '')) ?>;
@@ -170,6 +199,32 @@ const params = <?= json_encode([
 const apiBase = '/api/sfm_manual_alignment.php?' + new URLSearchParams(params).toString();
 const orderUrl = '/order_simple.php?id=' + encodeURIComponent(params.order_id) + '#simple-video-sfm';
 const storageKey = 'sfm-manual-align:' + JSON.stringify(params);
+const navigationStorageKey = 'sfm-manual-align:navigation-mode:v1';
+
+function normalizeNavigationMode(mode) {
+  return mode === 'free' ? 'free' : 'horizon';
+}
+
+function loadNavigationState() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(navigationStorageKey) || '{}'
+    );
+    const anchor = normalizeNavigationMode(saved.anchor);
+    const source = normalizeNavigationMode(saved.source);
+    const sync = saved.sync !== false;
+    return {
+      anchor,
+      source: sync ? anchor : source,
+      sync,
+    };
+  } catch (error) {
+    console.warn('Could not restore navigation state', error);
+    return { anchor: 'horizon', source: 'horizon', sync: true };
+  }
+}
+
+const navigationState = loadNavigationState();
 
 const pairs = [];
 let pendingAnchor = null;
@@ -253,7 +308,7 @@ function completePairIfReady() {
 }
 
 class CloudViewer {
-  constructor({ elementId, statusId, side, onPick }) {
+  constructor({ elementId, statusId, side, onPick, navigationMode }) {
     this.el = document.getElementById(elementId);
     this.status = document.getElementById(statusId);
     this.side = side;
@@ -266,9 +321,8 @@ class CloudViewer {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.el.appendChild(this.renderer.domElement);
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.screenSpacePanning = true;
+    this.controls = null;
+    this.navigationMode = 'horizon';
     this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
     this.scene.add(new THREE.AxesHelper(1.5));
     this.cloud = null;
@@ -276,6 +330,7 @@ class CloudViewer {
     this.markers = new THREE.Group();
     this.scene.add(this.markers);
     this.radius = 1;
+    this.setNavigationMode(navigationMode);
     this.raycaster = new THREE.Raycaster();
     this.raycaster.params.Points.threshold = 0.03;
     this.pointer = new THREE.Vector2();
@@ -293,6 +348,54 @@ class CloudViewer {
       this.pick(event);
     });
     this.animate();
+  }
+
+  setNavigationMode(mode) {
+    const nextMode = normalizeNavigationMode(mode);
+    const target = this.controls?.target?.clone()
+      || new THREE.Vector3();
+    const minDistance = Number.isFinite(this.controls?.minDistance)
+      ? this.controls.minDistance
+      : 0;
+    const maxDistance = Number.isFinite(this.controls?.maxDistance)
+      ? this.controls.maxDistance
+      : Infinity;
+
+    if (this.controls) this.controls.dispose();
+    this.navigationMode = nextMode;
+
+    if (this.navigationMode === 'horizon') {
+      this.camera.up.set(0, 1, 0);
+      this.camera.lookAt(target);
+    }
+
+    if (this.navigationMode === 'free') {
+      this.controls = new TrackballControls(
+        this.camera,
+        this.renderer.domElement
+      );
+      this.controls.noRoll = false;
+      this.controls.rotateSpeed = 3.2;
+      this.controls.zoomSpeed = 1.2;
+      this.controls.panSpeed = 0.8;
+      this.controls.staticMoving = false;
+      this.controls.dynamicDampingFactor = 0.18;
+    } else {
+      this.controls = new OrbitControls(
+        this.camera,
+        this.renderer.domElement
+      );
+      this.controls.enableDamping = true;
+      this.controls.screenSpacePanning = true;
+    }
+
+    this.controls.target.copy(target);
+    this.controls.minDistance = minDistance;
+    this.controls.maxDistance = maxDistance;
+    if (typeof this.controls.handleResize === 'function') {
+      this.controls.handleResize();
+    }
+    this.controls.update();
   }
 
   async load(url) {
@@ -322,6 +425,9 @@ class CloudViewer {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    if (typeof this.controls?.handleResize === 'function') {
+      this.controls.handleResize();
+    }
   }
 
   fit(extraObject = null) {
@@ -343,7 +449,17 @@ class CloudViewer {
     this.camera.far = Math.max(radius * 100, 1000);
     this.camera.updateProjectionMatrix();
     this.controls.target.copy(center);
-    this.camera.position.set(center.x + radius * 1.25, center.y + radius * 0.8, center.z + radius * 1.25);
+    if (this.navigationMode === 'horizon') {
+      this.camera.up.set(0, 1, 0);
+    }
+    this.camera.position.set(
+      center.x + radius * 1.25,
+      center.y + radius * 0.8,
+      center.z + radius * 1.25
+    );
+    this.camera.lookAt(center);
+    this.controls.minDistance = radius * 0.01;
+    this.controls.maxDistance = radius * 100;
     this.controls.update();
   }
 
@@ -388,6 +504,7 @@ const anchorViewer = new CloudViewer({
   elementId: 'anchorViewer',
   statusId: 'anchorStatus',
   side: 'anchor',
+  navigationMode: navigationState.anchor,
   onPick: point => {
     pendingAnchor = point;
     updatePendingUi();
@@ -399,12 +516,92 @@ const sourceViewer = new CloudViewer({
   elementId: 'sourceViewer',
   statusId: 'sourceStatus',
   side: 'source',
+  navigationMode: navigationState.source,
   onPick: point => {
     pendingSource = point;
     updatePendingUi();
     completePairIfReady();
   },
 });
+
+const anchorNavigationSelect = document.getElementById(
+  'anchorNavigationMode'
+);
+const sourceNavigationSelect = document.getElementById(
+  'sourceNavigationMode'
+);
+const syncNavigationModes = document.getElementById(
+  'syncNavigationModes'
+);
+const manualNavigationHint = document.getElementById(
+  'manualNavigationHint'
+);
+
+anchorNavigationSelect.value = navigationState.anchor;
+sourceNavigationSelect.value = navigationState.source;
+syncNavigationModes.checked = navigationState.sync;
+
+function persistNavigationState() {
+  try {
+    localStorage.setItem(
+      navigationStorageKey,
+      JSON.stringify({
+        anchor: anchorViewer.navigationMode,
+        source: sourceViewer.navigationMode,
+        sync: syncNavigationModes.checked,
+      })
+    );
+  } catch (error) {
+    console.warn('Navigation mode persistence failed', error);
+  }
+}
+
+function updateNavigationHint() {
+  const same = anchorViewer.navigationMode
+    === sourceViewer.navigationMode;
+  manualNavigationHint.textContent = same
+    ? (
+        anchorViewer.navigationMode === 'free'
+          ? 'Both viewers use free camera roll. Cloud transforms are unchanged.'
+          : 'Both viewers keep world up locked.'
+      )
+    : 'Anchor and Source use independent camera-navigation modes.';
+}
+
+function applyNavigationMode(side, mode) {
+  const nextMode = normalizeNavigationMode(mode);
+  const sync = syncNavigationModes.checked;
+
+  if (side === 'anchor' || sync) {
+    anchorViewer.setNavigationMode(nextMode);
+    anchorNavigationSelect.value = nextMode;
+  }
+  if (side === 'source' || sync) {
+    sourceViewer.setNavigationMode(nextMode);
+    sourceNavigationSelect.value = nextMode;
+  }
+
+  persistNavigationState();
+  updateNavigationHint();
+}
+
+anchorNavigationSelect.addEventListener(
+  'change',
+  event => applyNavigationMode('anchor', event.target.value)
+);
+sourceNavigationSelect.addEventListener(
+  'change',
+  event => applyNavigationMode('source', event.target.value)
+);
+syncNavigationModes.addEventListener('change', () => {
+  if (syncNavigationModes.checked) {
+    sourceViewer.setNavigationMode(anchorViewer.navigationMode);
+    sourceNavigationSelect.value = anchorViewer.navigationMode;
+  }
+  persistNavigationState();
+  updateNavigationHint();
+});
+updateNavigationHint();
 
 function rebuildMarkers() {
   const anchorPoints = pairs.map(pair => pair.anchor);
