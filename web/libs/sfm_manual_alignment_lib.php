@@ -86,7 +86,14 @@ function sfm_manual_resolve_merge_anchor(mysqli $db,int $orderId,int $mergeId): 
     $st->bind_param('ii',$mergeId,$orderId); $st->execute(); $m=$st->get_result()->fetch_assoc(); $st->close(); if(!$m) throw new RuntimeException('Merge anchor not found for this order');
     if(strtoupper((string)($m['status']??''))!=='DONE') throw new RuntimeException('Merge anchor is not DONE');
     $type=(string)($m['merge_type']??''); $msg=strtolower((string)($m['message']??''));
-    $supported=[SFM_MANUAL_MERGE_TYPE,'aligned_shared_images_dense_ply',SFM_MANUAL_INCREMENTAL_MERGE_TYPE,SFM_AUTO_INCREMENTAL_MERGE_TYPE];
+    $supported=[
+        SFM_MANUAL_MERGE_TYPE,
+        'aligned_shared_images_dense_ply',
+        SFM_MANUAL_INCREMENTAL_MERGE_TYPE,
+        SFM_AUTO_INCREMENTAL_MERGE_TYPE,
+        'manual_visual_sim3_dense_ply',
+        'manual_visual_incremental_sim3_dense_ply',
+    ];
     if(str_contains($msg,'rejected')||str_contains($msg,'anchor only')||str_contains($type,'anchor_only')||!in_array($type,$supported,true)) throw new RuntimeException('Merge anchor is not an accepted aligned assembly');
     $rawResult=[]; $rp=(string)($m['result_json_path']??''); if($rp!=='' && is_file($rp)){ $safeJson=sfm_manual_safe_realpath($rp); $rawResult=json_decode((string)file_get_contents($safeJson),true)?:[]; }
     $hasIncluded=array_key_exists('included',$rawResult)||array_key_exists('included_models',$rawResult); $included=$rawResult['included'] ?? ($rawResult['included_models'] ?? []);

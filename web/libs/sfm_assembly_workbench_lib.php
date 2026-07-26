@@ -78,6 +78,10 @@ function sfm_assembly_workbench_label(string $type, int $mergeId): string
             'Ручная сборка #' . $mergeId,
         'manual_incremental_sim3_dense_ply' =>
             'Ручное дополнение #' . $mergeId,
+        'manual_visual_sim3_dense_ply' =>
+            'Визуальная сборка #' . $mergeId,
+        'manual_visual_incremental_sim3_dense_ply' =>
+            'Визуальное дополнение #' . $mergeId,
         'automatic_incremental_shared_images_dense_ply' =>
             'Автоматическое дополнение #' . $mergeId,
         default => 'Диагностическая сборка #' . $mergeId,

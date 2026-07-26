@@ -1406,5 +1406,140 @@ try {
   console.error('Visual scale controls failed', error);
 }
 </script>
+
+<script type="module">
+const visualSaveCsrf = <?= json_encode(
+  (string)($_SESSION['secCode'] ?? '')
+) ?>;
+const visualSaveQuery =
+  new URLSearchParams(window.location.search);
+
+async function waitForVisualSaveViewer() {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (window.sfmVisualAlignmentViewer) {
+      return window.sfmVisualAlignmentViewer;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error('Visual alignment viewer is unavailable');
+}
+
+try {
+  const visualViewer = await waitForVisualSaveViewer();
+  const saveButton = document.createElement('button');
+  saveButton.type = 'button';
+  saveButton.id = 'visualSaveAssembly';
+  saveButton.className = 'btn btn-sm btn-success';
+  saveButton.textContent = 'Сохранить сборку';
+
+  const resetButton = document.getElementById(
+    'visualResetTransform'
+  );
+  resetButton?.insertAdjacentElement(
+    'beforebegin',
+    saveButton
+  );
+
+  const resultLinks = document.createElement('div');
+  resultLinks.id = 'visualSaveAssemblyLinks';
+  resultLinks.className = 'd-flex flex-wrap gap-2 mt-2';
+  document.getElementById('visualTransformStatus')
+    ?.insertAdjacentElement('afterend', resultLinks);
+
+  saveButton.addEventListener('click', async () => {
+    if (!window.confirm(
+      'Сохранить текущее положение Moving source '
+      + 'как реальную сборку?'
+    )) {
+      return;
+    }
+
+    saveButton.disabled = true;
+    saveButton.textContent = 'Создание PLY…';
+
+    const status = document.getElementById(
+      'visualTransformStatus'
+    );
+    status.className = 'small text-primary';
+    status.textContent =
+      'Применение transform и создание merged PLY…';
+    resultLinks.innerHTML = '';
+
+    try {
+      const endpoint =
+        '/api/sfm_manual_visual_alignment.php?'
+        + visualSaveQuery.toString();
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': visualSaveCsrf,
+        },
+        body: JSON.stringify({
+          transform: visualViewer.state(),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        throw new Error(
+          result.error || `HTTP ${response.status}`
+        );
+      }
+
+      status.className = 'small text-success';
+      status.textContent =
+        'Сборка сохранена: Assembly #'
+        + Number(result.merge_id)
+        + ' · '
+        + Number(
+          result.merged_points || 0
+        ).toLocaleString()
+        + ' points'
+        + (
+          result.already_saved
+            ? ' · уже существовала'
+            : ''
+        );
+
+      resultLinks.innerHTML = `
+        <a class="btn btn-sm btn-success"
+          target="_blank"
+          href="${result.viewer_url}">
+          Открыть сборку
+        </a>
+        <a class="btn btn-sm btn-outline-success"
+          href="${result.download_url}">
+          Скачать PLY
+        </a>
+        <a class="btn btn-sm btn-outline-secondary"
+          target="_blank"
+          href="${result.result_url}">
+          Result JSON
+        </a>
+        <a class="btn btn-sm btn-outline-primary"
+          href="${result.order_url}">
+          Добавить следующую модель
+        </a>
+      `;
+
+      saveButton.textContent =
+        'Сборка сохранена #' + Number(result.merge_id);
+    } catch (error) {
+      status.className = 'small text-danger';
+      status.textContent =
+        'Сборка не сохранена: '
+        + String(error.message || error);
+      saveButton.disabled = false;
+      saveButton.textContent = 'Сохранить сборку';
+    }
+  });
+} catch (error) {
+  console.error(
+    'Visual assembly save controls failed',
+    error
+  );
+}
+</script>
 </body>
 </html>
