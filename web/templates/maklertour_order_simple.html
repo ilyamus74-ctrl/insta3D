@@ -184,5 +184,341 @@ window.addEventListener('load', function () {
 });
 </script>
 {/literal}
+<script type="application/json" id="sfm-run-lineage-json">{$sfmRunLineageJson nofilter}</script>
+{literal}
+<script>
+(function () {
+  function create(tag, className, text) {
+    var element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+  }
+
+  function addLink(parent, label, href, className, blank) {
+    if (!href) return;
+    var link = create('a', className, label);
+    link.href = href;
+    if (blank) {
+      link.target = '_blank';
+      link.rel = 'noopener';
+    }
+    parent.appendChild(link);
+  }
+
+  function findRunCard(runId) {
+    var selector =
+      'input[name="pipeline_run_id"][value="' + String(runId) + '"]';
+    var inputs = document.querySelectorAll(selector);
+    for (var index = 0; index < inputs.length; index += 1) {
+      var card = inputs[index].closest('.border.rounded.p-3.h-100');
+      if (card) return card;
+    }
+    return null;
+  }
+
+  function hideOldComponentTable(card) {
+    card.querySelectorAll('strong').forEach(function (strong) {
+      if (strong.textContent.trim() !== 'Sparse components:') return;
+      var block = strong.closest('.small.border.rounded.p-2.my-2');
+      if (block) block.classList.add('d-none');
+    });
+  }
+
+  function assemblyState(run) {
+    if (run.merge) {
+      if (run.merge.state === 'done') return 'Сборка готова';
+      if (run.merge.state === 'anchor_only') {
+        return 'Склейка не соединила компоненты: получен только anchor';
+      }
+      return 'Создана диагностическая сборка без гарантии выравнивания';
+    }
+
+    var state = run.auto_components
+      ? run.auto_components.aligned_merge
+      : 'not started';
+    if (state === 'done') return 'Автоматическая сборка завершена';
+    if (state === 'anchor_only') {
+      return 'Общего COLMAP-пути между компонентами не найдено';
+    }
+    if (state === 'error') return 'Ошибка автоматической сборки';
+    if (state === 'running') return 'Автоматическая сборка выполняется';
+    return 'Сборка ещё не создана';
+  }
+
+  function hidden(form, name, value) {
+    var input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = String(value);
+    form.appendChild(input);
+  }
+
+  function render(run) {
+    var card = findRunCard(run.run_id);
+    if (!card || card.querySelector('[data-sfm-lineage="' + run.run_id + '"]')) {
+      return;
+    }
+
+    hideOldComponentTable(card);
+
+    var primary = (run.components || []).find(function (component) {
+      return component.is_primary && component.has_dense;
+    }) || (run.components || []).find(function (component) {
+      return component.has_dense;
+    });
+
+    card.querySelectorAll('a').forEach(function (link) {
+      var label = link.textContent.trim();
+      if (primary && label === 'Open dense cloud') {
+        link.textContent = 'Open primary Model ' + primary.model_id + ' dense';
+        link.href = primary.viewer_url;
+      }
+      if (primary && label === 'Download dense PLY') {
+        link.textContent = 'Download primary Model ' + primary.model_id + ' PLY';
+        link.href = primary.download_url;
+      }
+      if (label === 'Open final mesh') {
+        link.textContent = 'Open pipeline mesh (legacy pointer)';
+        link.title = 'This is a component mesh, not a confirmed combined model.';
+      }
+      if (label === 'Download final mesh PLY') {
+        link.textContent = 'Download pipeline mesh (legacy pointer)';
+        link.title = 'This is a component mesh, not a confirmed combined model.';
+      }
+    });
+
+    var panel = create('div', 'border rounded p-2 my-2 bg-light');
+    panel.dataset.sfmLineage = String(run.run_id);
+
+    var heading = create('div', 'd-flex justify-content-between gap-2 flex-wrap');
+    heading.appendChild(
+      create(
+        'strong',
+        '',
+        'Run #' + run.run_id + ' · ' + String(run.mode || '').toUpperCase()
+      )
+    );
+    heading.appendChild(create('span', 'badge bg-secondary', run.status));
+    panel.appendChild(heading);
+
+    var timestamps = [
+      run.started_at ? 'start: ' + run.started_at : '',
+      run.finished_at ? 'finish: ' + run.finished_at : '',
+      'video_scan_id: ' + run.video_scan_id
+    ].filter(Boolean).join(' · ');
+    panel.appendChild(create('div', 'small text-muted', timestamps));
+    panel.appendChild(
+      create('div', 'small text-muted text-break', run.source_filename)
+    );
+
+    panel.appendChild(
+      create('div', 'fw-semibold mt-2', 'Компоненты именно этого Run')
+    );
+
+    var responsive = create('div', 'table-responsive');
+    var table = create('table', 'table table-sm align-middle mb-1');
+    var thead = document.createElement('thead');
+    thead.innerHTML =
+      '<tr><th>Model</th><th>Кадры / sparse</th>' +
+      '<th>Dense job</th><th>Артефакты</th></tr>';
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+
+    (run.components || []).forEach(function (component) {
+      var row = document.createElement('tr');
+      var model = document.createElement('td');
+      model.appendChild(create('strong', '', 'Model ' + component.model_id));
+      if (component.is_primary) {
+        model.appendChild(document.createTextNode(' '));
+        model.appendChild(create('span', 'badge bg-primary', 'primary'));
+      }
+      row.appendChild(model);
+
+      row.appendChild(
+        create(
+          'td',
+          'small',
+          component.registered_images + ' images / ' +
+            component.sparse_points + ' points'
+        )
+      );
+
+      var job = component.dense_db_job_id
+        ? 'DB #' + component.dense_db_job_id +
+          ' · remote ' + component.dense_remote_job_id +
+          ' · ' + component.dense_status
+        : 'not generated';
+      row.appendChild(create('td', 'small', job));
+
+      var actions = create('td', 'd-flex gap-1 flex-wrap');
+      if (component.has_dense) {
+        addLink(
+          actions,
+          'Открыть Model ' + component.model_id,
+          component.viewer_url,
+          'btn btn-sm btn-outline-primary',
+          true
+        );
+        addLink(
+          actions,
+          'Скачать PLY',
+          component.download_url,
+          'btn btn-sm btn-outline-success',
+          false
+        );
+      } else {
+        actions.appendChild(
+          create('span', 'small text-muted', 'dense отсутствует')
+        );
+      }
+      row.appendChild(actions);
+      tbody.appendChild(row);
+    });
+
+    table.appendChild(tbody);
+    responsive.appendChild(table);
+    panel.appendChild(responsive);
+
+    var assembly = create('div', 'border-top pt-2 mt-2');
+    assembly.appendChild(create('div', 'fw-semibold', 'Сборка этого Run'));
+    assembly.appendChild(create('div', 'small', assemblyState(run)));
+
+    if (run.auto_components && run.auto_components.last_error) {
+      assembly.appendChild(
+        create(
+          'div',
+          'small text-warning',
+          run.auto_components.last_error
+        )
+      );
+    }
+
+    if (run.merge) {
+      assembly.appendChild(
+        create(
+          'div',
+          'small text-muted',
+          'merge #' + run.merge.merge_id +
+            ' · ' + run.merge.merge_type +
+            ' · ' + run.merge.points + ' points' +
+            (run.merge.created_at ? ' · ' + run.merge.created_at : '')
+        )
+      );
+
+      if (run.merge.included_models.length) {
+        assembly.appendChild(
+          create(
+            'div',
+            'small',
+            'included Models: ' + run.merge.included_models.join(', ')
+          )
+        );
+      }
+      if (run.merge.excluded_models.length) {
+        assembly.appendChild(
+          create(
+            'div',
+            'small text-warning',
+            'excluded Models: ' + run.merge.excluded_models.join(', ')
+          )
+        );
+      }
+
+      var mergeLinks = create('div', 'd-flex gap-1 flex-wrap mt-1');
+      addLink(
+        mergeLinks,
+        'Открыть сборку',
+        run.merge.open_url,
+        'btn btn-sm btn-outline-primary',
+        true
+      );
+      addLink(
+        mergeLinks,
+        'Скачать сборку',
+        run.merge.download_url,
+        'btn btn-sm btn-outline-success',
+        false
+      );
+      addLink(
+        mergeLinks,
+        'Result JSON',
+        run.merge.result_url,
+        'btn btn-sm btn-outline-secondary',
+        true
+      );
+      assembly.appendChild(mergeLinks);
+    }
+
+    if (run.can_aligned_merge && (!run.merge || run.merge.state !== 'done')) {
+      var form = document.createElement('form');
+      form.method = 'post';
+      form.action = '/order.php?id=' + run.order_id;
+      form.className = 'mt-2';
+      form.addEventListener('submit', function (event) {
+        var question =
+          'Собрать dense-компоненты Run #' + run.run_id +
+          ' по общим COLMAP-позам? Компоненты без общего пути будут исключены.';
+        if (!window.confirm(question)) event.preventDefault();
+      });
+
+      hidden(form, 'action', 'aligned_merge_generated_dense_clouds');
+      hidden(form, 'sparse_remote_job_id', run.sparse_remote_job_id);
+      hidden(form, 'anchor_model_id', run.anchor_model_id);
+      hidden(form, 'exclude_tiny', 1);
+      hidden(form, 'min_points', 1000);
+      (run.source_job_ids || []).forEach(function (jobId) {
+        hidden(form, 'source_job_ids[]', jobId);
+      });
+
+      var button = create(
+        'button',
+        'btn btn-sm btn-success',
+        'Собрать компоненты Run #' + run.run_id + ' в одну модель'
+      );
+      button.type = 'submit';
+      form.appendChild(button);
+      form.appendChild(
+        create(
+          'div',
+          'form-text',
+          'Используются только dense jobs этого Run и одного sparse parent.'
+        )
+      );
+      assembly.appendChild(form);
+    }
+
+    panel.appendChild(assembly);
+
+    var title = card.querySelector('.fw-semibold');
+    if (title && title.nextSibling) {
+      title.parentNode.insertBefore(panel, title.nextSibling);
+    } else {
+      card.insertBefore(panel, card.firstChild);
+    }
+  }
+
+  var source = document.getElementById('sfm-run-lineage-json');
+  if (!source) return;
+
+  var runs;
+  try {
+    runs = JSON.parse(source.textContent || '[]');
+  } catch (error) {
+    console.error('Invalid SfM run lineage JSON', error);
+    return;
+  }
+
+  runs.forEach(render);
+
+  if (window.location.hash === '#simple-video-sfm') {
+    var trigger = document.querySelector(
+      '[data-bs-target="#simple-video-sfm"]'
+    );
+    if (trigger && window.bootstrap && window.bootstrap.Tab) {
+      window.bootstrap.Tab.getOrCreateInstance(trigger).show();
+    }
+  }
+})();
 </main>
 {include file="maklertour_footer.html"}

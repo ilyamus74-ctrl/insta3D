@@ -29,21 +29,14 @@ function auto_photo_dense_download_is_candidate(array $job): bool
         return false;
     }
 
-    foreach ([
-        'source_type',
-        'standalone_auto_photo_dense',
-        'dense_only',
-        'sparse_db_job_id',
-        'sparse_job_id',
-        'sparse_remote_job_id',
-        'model_id',
-    ] as $key) {
-        if (array_key_exists($key, $parameters)) {
-            return true;
-        }
-    }
-
-    return false;
+    /*
+     * Video SfM component jobs also publish model_id and
+     * sparse_remote_job_id. Generic keys must not route those jobs through
+     * the standalone Photo 3D scope resolver.
+     */
+    return ($parameters['source_type'] ?? null) === 'auto_photo_sparse'
+        && ($parameters['standalone_auto_photo_dense'] ?? null) === true
+        && ($parameters['dense_only'] ?? null) === true;
 }
 
 function auto_photo_dense_download_valid_ply(string $file): bool

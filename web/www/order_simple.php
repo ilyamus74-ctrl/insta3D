@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/bootstrap.php';
 require_once dirname(__DIR__) . '/remote_station/sfm_pipeline.php';
 require_once dirname(__DIR__) . '/libs/sfm_manual_alignment_lib.php';
+require_once dirname(__DIR__) . '/libs/sfm_video_run_lineage_lib.php';
 require_once dirname(__DIR__) . '/libs/auto_photo_sparse_ui_web_lib.php';
 require_once dirname(__DIR__)
     . '/libs/auto_photo_sparse_ui_render_lib.php';
@@ -111,6 +112,12 @@ function osv_run_sparse_components(array $run,array $jobs,int $orderId,int $sess
   if(!$sparse) return [];
   $remote=(int)$sparse['remote_job_id']; $payload=osv_sparse_components_for_job($remote); $models=$payload['models'] ?? [];
   if(!is_array($models)) return [];
+  $largestModelId=array_key_exists('largest_model_id',$payload)?(int)$payload['largest_model_id']:null;
+  if($largestModelId===null && $models){
+    $ranked=$models;
+    usort($ranked,fn($a,$b)=>((int)($b['registered_images']??0)<=> (int)($a['registered_images']??0)) ?: ((int)($b['points3D_count']??0)<=> (int)($a['points3D_count']??0)));
+    $largestModelId=(int)($ranked[0]['model_id']??0);
+  }
   $denseByModel=[];
   foreach($jobs as $j){
     if((int)($j['pipeline_run_id']??0)!==$rid) continue;
@@ -118,10 +125,30 @@ function osv_run_sparse_components(array $run,array $jobs,int $orderId,int $sess
     $params=osv_json_array($j['parameters_json'] ?? '{}');
     if(!array_key_exists('model_id',$params)) continue;
     $mid=(int)$params['model_id']; $ply=osv_remote_dir((int)$j['remote_job_id']).'/merged/merged_fused.ply'; $pi=osv_ply_info($ply);
-    $denseByModel[$mid]=['db_job_id'=>(int)$j['id'],'remote_job_id'=>(int)$j['remote_job_id'],'status'=>(string)$j['status'],'has_dense'=>!empty($pi['valid']),'viewer_url'=>!empty($pi['valid'])?('/sfm_3d_viewer.php?order_id='.$orderId.'&session_id='.$sessionId.'&pipeline_run_id='.$rid.'&artifact=dense&dense_remote_job_id='.(int)$j['remote_job_id']):'','download_url'=>!empty($pi['valid'])?('/api/sfm_remote_job_status.php?job_id='.(int)$j['id'].'&file=ply'):''];
+    $candidate=['db_job_id'=>(int)$j['id'],'remote_job_id'=>(int)$j['remote_job_id'],'status'=>(string)$j['status'],'has_dense'=>!empty($pi['valid']),'dense_points'=>(int)($pi['vertices']??0),'viewer_url'=>!empty($pi['valid'])?('/sfm_3d_viewer.php?order_id='.$orderId.'&session_id='.$sessionId.'&pipeline_run_id='.$rid.'&artifact=dense&dense_remote_job_id='.(int)$j['remote_job_id']):'','download_url'=>!empty($pi['valid'])?('/api/sfm_remote_job_status.php?job_id='.(int)$j['id'].'&file=ply'):''];
+    $current=$denseByModel[$mid] ?? null;
+    if($current===null || (empty($current['has_dense']) && !empty($candidate['has_dense'])) || ((bool)$current['has_dense']===(bool)$candidate['has_dense'] && (int)$candidate['db_job_id']>(int)$current['db_job_id'])){ $denseByModel[$mid]=$candidate; }
   }
   $out=[];
-  foreach($models as $m){ if(!is_array($m)) continue; $mid=(int)($m['model_id'] ?? 0); $dense=$denseByModel[$mid] ?? null; $out[]=['model_id'=>$mid,'registered_images'=>(int)($m['registered_images'] ?? 0),'sparse_points'=>(int)($m['points3D_count'] ?? ($m['sparse_points'] ?? 0)),'selected'=>$dense!==null,'dense_status'=>$dense['status'] ?? 'not selected','dense_remote_job_id'=>$dense['remote_job_id'] ?? 0,'viewer_url'=>$dense['viewer_url'] ?? '','download_url'=>$dense['download_url'] ?? '']; }
+  foreach($models as $m){
+    if(!is_array($m)) continue;
+    $mid=(int)($m['model_id'] ?? 0); $dense=$denseByModel[$mid] ?? null;
+    $out[]=[
+      'model_id'=>$mid,
+      'registered_images'=>(int)($m['registered_images'] ?? 0),
+      'sparse_points'=>(int)($m['points3D_count'] ?? ($m['sparse_points'] ?? 0)),
+      'is_primary'=>$largestModelId!==null && $mid===$largestModelId,
+      'selected'=>$dense!==null,
+      'has_dense'=>!empty($dense['has_dense']),
+      'dense_status'=>$dense['status'] ?? 'not selected',
+      'dense_db_job_id'=>$dense['db_job_id'] ?? 0,
+      'dense_remote_job_id'=>$dense['remote_job_id'] ?? 0,
+      'dense_points'=>$dense['dense_points'] ?? 0,
+      'sparse_remote_job_id'=>$remote,
+      'viewer_url'=>$dense['viewer_url'] ?? '',
+      'download_url'=>$dense['download_url'] ?? '',
+    ];
+  }
   return $out;
 }
 function osv_build_generated(array $sessions, array $merges=[]): array {
@@ -232,7 +259,10 @@ function osv_build_models_assemblies_by_session(array $sessions,array $merges,in
 $modelsAssembliesBySession=osv_build_models_assemblies_by_session($captureSessions,$generatedMerges,$orderId);
 foreach($captureSessions as $i=>$s){ $captureSessions[$i]['models_assemblies']=$modelsAssembliesBySession[(int)$s['id']] ?? []; }
 $generatedModels=osv_build_generated($captureSessions,$generatedMerges); $anchorOptions=[]; $defaultSparseRemoteJobId=0; foreach($generatedModels as $gm){ $mid=(int)($gm['model_id'] ?? 0); if($mid>0){ $anchorOptions[$mid]='Model '.$mid; } if($defaultSparseRemoteJobId<=0 && (int)($gm['sparse_remote_job_id'] ?? 0)>0){ $defaultSparseRemoteJobId=(int)$gm['sparse_remote_job_id']; } } ksort($anchorOptions); $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),'videos'=>count($videoScans),'capture_bundles'=>array_sum(array_map(fn($s)=>count($s['capture_bundles'] ?? []),$captureSessions)),'generated_models'=>count($generatedModels)];
-$smarty->assign('models_assemblies_by_session',$modelsAssembliesBySession); $smarty->assign('anchor_options',$anchorOptions); $smarty->assign('default_sparse_remote_job_id',$defaultSparseRemoteJobId); $smarty->assign('current_user',$user); $smarty->assign('order',$order); $smarty->assign('captureSessions',$captureSessions); $smarty->assign('videoScans',$videoScans); $smarty->assign('generated_models',$generatedModels); $smarty->assign('mediaTotals',$mediaTotals); $smarty->assign('canDeleteMedia',$canDeleteMedia);
+$sfmRunLineage=sfm_video_run_lineage_build($captureSessions,$generatedMerges,$orderId,$canDeleteMedia);
+$sfmRunLineageJson=json_encode($sfmRunLineage,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+if(!is_string($sfmRunLineageJson))$sfmRunLineageJson='[]';
+$smarty->assign('models_assemblies_by_session',$modelsAssembliesBySession); $smarty->assign('anchor_options',$anchorOptions); $smarty->assign('default_sparse_remote_job_id',$defaultSparseRemoteJobId); $smarty->assign('current_user',$user); $smarty->assign('order',$order); $smarty->assign('captureSessions',$captureSessions); $smarty->assign('videoScans',$videoScans); $smarty->assign('generated_models',$generatedModels); $smarty->assign('mediaTotals',$mediaTotals); $smarty->assign('canDeleteMedia',$canDeleteMedia); $smarty->assign('sfmRunLineageJson',$sfmRunLineageJson);
 $smarty->assign('autoPhotoSparseUiNav',$autoPhotoSparseUiRender['nav']);
 $smarty->assign('autoPhotoSparseUiPane',$autoPhotoSparseUiRender['pane']);
 $smarty->display('maklertour_order_simple.html');
