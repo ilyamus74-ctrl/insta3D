@@ -1,0 +1,321 @@
+diff --git a/web/remote_station/scripts/process_colmap_sparse.sh b/web/remote_station/scripts/process_colmap_sparse.sh
+index fa0cedb..0000000 100755
+--- a/web/remote_station/scripts/process_colmap_sparse.sh
++++ b/web/remote_station/scripts/process_colmap_sparse.sh
+@@ -27,5 +27,12 @@ COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA="${COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA
+ COLMAP_CAMERA_MODEL_FROM_METADATA=""
+ PARAMETERS_JSON_PATH="$BASE/input/job_${JOB_ID}/parameters.json"
++APRILTAG_ASSIST_ENABLED="${APRILTAG_ASSIST_ENABLED:-1}"
++APRILTAG_TAG_FAMILY="${APRILTAG_TAG_FAMILY:-tag36h11}"
++APRILTAG_MARKER_SIZE_M="${APRILTAG_MARKER_SIZE_M:-0.160}"
++APRILTAG_VALID_IDS="${APRILTAG_VALID_IDS:-1-30}"
++APRILTAG_MIN_OBSERVATIONS="${APRILTAG_MIN_OBSERVATIONS:-3}"
++APRILTAG_MAX_OBSERVATIONS_PER_TAG="${APRILTAG_MAX_OBSERVATIONS_PER_TAG:-20}"
++APRILTAG_DETECTOR_BIN="${APRILTAG_DETECTOR_BIN:-}"
+
+ mkdir -p "$BASE/status" "$BASE/logs"
+
+@@ -531,6 +538,63 @@ done
+
+ generate_sparse_components
+
++APRILTAG_ASSIST_JSON_PATH="$OUTPUT_DIR/apriltag_assist.json"
++if [[ "$APRILTAG_ASSIST_ENABLED" == "1" ]]; then
++  write_status "RUNNING" 94 -1 "AprilTag helper: checking registered frames"
++  APRILTAG_ASSIST_CMD=(
++    "$BASE/scripts/analyze_apriltag_assist.sh"
++    --frames-dir "$FRAMES_DIR"
++    --sparse-dir "$SPARSE_DIR"
++    --output-json "$APRILTAG_ASSIST_JSON_PATH"
++    --tag-family "$APRILTAG_TAG_FAMILY"
++    --marker-size-m "$APRILTAG_MARKER_SIZE_M"
++    --valid-ids "$APRILTAG_VALID_IDS"
++    --min-observations "$APRILTAG_MIN_OBSERVATIONS"
++    --max-observations-per-tag "$APRILTAG_MAX_OBSERVATIONS_PER_TAG"
++  )
++  if [[ -n "$APRILTAG_DETECTOR_BIN" ]]; then
++    APRILTAG_ASSIST_CMD+=(--detector-bin "$APRILTAG_DETECTOR_BIN")
++  fi
++  if ! "${APRILTAG_ASSIST_CMD[@]}" >> "$LOG_FILE" 2>&1; then
++    python3 - "$APRILTAG_ASSIST_JSON_PATH" <<'PYASSIST'
++import json,sys
++path=sys.argv[1]
++payload={
++  "status":"MARKER_ASSIST_ERROR",
++  "assist_only":True,
++  "sim3_applied":False,
++  "completed_with_warnings":True,
++  "warning_code":"MARKER_ASSIST_ERROR",
++  "warning_text":"AprilTag-помощник завершился с ошибкой. Основная COLMAP-сборка продолжена без маркерной привязки.",
++  "detections_total":0,
++  "usable_observations":0,
++  "usable_tags":0,
++  "bridge_tags":[],
++  "observations_by_tag":{}
++}
++open(path,'w',encoding='utf-8').write(json.dumps(payload,ensure_ascii=False,indent=2))
++PYASSIST
++  fi
++else
++  python3 - "$APRILTAG_ASSIST_JSON_PATH" <<'PYASSIST'
++import json,sys
++payload={
++  "status":"MARKER_ASSIST_DISABLED",
++  "assist_only":True,
++  "sim3_applied":False,
++  "completed_with_warnings":True,
++  "warning_code":"MARKER_ASSIST_DISABLED",
++  "warning_text":"AprilTag-помощник отключён. Модель построена без маркерной привязки.",
++  "detections_total":0,
++  "usable_observations":0,
++  "usable_tags":0,
++  "bridge_tags":[],
++  "observations_by_tag":{}
++}
++open(sys.argv[1],'w',encoding='utf-8').write(json.dumps(payload,ensure_ascii=False,indent=2))
++PYASSIST
++fi
++
+ CAMERA_METADATA_RESULT="{}"
+ META_PATH="$(find_camera_metadata_json || true)"
+ if [[ -n "$META_PATH" && -f "$META_PATH" ]]; then
+@@ -539,5 +597,27 @@ fi
+ SPARSE_COMPONENTS_JSON="{}"
+ if [[ -f "$OUTPUT_DIR/sparse_components.json" ]]; then SPARSE_COMPONENTS_JSON="$(cat "$OUTPUT_DIR/sparse_components.json")"; fi
++APRILTAG_ASSIST_JSON="$(cat "$APRILTAG_ASSIST_JSON_PATH")"
++mapfile -t RESULT_WARNING_META < <(
++python3 - "$MODEL_COUNT" "$APRILTAG_ASSIST_JSON_PATH" <<'PYRESULT'
++import json,sys
++model_count=int(sys.argv[1])
++marker=json.load(open(sys.argv[2],encoding='utf-8'))
++warnings=[]
++if model_count>1:
++    warnings.append("Sparse reconstruction split into multiple components")
++marker_warning=str(marker.get("warning_text") or "").strip()
++if marker_warning:
++    warnings.append(marker_warning)
++print(json.dumps(" ".join(warnings),ensure_ascii=False))
++print(json.dumps(warnings,ensure_ascii=False))
++print("true" if warnings else "false")
++print(marker_warning.replace("\n"," "))
++PYRESULT
++)
++RESULT_WARNING_JSON="${RESULT_WARNING_META[0]:-\"\"}"
++RESULT_WARNINGS_JSON="${RESULT_WARNING_META[1]:-[]}"
++COMPLETED_WITH_WARNINGS="${RESULT_WARNING_META[2]:-false}"
++APRILTAG_WARNING_TEXT="${RESULT_WARNING_META[3]:-}"
+ cat > "$OUTPUT_DIR/result.json" <<JSON
+ {
+   "job_id": "$JOB_ID",
+@@ -557,9 +634,17 @@ cat > "$OUTPUT_DIR/result.json" <<JSON
+   "largest_model_id": $(python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("largest_model_id")))' <<< "$SPARSE_COMPONENTS_JSON"),
+   "largest_model_registered_images": $(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("largest_model_registered_images",0))' <<< "$SPARSE_COMPONENTS_JSON"),
+   "sparse_components_path": "$OUTPUT_DIR/sparse_components.json",
+-  "warning": "$(if [[ "$MODEL_COUNT" -gt 1 ]]; then printf 'Sparse reconstruction split into multiple components'; fi)",
++  "marker_assist_path": "$APRILTAG_ASSIST_JSON_PATH",
++  "marker_assist": $APRILTAG_ASSIST_JSON,
++  "completed_with_warnings": $COMPLETED_WITH_WARNINGS,
++  "warnings": $RESULT_WARNINGS_JSON,
++  "warning": $RESULT_WARNING_JSON,
+   "finished_at": "$(date -Iseconds)"
+ }
+ JSON
+
+-write_status "DONE" 100 -1 "COLMAP sparse reconstruction done"
++FINAL_MESSAGE="COLMAP sparse reconstruction done"
++if [[ -n "$APRILTAG_WARNING_TEXT" ]]; then
++  FINAL_MESSAGE="$FINAL_MESSAGE. $APRILTAG_WARNING_TEXT"
++fi
++write_status "DONE" 100 -1 "$FINAL_MESSAGE"
+ diff --git a/web/remote_station/scripts/process_colmap_dense.sh b/web/remote_station/scripts/process_colmap_dense.sh
+index 6be3e30..0000000 100755
+--- a/web/remote_station/scripts/process_colmap_dense.sh
++++ b/web/remote_station/scripts/process_colmap_dense.sh
+@@ -96,6 +96,28 @@ PY
+ )"
+ if [[ -z "$FRAMES_DIR" ]]; then write_status "ERROR" 0 -1 "frames_dir missing in sparse result.json: $SPARSE_RESULT"; exit 1; fi
+ if [[ ! -d "$FRAMES_DIR" ]]; then write_status "ERROR" 0 -1 "Frames directory not found: $FRAMES_DIR"; exit 1; fi
++mapfile -t MARKER_META < <(
++python3 - "$SPARSE_RESULT" <<'PYMARKER'
++import json,sys
++data=json.load(open(sys.argv[1],encoding='utf-8'))
++marker=data.get('marker_assist')
++if not isinstance(marker,dict):
++    marker={
++      "status":"MARKER_ASSIST_NOT_RECORDED",
++      "assist_only":True,
++      "sim3_applied":False,
++      "completed_with_warnings":True,
++      "warning_code":"MARKER_ASSIST_NOT_RECORDED",
++      "warning_text":"В sparse-результате нет данных AprilTag-помощника. Dense-модель продолжена без маркерной проверки."
++    }
++print(json.dumps(marker,ensure_ascii=False))
++print(str(marker.get('warning_text') or '').replace('\n',' '))
++print('true' if marker.get('completed_with_warnings') else 'false')
++PYMARKER
++)
++MARKER_ASSIST_JSON="${MARKER_META[0]:-{}}"
++MARKER_WARNING_TEXT="${MARKER_META[1]:-}"
++COMPLETED_WITH_WARNINGS="${MARKER_META[2]:-false}"
+ for f in cameras.bin images.bin points3D.bin; do [[ -f "$SPARSE_MODEL_DIR/$f" ]] || { write_status "ERROR" 0 -1 "Sparse model file missing: $SPARSE_MODEL_DIR/$f"; exit 1; }; done
+ mkdir -p "$DENSE_DIR" "$DENSE_LOG_DIR"
+
+@@ -118,7 +142,14 @@ cat > "$DENSE_DIR/result.json" <<JSON
+   "dense_dir": "$DENSE_DIR",
+   "fused_ply": "$FUSED_PLY",
+   "fused_ply_size_bytes": $SIZE,
++  "marker_assist": $MARKER_ASSIST_JSON,
++  "completed_with_warnings": $COMPLETED_WITH_WARNINGS,
++  "warning": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1],ensure_ascii=False))' "$MARKER_WARNING_TEXT"),
+   "finished_at": "$(date -Iseconds)"
+ }
+ JSON
+-write_status "DONE" 100 -1 "COLMAP dense reconstruction done"
++FINAL_MESSAGE="COLMAP dense reconstruction done"
++if [[ -n "$MARKER_WARNING_TEXT" ]]; then
++  FINAL_MESSAGE="$FINAL_MESSAGE. $MARKER_WARNING_TEXT"
++fi
++write_status "DONE" 100 -1 "$FINAL_MESSAGE"
+diff --git a/web/tests/apriltag_assist_test.sh b/web/tests/apriltag_assist_test.sh
+new file mode 100755
+index 0000000..0000000
+--- /dev/null
++++ b/web/tests/apriltag_assist_test.sh
+@@ -0,0 +1,76 @@
++#!/usr/bin/env bash
++set -Eeuo pipefail
++
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++HELPER="$ROOT/remote_station/scripts/analyze_apriltag_assist.sh"
++TMP="$(mktemp -d)"
++trap 'rm -rf "$TMP"' EXIT
++
++mkdir -p "$TMP/frames" "$TMP/sparse/0/txt" "$TMP/sparse/1/txt"
++for n in 1 2 3 101 102 103; do
++  touch "$TMP/frames/frame_$(printf '%06d' "$n").jpg"
++done
++
++cat > "$TMP/sparse/0/txt/images.txt" <<'EOF'
++# Image list
++1 1 0 0 0 0 0 0 1 frame_000001.jpg
++2 1 0 0 0 0 0 0 1 frame_000002.jpg
++3 1 0 0 0 0 0 0 1 frame_000003.jpg
++EOF
++
++cat > "$TMP/sparse/1/txt/images.txt" <<'EOF'
++# Image list
++1 1 0 0 0 0 0 0 1 frame_000101.jpg
++2 1 0 0 0 0 0 0 1 frame_000102.jpg
++3 1 0 0 0 0 0 0 1 frame_000103.jpg
++EOF
++
++cat > "$TMP/detections.json" <<'EOF'
++{
++  "detections": [
++    {"source_path":"frame_000001.jpg","marker_id":7,"corners":[[1,1],[2,1],[2,2],[1,2]]},
++    {"source_path":"frame_000002.jpg","marker_id":7,"corners":[[1,1],[2,1],[2,2],[1,2]]},
++    {"source_path":"frame_000003.jpg","marker_id":7,"corners":[[1,1],[2,1],[2,2],[1,2]]},
++    {"source_path":"frame_000101.jpg","marker_id":7,"corners":[[1,1],[2,1],[2,2],[1,2]]},
++    {"source_path":"frame_000102.jpg","marker_id":7,"corners":[[1,1],[2,1],[2,2],[1,2]]},
++    {"source_path":"frame_000103.jpg","marker_id":7,"corners":[[1,1],[2,1],[2,2],[1,2]]}
++  ]
++}
++EOF
++
++APRILTAG_ASSIST_DETECTIONS_JSON="$TMP/detections.json" \
++  "$HELPER" \
++  --frames-dir "$TMP/frames" \
++  --sparse-dir "$TMP/sparse" \
++  --output-json "$TMP/ready.json" \
++  --min-observations 3
++
++python3 - "$TMP/ready.json" <<'PY'
++import json,sys
++d=json.load(open(sys.argv[1],encoding='utf-8'))
++assert d['status']=='MARKERS_READY', d
++assert d['bridge_tags']==[7], d
++assert d['scale_ready_components']==['0','1'], d
++assert d['completed_with_warnings'] is False, d
++PY
++
++cat > "$TMP/empty.json" <<'EOF'
++{"detections":[]}
++EOF
++
++APRILTAG_ASSIST_DETECTIONS_JSON="$TMP/empty.json" \
++  "$HELPER" \
++  --frames-dir "$TMP/frames" \
++  --sparse-dir "$TMP/sparse" \
++  --output-json "$TMP/not_found.json" \
++  --min-observations 3
++
++python3 - "$TMP/not_found.json" <<'PY'
++import json,sys
++d=json.load(open(sys.argv[1],encoding='utf-8'))
++assert d['status']=='MARKERS_NOT_FOUND', d
++assert d['completed_with_warnings'] is True, d
++assert 'проблемы их стыковки' in d['warning_text'], d
++PY
++
++echo "OK"
+diff --git a/web/tests/apriltag_assist_contract_test.php b/web/tests/apriltag_assist_contract_test.php
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/web/tests/apriltag_assist_contract_test.php
+@@ -0,0 +1,55 @@
++<?php
++declare(strict_types=1);
++
++$root = dirname(__DIR__);
++$helper = $root
++    . '/remote_station/scripts/analyze_apriltag_assist.sh';
++$sparse = $root
++    . '/remote_station/scripts/process_colmap_sparse.sh';
++$dense = $root
++    . '/remote_station/scripts/process_colmap_dense.sh';
++
++foreach ([$helper, $sparse, $dense] as $path) {
++    if (!is_file($path)) {
++        throw new RuntimeException(
++            'required file not found: ' . $path
++        );
++    }
++}
++
++function apriltag_contract_ok(bool $condition, string $message): void
++{
++    if (!$condition) {
++        throw new RuntimeException($message);
++    }
++}
++
++$helperSource = (string)file_get_contents($helper);
++foreach ([
++    'MARKERS_NOT_FOUND',
++    'MARKERS_INSUFFICIENT',
++    'MARKERS_DISCONNECTED',
++    'MARKERS_READY',
++    'min_registered_observations_per_tag',
++    'bridge_tags',
++    'sim3_applied',
++] as $required) {
++    apriltag_contract_ok(
++        str_contains($helperSource, $required),
++        'helper contract missing: ' . $required
++    );
++}
++
++$sparseSource = (string)file_get_contents($sparse);
++apriltag_contract_ok(
++    str_contains($sparseSource, '"marker_assist":'),
++    'sparse result does not expose marker_assist'
++);
++
++$denseSource = (string)file_get_contents($dense);
++apriltag_contract_ok(
++    str_contains($denseSource, '"marker_assist":'),
++    'dense result does not propagate marker_assist'
++);
++
++echo "OK\n";
