@@ -3,9 +3,10 @@
 ## Status
 
 ```text
-PLANNED
-CURRENT IMPLEMENTATION STAGE: pair-local depth
-ACTIVE NEXT STAGE: APP-STEREO-F01A
+IMPLEMENTED THROUGH INITIAL GLOBAL FUSION
+CURRENT TRAJECTORY MATCHER: ORB
+CURRENT FUSION STAGE: initial_no_icp
+RUNTIME ACCEPTANCE PENDING
 ```
 
 ## Purpose
@@ -33,16 +34,20 @@ calibration/stereo_extrinsics.json
 
 ## Current boundary
 
-The current job creates independent pair-local depth results.
+The current job creates:
 
-It does not yet:
+- pair-local metric depth and colored PLY clouds;
+- an ORB/PnP metric trajectory with accepted/rejected pose records;
+- an accepted-pose-only initial global voxel fusion;
+- `dense/global_fusion/fused_global_no_icp.ply`;
+- `fusion_stage=initial_no_icp`;
+- `icp_applied=false`;
+- `global_fusion_complete=false`.
 
-- estimate camera poses between pairs;
-- transform pairs into a common frame;
-- create a global fused PLY.
-
-Multiple depth maps or multiple local PLY files do not constitute a global
-model.
+The current global PLY is diagnostic, not the final production model. The job
+does not yet provide LightGlue matching, IMU pose gating, submaps,
+relocalization, ICP refinement, VGGT recovery, global bundle adjustment, TSDF
+integration or mesh export.
 
 ## Stage F01A — Pair-local metric clouds
 
@@ -115,9 +120,8 @@ F01B contract.
 Required artifacts:
 
 ```text
-dense/stereo_global_fused.ply
-dense/stereo_fusion_debug.json
-dense/stereo_fusion_preview.jpg
+dense/global_fusion/fused_global_no_icp.ply
+dense/global_fusion/global_fusion_manifest.json
 ```
 
 Global fusion may include only pair clouds whose pose and depth quality gates
@@ -137,6 +141,28 @@ world coordinate convention
 units
 ```
 
+
+## Matcher and roadmap branch boundary
+
+The current stereo trajectory matcher is ORB with mutual binary-descriptor
+matching followed by metric 3D-to-2D PnP.
+
+The repository contains two different future LightGlue tasks:
+
+```text
+Video SfM LightGlue bridge:
+    bridge disconnected COLMAP room/staircase components
+
+Stereo odometry LightGlue matcher:
+    improve cross-pair correspondences in MAKLERTOUR_SYNCED_DENSE
+```
+
+These tasks must not share an unqualified `LightGlue POC` status. They use
+different inputs, outputs, acceptance metrics and failure handling.
+
+The stereo matcher must first be A/B-tested against a saved ORB baseline. ORB
+remains the fast path or fallback until runtime evidence supports a different
+policy.
 ## Coordinate and orientation rules
 
 - UI/display rotation is diagnostic only.

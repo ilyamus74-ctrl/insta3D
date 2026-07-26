@@ -3,7 +3,8 @@
 ## Status
 
 ```text
-READY FOR IMPLEMENTATION
+IMPLEMENTED AND WIRED INTO MAKLERTOUR_SYNCED_DENSE
+RUNTIME VISUAL ACCEPTANCE PENDING
 ```
 
 ## Parent
@@ -230,4 +231,4 @@ vertical branch is verified
 documentation is updated
 ```
 
-After acceptance, start `APP-STEREO-F01B`.
+Implementation is complete; runtime inspection remains part of the current stereo acceptance gate.

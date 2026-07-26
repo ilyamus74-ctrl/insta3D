@@ -3,8 +3,8 @@
 ## Status
 
 ```text
-IMPLEMENTED CORE
-NOT WIRED INTO MAKLERTOUR_SYNCED_DENSE
+IMPLEMENTED AND WIRED INTO MAKLERTOUR_SYNCED_DENSE
+RUNTIME ACCEPTANCE PENDING
 ```
 
 ## Parent
@@ -34,9 +34,9 @@ dense/stereo_trajectory.json
 dense/stereo_odometry_debug.json
 ```
 
-F01B-A is intentionally not called by
-`process_maklertour_synced_dense.sh`. Job integration is a separate F01B-B
-patch after F01A runtime verification.
+F01B-A is called automatically by `process_maklertour_synced_dense.sh` after
+pair-local depth/cloud export. The current implementation uses ORB; LightGlue
+is a future A/B-tested matcher or fallback, not an already active dependency.
 
 ## Method
 
@@ -161,11 +161,10 @@ python3 web/remote_station/scripts/stereo_visual_odometry.py \
   /path/to/job/dense
 ```
 
-## Next patch
+## Next runtime gate
 
 ```text
-APP-STEREO-F01B-B
-→ call the engine from process_maklertour_synced_dense.sh
-→ publish trajectory/debug paths in result.json
-→ keep global_fusion_complete=false
+run a short calibrated synced-depth capture
+→ inspect accepted/rejected poses and drift
+→ save ORB baseline metrics before LightGlue changes
 ```

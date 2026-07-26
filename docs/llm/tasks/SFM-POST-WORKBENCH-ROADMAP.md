@@ -7,7 +7,7 @@ SFM-ASSEMBLY-WORKBENCH-B
 → SFM-VIEWER-FREE-ORBIT-A
 → SFM-MANUAL-VISUAL-ALIGN-A
 → SFM-MANUAL-VISUAL-ALIGN-B
-→ resume LightGlue bridge POC
+→ resume Video SfM LightGlue bridge POC
 ```
 
 No later task may silently bypass an incomplete earlier contract.
@@ -38,6 +38,20 @@ ICP refinement is not available after a human initial alignment
 ```
 
 ## Stage 1 — SFM-ASSEMBLY-WORKBENCH-B
+
+## Branch boundary
+
+This roadmap owns the single-camera Video SfM component assembly path only.
+It does not own `MAKLERTOUR_SYNCED_DENSE`, calibrated stereo depth, stereo
+visual odometry or global stereo fusion.
+
+`LightGlue bridge POC` in this file always means:
+
+```text
+Video SfM LightGlue bridge for disconnected COLMAP room/staircase components
+```
+
+Stereo LightGlue work is tracked separately under the APP-STEREO roadmap.
 
 Finish explicit Anchor and Moving-source semantics, assembly lineage reuse,
 source trust states, compatibility checks and actionable errors.
@@ -75,10 +89,11 @@ Use the human visual transform as an initial state for local ICP refinement.
 
 ICP must not be treated as blind global registration.
 
-## Stage 5 — LightGlue bridge POC
+## Stage 5 — Video SfM LightGlue bridge POC
 
 After the UI and manual alignment contracts are stable, resume the bridge POC
-for disconnected room/staircase components.
+for disconnected room/staircase COLMAP components. This stage must not modify
+the synced-stereo ORB/PnP trajectory pipeline.
 
 ## Global safety rules
 

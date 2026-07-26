@@ -4,7 +4,8 @@
 
 ```text
 IMPLEMENTED
-RUNTIME DEPLOYMENT PENDING
+STATION SCRIPT SYNC AVAILABLE
+STEREO RUNTIME ACCEPTANCE PENDING
 ```
 
 ## Goal
@@ -31,4 +32,4 @@ cd /home/makler/web/remote_station
 ./deploy_station.sh ./stations.conf
 ```
 
-Then submit a new `MAKLERTOUR_SYNCED_DENSE` bundle.
+Then submit a short calibrated `MAKLERTOUR_SYNCED_DENSE` bundle and preserve its baseline metrics.

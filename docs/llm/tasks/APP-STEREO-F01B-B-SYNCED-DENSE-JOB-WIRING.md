@@ -3,8 +3,8 @@
 ## Status
 
 ```text
-IMPLEMENTED
-DEPLOYMENT DEFERRED UNTIL ACTIVE FHD60 JOB FINISHES
+IMPLEMENTED AND WIRED
+RUNTIME ACCEPTANCE PENDING
 ```
 
 ## Parent
@@ -98,9 +98,7 @@ The job fails when:
 
 ## Safety boundary
 
-This patch does not:
-
-- deploy scripts while the FHD60 job is active;
+This stage does not:
 - modify Android;
 - perform global point-cloud fusion;
 - run ICP;
@@ -122,9 +120,9 @@ The test uses a temporary station and fake processing executables. It verifies:
 - final status is `DONE`;
 - global fusion remains false.
 
-## Runtime acceptance after deployment
+## Runtime acceptance
 
-Run a new `MAKLERTOUR_SYNCED_DENSE` job and inspect:
+Run a new short calibrated `MAKLERTOUR_SYNCED_DENSE` job and inspect:
 
 ```text
 pair_cloud_count

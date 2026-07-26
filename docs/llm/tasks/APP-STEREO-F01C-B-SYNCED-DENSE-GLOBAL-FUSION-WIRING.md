@@ -3,8 +3,8 @@
 ## Status
 
 ```text
-IMPLEMENTED
-DEPLOYMENT DEFERRED UNTIL ACTIVE FHD60 JOB FINISHES
+IMPLEMENTED AND WIRED
+RUNTIME ACCEPTANCE PENDING
 ```
 
 ## Parent
@@ -116,10 +116,8 @@ point counters, artifact paths, and the false ICP/completion flags.
 
 ## Runtime acceptance
 
-After the active FHD60 job finishes:
-
-1. deploy the updated station scripts;
-2. start a new `MAKLERTOUR_SYNCED_DENSE` job;
+1. verify the stereo station deploy gate;
+2. start a new short calibrated `MAKLERTOUR_SYNCED_DENSE` job;
 3. inspect trajectory acceptance;
 4. open `fused_global_no_icp.ply`;
 5. verify scale, orientation, duplicate surfaces, drift, and cloud gaps;

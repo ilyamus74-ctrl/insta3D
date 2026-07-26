@@ -3,8 +3,9 @@
 ## Status
 
 ```text
-PLANNED
-ACTIVE NEXT: APP-STEREO-F01A
+IMPLEMENTED THROUGH F01C INITIAL GLOBAL FUSION
+CURRENT MATCHER: ORB
+RUNTIME ACCEPTANCE PENDING
 ```
 
 ## Goal
@@ -23,29 +24,40 @@ Android synced_depth_frames capture
 → baseline-axis detection
 → horizontal or vertical StereoSGBM
 → metric depth for individual pairs
-→ browser preview and depth summary
+→ colored pair-local metric PLY clouds
+→ ORB cross-pair metric visual odometry
+→ accepted-pose global transforms
+→ initial voxel-fused global PLY without ICP
+→ browser preview, manifests and result summary
 ```
 
-The current output is not a global model:
+The current output includes an initial diagnostic global model:
 
 ```text
-pair 0 → local depth
-pair 1 → local depth
-pair 2 → local depth
+pair-local metric clouds
++ accepted ORB/PnP trajectory poses
+→ dense/global_fusion/fused_global_no_icp.ply
+→ icp_applied=false
+→ global_fusion_complete=false
 ```
 
-The missing pipeline is:
+The missing production pipeline is:
 
 ```text
-pair-local metric 3D
-+ metric camera trajectory
-+ quality-controlled transforms
-→ global fused 3D
+runtime acceptance and drift classification
+→ deterministic pair quality/keyframe selection
+→ LightGlue A/B and fallback integration
+→ IMU rotation validation
+→ submaps and relocalization
+→ bounded neighbor-only ICP
+→ VGGT recovery for broken trajectories
+→ global pose optimization / bundle adjustment
+→ Open3D TSDF and mesh
 ```
 
 ## Implementation sequence
 
-### APP-STEREO-F01A — Metric Pair Cloud Export
+### APP-STEREO-F01A — Metric Pair Cloud Export — implemented
 
 For each accepted stereo pair:
 
@@ -58,7 +70,7 @@ metric depth
 
 F01A does not estimate motion and must not claim global alignment.
 
-### APP-STEREO-F01B — Metric Stereo Visual Odometry
+### APP-STEREO-F01B — Metric Stereo Visual Odometry — implemented with ORB
 
 For selected consecutive pairs:
 
@@ -73,7 +85,7 @@ For selected consecutive pairs:
 
 IMU rotation is validation/support data, not the sole pose source.
 
-### APP-STEREO-F01C — Global Fusion
+### APP-STEREO-F01C — Initial Global Fusion — implemented without ICP
 
 ```text
 local pair clouds
@@ -81,8 +93,9 @@ local pair clouds
 → world transforms
 → quality gates
 → voxel filtering
-→ optional neighbor-only ICP refinement
-→ stereo_global_fused.ply
+→ dense/global_fusion/fused_global_no_icp.ply
+→ icp_applied=false
+→ global_fusion_complete=false
 ```
 
 ### APP-STEREO-T01 — Optional ToF depth anchor
@@ -100,11 +113,15 @@ Three ToF sensors are deferred until one sensor proves useful.
 
 ## Parallel Video SfM branch
 
-FHD 60 FPS Video SfM evaluation continues independently.
+FHD 60 FPS Video SfM evaluation continues independently. Its LightGlue bridge
+POC targets disconnected COLMAP room/staircase components.
 
-Its result may establish Video SfM as the recommended capture mode, but it
-does not block stereo F01. Video and stereo changes must remain in separate
-patch series until each branch has runtime evidence.
+Stereo F01 uses a different matching problem: cross-pair trajectory estimation
+from synchronized calibrated stereo pairs. A future stereo LightGlue matcher
+must be documented and tested separately from the Video SfM bridge POC.
+
+Video and stereo changes must remain in separate patch series until each branch
+has runtime evidence.
 
 ## Non-goals
 
@@ -167,23 +184,26 @@ dense/stereo_trajectory.json
 dense/stereo_odometry_debug.json
 
 F01C:
-dense/stereo_global_fused.ply
-dense/stereo_fusion_debug.json
-dense/stereo_fusion_preview.jpg
+dense/global_fusion/fused_global_no_icp.ply
+dense/global_fusion/global_fusion_manifest.json
+global_fusion_complete=false
 ```
 
 ## Acceptance sequence
 
 ```text
-1. Implement F01A.
-2. Inspect 3–5 local pair clouds in MeshLab.
-3. Confirm metric scale and orientation.
-4. Implement F01B.
-5. Validate trajectory on a short controlled path.
-6. Implement F01C.
-7. Inspect global model and drift.
-8. Add web viewer and secure PLY download.
-9. Evaluate one central VL53L8CX.
+1. Run a short calibrated MAKLERTOUR_SYNCED_DENSE capture.
+2. Inspect 3–5 pair-local clouds and confirm metric scale/orientation.
+3. Inspect accepted/rejected ORB trajectory poses and reprojection errors.
+4. Open fused_global_no_icp.ply and classify drift, duplicates and gaps.
+5. Add pair quality/keyframe selection.
+6. A/B-test stereo LightGlue against the saved ORB baseline.
+7. Add IMU rotation validation and submap/relocalization diagnostics.
+8. Add bounded neighbor-only ICP.
+9. Add VGGT recovery and then global pose optimization.
+10. Add TSDF/mesh only after optimized-pose acceptance.
+11. Add web viewer and secure PLY download for the accepted artifact.
+12. Evaluate one central VL53L8CX only after stereo runtime acceptance.
 ```
 
 ## Related contracts
