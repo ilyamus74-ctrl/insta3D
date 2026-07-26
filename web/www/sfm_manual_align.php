@@ -805,6 +805,419 @@ await Promise.all([
   anchorViewer.load(apiBase + '&action=file&file=anchor'),
   sourceViewer.load(apiBase + '&action=file&file=source'),
 ]);
+
+window.sfmManualClouds = { anchorViewer, sourceViewer };
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+const clouds = window.sfmManualClouds;
+if (!clouds?.anchorViewer?.geometry || !clouds?.sourceViewer?.geometry) {
+  console.error('Visual alignment UI: geometries are unavailable');
+} else {
+  const query = new URLSearchParams(window.location.search);
+  const visualStorageKey = 'sfm-manual-visual:' + JSON.stringify({
+    order_id: Number(query.get('order_id') || 0),
+    anchor_kind: query.get('anchor_kind') || 'remote',
+    anchor_id: Number(query.get('anchor_id') || 0),
+    source_kind: query.get('source_kind') || 'remote',
+    source_id: Number(query.get('source_id') || 0),
+  });
+
+  const style = document.createElement('style');
+  style.textContent = `
+    .combined-visual-canvas {
+      height: 72vh;
+      min-height: 540px;
+      background: #202638;
+      border-radius: .4rem;
+      overflow: hidden;
+      position: relative;
+    }
+    .visual-transform-grid input { min-width: 0; }
+  `;
+  document.head.appendChild(style);
+
+  const card = document.createElement('div');
+  card.id = 'visualAlignmentCard';
+  card.className = 'card mt-3';
+  card.innerHTML = `
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <div>
+        <b>Visual alignment: Anchor + Moving source</b>
+        <div class="small text-muted">
+          Anchor фиксирован. Moving source можно двигать, вращать и равномерно масштабировать.
+        </div>
+      </div>
+      <div class="d-flex gap-1">
+        <button class="btn btn-sm btn-outline-secondary" type="button" id="visualFitBoth">Fit both</button>
+        <button class="btn btn-sm btn-outline-danger" type="button" id="visualResetTransform">Reset transform</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-primary active" type="button" data-visual-mode="translate">Move (W)</button>
+          <button class="btn btn-outline-primary" type="button" data-visual-mode="rotate">Rotate (E)</button>
+          <button class="btn btn-outline-primary" type="button" data-visual-mode="scale">Scale (R)</button>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" type="button" id="visualSpaceToggle">World axes (Q)</button>
+        <label class="small mb-0">Moving opacity
+          <input type="range" class="form-range d-inline-block align-middle ms-1" id="visualOpacity" min="0.1" max="1" step="0.05" value="0.72" style="width:150px">
+        </label>
+        <label class="small mb-0">Anchor points
+          <input type="range" class="form-range d-inline-block align-middle ms-1" id="visualAnchorPointSize" min="0.5" max="6" step="0.25" value="2" style="width:120px">
+        </label>
+        <label class="small mb-0">Moving points
+          <input type="range" class="form-range d-inline-block align-middle ms-1" id="visualMovingPointSize" min="0.5" max="6" step="0.25" value="2.5" style="width:120px">
+        </label>
+      </div>
+
+      <div id="combinedVisualViewer" class="combined-visual-canvas">
+        <div id="combinedVisualStatus" class="viewer-status">Подготовка общего окна…</div>
+        <div class="viewer-hint">
+          Манипулятор изменяет Moving source. Мышь вне манипулятора управляет камерой.
+        </div>
+      </div>
+
+      <div class="row g-2 visual-transform-grid mt-2">
+        <div class="col-6 col-md-3 col-xl-1"><label class="form-label small">X<input class="form-control form-control-sm" id="visualTx" type="number" step="any" value="0"></label></div>
+        <div class="col-6 col-md-3 col-xl-1"><label class="form-label small">Y<input class="form-control form-control-sm" id="visualTy" type="number" step="any" value="0"></label></div>
+        <div class="col-6 col-md-3 col-xl-1"><label class="form-label small">Z<input class="form-control form-control-sm" id="visualTz" type="number" step="any" value="0"></label></div>
+        <div class="col-6 col-md-3 col-xl-1"><label class="form-label small">Rot X°<input class="form-control form-control-sm" id="visualRx" type="number" step="0.1" value="0"></label></div>
+        <div class="col-6 col-md-3 col-xl-1"><label class="form-label small">Rot Y°<input class="form-control form-control-sm" id="visualRy" type="number" step="0.1" value="0"></label></div>
+        <div class="col-6 col-md-3 col-xl-1"><label class="form-label small">Rot Z°<input class="form-control form-control-sm" id="visualRz" type="number" step="0.1" value="0"></label></div>
+        <div class="col-6 col-md-3 col-xl-1"><label class="form-label small">Scale<input class="form-control form-control-sm" id="visualScale" type="number" min="0.0001" max="10000" step="0.001" value="1"></label></div>
+        <div class="col-12 col-xl-5 d-flex flex-wrap gap-2 align-items-end pb-3">
+          <button class="btn btn-outline-secondary" type="button" id="visualCopyMatrix">Copy matrix4</button>
+          <button class="btn btn-outline-primary" type="button" id="visualExportTransform">Export transform JSON</button>
+        </div>
+      </div>
+
+      <div id="visualTransformStatus" class="small text-muted">
+        Transform хранится локально. Server preview/finalize будет подключён следующим patch.
+      </div>
+    </div>
+  `;
+  document.querySelector('.viewer-grid').insertAdjacentElement('afterend', card);
+
+  class VisualAlignmentViewer {
+    constructor(anchorGeometry, sourceGeometry) {
+      this.el = document.getElementById('combinedVisualViewer');
+      this.status = document.getElementById('combinedVisualStatus');
+      this.scene = new THREE.Scene();
+      this.scene.background = new THREE.Color(0x202638);
+      this.camera = new THREE.PerspectiveCamera(60, 1, 0.001, 100000);
+      this.camera.position.set(0, 3, 8);
+
+      this.renderer = new THREE.WebGLRenderer({ antialias: true });
+      this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+      this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+      this.el.appendChild(this.renderer.domElement);
+
+      this.cameraControls = new TrackballControls(this.camera, this.renderer.domElement);
+      this.cameraControls.noRoll = false;
+      this.cameraControls.rotateSpeed = 3.0;
+      this.cameraControls.zoomSpeed = 1.2;
+      this.cameraControls.panSpeed = 0.8;
+      this.cameraControls.staticMoving = false;
+      this.cameraControls.dynamicDampingFactor = 0.18;
+
+      this.transformControls = new TransformControls(this.camera, this.renderer.domElement);
+      this.transformControls.setMode('translate');
+      this.transformControls.setSpace('world');
+      this.scene.add(this.transformControls);
+
+      this.scene.add(new THREE.AmbientLight(0xffffff, 1.25));
+      this.scene.add(new THREE.AxesHelper(1.5));
+      this.grid = new THREE.GridHelper(20, 40);
+      this.scene.add(this.grid);
+
+      this.anchorObject = new THREE.Points(
+        anchorGeometry,
+        new THREE.PointsMaterial({
+          size: 2,
+          sizeAttenuation: false,
+          vertexColors: anchorGeometry.hasAttribute('color'),
+          color: anchorGeometry.hasAttribute('color') ? 0xffffff : 0x77aaff,
+        })
+      );
+      this.movingObject = new THREE.Points(
+        sourceGeometry,
+        new THREE.PointsMaterial({
+          size: 2.5,
+          sizeAttenuation: false,
+          vertexColors: sourceGeometry.hasAttribute('color'),
+          color: sourceGeometry.hasAttribute('color') ? 0x88ff99 : 0x44ff88,
+          transparent: true,
+          opacity: 0.72,
+          depthWrite: false,
+        })
+      );
+      this.scene.add(this.anchorObject);
+      this.scene.add(this.movingObject);
+      this.transformControls.attach(this.movingObject);
+
+      this.scaleBase = 1;
+      this.scaleGuard = false;
+      this.transformControls.addEventListener('dragging-changed', e => {
+        this.cameraControls.enabled = !e.value;
+      });
+      this.transformControls.addEventListener('mouseDown', () => {
+        this.scaleBase = this.movingObject.scale.x;
+      });
+      this.transformControls.addEventListener('objectChange', () => {
+        this.enforceUniformScale();
+        this.syncInputs();
+        this.persist();
+      });
+
+      new ResizeObserver(() => this.resize()).observe(this.el);
+      this.status.textContent =
+        `${anchorGeometry.getAttribute('position').count.toLocaleString()} anchor + `
+        + `${sourceGeometry.getAttribute('position').count.toLocaleString()} moving points`;
+      this.restore();
+      this.fit();
+      this.syncInputs();
+      this.animate();
+    }
+
+    enforceUniformScale() {
+      if (this.scaleGuard || this.transformControls.getMode() !== 'scale') return;
+      const values = this.movingObject.scale.toArray();
+      let selected = values[0];
+      let delta = Math.abs(values[0] - this.scaleBase);
+      for (const value of values.slice(1)) {
+        const current = Math.abs(value - this.scaleBase);
+        if (current > delta) {
+          selected = value;
+          delta = current;
+        }
+      }
+      const uniform = THREE.MathUtils.clamp(Math.abs(selected), 0.0001, 10000);
+      this.scaleGuard = true;
+      this.movingObject.scale.setScalar(uniform);
+      this.scaleGuard = false;
+    }
+
+    setMode(mode) {
+      this.transformControls.setMode(mode);
+      document.querySelectorAll('[data-visual-mode]').forEach(button => {
+        button.classList.toggle('active', button.dataset.visualMode === mode);
+      });
+    }
+
+    toggleSpace() {
+      const next = this.transformControls.space === 'world' ? 'local' : 'world';
+      this.transformControls.setSpace(next);
+      document.getElementById('visualSpaceToggle').textContent =
+        next === 'world' ? 'World axes (Q)' : 'Local axes (Q)';
+    }
+
+    matrixRows() {
+      this.movingObject.updateMatrix();
+      const e = this.movingObject.matrix.elements;
+      return [
+        [e[0], e[4], e[8], e[12]],
+        [e[1], e[5], e[9], e[13]],
+        [e[2], e[6], e[10], e[14]],
+        [e[3], e[7], e[11], e[15]],
+      ];
+    }
+
+    state() {
+      return {
+        schema_version: 1,
+        method: 'manual_visual_transform_sim3',
+        position: this.movingObject.position.toArray(),
+        quaternion: this.movingObject.quaternion.toArray(),
+        uniform_scale: this.movingObject.scale.x,
+        matrix4: this.matrixRows(),
+      };
+    }
+
+    applyState(state) {
+      if (!state) return;
+      if (Array.isArray(state.position) && state.position.length === 3) {
+        this.movingObject.position.fromArray(state.position.map(Number));
+      }
+      if (Array.isArray(state.quaternion) && state.quaternion.length === 4) {
+        this.movingObject.quaternion.fromArray(state.quaternion.map(Number)).normalize();
+      }
+      const scale = Number(state.uniform_scale ?? state.scale);
+      if (Number.isFinite(scale) && scale > 0) {
+        this.movingObject.scale.setScalar(THREE.MathUtils.clamp(scale, 0.0001, 10000));
+      }
+      this.movingObject.updateMatrix();
+      this.transformControls.update();
+    }
+
+    reset() {
+      this.movingObject.position.set(0, 0, 0);
+      this.movingObject.quaternion.identity();
+      this.movingObject.scale.setScalar(1);
+      this.movingObject.updateMatrix();
+      this.syncInputs();
+      this.persist();
+      this.fit();
+    }
+
+    fit() {
+      const box = new THREE.Box3();
+      for (const object of [this.anchorObject, this.movingObject]) {
+        const current = new THREE.Box3().setFromObject(object);
+        if (!current.isEmpty()) box.union(current);
+      }
+      if (box.isEmpty()) return;
+      const center = box.getCenter(new THREE.Vector3());
+      const radius = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 0.01);
+      this.camera.near = Math.max(radius / 10000, 0.0001);
+      this.camera.far = Math.max(radius * 100, 1000);
+      this.camera.updateProjectionMatrix();
+      this.cameraControls.target.copy(center);
+      this.camera.position.set(
+        center.x + radius * 1.5,
+        center.y + radius * 0.9,
+        center.z + radius * 1.5
+      );
+      this.camera.lookAt(center);
+      this.cameraControls.minDistance = radius * 0.01;
+      this.cameraControls.maxDistance = radius * 100;
+      this.cameraControls.update();
+      this.grid.scale.setScalar(Math.max(radius / 10, 0.1));
+    }
+
+    syncInputs() {
+      const r = new THREE.Euler().setFromQuaternion(this.movingObject.quaternion, 'XYZ');
+      const values = {
+        visualTx: this.movingObject.position.x,
+        visualTy: this.movingObject.position.y,
+        visualTz: this.movingObject.position.z,
+        visualRx: THREE.MathUtils.radToDeg(r.x),
+        visualRy: THREE.MathUtils.radToDeg(r.y),
+        visualRz: THREE.MathUtils.radToDeg(r.z),
+        visualScale: this.movingObject.scale.x,
+      };
+      for (const [id, value] of Object.entries(values)) {
+        const input = document.getElementById(id);
+        if (document.activeElement !== input) {
+          input.value = Number(value).toFixed(id === 'visualScale' ? 6 : 4);
+        }
+      }
+    }
+
+    applyInputs() {
+      const n = id => Number(document.getElementById(id).value);
+      const position = [n('visualTx'), n('visualTy'), n('visualTz')];
+      const rotation = [n('visualRx'), n('visualRy'), n('visualRz')];
+      const scale = n('visualScale');
+      if (!position.every(Number.isFinite) || !rotation.every(Number.isFinite) ||
+          !Number.isFinite(scale) || scale <= 0) return;
+      this.movingObject.position.fromArray(position);
+      this.movingObject.quaternion.setFromEuler(new THREE.Euler(
+        THREE.MathUtils.degToRad(rotation[0]),
+        THREE.MathUtils.degToRad(rotation[1]),
+        THREE.MathUtils.degToRad(rotation[2]),
+        'XYZ'
+      ));
+      this.movingObject.scale.setScalar(THREE.MathUtils.clamp(scale, 0.0001, 10000));
+      this.movingObject.updateMatrix();
+      this.transformControls.update();
+      this.persist();
+    }
+
+    persist() {
+      localStorage.setItem(visualStorageKey, JSON.stringify(this.state()));
+      const status = document.getElementById('visualTransformStatus');
+      status.className = 'small text-success';
+      status.textContent = 'Visual transform сохранён локально: '
+        + new Date().toLocaleTimeString();
+    }
+
+    restore() {
+      try {
+        this.applyState(JSON.parse(localStorage.getItem(visualStorageKey) || 'null'));
+      } catch (error) {
+        console.warn('Cannot restore visual transform', error);
+      }
+    }
+
+    resize() {
+      const width = Math.max(this.el.clientWidth, 1);
+      const height = Math.max(this.el.clientHeight, 1);
+      this.renderer.setSize(width, height, false);
+      this.camera.aspect = width / height;
+      this.camera.updateProjectionMatrix();
+      this.cameraControls.handleResize();
+    }
+
+    animate() {
+      requestAnimationFrame(() => this.animate());
+      this.cameraControls.update();
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  const visualViewer = new VisualAlignmentViewer(
+    clouds.anchorViewer.geometry,
+    clouds.sourceViewer.geometry
+  );
+
+  document.querySelectorAll('[data-visual-mode]').forEach(button => {
+    button.addEventListener('click', () => visualViewer.setMode(button.dataset.visualMode));
+  });
+  document.getElementById('visualSpaceToggle').addEventListener('click', () => visualViewer.toggleSpace());
+  document.getElementById('visualFitBoth').addEventListener('click', () => visualViewer.fit());
+  document.getElementById('visualResetTransform').addEventListener('click', () => visualViewer.reset());
+  document.getElementById('visualOpacity').addEventListener('input', e => {
+    visualViewer.movingObject.material.opacity = Number(e.target.value);
+  });
+  document.getElementById('visualAnchorPointSize').addEventListener('input', e => {
+    visualViewer.anchorObject.material.size = Number(e.target.value);
+  });
+  document.getElementById('visualMovingPointSize').addEventListener('input', e => {
+    visualViewer.movingObject.material.size = Number(e.target.value);
+  });
+
+  for (const id of ['visualTx','visualTy','visualTz','visualRx','visualRy','visualRz','visualScale']) {
+    document.getElementById(id).addEventListener('change', () => visualViewer.applyInputs());
+  }
+
+  document.getElementById('visualCopyMatrix').addEventListener('click', async () => {
+    const text = JSON.stringify(visualViewer.matrixRows(), null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      document.getElementById('visualTransformStatus').textContent = 'matrix4 copied.';
+    } catch (error) {
+      document.getElementById('visualTransformStatus').textContent = text;
+    }
+  });
+
+  document.getElementById('visualExportTransform').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(visualViewer.state(), null, 2)], {
+      type: 'application/json',
+    });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `visual_transform_${query.get('order_id') || 0}_`
+      + `${query.get('anchor_kind') || 'remote'}_${query.get('anchor_id') || 0}_`
+      + `${query.get('source_kind') || 'remote'}_${query.get('source_id') || 0}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  });
+
+  window.addEventListener('keydown', event => {
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+    const key = event.key.toLowerCase();
+    if (key === 'w') visualViewer.setMode('translate');
+    if (key === 'e') visualViewer.setMode('rotate');
+    if (key === 'r') visualViewer.setMode('scale');
+    if (key === 'q') visualViewer.toggleSpace();
+  });
+}
 </script>
 </body>
 </html>
