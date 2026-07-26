@@ -728,6 +728,8 @@ window.addEventListener('load', function () {
 
     var orderId = Number(payload.order_id || 0);
     var canCreate = Boolean(payload.can_create_merge);
+    var canDeleteMerge = Boolean(payload.can_delete_merge);
+    var workbenchCsrfToken = String(payload.csrf_token || '');
     var assemblies = Array.isArray(payload.assemblies)
       ? payload.assemblies
       : [];
@@ -1216,6 +1218,77 @@ window.addEventListener('load', function () {
         'btn btn-sm btn-outline-secondary',
         true
       );
+
+      if (canDeleteMerge) {
+        var deleteButton = create(
+          'button',
+          'btn btn-sm btn-outline-danger',
+          'Удалить сборку'
+        );
+        deleteButton.type = 'button';
+        deleteButton.addEventListener('click', async function () {
+          var mergeId = Number(assembly.merge_id || 0);
+          var confirmation = window.prompt(
+            'Физически удалить Assembly #' + mergeId
+              + ' и её PLY/JSON?\n'
+              + 'Исходные Video SfM models не удаляются.\n\n'
+              + 'Введи номер для подтверждения: ' + mergeId
+          );
+          if (confirmation !== String(mergeId)) {
+            return;
+          }
+
+          deleteButton.disabled = true;
+          deleteButton.textContent = 'Удаление…';
+
+          try {
+            var response = await fetch(
+              '/api/sfm_generated_merge_delete.php',
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-CSRF-Token': workbenchCsrfToken
+                },
+                body: JSON.stringify({
+                  order_id: orderId,
+                  merge_id: mergeId,
+                  confirm_merge_id: Number(confirmation)
+                })
+              }
+            );
+            var result = await response.json();
+            if (!response.ok || !result.ok) {
+              throw new Error(
+                result.error || ('HTTP ' + response.status)
+              );
+            }
+
+            var registryKey = 'merge:' + mergeId;
+            selected.delete(registryKey);
+            registry.delete(registryKey);
+            block.remove();
+            updateControls();
+
+            if (result.cleanup_warning) {
+              window.alert(
+                'Запись удалена, но очистка карантина '
+                  + 'завершилась с предупреждением: '
+                  + result.cleanup_warning
+              );
+            }
+          } catch (error) {
+            deleteButton.disabled = false;
+            deleteButton.textContent = 'Удалить сборку';
+            window.alert(
+              'Сборка не удалена: '
+                + String(error.message || error)
+            );
+          }
+        });
+        tools.appendChild(deleteButton);
+      }
+
       block.appendChild(tools);
       parent.appendChild(block);
     }

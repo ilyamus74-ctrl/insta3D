@@ -286,6 +286,8 @@ require_once dirname(__DIR__) . '/libs/sfm_assembly_workbench_lib.php';
 $sfmAssemblyWorkbench=[
   'order_id'=>$orderId,
   'can_create_merge'=>$canCreateGeneratedMerge,
+  'can_delete_merge'=>$canCreateGeneratedMerge,
+  'csrf_token'=>(string)($_SESSION['secCode'] ?? ''),
   'assemblies'=>sfm_assembly_workbench_build($dbcnx,$orderId,$generatedMerges),
 ];
 $sfmAssemblyWorkbenchJson=json_encode($sfmAssemblyWorkbench,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);

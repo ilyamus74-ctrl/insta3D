@@ -1196,6 +1196,7 @@ if (!clouds?.anchorViewer?.geometry || !clouds?.sourceViewer?.geometry) {
     clouds.anchorViewer.geometry,
     clouds.sourceViewer.geometry
   );
+  window.sfmVisualAlignmentViewer = visualViewer;
 
   document.querySelectorAll('[data-visual-mode]').forEach(button => {
     button.addEventListener('click', () => visualViewer.setMode(button.dataset.visualMode));
@@ -1248,6 +1249,161 @@ if (!clouds?.anchorViewer?.geometry || !clouds?.sourceViewer?.geometry) {
     if (key === 'r') visualViewer.setMode('scale');
     if (key === 'q') visualViewer.toggleSpace();
   });
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+function visualScaleRadius(geometry) {
+  geometry.computeBoundingBox();
+  const size = geometry.boundingBox.getSize(new THREE.Vector3());
+  return Math.max(size.length() * 0.5, 0.01);
+}
+
+function fitManualViewerWithSharedRadius(viewer, sharedRadius) {
+  const center = viewer.geometry.boundingBox.getCenter(
+    new THREE.Vector3()
+  );
+  const radius = Math.max(Number(sharedRadius) || 0, 0.01);
+
+  viewer.camera.near = Math.max(radius / 10000, 0.0001);
+  viewer.camera.far = Math.max(radius * 100, 1000);
+  viewer.camera.updateProjectionMatrix();
+  viewer.controls.target.copy(center);
+
+  if (viewer.navigationMode === 'horizon') {
+    viewer.camera.up.set(0, 1, 0);
+  }
+
+  viewer.camera.position.set(
+    center.x + radius * 1.25,
+    center.y + radius * 0.8,
+    center.z + radius * 1.25
+  );
+  viewer.camera.lookAt(center);
+  viewer.controls.minDistance = radius * 0.01;
+  viewer.controls.maxDistance = radius * 100;
+  viewer.controls.update();
+}
+
+async function waitForVisualAlignmentViewer() {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (window.sfmVisualAlignmentViewer) {
+      return window.sfmVisualAlignmentViewer;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error('Visual alignment viewer was not initialized');
+}
+
+try {
+  const clouds = window.sfmManualClouds
+    || await window.sfmManualCloudsReady;
+  const visualViewer = await waitForVisualAlignmentViewer();
+
+  const scaleToolbar = document.createElement('div');
+  scaleToolbar.className =
+    'd-flex flex-wrap gap-2 align-items-center mb-1';
+  scaleToolbar.innerHTML = `
+    <button class="btn btn-sm btn-outline-primary"
+      type="button" id="syncViewerScaleBtn">
+      Одинаковый масштаб двух окон
+    </button>
+    <span class="small text-muted"
+      id="sharedViewerScaleStatus"></span>
+  `;
+  document.getElementById('manualNavigationHint')
+    ?.insertAdjacentElement('afterend', scaleToolbar);
+
+  const matchButton = document.createElement('button');
+  matchButton.type = 'button';
+  matchButton.id = 'visualMatchMovingScale';
+  matchButton.className = 'btn btn-sm btn-outline-primary';
+  matchButton.textContent = 'Match Moving scale to Anchor';
+  document.getElementById('visualFitBoth')
+    ?.insertAdjacentElement('afterend', matchButton);
+
+  function syncTopViewerCameraScale() {
+    const anchorRadius = visualScaleRadius(
+      clouds.anchorViewer.geometry
+    );
+    const sourceRadius = visualScaleRadius(
+      clouds.sourceViewer.geometry
+    );
+    const sharedRadius = Math.max(anchorRadius, sourceRadius);
+
+    fitManualViewerWithSharedRadius(
+      clouds.anchorViewer,
+      sharedRadius
+    );
+    fitManualViewerWithSharedRadius(
+      clouds.sourceViewer,
+      sharedRadius
+    );
+
+    const status = document.getElementById(
+      'sharedViewerScaleStatus'
+    );
+    if (status) {
+      status.textContent =
+        'Одинаковый camera scale: '
+        + `Anchor ${anchorRadius.toFixed(4)}, `
+        + `Source ${sourceRadius.toFixed(4)}, `
+        + `shared ${sharedRadius.toFixed(4)}.`;
+    }
+  }
+
+  function matchMovingScaleToAnchor() {
+    const anchorRadius = visualScaleRadius(
+      visualViewer.anchorObject.geometry
+    );
+    const movingRadius = visualScaleRadius(
+      visualViewer.movingObject.geometry
+    );
+    if (!(anchorRadius > 0) || !(movingRadius > 0)) {
+      return;
+    }
+
+    const matchedScale = THREE.MathUtils.clamp(
+      anchorRadius / movingRadius,
+      0.0001,
+      10000
+    );
+
+    visualViewer.movingObject.scale.setScalar(matchedScale);
+    visualViewer.movingObject.updateMatrix();
+    visualViewer.transformControls.update();
+    visualViewer.syncInputs();
+    visualViewer.persist();
+    visualViewer.fit();
+
+    const status = document.getElementById(
+      'visualTransformStatus'
+    );
+    status.className = 'small text-primary';
+    status.textContent =
+      'Moving uniform scale подобран по bounding box: '
+      + matchedScale.toFixed(8)
+      + '. Проверь и уточни вручную.';
+  }
+
+  document.getElementById('syncViewerScaleBtn')
+    .addEventListener('click', syncTopViewerCameraScale);
+  document.getElementById('visualMatchMovingScale')
+    .addEventListener('click', matchMovingScaleToAnchor);
+
+  for (const fitButtonId of ['fitAnchor', 'fitSource']) {
+    document.getElementById(fitButtonId)
+      ?.addEventListener(
+        'click',
+        () => setTimeout(syncTopViewerCameraScale, 0)
+      );
+  }
+
+  syncTopViewerCameraScale();
+} catch (error) {
+  console.error('Visual scale controls failed', error);
 }
 </script>
 </body>
