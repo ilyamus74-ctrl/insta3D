@@ -185,6 +185,7 @@ window.addEventListener('load', function () {
 </script>
 {/literal}
 <script type="application/json" id="sfm-run-lineage-json">{$sfmRunLineageJson nofilter}</script>
+<script type="application/json" id="sfm-assembly-workbench-json">{$sfmAssemblyWorkbenchJson nofilter}</script>
 {literal}
 <script>
 (function () {
@@ -466,41 +467,13 @@ window.addEventListener('load', function () {
     }
 
     if (run.can_aligned_merge && (!run.merge || run.merge.state !== 'done')) {
-      var form = document.createElement('form');
-      form.method = 'post';
-      form.action = '/order.php?id=' + run.order_id;
-      form.className = 'mt-2';
-      form.addEventListener('submit', function (event) {
-        var question =
-          'Собрать dense-компоненты Run #' + run.run_id +
-          ' по общим COLMAP-позам? Компоненты без общего пути будут исключены.';
-        if (!window.confirm(question)) event.preventDefault();
-      });
-
-      hidden(form, 'action', 'aligned_merge_generated_dense_clouds');
-      hidden(form, 'sparse_remote_job_id', run.sparse_remote_job_id);
-      hidden(form, 'anchor_model_id', run.anchor_model_id);
-      hidden(form, 'exclude_tiny', 1);
-      hidden(form, 'min_points', 1000);
-      (run.source_job_ids || []).forEach(function (jobId) {
-        hidden(form, 'source_job_ids[]', jobId);
-      });
-
-      var button = create(
-        'button',
-        'btn btn-sm btn-success',
-        'Собрать компоненты Run #' + run.run_id + ' в одну модель'
-      );
-      button.type = 'submit';
-      form.appendChild(button);
-      form.appendChild(
+      assembly.appendChild(
         create(
           'div',
-          'form-text',
-          'Используются только dense jobs этого Run и одного sparse parent.'
+          'small text-muted mt-1',
+          'Выбор компонентов и создание новой сборки находятся во вкладке Generated Models.'
         )
       );
-      assembly.appendChild(form);
     }
 
     panel.appendChild(assembly);
@@ -743,6 +716,648 @@ window.addEventListener('load', function () {
     target.insertBefore(card, target.firstChild);
   }
 
+  function renderAssemblyWorkbench(runs, payload) {
+    var target = document.getElementById('simple-generated');
+    if (!target || target.dataset.assemblyWorkbenchReady === '1') {
+      return;
+    }
+    target.dataset.assemblyWorkbenchReady = '1';
+
+    var legacyNodes = Array.from(target.children);
+    target.innerHTML = '';
+
+    var orderId = Number(payload.order_id || 0);
+    var canCreate = Boolean(payload.can_create_merge);
+    var assemblies = Array.isArray(payload.assemblies)
+      ? payload.assemblies
+      : [];
+    var registry = new Map();
+    var selected = new Set();
+
+    var sortedRuns = runs.slice().sort(function (left, right) {
+      var leftTime = left.started_at || left.created_at || '';
+      var rightTime = right.started_at || right.created_at || '';
+      if (leftTime === rightTime) {
+        return Number(right.run_id || 0) - Number(left.run_id || 0);
+      }
+      return rightTime.localeCompare(leftTime);
+    });
+
+    var sourceCard = create('div', 'card mb-3');
+    var sourceBody = create('div', 'card-body');
+    sourceBody.appendChild(
+      create('h5', 'card-title', 'Исходные модели Video SfM')
+    );
+    sourceBody.appendChild(
+      create(
+        'div',
+        'small text-muted mb-3',
+        'Выберите component models из одной или нескольких обработок. Последняя обработка открыта и выбрана по умолчанию.'
+      )
+    );
+
+    var latestSelectableRunId = null;
+    sortedRuns.forEach(function (run) {
+      var dense = (run.components || []).filter(function (component) {
+        return component.has_dense && Number(component.dense_db_job_id) > 0;
+      });
+      if (latestSelectableRunId === null && dense.length) {
+        latestSelectableRunId = Number(run.run_id);
+      }
+    });
+
+    sortedRuns.forEach(function (run) {
+      var components = (run.components || []).filter(function (component) {
+        return component.has_dense && Number(component.dense_db_job_id) > 0;
+      });
+      if (!components.length) return;
+
+      var details = document.createElement('details');
+      details.className = 'border rounded p-2 mb-2';
+      details.open = Number(run.run_id) === latestSelectableRunId;
+
+      var summary = create(
+        'summary',
+        'fw-semibold',
+        (Number(run.run_id) === latestSelectableRunId
+          ? 'Последняя обработка · '
+          : '')
+          + 'Run #' + run.run_id
+          + ' · ' + String(run.mode || '').toUpperCase()
+          + ' · ' + components.length + ' dense models'
+      );
+      details.appendChild(summary);
+
+      details.appendChild(
+        create(
+          'div',
+          'small text-muted mt-2',
+          [
+            run.started_at ? 'старт: ' + run.started_at : '',
+            run.finished_at ? 'завершено: ' + run.finished_at : '',
+            'video_scan_id: ' + run.video_scan_id
+          ].filter(Boolean).join(' · ')
+        )
+      );
+      details.appendChild(
+        create('div', 'small text-break mb-2', run.source_filename || '')
+      );
+
+      var responsive = create('div', 'table-responsive');
+      var table = create('table', 'table table-sm align-middle mb-0');
+      var thead = document.createElement('thead');
+      thead.innerHTML =
+        '<tr><th>Выбор</th><th>Model</th><th>Создано</th>'
+        + '<th>Geometry</th><th>Job</th><th>Артефакты</th></tr>';
+      table.appendChild(thead);
+      var tbody = document.createElement('tbody');
+
+      components.forEach(function (component) {
+        var key = 'remote:' + component.dense_remote_job_id;
+        var sourceRecord = {
+          key: key,
+          kind: 'remote',
+          id: Number(component.dense_remote_job_id),
+          label:
+            'Run #' + run.run_id + ' · Model ' + component.model_id,
+          dbJobIds: [Number(component.dense_db_job_id)],
+          sparseIds: [Number(component.sparse_remote_job_id)],
+          leafModels: [{
+            model_id: Number(component.model_id),
+            sparse_remote_job_id: Number(component.sparse_remote_job_id),
+            label:
+              'Run #' + run.run_id + ' · Model ' + component.model_id
+          }],
+          points: Number(component.dense_points || 0)
+        };
+        registry.set(key, sourceRecord);
+
+        var row = document.createElement('tr');
+        var choice = document.createElement('td');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'form-check-input sfm-workbench-source';
+        checkbox.dataset.sourceKey = key;
+        checkbox.checked = Number(run.run_id) === latestSelectableRunId;
+        if (checkbox.checked) selected.add(key);
+        checkbox.addEventListener('change', function () {
+          if (checkbox.checked) selected.add(key);
+          else selected.delete(key);
+          updateControls();
+        });
+        choice.appendChild(checkbox);
+        row.appendChild(choice);
+
+        var model = document.createElement('td');
+        model.appendChild(
+          create('strong', '', 'Model ' + component.model_id)
+        );
+        if (component.is_primary) {
+          model.appendChild(document.createTextNode(' '));
+          model.appendChild(create('span', 'badge bg-primary', 'primary'));
+        }
+        row.appendChild(model);
+
+        row.appendChild(
+          create('td', 'small text-nowrap', component.created_at || '—')
+        );
+        row.appendChild(
+          create(
+            'td',
+            'small',
+            component.registered_images + ' images · '
+              + component.sparse_points + ' sparse · '
+              + component.dense_points + ' dense'
+          )
+        );
+        row.appendChild(
+          create(
+            'td',
+            'small',
+            'DB #' + component.dense_db_job_id
+              + ' · remote ' + component.dense_remote_job_id
+          )
+        );
+
+        var actions = create('td', 'd-flex gap-1 flex-wrap');
+        addLink(
+          actions,
+          'Открыть',
+          component.viewer_url,
+          'btn btn-sm btn-outline-primary',
+          true
+        );
+        addLink(
+          actions,
+          'Скачать PLY',
+          component.download_url,
+          'btn btn-sm btn-outline-success',
+          false
+        );
+        row.appendChild(actions);
+        tbody.appendChild(row);
+      });
+
+      table.appendChild(tbody);
+      responsive.appendChild(table);
+      details.appendChild(responsive);
+      sourceBody.appendChild(details);
+    });
+
+    sourceCard.appendChild(sourceBody);
+    target.appendChild(sourceCard);
+
+    var controlCard = create('div', 'card mb-3');
+    var controlBody = create('div', 'card-body');
+    controlBody.appendChild(
+      create('h5', 'card-title', 'Создать новую сборку')
+    );
+
+    var selectedSummary = create(
+      'div',
+      'alert alert-secondary py-2',
+      'Источники не выбраны.'
+    );
+    controlBody.appendChild(selectedSummary);
+
+    var anchorLabel = create('label', 'form-label small', 'Anchor');
+    var anchorSelect = create('select', 'form-select form-select-sm mb-2');
+    anchorLabel.appendChild(anchorSelect);
+    controlBody.appendChild(anchorLabel);
+
+    var optionsRow = create('div', 'd-flex gap-3 flex-wrap mb-2');
+    var tinyLabel = create('label', 'form-check small');
+    var tinyCheckbox = document.createElement('input');
+    tinyCheckbox.type = 'checkbox';
+    tinyCheckbox.className = 'form-check-input';
+    tinyCheckbox.checked = true;
+    tinyLabel.appendChild(tinyCheckbox);
+    tinyLabel.appendChild(
+      document.createTextNode(' Исключить модели меньше 1000 points')
+    );
+    optionsRow.appendChild(tinyLabel);
+    controlBody.appendChild(optionsRow);
+
+    var automaticForm = document.createElement('form');
+    automaticForm.method = 'post';
+    automaticForm.action = '/order.php?id=' + orderId;
+    automaticForm.className = 'd-inline';
+    var automaticButton = create(
+      'button',
+      'btn btn-success me-2 mb-2',
+      'Автоматическая склейка'
+    );
+    automaticButton.type = 'submit';
+    automaticForm.appendChild(automaticButton);
+    controlBody.appendChild(automaticForm);
+
+    var manualButton = create(
+      'button',
+      'btn btn-outline-primary me-2 mb-2',
+      'Ручная склейка выбранной пары'
+    );
+    manualButton.type = 'button';
+    controlBody.appendChild(manualButton);
+
+    var controlHint = create('div', 'small text-muted');
+    controlBody.appendChild(controlHint);
+
+    controlCard.appendChild(controlBody);
+    target.appendChild(controlCard);
+
+    var resultsCard = create('div', 'card mb-3');
+    var resultsBody = create('div', 'card-body');
+    resultsBody.appendChild(
+      create('h5', 'card-title', 'Результаты сборок')
+    );
+    resultsBody.appendChild(
+      create(
+        'div',
+        'small text-muted mb-3',
+        'Последние результаты сверху. Принятые aligned/manual assemblies можно использовать как источник следующей сборки.'
+      )
+    );
+
+    var normalResults = assemblies.filter(function (assembly) {
+      return assembly.state !== 'diagnostic';
+    });
+    var diagnosticResults = assemblies.filter(function (assembly) {
+      return assembly.state === 'diagnostic';
+    });
+
+    function stateBadge(assembly) {
+      if (assembly.state === 'accepted') {
+        return ['bg-success', 'ACCEPTED'];
+      }
+      if (assembly.state === 'anchor_only') {
+        return ['bg-warning text-dark', 'ANCHOR ONLY'];
+      }
+      if (assembly.state === 'failed') {
+        return ['bg-danger', 'FAILED'];
+      }
+      return ['bg-secondary', String(assembly.state || 'UNKNOWN').toUpperCase()];
+    }
+
+    function renderAssemblyResult(assembly, parent) {
+      var block = create('div', 'border rounded p-2 mb-2');
+      var header = create(
+        'div',
+        'd-flex justify-content-between gap-2 flex-wrap'
+      );
+      header.appendChild(create('strong', '', assembly.label));
+      var badge = stateBadge(assembly);
+      header.appendChild(create('span', 'badge ' + badge[0], badge[1]));
+      block.appendChild(header);
+
+      block.appendChild(
+        create(
+          'div',
+          'small text-muted',
+          [
+            assembly.created_at || '',
+            assembly.merge_type || '',
+            Number(assembly.points || 0) + ' points'
+          ].filter(Boolean).join(' · ')
+        )
+      );
+
+      var leafModels = Array.isArray(assembly.leaf_model_ids)
+        ? assembly.leaf_model_ids
+        : [];
+      if (leafModels.length) {
+        block.appendChild(
+          create(
+            'div',
+            'small',
+            'Leaf Models: ' + leafModels.join(', ')
+          )
+        );
+      }
+      if (
+        Array.isArray(assembly.included_models)
+        && assembly.included_models.length
+      ) {
+        block.appendChild(
+          create(
+            'div',
+            'small',
+            'Included: ' + assembly.included_models.join(', ')
+          )
+        );
+      }
+      if (
+        Array.isArray(assembly.excluded_models)
+        && assembly.excluded_models.length
+      ) {
+        block.appendChild(
+          create(
+            'div',
+            'small text-warning',
+            'Excluded: ' + assembly.excluded_models.join(', ')
+          )
+        );
+      }
+      if (assembly.message) {
+        block.appendChild(
+          create('div', 'small text-muted', assembly.message)
+        );
+      }
+
+      var tools = create('div', 'd-flex gap-1 flex-wrap mt-2');
+      if (assembly.selectable_as_source) {
+        var sourceLabel = create('label', 'form-check me-2');
+        var sourceCheckbox = document.createElement('input');
+        var key = 'merge:' + assembly.merge_id;
+        sourceCheckbox.type = 'checkbox';
+        sourceCheckbox.className =
+          'form-check-input sfm-workbench-source';
+        sourceCheckbox.dataset.sourceKey = key;
+
+        registry.set(key, {
+          key: key,
+          kind: 'merge',
+          id: Number(assembly.merge_id),
+          label: assembly.label,
+          dbJobIds: (assembly.leaf_source_job_ids || []).map(Number),
+          sparseIds: (assembly.sparse_remote_job_ids || []).map(Number),
+          leafModels: (assembly.leaf_source_jobs || []).map(
+            function (leaf) {
+              return {
+                model_id: Number(leaf.model_id),
+                sparse_remote_job_id:
+                  Number(leaf.sparse_remote_job_id),
+                label:
+                  assembly.label + ' · Model ' + leaf.model_id
+              };
+            }
+          ),
+          points: Number(assembly.points || 0)
+        });
+
+        sourceCheckbox.addEventListener('change', function () {
+          if (sourceCheckbox.checked) selected.add(key);
+          else selected.delete(key);
+          updateControls();
+        });
+        sourceLabel.appendChild(sourceCheckbox);
+        sourceLabel.appendChild(
+          document.createTextNode(' Использовать как источник')
+        );
+        tools.appendChild(sourceLabel);
+      } else if (assembly.select_error) {
+        tools.appendChild(
+          create(
+            'span',
+            'small text-muted me-2',
+            'Нельзя использовать как источник: ' + assembly.select_error
+          )
+        );
+      }
+
+      addLink(
+        tools,
+        'Открыть',
+        assembly.open_url,
+        'btn btn-sm btn-outline-primary',
+        true
+      );
+      addLink(
+        tools,
+        'Скачать PLY',
+        assembly.download_url,
+        'btn btn-sm btn-outline-success',
+        false
+      );
+      addLink(
+        tools,
+        'Result JSON',
+        assembly.result_url,
+        'btn btn-sm btn-outline-secondary',
+        true
+      );
+      block.appendChild(tools);
+      parent.appendChild(block);
+    }
+
+    if (normalResults.length) {
+      normalResults.forEach(function (assembly) {
+        renderAssemblyResult(assembly, resultsBody);
+      });
+    } else {
+      resultsBody.appendChild(
+        create('div', 'text-muted', 'Сборки ещё не создавались.')
+      );
+    }
+
+    if (diagnosticResults.length) {
+      var diagnosticDetails = document.createElement('details');
+      diagnosticDetails.className = 'mt-3';
+      diagnosticDetails.appendChild(
+        create(
+          'summary',
+          'fw-semibold',
+          'Диагностические результаты: ' + diagnosticResults.length
+        )
+      );
+      var diagnosticBody = create('div', 'mt-2');
+      diagnosticResults.forEach(function (assembly) {
+        renderAssemblyResult(assembly, diagnosticBody);
+      });
+      diagnosticDetails.appendChild(diagnosticBody);
+      resultsBody.appendChild(diagnosticDetails);
+    }
+
+    resultsCard.appendChild(resultsBody);
+    target.appendChild(resultsCard);
+
+    var legacyDetails = document.createElement('details');
+    legacyDetails.className = 'card mb-3';
+    var legacySummary = create(
+      'summary',
+      'card-body fw-semibold',
+      'Legacy / дополнительные инструменты'
+    );
+    legacyDetails.appendChild(legacySummary);
+    var legacyBody = create('div', 'card-body border-top');
+    legacyNodes.forEach(function (node) {
+      legacyBody.appendChild(node);
+    });
+    legacyDetails.appendChild(legacyBody);
+    target.appendChild(legacyDetails);
+
+    function selectedRecords() {
+      return Array.from(selected)
+        .map(function (key) {
+          return registry.get(key);
+        })
+        .filter(Boolean);
+    }
+
+    function uniqueNumbers(values) {
+      return Array.from(new Set(
+        values.map(Number).filter(function (value) {
+          return Number.isFinite(value) && value > 0;
+        })
+      ));
+    }
+
+    function updateControls() {
+      var records = selectedRecords();
+      var jobIds = uniqueNumbers(
+        records.flatMap(function (record) {
+          return record.dbJobIds || [];
+        })
+      );
+      var sparseIds = uniqueNumbers(
+        records.flatMap(function (record) {
+          return record.sparseIds || [];
+        })
+      );
+
+      var leafOptions = [];
+      var leafKeys = new Set();
+      records.forEach(function (record) {
+        (record.leafModels || []).forEach(function (leaf) {
+          var key =
+            String(leaf.sparse_remote_job_id) + ':'
+            + String(leaf.model_id);
+          if (
+            leafKeys.has(key)
+            || !Number.isFinite(Number(leaf.model_id))
+          ) {
+            return;
+          }
+          leafKeys.add(key);
+          leafOptions.push(leaf);
+        });
+      });
+
+      var duplicateCount = records.reduce(function (sum, record) {
+        return sum + (record.dbJobIds || []).length;
+      }, 0) - jobIds.length;
+
+      selectedSummary.className =
+        'alert alert-secondary py-2';
+      selectedSummary.textContent =
+        'Выбрано источников: ' + records.length
+        + ' · уникальных component jobs: ' + jobIds.length
+        + ' · sparse parents: ' + sparseIds.length
+        + (
+          duplicateCount > 0
+            ? ' · повторов удалено: ' + duplicateCount
+            : ''
+        );
+
+      var previousAnchor = anchorSelect.value;
+      anchorSelect.innerHTML = '';
+      leafOptions.forEach(function (leaf) {
+        var option = document.createElement('option');
+        option.value = String(leaf.model_id);
+        option.textContent = leaf.label;
+        anchorSelect.appendChild(option);
+      });
+      if (
+        previousAnchor
+        && Array.from(anchorSelect.options).some(function (option) {
+          return option.value === previousAnchor;
+        })
+      ) {
+        anchorSelect.value = previousAnchor;
+      }
+
+      automaticForm.innerHTML = '';
+      hidden(
+        automaticForm,
+        'action',
+        'aligned_merge_generated_dense_clouds'
+      );
+      hidden(automaticForm, 'return_to', 'simple');
+      hidden(automaticForm, 'min_points', 1000);
+      if (tinyCheckbox.checked) {
+        hidden(automaticForm, 'exclude_tiny', 1);
+      }
+      jobIds.forEach(function (jobId) {
+        hidden(automaticForm, 'source_job_ids[]', jobId);
+      });
+      if (sparseIds.length === 1) {
+        hidden(
+          automaticForm,
+          'sparse_remote_job_id',
+          sparseIds[0]
+        );
+      }
+      if (anchorSelect.value) {
+        hidden(
+          automaticForm,
+          'anchor_model_id',
+          anchorSelect.value
+        );
+      }
+      automaticForm.appendChild(automaticButton);
+
+      var automaticReason = '';
+      if (!canCreate) {
+        automaticReason = 'Нет права на создание сборки.';
+      } else if (jobIds.length < 2) {
+        automaticReason =
+          'Для автоматической склейки нужны минимум две уникальные component models.';
+      } else if (sparseIds.length !== 1) {
+        automaticReason =
+          'Автоматическая склейка требует один sparse parent. Для разных реконструкций используйте ручную склейку пары.';
+      } else if (!anchorSelect.value) {
+        automaticReason = 'Не удалось определить anchor Model.';
+      }
+
+      automaticButton.disabled = automaticReason !== '';
+      automaticForm.onsubmit = function (event) {
+        if (automaticReason) {
+          event.preventDefault();
+          return false;
+        }
+        return window.confirm(
+          'Создать aligned assembly из '
+            + jobIds.length
+            + ' component models?'
+        );
+      };
+
+      var manualReason = '';
+      if (!canCreate) {
+        manualReason = 'Нет права на создание сборки.';
+      } else if (records.length !== 2) {
+        manualReason =
+          'Для ручной склейки выберите ровно два логических источника.';
+      }
+
+      manualButton.disabled = manualReason !== '';
+      manualButton.onclick = function () {
+        if (manualReason) return;
+        var anchorKey = records[0].key;
+        var sourceKey = records[1].key;
+        var anchor = registry.get(anchorKey);
+        var sourceRecord = registry.get(sourceKey);
+        if (!anchor || !sourceRecord) return;
+
+        var url = '/sfm_manual_align.php?order_id='
+          + encodeURIComponent(orderId)
+          + '&anchor_kind=' + encodeURIComponent(anchor.kind)
+          + '&anchor_id=' + encodeURIComponent(anchor.id)
+          + '&source_kind=' + encodeURIComponent(sourceRecord.kind)
+          + '&source_id=' + encodeURIComponent(sourceRecord.id);
+        window.open(url, '_blank', 'noopener');
+      };
+
+      controlHint.textContent =
+        automaticReason || manualReason || (
+          'Automatic: shared COLMAP poses. Manual: selected pair with correspondence editor.'
+        );
+    }
+
+    anchorSelect.addEventListener('change', updateControls);
+    tinyCheckbox.addEventListener('change', updateControls);
+    updateControls();
+  }
+
   var source = document.getElementById('sfm-run-lineage-json');
   if (!source) return;
 
@@ -755,7 +1370,23 @@ window.addEventListener('load', function () {
   }
 
   runs.forEach(render);
-  renderGeneratedRunModels(runs);
+
+  var workbenchSource = document.getElementById(
+    'sfm-assembly-workbench-json'
+  );
+  var workbench = {
+    order_id: 0,
+    can_create_merge: false,
+    assemblies: []
+  };
+  if (workbenchSource) {
+    try {
+      workbench = JSON.parse(workbenchSource.textContent || '{}');
+    } catch (error) {
+      console.error('Invalid SfM assembly workbench JSON', error);
+    }
+  }
+  renderAssemblyWorkbench(runs, workbench);
 
   if (window.location.hash === '#simple-video-sfm') {
     var trigger = document.querySelector(

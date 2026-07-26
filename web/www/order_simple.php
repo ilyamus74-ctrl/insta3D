@@ -282,7 +282,15 @@ $canCreateGeneratedMerge=$canDeleteMedia
 $sfmRunLineage=sfm_video_run_lineage_build($captureSessions,$generatedMerges,$orderId,$canCreateGeneratedMerge);
 $sfmRunLineageJson=json_encode($sfmRunLineage,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
 if(!is_string($sfmRunLineageJson))$sfmRunLineageJson='[]';
-$smarty->assign('models_assemblies_by_session',$modelsAssembliesBySession); $smarty->assign('anchor_options',$anchorOptions); $smarty->assign('default_sparse_remote_job_id',$defaultSparseRemoteJobId); $smarty->assign('current_user',$user); $smarty->assign('order',$order); $smarty->assign('captureSessions',$captureSessions); $smarty->assign('videoScans',$videoScans); $smarty->assign('generated_models',$generatedModels); $smarty->assign('mediaTotals',$mediaTotals); $smarty->assign('canDeleteMedia',$canDeleteMedia); $smarty->assign('sfmRunLineageJson',$sfmRunLineageJson);
+require_once dirname(__DIR__) . '/libs/sfm_assembly_workbench_lib.php';
+$sfmAssemblyWorkbench=[
+  'order_id'=>$orderId,
+  'can_create_merge'=>$canCreateGeneratedMerge,
+  'assemblies'=>sfm_assembly_workbench_build($dbcnx,$orderId,$generatedMerges),
+];
+$sfmAssemblyWorkbenchJson=json_encode($sfmAssemblyWorkbench,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
+if(!is_string($sfmAssemblyWorkbenchJson))$sfmAssemblyWorkbenchJson='{"order_id":0,"can_create_merge":false,"assemblies":[]}';
+$smarty->assign('models_assemblies_by_session',$modelsAssembliesBySession); $smarty->assign('anchor_options',$anchorOptions); $smarty->assign('default_sparse_remote_job_id',$defaultSparseRemoteJobId); $smarty->assign('current_user',$user); $smarty->assign('order',$order); $smarty->assign('captureSessions',$captureSessions); $smarty->assign('videoScans',$videoScans); $smarty->assign('generated_models',$generatedModels); $smarty->assign('mediaTotals',$mediaTotals); $smarty->assign('canDeleteMedia',$canDeleteMedia); $smarty->assign('sfmRunLineageJson',$sfmRunLineageJson); $smarty->assign('sfmAssemblyWorkbenchJson',$sfmAssemblyWorkbenchJson);
 $smarty->assign('autoPhotoSparseUiNav',$autoPhotoSparseUiRender['nav']);
 $smarty->assign('autoPhotoSparseUiPane',$autoPhotoSparseUiRender['pane']);
 $smarty->display('maklertour_order_simple.html');
