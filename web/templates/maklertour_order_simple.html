@@ -768,5 +768,65 @@ window.addEventListener('load', function () {
 })();
 </script>
 {/literal}
+{literal}
+<script>
+(function () {
+  document.querySelectorAll('[data-sfm-lineage]').forEach(function (panel) {
+    var componentTitle = Array.from(panel.children).find(function (element) {
+      return element.classList.contains('fw-semibold')
+        && element.textContent.trim() === 'Компоненты именно этого Run';
+    });
+    var componentTable = Array.from(
+      panel.querySelectorAll(':scope > .table-responsive')
+    ).find(function (element) {
+      var headings = Array.from(element.querySelectorAll('thead th')).map(
+        function (heading) {
+          return heading.textContent.trim();
+        }
+      );
+      return headings.indexOf('Model') !== -1
+        && headings.indexOf('Dense job') !== -1;
+    });
+
+    if (
+      !componentTitle
+      || !componentTable
+      || componentTable.closest('details')
+    ) {
+      return;
+    }
+
+    var rows = Array.from(componentTable.querySelectorAll('tbody tr'));
+    var denseCount = rows.filter(function (row) {
+      var cells = row.querySelectorAll('td');
+      return cells.length >= 3
+        && cells[2].textContent.indexOf('not generated') === -1;
+    }).length;
+
+    var details = document.createElement('details');
+    details.className = 'mt-2';
+
+    var summary = document.createElement('summary');
+    summary.className = 'fw-semibold';
+    summary.textContent =
+      'Компоненты Run: ' + rows.length
+      + ' · dense: ' + denseCount
+      + ' — открыть список';
+
+    details.appendChild(summary);
+    details.appendChild(componentTable);
+    componentTitle.replaceWith(details);
+  });
+
+  document.querySelectorAll(
+    '#simple-video-sfm details > summary'
+  ).forEach(function (summary) {
+    if (summary.textContent.trim() !== 'Модели и сборки') return;
+    var details = summary.closest('details');
+    if (details) details.remove();
+  });
+})();
+</script>
+{/literal}
 </main>
 {include file="maklertour_footer.html"}
