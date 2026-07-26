@@ -801,12 +801,24 @@ renderPairs();
 updatePendingUi();
 rebuildMarkers();
 
-await Promise.all([
-  anchorViewer.load(apiBase + '&action=file&file=anchor'),
-  sourceViewer.load(apiBase + '&action=file&file=source'),
-]);
+window.sfmManualCloudsReady = new Promise((resolve, reject) => {
+  window.sfmManualCloudsResolve = resolve;
+  window.sfmManualCloudsReject = reject;
+});
 
-window.sfmManualClouds = { anchorViewer, sourceViewer };
+try {
+  await Promise.all([
+    anchorViewer.load(apiBase + '&action=file&file=anchor'),
+    sourceViewer.load(apiBase + '&action=file&file=source'),
+  ]);
+
+  const readyClouds = { anchorViewer, sourceViewer };
+  window.sfmManualClouds = readyClouds;
+  window.sfmManualCloudsResolve(readyClouds);
+} catch (error) {
+  window.sfmManualCloudsReject(error);
+  throw error;
+}
 </script>
 
 <script type="module">
@@ -814,9 +826,28 @@ import * as THREE from 'three';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
-const clouds = window.sfmManualClouds;
+let clouds = window.sfmManualClouds;
+let visualStartupError = null;
+
+try {
+  clouds = clouds || await window.sfmManualCloudsReady;
+} catch (error) {
+  visualStartupError = error;
+  console.error('Visual alignment UI startup failed', error);
+}
+
 if (!clouds?.anchorViewer?.geometry || !clouds?.sourceViewer?.geometry) {
-  console.error('Visual alignment UI: geometries are unavailable');
+  const errorCard = document.createElement('div');
+  errorCard.id = 'visualAlignmentError';
+  errorCard.className = 'alert alert-danger mt-3';
+  errorCard.textContent =
+    'Visual alignment не запущен: '
+    + String(
+      visualStartupError?.message
+      || 'Anchor или Moving-source geometry не загрузилась.'
+    );
+  document.querySelector('.viewer-grid')
+    ?.insertAdjacentElement('afterend', errorCard);
 } else {
   const query = new URLSearchParams(window.location.search);
   const visualStorageKey = 'sfm-manual-visual:' + JSON.stringify({
