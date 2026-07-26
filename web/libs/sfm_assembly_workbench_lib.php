@@ -161,6 +161,7 @@ function sfm_assembly_workbench_build(
         $leafRemoteIds = [];
         $leafModelIds = [];
         $sparseRemoteIds = [];
+        $leafCaptureSessionIds = [];
 
         foreach ($leaf as $item) {
             if (!is_array($item)) {
@@ -222,12 +223,20 @@ function sfm_assembly_workbench_build(
                 $sparseRemoteIds[$sparseRemoteId] = true;
             }
 
+            $captureSessionId = (int) (
+                $job['capture_session_id'] ?? 0
+            );
+            if ($captureSessionId > 0) {
+                $leafCaptureSessionIds[$captureSessionId] = true;
+            }
+
             $leafRows[] = [
                 'db_job_id' => $dbJobId,
                 'remote_job_id' => $remoteJobId,
                 'pipeline_run_id' => (int) (
                     $job['pipeline_run_id'] ?? 0
                 ),
+                'capture_session_id' => $captureSessionId,
                 'model_id' => $modelId,
                 'sparse_remote_job_id' => $sparseRemoteId,
             ];
@@ -253,6 +262,13 @@ function sfm_assembly_workbench_build(
             'status' => (string) ($merge['status'] ?? ''),
             'state' => $state,
             'created_at' => (string) ($merge['created_at'] ?? ''),
+            'capture_session_id' => (int) (
+                $merge['capture_session_id'] ?? 0
+            ),
+            'leaf_capture_session_ids' => array_map(
+                'intval',
+                array_keys($leafCaptureSessionIds)
+            ),
             'points' => (int) ($merge['total_points'] ?? 0),
             'message' => (string) ($merge['message'] ?? ''),
             'included_models' => $includedModels,

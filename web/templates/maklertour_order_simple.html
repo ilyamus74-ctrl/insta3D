@@ -822,6 +822,7 @@ window.addEventListener('load', function () {
             'Run #' + run.run_id + ' · Model ' + component.model_id,
           dbJobIds: [Number(component.dense_db_job_id)],
           sparseIds: [Number(component.sparse_remote_job_id)],
+          captureSessionId: Number(run.session_id || 0),
           leafModels: [{
             model_id: Number(component.model_id),
             sparse_remote_job_id: Number(component.sparse_remote_job_id),
@@ -920,10 +921,25 @@ window.addEventListener('load', function () {
     );
     controlBody.appendChild(selectedSummary);
 
-    var anchorLabel = create('label', 'form-label small', 'Anchor');
-    var anchorSelect = create('select', 'form-select form-select-sm mb-2');
-    anchorLabel.appendChild(anchorSelect);
-    controlBody.appendChild(anchorLabel);
+    var automaticSection = create(
+      'div',
+      'border rounded p-2 mb-3'
+    );
+    automaticSection.appendChild(
+      create('div', 'fw-semibold mb-2', 'Автоматическая склейка')
+    );
+
+    var automaticAnchorLabel = create(
+      'label',
+      'form-label small',
+      'Anchor Model внутри общей sparse-реконструкции'
+    );
+    var automaticAnchorSelect = create(
+      'select',
+      'form-select form-select-sm mb-2'
+    );
+    automaticAnchorLabel.appendChild(automaticAnchorSelect);
+    automaticSection.appendChild(automaticAnchorLabel);
 
     var optionsRow = create('div', 'd-flex gap-3 flex-wrap mb-2');
     var tinyLabel = create('label', 'form-check small');
@@ -936,7 +952,7 @@ window.addEventListener('load', function () {
       document.createTextNode(' Исключить модели меньше 1000 points')
     );
     optionsRow.appendChild(tinyLabel);
-    controlBody.appendChild(optionsRow);
+    automaticSection.appendChild(optionsRow);
 
     var automaticForm = document.createElement('form');
     automaticForm.method = 'post';
@@ -945,22 +961,82 @@ window.addEventListener('load', function () {
     var automaticButton = create(
       'button',
       'btn btn-success me-2 mb-2',
-      'Автоматическая склейка'
+      'Создать автоматическую сборку'
     );
     automaticButton.type = 'submit';
     automaticForm.appendChild(automaticButton);
-    controlBody.appendChild(automaticForm);
+    automaticSection.appendChild(automaticForm);
+
+    var automaticHint = create('div', 'small text-muted');
+    automaticSection.appendChild(automaticHint);
+    controlBody.appendChild(automaticSection);
+
+    var manualSection = create('div', 'border rounded p-2');
+    manualSection.appendChild(
+      create('div', 'fw-semibold mb-2', 'Ручная склейка пары')
+    );
+    manualSection.appendChild(
+      create(
+        'div',
+        'small text-muted mb-2',
+        'Выберите ровно два логических источника выше, затем явно назначьте Anchor и Moving source.'
+      )
+    );
+
+    var manualGrid = create('div', 'row g-2 mb-2');
+    var manualAnchorColumn = create('div', 'col-12 col-lg-5');
+    var manualAnchorLabel = create(
+      'label',
+      'form-label small',
+      'Anchor — остаётся неподвижным'
+    );
+    var manualAnchorSelect = create(
+      'select',
+      'form-select form-select-sm'
+    );
+    manualAnchorLabel.appendChild(manualAnchorSelect);
+    manualAnchorColumn.appendChild(manualAnchorLabel);
+    manualGrid.appendChild(manualAnchorColumn);
+
+    var swapColumn = create(
+      'div',
+      'col-12 col-lg-2 d-flex align-items-end'
+    );
+    var swapManualButton = create(
+      'button',
+      'btn btn-sm btn-outline-secondary w-100',
+      '⇄ Поменять'
+    );
+    swapManualButton.type = 'button';
+    swapColumn.appendChild(swapManualButton);
+    manualGrid.appendChild(swapColumn);
+
+    var manualMovingColumn = create('div', 'col-12 col-lg-5');
+    var manualMovingLabel = create(
+      'label',
+      'form-label small',
+      'Moving source — перемещается к Anchor'
+    );
+    var manualMovingSelect = create(
+      'select',
+      'form-select form-select-sm'
+    );
+    manualMovingLabel.appendChild(manualMovingSelect);
+    manualMovingColumn.appendChild(manualMovingLabel);
+    manualGrid.appendChild(manualMovingColumn);
+    manualSection.appendChild(manualGrid);
 
     var manualButton = create(
       'button',
       'btn btn-outline-primary me-2 mb-2',
-      'Ручная склейка выбранной пары'
+      'Открыть редактор ручной склейки'
     );
     manualButton.type = 'button';
-    controlBody.appendChild(manualButton);
+    manualSection.appendChild(manualButton);
 
-    var controlHint = create('div', 'small text-muted');
-    controlBody.appendChild(controlHint);
+    var manualHint = create('div', 'small text-muted');
+    manualSection.appendChild(manualHint);
+    controlBody.appendChild(manualSection);
 
     controlCard.appendChild(controlBody);
     target.appendChild(controlCard);
@@ -1080,6 +1156,11 @@ window.addEventListener('load', function () {
           label: assembly.label,
           dbJobIds: (assembly.leaf_source_job_ids || []).map(Number),
           sparseIds: (assembly.sparse_remote_job_ids || []).map(Number),
+          captureSessionId: Number(
+            assembly.capture_session_id
+              || (assembly.leaf_capture_session_ids || [])[0]
+              || 0
+          ),
           leafModels: (assembly.leaf_source_jobs || []).map(
             function (leaf) {
               return {
@@ -1201,6 +1282,98 @@ window.addEventListener('load', function () {
       ));
     }
 
+    function recordContains(container, candidate) {
+      var containerJobs = new Set(
+        (container.dbJobIds || []).map(Number)
+      );
+      var candidateJobs = (candidate.dbJobIds || []).map(Number);
+      return candidateJobs.length > 0
+        && candidateJobs.every(function (jobId) {
+          return containerJobs.has(jobId);
+        });
+    }
+
+    function duplicateLogicalSource(records) {
+      for (var leftIndex = 0; leftIndex < records.length; leftIndex += 1) {
+        var container = records[leftIndex];
+        if (container.kind !== 'merge') continue;
+
+        for (
+          var rightIndex = 0;
+          rightIndex < records.length;
+          rightIndex += 1
+        ) {
+          if (leftIndex === rightIndex) continue;
+          var candidate = records[rightIndex];
+          if (
+            candidate.kind === 'remote'
+            && recordContains(container, candidate)
+          ) {
+            return candidate.label + ' уже входит в ' + container.label + '.';
+          }
+        }
+      }
+      return '';
+    }
+
+    function fillLogicalSelect(select, records, preferredKey) {
+      select.innerHTML = '';
+      records.forEach(function (record) {
+        var option = document.createElement('option');
+        option.value = record.key;
+        option.textContent =
+          record.label
+          + (record.kind === 'merge' ? ' [assembly]' : ' [component]');
+        select.appendChild(option);
+      });
+
+      if (
+        preferredKey
+        && records.some(function (record) {
+          return record.key === preferredKey;
+        })
+      ) {
+        select.value = preferredKey;
+      }
+    }
+
+    function manualPairReason(records, anchor, moving) {
+      if (!canCreate) {
+        return 'Нет права на создание сборки.';
+      }
+      if (records.length !== 2) {
+        return 'Для ручной склейки выберите ровно два логических источника.';
+      }
+      if (!anchor || !moving) {
+        return 'Назначьте Anchor и Moving source.';
+      }
+      if (anchor.key === moving.key) {
+        return 'Anchor и Moving source должны быть разными.';
+      }
+      if (moving.kind !== 'remote') {
+        return 'Assembly нельзя использовать как Moving source. Назначьте assembly как Anchor.';
+      }
+
+      var anchorSession = Number(anchor.captureSessionId || 0);
+      var movingSession = Number(moving.captureSessionId || 0);
+      if (
+        anchorSession > 0
+        && movingSession > 0
+        && anchorSession !== movingSession
+      ) {
+        return 'Anchor и Moving source относятся к разным capture sessions.';
+      }
+
+      if (
+        anchor.kind === 'merge'
+        && recordContains(anchor, moving)
+      ) {
+        return moving.label + ' уже входит в выбранную assembly.';
+      }
+
+      return '';
+    }
+
     function updateControls() {
       var records = selectedRecords();
       var jobIds = uniqueNumbers(
@@ -1211,6 +1384,11 @@ window.addEventListener('load', function () {
       var sparseIds = uniqueNumbers(
         records.flatMap(function (record) {
           return record.sparseIds || [];
+        })
+      );
+      var captureSessionIds = uniqueNumbers(
+        records.map(function (record) {
+          return record.captureSessionId || 0;
         })
       );
 
@@ -1235,34 +1413,45 @@ window.addEventListener('load', function () {
       var duplicateCount = records.reduce(function (sum, record) {
         return sum + (record.dbJobIds || []).length;
       }, 0) - jobIds.length;
+      var duplicateSourceReason = duplicateLogicalSource(records);
 
       selectedSummary.className =
-        'alert alert-secondary py-2';
+        duplicateSourceReason
+          ? 'alert alert-warning py-2'
+          : 'alert alert-secondary py-2';
       selectedSummary.textContent =
         'Выбрано источников: ' + records.length
         + ' · уникальных component jobs: ' + jobIds.length
         + ' · sparse parents: ' + sparseIds.length
+        + ' · capture sessions: ' + captureSessionIds.length
         + (
           duplicateCount > 0
             ? ' · повторов удалено: ' + duplicateCount
             : ''
+        )
+        + (
+          duplicateSourceReason
+            ? ' · ' + duplicateSourceReason
+            : ''
         );
 
-      var previousAnchor = anchorSelect.value;
-      anchorSelect.innerHTML = '';
+      var previousAutomaticAnchor = automaticAnchorSelect.value;
+      automaticAnchorSelect.innerHTML = '';
       leafOptions.forEach(function (leaf) {
         var option = document.createElement('option');
         option.value = String(leaf.model_id);
         option.textContent = leaf.label;
-        anchorSelect.appendChild(option);
+        automaticAnchorSelect.appendChild(option);
       });
       if (
-        previousAnchor
-        && Array.from(anchorSelect.options).some(function (option) {
-          return option.value === previousAnchor;
-        })
+        previousAutomaticAnchor
+        && Array.from(automaticAnchorSelect.options).some(
+          function (option) {
+            return option.value === previousAutomaticAnchor;
+          }
+        )
       ) {
-        anchorSelect.value = previousAnchor;
+        automaticAnchorSelect.value = previousAutomaticAnchor;
       }
 
       automaticForm.innerHTML = '';
@@ -1286,11 +1475,11 @@ window.addEventListener('load', function () {
           sparseIds[0]
         );
       }
-      if (anchorSelect.value) {
+      if (automaticAnchorSelect.value) {
         hidden(
           automaticForm,
           'anchor_model_id',
-          anchorSelect.value
+          automaticAnchorSelect.value
         );
       }
       automaticForm.appendChild(automaticButton);
@@ -1298,14 +1487,19 @@ window.addEventListener('load', function () {
       var automaticReason = '';
       if (!canCreate) {
         automaticReason = 'Нет права на создание сборки.';
+      } else if (duplicateSourceReason) {
+        automaticReason = duplicateSourceReason;
+      } else if (captureSessionIds.length > 1) {
+        automaticReason =
+          'Выбранные источники относятся к разным capture sessions.';
       } else if (jobIds.length < 2) {
         automaticReason =
           'Для автоматической склейки нужны минимум две уникальные component models.';
       } else if (sparseIds.length !== 1) {
         automaticReason =
           'Автоматическая склейка требует один sparse parent. Для разных реконструкций используйте ручную склейку пары.';
-      } else if (!anchorSelect.value) {
-        automaticReason = 'Не удалось определить anchor Model.';
+      } else if (!automaticAnchorSelect.value) {
+        automaticReason = 'Не удалось определить Anchor Model.';
       }
 
       automaticButton.disabled = automaticReason !== '';
@@ -1317,43 +1511,93 @@ window.addEventListener('load', function () {
         return window.confirm(
           'Создать aligned assembly из '
             + jobIds.length
-            + ' component models?'
+            + ' уникальных component models?'
         );
       };
+      automaticHint.textContent =
+        automaticReason
+        || 'Используются общие COLMAP poses внутри одной sparse-реконструкции.';
 
-      var manualReason = '';
-      if (!canCreate) {
-        manualReason = 'Нет права на создание сборки.';
-      } else if (records.length !== 2) {
-        manualReason =
-          'Для ручной склейки выберите ровно два логических источника.';
+      var previousManualAnchor = manualAnchorSelect.value;
+      var previousManualMoving = manualMovingSelect.value;
+      var sortedManualRecords = records.slice().sort(
+        function (left, right) {
+          return left.label.localeCompare(right.label);
+        }
+      );
+
+      if (sortedManualRecords.length === 2) {
+        var mergeRecord = sortedManualRecords.find(function (record) {
+          return record.kind === 'merge';
+        });
+        var remoteRecord = sortedManualRecords.find(function (record) {
+          return record.kind === 'remote';
+        });
+        if (mergeRecord && remoteRecord) {
+          previousManualAnchor = mergeRecord.key;
+          previousManualMoving = remoteRecord.key;
+        } else {
+          previousManualAnchor =
+            previousManualAnchor || sortedManualRecords[0].key;
+          previousManualMoving =
+            previousManualMoving || sortedManualRecords[1].key;
+        }
       }
 
+      fillLogicalSelect(
+        manualAnchorSelect,
+        sortedManualRecords,
+        previousManualAnchor
+      );
+      fillLogicalSelect(
+        manualMovingSelect,
+        sortedManualRecords,
+        previousManualMoving
+      );
+
+      var manualAnchor = registry.get(manualAnchorSelect.value);
+      var manualMoving = registry.get(manualMovingSelect.value);
+      var manualReason = manualPairReason(
+        records,
+        manualAnchor,
+        manualMoving
+      );
+
+      swapManualButton.disabled = records.length !== 2;
       manualButton.disabled = manualReason !== '';
       manualButton.onclick = function () {
-        if (manualReason) return;
-        var anchorKey = records[0].key;
-        var sourceKey = records[1].key;
-        var anchor = registry.get(anchorKey);
-        var sourceRecord = registry.get(sourceKey);
-        if (!anchor || !sourceRecord) return;
+        if (manualReason || !manualAnchor || !manualMoving) return;
 
         var url = '/sfm_manual_align.php?order_id='
           + encodeURIComponent(orderId)
-          + '&anchor_kind=' + encodeURIComponent(anchor.kind)
-          + '&anchor_id=' + encodeURIComponent(anchor.id)
-          + '&source_kind=' + encodeURIComponent(sourceRecord.kind)
-          + '&source_id=' + encodeURIComponent(sourceRecord.id);
+          + '&anchor_kind=' + encodeURIComponent(manualAnchor.kind)
+          + '&anchor_id=' + encodeURIComponent(manualAnchor.id)
+          + '&source_kind=' + encodeURIComponent(manualMoving.kind)
+          + '&source_id=' + encodeURIComponent(manualMoving.id);
         window.open(url, '_blank', 'noopener');
       };
 
-      controlHint.textContent =
-        automaticReason || manualReason || (
-          'Automatic: shared COLMAP poses. Manual: selected pair with correspondence editor.'
+      manualHint.textContent =
+        manualReason
+        || (
+          'Anchor: ' + manualAnchor.label
+          + ' · Moving source: ' + manualMoving.label
+          + '. Направление не зависит от порядка установки галочек.'
         );
     }
 
-    anchorSelect.addEventListener('change', updateControls);
+    automaticAnchorSelect.addEventListener(
+      'change',
+      updateControls
+    );
+    manualAnchorSelect.addEventListener('change', updateControls);
+    manualMovingSelect.addEventListener('change', updateControls);
+    swapManualButton.addEventListener('click', function () {
+      var currentAnchor = manualAnchorSelect.value;
+      manualAnchorSelect.value = manualMovingSelect.value;
+      manualMovingSelect.value = currentAnchor;
+      updateControls();
+    });
     tinyCheckbox.addEventListener('change', updateControls);
     updateControls();
   }
