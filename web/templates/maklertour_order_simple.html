@@ -321,7 +321,8 @@ window.addEventListener('load', function () {
     var thead = document.createElement('thead');
     thead.innerHTML =
       '<tr><th>Model</th><th>Кадры / sparse</th>' +
-      '<th>Dense job</th><th>Артефакты</th></tr>';
+      '<th>Dense job</th><th>Создано / готово</th>' +
+      '<th>Артефакты</th></tr>';
     table.appendChild(thead);
     var tbody = document.createElement('tbody');
 
@@ -350,6 +351,20 @@ window.addEventListener('load', function () {
           ' · ' + component.dense_status
         : 'not generated';
       row.appendChild(create('td', 'small', job));
+
+      var createdReady = [
+        component.created_at ? 'создано: ' + component.created_at : '',
+        component.finished_at
+          ? 'готово: ' + component.finished_at
+          : (
+              component.updated_at
+                ? 'обновлено: ' + component.updated_at
+                : ''
+            )
+      ].filter(Boolean).join(' · ');
+      row.appendChild(
+        create('td', 'small text-nowrap', createdReady || '—')
+      );
 
       var actions = create('td', 'd-flex gap-1 flex-wrap');
       if (component.has_dense) {
@@ -498,6 +513,236 @@ window.addEventListener('load', function () {
     }
   }
 
+  function renderGeneratedRunModels(runs) {
+    var target = document.getElementById('simple-generated');
+    if (!target || target.querySelector('[data-sfm-run-models]')) return;
+
+    var sorted = runs.slice().sort(function (left, right) {
+      var leftTime = left.started_at || left.created_at || '';
+      var rightTime = right.started_at || right.created_at || '';
+      if (leftTime === rightTime) {
+        return Number(right.run_id || 0) - Number(left.run_id || 0);
+      }
+      return rightTime.localeCompare(leftTime);
+    });
+
+    var card = create('div', 'card mb-3');
+    card.dataset.sfmRunModels = '1';
+    var body = create('div', 'card-body');
+    body.appendChild(
+      create('h5', 'card-title', 'Video SfM models by processing Run')
+    );
+    body.appendChild(
+      create(
+        'div',
+        'small text-muted mb-2',
+        'Последняя обработка сверху. Модели сгруппированы по видео и Run.'
+      )
+    );
+
+    var shown = 0;
+
+    sorted.forEach(function (run, runIndex) {
+      var components = (run.components || []).filter(function (component) {
+        return component.has_dense;
+      });
+      if (!components.length) return;
+
+      shown += 1;
+      var section = create('div', 'border rounded p-2 mb-3');
+
+      var heading = create(
+        'div',
+        'd-flex justify-content-between gap-2 flex-wrap'
+      );
+      heading.appendChild(
+        create(
+          'strong',
+          '',
+          (runIndex === 0 ? 'Последняя обработка · ' : '') +
+            'Run #' + run.run_id + ' · ' +
+            String(run.mode || '').toUpperCase()
+        )
+      );
+      heading.appendChild(
+        create('span', 'badge bg-secondary', run.status || 'UNKNOWN')
+      );
+      section.appendChild(heading);
+
+      section.appendChild(
+        create(
+          'div',
+          'small text-muted',
+          [
+            run.started_at ? 'старт: ' + run.started_at : '',
+            run.finished_at ? 'завершено: ' + run.finished_at : '',
+            'video_scan_id: ' + run.video_scan_id
+          ].filter(Boolean).join(' · ')
+        )
+      );
+      section.appendChild(
+        create('div', 'small text-break mb-2', run.source_filename || '')
+      );
+
+      var responsive = create('div', 'table-responsive');
+      var table = create('table', 'table table-sm align-middle mb-2');
+      var thead = document.createElement('thead');
+      thead.innerHTML =
+        '<tr><th>Model</th><th>Создано</th><th>Готово</th>' +
+        '<th>Geometry</th><th>Job</th><th>Артефакты</th></tr>';
+      table.appendChild(thead);
+      var tbody = document.createElement('tbody');
+
+      components.forEach(function (component) {
+        var row = document.createElement('tr');
+        var model = document.createElement('td');
+        model.appendChild(
+          create('strong', '', 'Model ' + component.model_id)
+        );
+        if (component.is_primary) {
+          model.appendChild(document.createTextNode(' '));
+          model.appendChild(create('span', 'badge bg-primary', 'primary'));
+        }
+        row.appendChild(model);
+
+        row.appendChild(
+          create('td', 'small text-nowrap', component.created_at || '—')
+        );
+        row.appendChild(
+          create(
+            'td',
+            'small text-nowrap',
+            component.finished_at || component.updated_at || '—'
+          )
+        );
+        row.appendChild(
+          create(
+            'td',
+            'small',
+            component.registered_images + ' images · ' +
+              component.sparse_points + ' sparse · ' +
+              component.dense_points + ' dense'
+          )
+        );
+        row.appendChild(
+          create(
+            'td',
+            'small',
+            'DB #' + component.dense_db_job_id +
+              ' · remote ' + component.dense_remote_job_id
+          )
+        );
+
+        var actions = create('td', 'd-flex gap-1 flex-wrap');
+        addLink(
+          actions,
+          'Открыть',
+          component.viewer_url,
+          'btn btn-sm btn-outline-primary',
+          true
+        );
+        addLink(
+          actions,
+          'Скачать PLY',
+          component.download_url,
+          'btn btn-sm btn-outline-success',
+          false
+        );
+        row.appendChild(actions);
+        tbody.appendChild(row);
+      });
+
+      table.appendChild(tbody);
+      responsive.appendChild(table);
+      section.appendChild(responsive);
+
+      if (run.merge && run.merge.state === 'done') {
+        var mergeLinks = create('div', 'border-top pt-2');
+        mergeLinks.appendChild(
+          create(
+            'div',
+            'small fw-semibold',
+            'Готовая сборка #' + run.merge.merge_id +
+              ' · ' + run.merge.points + ' points' +
+              (run.merge.created_at ? ' · ' + run.merge.created_at : '')
+          )
+        );
+        addLink(
+          mergeLinks,
+          'Открыть сборку',
+          run.merge.open_url,
+          'btn btn-sm btn-outline-primary mt-1 me-1',
+          true
+        );
+        addLink(
+          mergeLinks,
+          'Скачать сборку',
+          run.merge.download_url,
+          'btn btn-sm btn-outline-success mt-1',
+          false
+        );
+        section.appendChild(mergeLinks);
+      } else if (run.can_aligned_merge) {
+        var form = document.createElement('form');
+        form.method = 'post';
+        form.action = '/order.php?id=' + run.order_id;
+        form.className = 'border-top pt-2';
+        form.addEventListener('submit', function (event) {
+          var question =
+            'Собрать все готовые модели Run #' + run.run_id +
+            ' в одну модель? Компоненты без общего COLMAP-пути будут исключены.';
+          if (!window.confirm(question)) event.preventDefault();
+        });
+
+        hidden(form, 'action', 'aligned_merge_generated_dense_clouds');
+        hidden(form, 'sparse_remote_job_id', run.sparse_remote_job_id);
+        hidden(form, 'anchor_model_id', run.anchor_model_id);
+        hidden(form, 'exclude_tiny', 1);
+        hidden(form, 'min_points', 1000);
+        (run.source_job_ids || []).forEach(function (jobId) {
+          hidden(form, 'source_job_ids[]', jobId);
+        });
+
+        var button = create(
+          'button',
+          'btn btn-sm btn-success',
+          'Собрать все модели Run #' + run.run_id + ' в одну модель'
+        );
+        button.type = 'submit';
+        form.appendChild(button);
+        form.appendChild(
+          create(
+            'div',
+            'form-text',
+            'Используются только готовые dense jobs этой обработки.'
+          )
+        );
+        section.appendChild(form);
+      } else {
+        section.appendChild(
+          create(
+            'div',
+            'small text-muted border-top pt-2',
+            components.length < 2
+              ? 'Для сборки нужны минимум две готовые модели.'
+              : 'Автосклейка недоступна для этого набора компонентов.'
+          )
+        );
+      }
+
+      body.appendChild(section);
+    });
+
+    if (!shown) {
+      body.appendChild(
+        create('div', 'text-muted', 'Готовые Video SfM models отсутствуют.')
+      );
+    }
+
+    card.appendChild(body);
+    target.insertBefore(card, target.firstChild);
+  }
+
   var source = document.getElementById('sfm-run-lineage-json');
   if (!source) return;
 
@@ -510,6 +755,7 @@ window.addEventListener('load', function () {
   }
 
   runs.forEach(render);
+  renderGeneratedRunModels(runs);
 
   if (window.location.hash === '#simple-video-sfm') {
     var trigger = document.querySelector(
@@ -520,6 +766,7 @@ window.addEventListener('load', function () {
     }
   }
 })();
+</script>
 {/literal}
 </main>
 {include file="maklertour_footer.html"}

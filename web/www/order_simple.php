@@ -125,7 +125,19 @@ function osv_run_sparse_components(array $run,array $jobs,int $orderId,int $sess
     $params=osv_json_array($j['parameters_json'] ?? '{}');
     if(!array_key_exists('model_id',$params)) continue;
     $mid=(int)$params['model_id']; $ply=osv_remote_dir((int)$j['remote_job_id']).'/merged/merged_fused.ply'; $pi=osv_ply_info($ply);
-    $candidate=['db_job_id'=>(int)$j['id'],'remote_job_id'=>(int)$j['remote_job_id'],'status'=>(string)$j['status'],'has_dense'=>!empty($pi['valid']),'dense_points'=>(int)($pi['vertices']??0),'viewer_url'=>!empty($pi['valid'])?('/sfm_3d_viewer.php?order_id='.$orderId.'&session_id='.$sessionId.'&pipeline_run_id='.$rid.'&artifact=dense&dense_remote_job_id='.(int)$j['remote_job_id']):'','download_url'=>!empty($pi['valid'])?('/api/sfm_remote_job_status.php?job_id='.(int)$j['id'].'&file=ply'):''];
+    $candidate=[
+      'db_job_id'=>(int)$j['id'],
+      'remote_job_id'=>(int)$j['remote_job_id'],
+      'status'=>(string)$j['status'],
+      'has_dense'=>!empty($pi['valid']),
+      'dense_points'=>(int)($pi['vertices']??0),
+      'created_at'=>(string)($j['created_at']??''),
+      'started_at'=>(string)($j['started_at']??''),
+      'finished_at'=>(string)($j['finished_at']??''),
+      'updated_at'=>(string)($j['updated_at']??''),
+      'viewer_url'=>!empty($pi['valid'])?('/sfm_3d_viewer.php?order_id='.$orderId.'&session_id='.$sessionId.'&pipeline_run_id='.$rid.'&artifact=dense&dense_remote_job_id='.(int)$j['remote_job_id']):'',
+      'download_url'=>!empty($pi['valid'])?('/api/sfm_remote_job_status.php?job_id='.(int)$j['id'].'&file=ply'):'',
+    ];
     $current=$denseByModel[$mid] ?? null;
     if($current===null || (empty($current['has_dense']) && !empty($candidate['has_dense'])) || ((bool)$current['has_dense']===(bool)$candidate['has_dense'] && (int)$candidate['db_job_id']>(int)$current['db_job_id'])){ $denseByModel[$mid]=$candidate; }
   }
@@ -144,6 +156,10 @@ function osv_run_sparse_components(array $run,array $jobs,int $orderId,int $sess
       'dense_db_job_id'=>$dense['db_job_id'] ?? 0,
       'dense_remote_job_id'=>$dense['remote_job_id'] ?? 0,
       'dense_points'=>$dense['dense_points'] ?? 0,
+      'created_at'=>$dense['created_at'] ?? '',
+      'started_at'=>$dense['started_at'] ?? '',
+      'finished_at'=>$dense['finished_at'] ?? '',
+      'updated_at'=>$dense['updated_at'] ?? '',
       'sparse_remote_job_id'=>$remote,
       'viewer_url'=>$dense['viewer_url'] ?? '',
       'download_url'=>$dense['download_url'] ?? '',
@@ -259,7 +275,11 @@ function osv_build_models_assemblies_by_session(array $sessions,array $merges,in
 $modelsAssembliesBySession=osv_build_models_assemblies_by_session($captureSessions,$generatedMerges,$orderId);
 foreach($captureSessions as $i=>$s){ $captureSessions[$i]['models_assemblies']=$modelsAssembliesBySession[(int)$s['id']] ?? []; }
 $generatedModels=osv_build_generated($captureSessions,$generatedMerges); $anchorOptions=[]; $defaultSparseRemoteJobId=0; foreach($generatedModels as $gm){ $mid=(int)($gm['model_id'] ?? 0); if($mid>0){ $anchorOptions[$mid]='Model '.$mid; } if($defaultSparseRemoteJobId<=0 && (int)($gm['sparse_remote_job_id'] ?? 0)>0){ $defaultSparseRemoteJobId=(int)$gm['sparse_remote_job_id']; } } ksort($anchorOptions); $mediaTotals=['sessions'=>count($captureSessions),'photos'=>count($photoPoints),'videos'=>count($videoScans),'capture_bundles'=>array_sum(array_map(fn($s)=>count($s['capture_bundles'] ?? []),$captureSessions)),'generated_models'=>count($generatedModels)];
-$sfmRunLineage=sfm_video_run_lineage_build($captureSessions,$generatedMerges,$orderId,$canDeleteMedia);
+$canCreateGeneratedMerge=$canDeleteMedia
+  || $role==='ADMIN'
+  || (int)($order['broker_id']??0)===$userId
+  || ($role==='OPERATOR' && (int)($order['operator_id']??0)===$userId);
+$sfmRunLineage=sfm_video_run_lineage_build($captureSessions,$generatedMerges,$orderId,$canCreateGeneratedMerge);
 $sfmRunLineageJson=json_encode($sfmRunLineage,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
 if(!is_string($sfmRunLineageJson))$sfmRunLineageJson='[]';
 $smarty->assign('models_assemblies_by_session',$modelsAssembliesBySession); $smarty->assign('anchor_options',$anchorOptions); $smarty->assign('default_sparse_remote_job_id',$defaultSparseRemoteJobId); $smarty->assign('current_user',$user); $smarty->assign('order',$order); $smarty->assign('captureSessions',$captureSessions); $smarty->assign('videoScans',$videoScans); $smarty->assign('generated_models',$generatedModels); $smarty->assign('mediaTotals',$mediaTotals); $smarty->assign('canDeleteMedia',$canDeleteMedia); $smarty->assign('sfmRunLineageJson',$sfmRunLineageJson);

@@ -1,4 +1,5 @@
--Eeuo pipefail
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
 DEFAULT_PATCH="/tmp/new_patch.diff"
 PATCH_FILE="$DEFAULT_PATCH"
