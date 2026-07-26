@@ -8,7 +8,7 @@ User=root
 Group=root
 WorkingDirectory=/home/makler/web
 Environment=SFM_GENERATED_MERGE_DELETE_MIN_AGE_SECONDS=30
-ExecStart=/usr/bin/env php /home/makler/web/remote_station/cleanup_generated_merge_quarantine.php
+ExecStart=/usr/bin/env php /home/makler/web/remote_station/cleanup_generated_merge_queue.php
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

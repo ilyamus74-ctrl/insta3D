@@ -34,9 +34,11 @@ journalctl -u makler-sfm-cleanup-worker.service -f
 
 ## Установка очистки удалённых сборок
 
-Веб-интерфейс атомарно переносит удаляемую сборку в
-`.delete_merge_<id>_<token>`. Рекурсивное удаление выполняет отдельный
-root-side timer, поэтому `apache` не получает права на root-owned результаты:
+Веб-интерфейс удаляет запись сборки из БД и публикует файл очереди
+`.delete_merge_<id>_<token>.queue.json`. Исходные root-owned каталоги не
+перемещаются процессом `apache`: проверку путей и рекурсивное удаление выполняет
+отдельный root-side timer. Это также работает для каталогов, которые `apache`
+не может переместить между родительскими директориями.
 
 ```bash
 cp web/remote_station/makler-generated-merge-cleanup.service /etc/systemd/system/

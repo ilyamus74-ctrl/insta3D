@@ -201,6 +201,9 @@ if ($outputRoot === false) {
 
 $moves = [];
 $quarantine = '';
+$quarantineTemp = '';
+$cleanupTargets = [];
+$committed = false;
 
 try {
     $dbcnx->begin_transaction();
@@ -348,29 +351,14 @@ try {
         }
     }
 
-    $quarantine = $outputRoot
-        . '/.delete_merge_'
-        . $mergeId
-        . '_'
-        . bin2hex(random_bytes(6));
-    if (!mkdir($quarantine, 0700, true)) {
-        throw new RuntimeException(
-            'Cannot create deletion quarantine'
-        );
-    }
-
     foreach (array_keys($dedicated) as $directory) {
-        $target = $quarantine . '/' . basename($directory);
-        if (!@rename($directory, $target)) {
-            throw new RuntimeException(
-                'Cannot quarantine assembly directory: '
-                . $directory
-            );
-        }
-        $moves[] = [$directory, $target];
+        $cleanupTargets[] = [
+            'kind' => 'directory',
+            'path' => $directory,
+        ];
     }
 
-    foreach ($paths as $index => $path) {
+    foreach ($paths as $path) {
         if (!file_exists($path) && !is_link($path)) {
             continue;
         }
@@ -378,7 +366,8 @@ try {
         $covered = false;
         foreach (array_keys($dedicated) as $directory) {
             if (
-                str_starts_with(
+                $path === $directory
+                || str_starts_with(
                     $path,
                     rtrim($directory, DIRECTORY_SEPARATOR)
                         . DIRECTORY_SEPARATOR
@@ -399,21 +388,52 @@ try {
             || !is_file($real)
         ) {
             throw new RuntimeException(
-                'Cannot quarantine assembly file: ' . $path
+                'Cannot queue assembly file for deletion: ' . $path
             );
         }
 
-        $target = $quarantine
-            . '/file_'
-            . $index
-            . '_'
-            . basename($real);
-        if (!@rename($real, $target)) {
-            throw new RuntimeException(
-                'Cannot quarantine assembly file: ' . $real
-            );
-        }
-        $moves[] = [$real, $target];
+        $cleanupTargets[] = [
+            'kind' => 'file',
+            'path' => $real,
+        ];
+    }
+
+    $quarantineToken = bin2hex(random_bytes(6));
+    $quarantine = $outputRoot
+        . '/.delete_merge_'
+        . $mergeId
+        . '_'
+        . $quarantineToken
+        . '.queue.json';
+    $quarantineTemp = $quarantine . '.tmp';
+    $queuePayload = [
+        'version' => 1,
+        'merge_id' => $mergeId,
+        'order_id' => $orderId,
+        'token' => $quarantineToken,
+        'created_at' => date(DATE_ATOM),
+        'targets' => $cleanupTargets,
+    ];
+    $queueJson = json_encode(
+        $queuePayload,
+        JSON_PRETTY_PRINT
+            | JSON_UNESCAPED_SLASHES
+            | JSON_UNESCAPED_UNICODE
+            | JSON_THROW_ON_ERROR
+    ) . PHP_EOL;
+    if (
+        @file_put_contents($quarantineTemp, $queueJson, LOCK_EX)
+        === false
+    ) {
+        throw new RuntimeException('Cannot create deletion queue');
+    }
+    @chmod($quarantineTemp, 0600);
+
+    if (!$cleanupTargets) {
+        error_log(
+            'Generated merge deletion queued without filesystem targets: '
+            . $mergeId
+        );
     }
 
     $statement = $dbcnx->prepare(
@@ -435,15 +455,21 @@ try {
     }
     $statement->close();
     $dbcnx->commit();
+    $committed = true;
 
-    // The HTTP process runs as apache and is intentionally unable to
-    // recursively remove root-owned model trees. The assembly is already
-    // atomically hidden from the application by rename(). A root-side timer
-    // removes the quarantine asynchronously.
-    $cleanupQueued = is_dir($quarantine);
+    // Publish the queue only after the database commit. The root-side timer
+    // validates and removes the original root-owned paths asynchronously.
+    $cleanupQueued = @rename($quarantineTemp, $quarantine);
+    if ($cleanupQueued) {
+        $quarantineTemp = '';
+    }
     $cleanupWarning = $cleanupQueued
         ? null
-        : 'Deletion quarantine disappeared before cleanup was queued';
+        : 'Assembly row was deleted, but the filesystem cleanup queue '
+            . 'could not be published';
+    if ($cleanupWarning !== null) {
+        error_log($cleanupWarning . ': ' . $quarantineTemp);
+    }
 
     if (function_exists('audit_log')) {
         audit_log(
@@ -465,24 +491,21 @@ try {
     merge_delete_reply([
         'ok' => true,
         'merge_id' => $mergeId,
-        'deleted_paths' => count($moves),
+        'deleted_paths' => count($cleanupTargets),
         'cleanup_warning' => $cleanupWarning,
         'cleanup_queued' => $cleanupQueued,
         'quarantine_name' => basename($quarantine),
     ]);
 } catch (Throwable $error) {
-    try {
-        $dbcnx->rollback();
-    } catch (Throwable) {
-    }
+    if (!$committed) {
+        try {
+            $dbcnx->rollback();
+        } catch (Throwable) {
+        }
 
-    merge_delete_restore($moves);
-    if (
-        $quarantine !== ''
-        && is_dir($quarantine)
-        && !$moves
-    ) {
-        @rmdir($quarantine);
+        merge_delete_restore($moves);
+        $quarantineTemp !== '' && @unlink($quarantineTemp);
+        $quarantine !== '' && @unlink($quarantine);
     }
 
     $message = $error->getMessage();
