@@ -115,7 +115,18 @@ PYMARKER
 MARKER_ASSIST_JSON="${MARKER_META[0]:-{}}"
 MARKER_WARNING_TEXT="${MARKER_META[1]:-}"
 COMPLETED_WITH_WARNINGS="${MARKER_META[2]:-false}"
-for f in cameras.bin images.bin points3D.bin; do [[ -f "$SPARSE_MODEL_DIR/$f" ]] || { write_status "ERROR" 0 -1 "Sparse model file missing: $SPARSE_MODEL_DIR/$f"; exit 1; }; done
+if [[ -f "$SPARSE_MODEL_DIR/cameras.bin" \
+   && -f "$SPARSE_MODEL_DIR/images.bin" \
+   && -f "$SPARSE_MODEL_DIR/points3D.bin" ]]; then
+  :
+elif [[ -f "$SPARSE_MODEL_DIR/cameras.txt" \
+     && -f "$SPARSE_MODEL_DIR/images.txt" \
+     && -f "$SPARSE_MODEL_DIR/points3D.txt" ]]; then
+  :
+else
+  write_status "ERROR" 0 -1 "Sparse model must contain cameras/images/points3D as BIN or TXT: $SPARSE_MODEL_DIR"
+  exit 1
+fi
 mkdir -p "$DENSE_DIR" "$DENSE_LOG_DIR"
 
 run_colmap image_undistorter --image_path "$FRAMES_DIR" --input_path "$SPARSE_MODEL_DIR" --output_path "$UNDISTORTED_DIR" --output_type COLMAP > "$DENSE_LOG_DIR/image_undistorter.log" 2>&1

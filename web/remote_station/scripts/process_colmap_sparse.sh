@@ -32,6 +32,10 @@ APRILTAG_VALID_IDS="${APRILTAG_VALID_IDS:-1-30}"
 APRILTAG_MIN_OBSERVATIONS="${APRILTAG_MIN_OBSERVATIONS:-3}"
 APRILTAG_MAX_OBSERVATIONS_PER_TAG="${APRILTAG_MAX_OBSERVATIONS_PER_TAG:-20}"
 APRILTAG_DETECTOR_BIN="${APRILTAG_DETECTOR_BIN:-}"
+APRILTAG_METRIC_ALIGNMENT_ENABLED="${APRILTAG_METRIC_ALIGNMENT_ENABLED:-1}"
+APRILTAG_MAX_PNP_ERROR_PX="${APRILTAG_MAX_PNP_ERROR_PX:-4.0}"
+APRILTAG_ALIGNMENT_MAX_ERROR_M="${APRILTAG_ALIGNMENT_MAX_ERROR_M:-0.04}"
+APRILTAG_MIN_BASELINE_M="${APRILTAG_MIN_BASELINE_M:-0.05}"
 
 mkdir -p "$BASE/status" "$BASE/logs"
 
@@ -595,6 +599,70 @@ payload={
 open(sys.argv[1],'w',encoding='utf-8').write(json.dumps(payload,ensure_ascii=False,indent=2))
 PYASSIST
 fi
+
+APRILTAG_ALIGNMENT_APPLIED=0
+if [[ "$APRILTAG_ASSIST_ENABLED" == "1" && "$APRILTAG_METRIC_ALIGNMENT_ENABLED" == "1" ]]; then
+  write_status "RUNNING" 96 -1 "AprilTag metric alignment: scale and component stitching"
+  if [[ -f "$BASE/scripts/apply_apriltag_metric_alignment.py" ]]; then
+    python3 "$BASE/scripts/apply_apriltag_metric_alignment.py" \
+      --frames-dir "$FRAMES_DIR" \
+      --sparse-dir "$SPARSE_DIR" \
+      --assist-json "$APRILTAG_ASSIST_JSON_PATH" \
+      --marker-size-m "$APRILTAG_MARKER_SIZE_M" \
+      --min-observations "$APRILTAG_MIN_OBSERVATIONS" \
+      --max-pnp-error-px "$APRILTAG_MAX_PNP_ERROR_PX" \
+      --alignment-max-error-m "$APRILTAG_ALIGNMENT_MAX_ERROR_M" \
+      --min-baseline-m "$APRILTAG_MIN_BASELINE_M" \
+      --apply >> "$LOG_FILE" 2>&1 \
+      || echo "WARNING | APRILTAG_METRIC | Alignment runner returned an error; original sparse models were retained" >> "$LOG_FILE"
+  else
+    echo "WARNING | APRILTAG_METRIC | Missing $BASE/scripts/apply_apriltag_metric_alignment.py; continuing without metric alignment" >> "$LOG_FILE"
+  fi
+fi
+
+APRILTAG_ALIGNMENT_APPLIED="$(
+python3 - "$APRILTAG_ASSIST_JSON_PATH" <<'PYMETRIC' 2>/dev/null || echo 0
+import json,sys
+try:
+    payload=json.load(open(sys.argv[1],encoding='utf-8'))
+    print('1' if payload.get('sim3_applied') else '0')
+except Exception:
+    print('0')
+PYMETRIC
+)"
+
+if [[ "$APRILTAG_ALIGNMENT_APPLIED" == "1" ]]; then
+  echo "INFO | APRILTAG_METRIC | Final sparse models were replaced by metric/aligned TXT models" >> "$LOG_FILE"
+  for model_dir in "$SPARSE_DIR"/*; do
+    if [[ -d "$model_dir" ]]; then
+      converted_dir="${model_dir}.bin_tmp"
+      rm -rf "$converted_dir"
+      mkdir -p "$converted_dir"
+      if run_colmap model_converter --input_path "$model_dir" --output_path "$converted_dir" --output_type BIN >> "$LOG_FILE" 2>&1; then
+        txt_backup="${model_dir}.txt_tmp"
+        rm -rf "$txt_backup"
+        mv "$model_dir" "$txt_backup"
+        mv "$converted_dir" "$model_dir"
+        rm -rf "$txt_backup"
+        echo "INFO | APRILTAG_METRIC | Converted aligned model $(basename "$model_dir") to BIN" >> "$LOG_FILE"
+      else
+        rm -rf "$converted_dir"
+        echo "WARNING | APRILTAG_METRIC | model_converter failed for aligned $model_dir; keeping TXT model" >> "$LOG_FILE"
+      fi
+      run_sparse_diagnostics "$model_dir"
+      python3 "$BASE/scripts/build_camera_trajectory.py" --model-dir "$model_dir" --diagnostics-json "$model_dir/sparse_diagnostics.json" --output-json "$model_dir/camera_trajectory.json" >> "$LOG_FILE" 2>&1 || echo "WARNING | CAMERA_TRAJECTORY | Failed for aligned $model_dir" >> "$LOG_FILE"
+      imu_jsonl="$(find_imu_jsonl || true)"
+      align_cmd=(python3 "$BASE/scripts/build_world_alignment.py" --model-dir "$model_dir" --camera-trajectory "$model_dir/camera_trajectory.json" --output-json "$model_dir/world_alignment.json")
+      [[ -n "$imu_jsonl" ]] && align_cmd+=(--imu-jsonl "$imu_jsonl")
+      "${align_cmd[@]}" >> "$LOG_FILE" 2>&1 || echo "WARNING | WORLD_ALIGNMENT | Failed for aligned $model_dir" >> "$LOG_FILE"
+    fi
+  done
+fi
+
+# Rebuild the manifest because metric alignment may replace and merge sparse
+# component directories. Dense selection must see the final model set.
+generate_sparse_components
+MODEL_COUNT=$(find "$SPARSE_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 
 CAMERA_METADATA_RESULT="{}"
 META_PATH="$(find_camera_metadata_json || true)"
