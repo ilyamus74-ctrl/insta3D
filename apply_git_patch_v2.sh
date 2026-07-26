@@ -91,13 +91,66 @@ git status --short
 echo "[INFO] Normalizing UTF-8 BOM and CRLF..."
 python3 - "$PATCH_FILE" "$NORMALIZED_PATCH" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 source = Path(sys.argv[1]).read_bytes()
 if source.startswith(b"\xef\xbb\xbf"):
     source = source[3:]
 source = source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-Path(sys.argv[2]).write_bytes(source)
+
+text = source.decode("utf-8")
+lines = text.splitlines()
+normalized = []
+in_hunk = False
+old_remaining = 0
+new_remaining = 0
+repaired_empty_context = 0
+
+hunk_re = re.compile(
+    r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@"
+)
+
+for line in lines:
+    match = hunk_re.match(line)
+    if match:
+        old_remaining = int(match.group(2) or 1)
+        new_remaining = int(match.group(4) or 1)
+        in_hunk = old_remaining > 0 or new_remaining > 0
+        normalized.append(line)
+        continue
+
+    if in_hunk and line == "":
+        line = " "
+        repaired_empty_context += 1
+
+    normalized.append(line)
+
+    if not in_hunk or line.startswith("\\ No newline"):
+        continue
+
+    prefix = line[:1]
+    if prefix == " ":
+        old_remaining -= 1
+        new_remaining -= 1
+    elif prefix == "-":
+        old_remaining -= 1
+    elif prefix == "+":
+        new_remaining -= 1
+
+    if old_remaining <= 0 and new_remaining <= 0:
+        in_hunk = False
+
+Path(sys.argv[2]).write_text(
+    "\n".join(normalized) + "\n",
+    encoding="utf-8",
+)
+
+if repaired_empty_context:
+    print(
+        "[INFO] Repaired empty context lines in patch: "
+        f"{repaired_empty_context}"
+    )
 PY
 
 if [[ ! -s "$NORMALIZED_PATCH" ]]; then

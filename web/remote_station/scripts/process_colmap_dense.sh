@@ -93,6 +93,28 @@ PY
 )"
 if [[ -z "$FRAMES_DIR" ]]; then write_status "ERROR" 0 -1 "frames_dir missing in sparse result.json: $SPARSE_RESULT"; exit 1; fi
 if [[ ! -d "$FRAMES_DIR" ]]; then write_status "ERROR" 0 -1 "Frames directory not found: $FRAMES_DIR"; exit 1; fi
+mapfile -t MARKER_META < <(
+python3 - "$SPARSE_RESULT" <<'PYMARKER'
+import json,sys
+data=json.load(open(sys.argv[1],encoding='utf-8'))
+marker=data.get('marker_assist')
+if not isinstance(marker,dict):
+    marker={
+      "status":"MARKER_ASSIST_NOT_RECORDED",
+      "assist_only":True,
+      "sim3_applied":False,
+      "completed_with_warnings":True,
+      "warning_code":"MARKER_ASSIST_NOT_RECORDED",
+      "warning_text":"В sparse-результате нет данных AprilTag-помощника. Dense-модель продолжена без маркерной проверки."
+    }
+print(json.dumps(marker,ensure_ascii=False))
+print(str(marker.get('warning_text') or '').replace('\n',' '))
+print('true' if marker.get('completed_with_warnings') else 'false')
+PYMARKER
+)
+MARKER_ASSIST_JSON="${MARKER_META[0]:-{}}"
+MARKER_WARNING_TEXT="${MARKER_META[1]:-}"
+COMPLETED_WITH_WARNINGS="${MARKER_META[2]:-false}"
 for f in cameras.bin images.bin points3D.bin; do [[ -f "$SPARSE_MODEL_DIR/$f" ]] || { write_status "ERROR" 0 -1 "Sparse model file missing: $SPARSE_MODEL_DIR/$f"; exit 1; }; done
 mkdir -p "$DENSE_DIR" "$DENSE_LOG_DIR"
 
@@ -117,7 +139,14 @@ cat > "$DENSE_DIR/result.json" <<JSON
   "dense_dir": "$DENSE_DIR",
   "fused_ply": "$FUSED_PLY",
   "fused_ply_size_bytes": $SIZE,
+  "marker_assist": $MARKER_ASSIST_JSON,
+  "completed_with_warnings": $COMPLETED_WITH_WARNINGS,
+  "warning": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1],ensure_ascii=False))' "$MARKER_WARNING_TEXT"),
   "finished_at": "$(date -Iseconds)"
 }
 JSON
-write_status "DONE" 100 -1 "COLMAP dense reconstruction done"
+FINAL_MESSAGE="COLMAP dense reconstruction done"
+if [[ -n "$MARKER_WARNING_TEXT" ]]; then
+  FINAL_MESSAGE="$FINAL_MESSAGE. $MARKER_WARNING_TEXT"
+fi
+write_status "DONE" 100 -1 "$FINAL_MESSAGE"

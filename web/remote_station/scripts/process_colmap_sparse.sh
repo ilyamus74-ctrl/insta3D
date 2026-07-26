@@ -25,6 +25,13 @@ COLMAP_LOOP_DETECTION="${COLMAP_LOOP_DETECTION:-0}"
 COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA="${COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA:-0}"
 COLMAP_CAMERA_MODEL_FROM_METADATA=""
 PARAMETERS_JSON_PATH="$BASE/input/job_${JOB_ID}/parameters.json"
+APRILTAG_ASSIST_ENABLED="${APRILTAG_ASSIST_ENABLED:-1}"
+APRILTAG_TAG_FAMILY="${APRILTAG_TAG_FAMILY:-tag36h11}"
+APRILTAG_MARKER_SIZE_M="${APRILTAG_MARKER_SIZE_M:-0.160}"
+APRILTAG_VALID_IDS="${APRILTAG_VALID_IDS:-1-30}"
+APRILTAG_MIN_OBSERVATIONS="${APRILTAG_MIN_OBSERVATIONS:-3}"
+APRILTAG_MAX_OBSERVATIONS_PER_TAG="${APRILTAG_MAX_OBSERVATIONS_PER_TAG:-20}"
+APRILTAG_DETECTOR_BIN="${APRILTAG_DETECTOR_BIN:-}"
 
 mkdir -p "$BASE/status" "$BASE/logs"
 
@@ -532,6 +539,63 @@ done
 
 generate_sparse_components
 
+APRILTAG_ASSIST_JSON_PATH="$OUTPUT_DIR/apriltag_assist.json"
+if [[ "$APRILTAG_ASSIST_ENABLED" == "1" ]]; then
+  write_status "RUNNING" 94 -1 "AprilTag helper: checking registered frames"
+  APRILTAG_ASSIST_CMD=(
+    "$BASE/scripts/analyze_apriltag_assist.sh"
+    --frames-dir "$FRAMES_DIR"
+    --sparse-dir "$SPARSE_DIR"
+    --output-json "$APRILTAG_ASSIST_JSON_PATH"
+    --tag-family "$APRILTAG_TAG_FAMILY"
+    --marker-size-m "$APRILTAG_MARKER_SIZE_M"
+    --valid-ids "$APRILTAG_VALID_IDS"
+    --min-observations "$APRILTAG_MIN_OBSERVATIONS"
+    --max-observations-per-tag "$APRILTAG_MAX_OBSERVATIONS_PER_TAG"
+  )
+  if [[ -n "$APRILTAG_DETECTOR_BIN" ]]; then
+    APRILTAG_ASSIST_CMD+=(--detector-bin "$APRILTAG_DETECTOR_BIN")
+  fi
+  if ! "${APRILTAG_ASSIST_CMD[@]}" >> "$LOG_FILE" 2>&1; then
+    python3 - "$APRILTAG_ASSIST_JSON_PATH" <<'PYASSIST'
+import json,sys
+path=sys.argv[1]
+payload={
+  "status":"MARKER_ASSIST_ERROR",
+  "assist_only":True,
+  "sim3_applied":False,
+  "completed_with_warnings":True,
+  "warning_code":"MARKER_ASSIST_ERROR",
+  "warning_text":"AprilTag-помощник завершился с ошибкой. Основная COLMAP-сборка продолжена без маркерной привязки.",
+  "detections_total":0,
+  "usable_observations":0,
+  "usable_tags":0,
+  "bridge_tags":[],
+  "observations_by_tag":{}
+}
+open(path,'w',encoding='utf-8').write(json.dumps(payload,ensure_ascii=False,indent=2))
+PYASSIST
+  fi
+else
+  python3 - "$APRILTAG_ASSIST_JSON_PATH" <<'PYASSIST'
+import json,sys
+payload={
+  "status":"MARKER_ASSIST_DISABLED",
+  "assist_only":True,
+  "sim3_applied":False,
+  "completed_with_warnings":True,
+  "warning_code":"MARKER_ASSIST_DISABLED",
+  "warning_text":"AprilTag-помощник отключён. Модель построена без маркерной привязки.",
+  "detections_total":0,
+  "usable_observations":0,
+  "usable_tags":0,
+  "bridge_tags":[],
+  "observations_by_tag":{}
+}
+open(sys.argv[1],'w',encoding='utf-8').write(json.dumps(payload,ensure_ascii=False,indent=2))
+PYASSIST
+fi
+
 CAMERA_METADATA_RESULT="{}"
 META_PATH="$(find_camera_metadata_json || true)"
 if [[ -n "$META_PATH" && -f "$META_PATH" ]]; then
@@ -539,6 +603,28 @@ if [[ -n "$META_PATH" && -f "$META_PATH" ]]; then
 fi
 SPARSE_COMPONENTS_JSON="{}"
 if [[ -f "$OUTPUT_DIR/sparse_components.json" ]]; then SPARSE_COMPONENTS_JSON="$(cat "$OUTPUT_DIR/sparse_components.json")"; fi
+APRILTAG_ASSIST_JSON="$(cat "$APRILTAG_ASSIST_JSON_PATH")"
+mapfile -t RESULT_WARNING_META < <(
+python3 - "$MODEL_COUNT" "$APRILTAG_ASSIST_JSON_PATH" <<'PYRESULT'
+import json,sys
+model_count=int(sys.argv[1])
+marker=json.load(open(sys.argv[2],encoding='utf-8'))
+warnings=[]
+if model_count>1:
+    warnings.append("Sparse reconstruction split into multiple components")
+marker_warning=str(marker.get("warning_text") or "").strip()
+if marker_warning:
+    warnings.append(marker_warning)
+print(json.dumps(" ".join(warnings),ensure_ascii=False))
+print(json.dumps(warnings,ensure_ascii=False))
+print("true" if warnings else "false")
+print(marker_warning.replace("\n"," "))
+PYRESULT
+)
+RESULT_WARNING_JSON="${RESULT_WARNING_META[0]:-\"\"}"
+RESULT_WARNINGS_JSON="${RESULT_WARNING_META[1]:-[]}"
+COMPLETED_WITH_WARNINGS="${RESULT_WARNING_META[2]:-false}"
+APRILTAG_WARNING_TEXT="${RESULT_WARNING_META[3]:-}"
 cat > "$OUTPUT_DIR/result.json" <<JSON
 {
   "job_id": "$JOB_ID",
@@ -560,9 +646,17 @@ cat > "$OUTPUT_DIR/result.json" <<JSON
   "largest_model_id": $(python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("largest_model_id")))' <<< "$SPARSE_COMPONENTS_JSON"),
   "largest_model_registered_images": $(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("largest_model_registered_images",0))' <<< "$SPARSE_COMPONENTS_JSON"),
   "sparse_components_path": "$OUTPUT_DIR/sparse_components.json",
-  "warning": "$(if [[ "$MODEL_COUNT" -gt 1 ]]; then printf 'Sparse reconstruction split into multiple components'; fi)",
+  "marker_assist_path": "$APRILTAG_ASSIST_JSON_PATH",
+  "marker_assist": $APRILTAG_ASSIST_JSON,
+  "completed_with_warnings": $COMPLETED_WITH_WARNINGS,
+  "warnings": $RESULT_WARNINGS_JSON,
+  "warning": $RESULT_WARNING_JSON,
   "finished_at": "$(date -Iseconds)"
 }
 JSON
 
-write_status "DONE" 100 -1 "COLMAP sparse reconstruction done"
+FINAL_MESSAGE="COLMAP sparse reconstruction done"
+if [[ -n "$APRILTAG_WARNING_TEXT" ]]; then
+  FINAL_MESSAGE="$FINAL_MESSAGE. $APRILTAG_WARNING_TEXT"
+fi
+write_status "DONE" 100 -1 "$FINAL_MESSAGE"

@@ -31,6 +31,22 @@ systemctl daemon-reload
 systemctl enable --now makler-sfm-cleanup-worker.service
 journalctl -u makler-sfm-cleanup-worker.service -f
 ```
+
+## Установка очистки удалённых сборок
+
+Веб-интерфейс атомарно переносит удаляемую сборку в
+`.delete_merge_<id>_<token>`. Рекурсивное удаление выполняет отдельный
+root-side timer, поэтому `apache` не получает права на root-owned результаты:
+
+```bash
+cp web/remote_station/makler-generated-merge-cleanup.service /etc/systemd/system/
+cp web/remote_station/makler-generated-merge-cleanup.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now makler-generated-merge-cleanup.timer
+systemctl start makler-generated-merge-cleanup.service
+journalctl -u makler-generated-merge-cleanup.service -n 100 --no-pager
+```
+
 ## Установка metrics timer
 
 Метрики собирает root-side updater в JSON cache, а PHP API только читает готовый файл.

@@ -1,0 +1,17 @@
+[Unit]
+Description=MaklerTour generated model quarantine cleanup
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/home/makler/web
+Environment=SFM_GENERATED_MERGE_DELETE_MIN_AGE_SECONDS=30
+ExecStart=/usr/bin/env php /home/makler/web/remote_station/cleanup_generated_merge_quarantine.php
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+StandardOutput=journal
+StandardError=journal
+

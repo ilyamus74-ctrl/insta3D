@@ -436,16 +436,14 @@ try {
     $statement->close();
     $dbcnx->commit();
 
-    $cleanupWarning = null;
-    try {
-        merge_delete_recursive($quarantine);
-    } catch (Throwable $error) {
-        $cleanupWarning = $error->getMessage();
-        error_log(
-            'Assembly quarantine cleanup failed: '
-            . $cleanupWarning
-        );
-    }
+    // The HTTP process runs as apache and is intentionally unable to
+    // recursively remove root-owned model trees. The assembly is already
+    // atomically hidden from the application by rename(). A root-side timer
+    // removes the quarantine asynchronously.
+    $cleanupQueued = is_dir($quarantine);
+    $cleanupWarning = $cleanupQueued
+        ? null
+        : 'Deletion quarantine disappeared before cleanup was queued';
 
     if (function_exists('audit_log')) {
         audit_log(
@@ -458,6 +456,8 @@ try {
                 'merge_id' => $mergeId,
                 'merge_type' => (string)$merge['merge_type'],
                 'cleanup_warning' => $cleanupWarning,
+                'cleanup_queued' => $cleanupQueued,
+                'quarantine_name' => basename($quarantine),
             ]
         );
     }
@@ -467,6 +467,8 @@ try {
         'merge_id' => $mergeId,
         'deleted_paths' => count($moves),
         'cleanup_warning' => $cleanupWarning,
+        'cleanup_queued' => $cleanupQueued,
+        'quarantine_name' => basename($quarantine),
     ]);
 } catch (Throwable $error) {
     try {

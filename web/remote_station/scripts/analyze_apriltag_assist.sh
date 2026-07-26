@@ -1,0 +1,494 @@
+#!/usr/bin/env bash
+set -u
+
+python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--frames-dir", required=True)
+    parser.add_argument("--sparse-dir", required=True)
+    parser.add_argument("--output-json", required=True)
+    parser.add_argument("--tag-family", default="tag36h11")
+    parser.add_argument("--marker-size-m", type=float, default=0.160)
+    parser.add_argument("--valid-ids", default="1-30")
+    parser.add_argument("--min-observations", type=int, default=3)
+    parser.add_argument("--max-observations-per-tag", type=int, default=20)
+    parser.add_argument("--detector-bin", default="")
+    return parser.parse_args()
+
+
+def parse_valid_ids(value: str) -> tuple[int, int]:
+    match = re.fullmatch(r"\s*(\d+)\s*-\s*(\d+)\s*", value)
+    if not match:
+        raise ValueError("valid ids must use MIN-MAX format")
+    minimum, maximum = map(int, match.groups())
+    if minimum > maximum:
+        raise ValueError("valid id minimum exceeds maximum")
+    return minimum, maximum
+
+
+def frame_index_from_name(name: str) -> int | None:
+    matches = re.findall(r"\d+", Path(name).stem)
+    return int(matches[-1]) if matches else None
+
+
+def registered_images(sparse_dir: Path) -> tuple[dict[str, set[str]], list[str]]:
+    by_image: dict[str, set[str]] = defaultdict(set)
+    components: list[str] = []
+
+    model_dirs = [path for path in sparse_dir.iterdir() if path.is_dir()]
+    model_dirs.sort(key=lambda path: int(path.name) if path.name.isdigit() else path.name)
+    for model_dir in model_dirs:
+        component = model_dir.name
+        candidates = [model_dir / "images.txt", model_dir / "txt" / "images.txt"]
+        images_txt = next((path for path in candidates if path.is_file()), None)
+        if images_txt is None:
+            continue
+        components.append(component)
+        for raw in images_txt.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(maxsplit=9)
+            if len(parts) < 10:
+                continue
+            image_name = parts[9].strip()
+            if Path(image_name).suffix.lower() not in IMAGE_SUFFIXES:
+                continue
+            by_image[image_name].add(component)
+
+    return dict(by_image), components
+
+
+def normalize_detection(
+    detection: dict[str, Any],
+    image_components: dict[str, set[str]],
+) -> dict[str, Any] | None:
+    marker_id = detection.get("marker_id")
+    try:
+        marker_id = int(marker_id)
+    except (TypeError, ValueError):
+        return None
+
+    image_name = str(
+        detection.get("image_name")
+        or detection.get("source_path")
+        or ""
+    )
+    image_name = Path(image_name).name
+    if not image_name:
+        return None
+
+    components = sorted(image_components.get(image_name, set()))
+    corners = detection.get("corners")
+    normalized_corners: list[list[float]] = []
+    if isinstance(corners, list):
+        for corner in corners[:4]:
+            if isinstance(corner, (list, tuple)) and len(corner) >= 2:
+                try:
+                    normalized_corners.append(
+                        [float(corner[0]), float(corner[1])]
+                    )
+                except (TypeError, ValueError):
+                    pass
+
+    center_x = detection.get("center_x")
+    center_y = detection.get("center_y")
+    if (
+        (center_x is None or center_y is None)
+        and len(normalized_corners) == 4
+    ):
+        center_x = sum(point[0] for point in normalized_corners) / 4.0
+        center_y = sum(point[1] for point in normalized_corners) / 4.0
+
+    confidence = detection.get("confidence")
+    try:
+        confidence = float(confidence) if confidence is not None else None
+    except (TypeError, ValueError):
+        confidence = None
+
+    return {
+        "marker_id": marker_id,
+        "image_name": image_name,
+        "frame_index": detection.get("frame_index")
+        if detection.get("frame_index") is not None
+        else frame_index_from_name(image_name),
+        "components": components,
+        "corners": normalized_corners,
+        "center_x": float(center_x) if center_x is not None else None,
+        "center_y": float(center_y) if center_y is not None else None,
+        "confidence": confidence,
+    }
+
+
+def load_precomputed(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        detections = payload.get("detections", [])
+    else:
+        detections = payload
+    if not isinstance(detections, list):
+        raise ValueError("precomputed detections must be a list")
+    return [item for item in detections if isinstance(item, dict)]
+
+
+def run_external_detector(
+    detector_bin: Path,
+    frames_dir: Path,
+    image_names: list[str],
+    tag_family: str,
+    valid_ids: str,
+    marker_size_m: float,
+) -> list[dict[str, Any]]:
+    items = []
+    for index, image_name in enumerate(image_names):
+        items.append(
+            {
+                "source_type": "sfm_registered_frame",
+                "source_id": index + 1,
+                "source_path": image_name,
+                "absolute_path": str(frames_dir / image_name),
+                "frame_index": frame_index_from_name(image_name),
+            }
+        )
+
+    with tempfile.TemporaryDirectory(prefix="apriltag_assist_") as tmp:
+        input_path = Path(tmp) / "input.json"
+        output_path = Path(tmp) / "detections.json"
+        input_path.write_text(
+            json.dumps({"items": items}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            [
+                str(detector_bin),
+                "--input-list",
+                str(input_path),
+                "--output",
+                str(output_path),
+                "--tag-family",
+                tag_family,
+                "--valid-ids",
+                valid_ids,
+                "--marker-size-m",
+                str(marker_size_m),
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "external detector failed: "
+                + (completed.stderr.strip() or completed.stdout.strip())
+            )
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        if not payload.get("ok"):
+            raise RuntimeError(
+                "external detector returned error: "
+                + str(payload.get("error") or "unknown")
+            )
+        detections = payload.get("detections", [])
+        if not isinstance(detections, list):
+            raise RuntimeError("external detector returned invalid detections")
+        return [item for item in detections if isinstance(item, dict)]
+
+
+def run_opencv_detector(
+    frames_dir: Path,
+    image_names: list[str],
+    valid_min: int,
+    valid_max: int,
+) -> list[dict[str, Any]]:
+    import cv2  # type: ignore
+
+    if not hasattr(cv2, "aruco"):
+        raise RuntimeError("OpenCV was built without aruco")
+    aruco = cv2.aruco
+    dictionary_id = getattr(aruco, "DICT_APRILTAG_36h11", None)
+    if dictionary_id is None:
+        raise RuntimeError("OpenCV lacks DICT_APRILTAG_36h11")
+    dictionary = aruco.getPredefinedDictionary(dictionary_id)
+    detector = None
+    if hasattr(aruco, "ArucoDetector"):
+        parameters = aruco.DetectorParameters()
+        detector = aruco.ArucoDetector(dictionary, parameters)
+
+    detections: list[dict[str, Any]] = []
+    for image_name in image_names:
+        image_path = frames_dir / image_name
+        image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            continue
+        if detector is not None:
+            corners, ids, _ = detector.detectMarkers(image)
+        else:
+            corners, ids, _ = aruco.detectMarkers(image, dictionary)
+        if ids is None:
+            continue
+        for marker_corners, raw_id in zip(corners, ids.flatten()):
+            marker_id = int(raw_id)
+            if marker_id < valid_min or marker_id > valid_max:
+                continue
+            points = marker_corners.reshape(-1, 2).tolist()
+            center_x = sum(float(point[0]) for point in points) / len(points)
+            center_y = sum(float(point[1]) for point in points) / len(points)
+            detections.append(
+                {
+                    "source_path": image_name,
+                    "frame_index": frame_index_from_name(image_name),
+                    "marker_id": marker_id,
+                    "corners": points,
+                    "center_x": center_x,
+                    "center_y": center_y,
+                    "confidence": None,
+                }
+            )
+    return detections
+
+
+def warning_for(status: str) -> str:
+    return {
+        "MARKERS_NOT_FOUND": (
+            "AprilTag-метки не обнаружены. Модель построена без маркерной "
+            "привязки. Масштаб может быть неметрическим, а при нескольких "
+            "SfM-компонентах возможны проблемы их стыковки."
+        ),
+        "MARKERS_INSUFFICIENT": (
+            "AprilTag-метки обнаружены, но недостаточно разных "
+            "зарегистрированных кадров: требуется минимум три наблюдения "
+            "одной метки в компоненте. Модель продолжена без надёжной "
+            "маркерной привязки."
+        ),
+        "MARKERS_DISCONNECTED": (
+            "AprilTag-метки обнаружены и могут помочь масштабу отдельных "
+            "компонент, но одинаковая метка не наблюдается минимум в трёх "
+            "кадрах каждой соединяемой компоненты. Возможны проблемы "
+            "стыковки моделей."
+        ),
+        "MARKER_DETECTOR_UNAVAILABLE": (
+            "AprilTag-помощник не смог запустить детектор. Модель продолжена "
+            "без маркерной проверки; возможны проблемы масштаба и стыковки."
+        ),
+        "MARKER_ASSIST_ERROR": (
+            "AprilTag-помощник завершился с ошибкой. Основная COLMAP-сборка "
+            "продолжена без маркерной привязки."
+        ),
+        "MARKER_ASSIST_DISABLED": (
+            "AprilTag-помощник отключён. Модель построена без маркерной "
+            "привязки."
+        ),
+    }.get(status, "")
+
+
+def build_result(args: argparse.Namespace) -> dict[str, Any]:
+    frames_dir = Path(args.frames_dir).resolve()
+    sparse_dir = Path(args.sparse_dir).resolve()
+    output_json = Path(args.output_json).resolve()
+    valid_min, valid_max = parse_valid_ids(args.valid_ids)
+    minimum = max(3, int(args.min_observations))
+    maximum = max(minimum, int(args.max_observations_per_tag))
+
+    image_components, components = registered_images(sparse_dir)
+    image_names = sorted(image_components)
+    raw_detections: list[dict[str, Any]] = []
+    detector = ""
+    detector_errors: list[str] = []
+
+    precomputed = os.environ.get("APRILTAG_ASSIST_DETECTIONS_JSON", "")
+    if precomputed:
+        raw_detections = load_precomputed(Path(precomputed))
+        detector = "precomputed"
+    else:
+        candidates: list[Path] = []
+        if args.detector_bin:
+            candidates.append(Path(args.detector_bin))
+        candidates.extend(
+            [
+                Path("/home/makler/web/tools/apriltag_detector_cpp/build/detect_markers"),
+                Path("/usr/local/bin/detect_markers"),
+                Path("/usr/bin/detect_markers"),
+            ]
+        )
+        external = next(
+            (
+                path
+                for path in candidates
+                if path.is_file() and os.access(path, os.X_OK)
+            ),
+            None,
+        )
+        if external is not None:
+            try:
+                raw_detections = run_external_detector(
+                    external,
+                    frames_dir,
+                    image_names,
+                    args.tag_family,
+                    args.valid_ids,
+                    args.marker_size_m,
+                )
+                detector = "apriltag-cpp"
+            except Exception as exc:
+                detector_errors.append(str(exc))
+
+        if not detector:
+            try:
+                raw_detections = run_opencv_detector(
+                    frames_dir,
+                    image_names,
+                    valid_min,
+                    valid_max,
+                )
+                detector = "opencv-aruco"
+            except Exception as exc:
+                detector_errors.append(str(exc))
+
+    normalized = []
+    for raw in raw_detections:
+        item = normalize_detection(raw, image_components)
+        if item is None:
+            continue
+        if valid_min <= item["marker_id"] <= valid_max:
+            normalized.append(item)
+
+    observations: dict[int, dict[str, set[str]]] = defaultdict(
+        lambda: defaultdict(set)
+    )
+    unregistered = 0
+    for detection in normalized:
+        if not detection["components"]:
+            unregistered += 1
+            continue
+        for component in detection["components"]:
+            observations[detection["marker_id"]][component].add(
+                detection["image_name"]
+            )
+
+    observations_by_tag: dict[str, Any] = {}
+    scale_ready_components: set[str] = set()
+    bridge_tags: list[int] = []
+    usable_observations = 0
+    for marker_id, by_component in sorted(observations.items()):
+        component_counts = {
+            component: min(len(images), maximum)
+            for component, images in sorted(by_component.items())
+        }
+        sufficient = [
+            component
+            for component, count in component_counts.items()
+            if count >= minimum
+        ]
+        scale_ready_components.update(sufficient)
+        if len(sufficient) >= 2:
+            bridge_tags.append(marker_id)
+        usable_observations += sum(component_counts.values())
+        observations_by_tag[str(marker_id)] = {
+            "component_observations": component_counts,
+            "sufficient_components": sufficient,
+            "total_registered_observations": sum(component_counts.values()),
+        }
+
+    if not detector:
+        status = "MARKER_DETECTOR_UNAVAILABLE"
+    elif not normalized:
+        status = "MARKERS_NOT_FOUND"
+    elif not scale_ready_components:
+        status = "MARKERS_INSUFFICIENT"
+    elif len(components) > 1 and not bridge_tags:
+        status = "MARKERS_DISCONNECTED"
+    else:
+        status = "MARKERS_READY"
+
+    warning = warning_for(status)
+    return {
+        "status": status,
+        "assist_only": True,
+        "sim3_applied": False,
+        "completed_with_warnings": status != "MARKERS_READY",
+        "warning_code": status if warning else None,
+        "warning_text": warning,
+        "detector": detector or None,
+        "detector_errors": detector_errors,
+        "tag_family": args.tag_family,
+        "marker_size_m": args.marker_size_m,
+        "valid_ids": [valid_min, valid_max],
+        "min_registered_observations_per_tag": minimum,
+        "max_observations_per_tag": maximum,
+        "models_count": len(components),
+        "components": components,
+        "scanned_registered_images": len(image_names),
+        "detections_total": len(normalized),
+        "unregistered_detections": unregistered,
+        "usable_observations": usable_observations,
+        "usable_tags": sum(
+            1
+            for item in observations_by_tag.values()
+            if item["sufficient_components"]
+        ),
+        "scale_ready_components": sorted(
+            scale_ready_components,
+            key=lambda value: int(value) if value.isdigit() else value,
+        ),
+        "bridge_tags": bridge_tags,
+        "observations_by_tag": observations_by_tag,
+        "detections": normalized,
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    output = Path(args.output_json)
+    try:
+        payload = build_result(args)
+    except Exception as exc:
+        payload = {
+            "status": "MARKER_ASSIST_ERROR",
+            "assist_only": True,
+            "sim3_applied": False,
+            "completed_with_warnings": True,
+            "warning_code": "MARKER_ASSIST_ERROR",
+            "warning_text": warning_for("MARKER_ASSIST_ERROR"),
+            "error": str(exc),
+            "detections_total": 0,
+            "usable_observations": 0,
+            "usable_tags": 0,
+            "bridge_tags": [],
+            "observations_by_tag": {},
+        }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(
+        "APRILTAG_ASSIST | "
+        + str(payload.get("status"))
+        + " | detections="
+        + str(payload.get("detections_total", 0))
+        + " | usable="
+        + str(payload.get("usable_observations", 0))
+    )
+    return 0
+
+
+raise SystemExit(main())
+PY
