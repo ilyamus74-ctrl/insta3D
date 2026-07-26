@@ -1,0 +1,435 @@
+diff --git a/web/www/api/sfm_generated_merge_delete.php b/web/www/api/sfm_generated_merge_delete.php
+index 494c716..0000000 100644
+--- a/web/www/api/sfm_generated_merge_delete.php
++++ b/web/www/api/sfm_generated_merge_delete.php
+@@ -438,16 +438,14 @@ try {
+     $statement->close();
+     $dbcnx->commit();
+
+-    $cleanupWarning = null;
+-    try {
+-        merge_delete_recursive($quarantine);
+-    } catch (Throwable $error) {
+-        $cleanupWarning = $error->getMessage();
+-        error_log(
+-            'Assembly quarantine cleanup failed: '
+-            . $cleanupWarning
+-        );
+-    }
++    // The HTTP process runs as apache and is intentionally unable to
++    // recursively remove root-owned model trees. The assembly is already
++    // atomically hidden from the application by rename(). A root-side timer
++    // removes the quarantine asynchronously.
++    $cleanupQueued = is_dir($quarantine);
++    $cleanupWarning = $cleanupQueued
++        ? null
++        : 'Deletion quarantine disappeared before cleanup was queued';
+
+     if (function_exists('audit_log')) {
+         audit_log(
+@@ -461,6 +455,8 @@ try {
+                 'merge_id' => $mergeId,
+                 'merge_type' => (string)$merge['merge_type'],
+                 'cleanup_warning' => $cleanupWarning,
++                'cleanup_queued' => $cleanupQueued,
++                'quarantine_name' => basename($quarantine),
+             ]
+         );
+     }
+@@ -470,6 +466,8 @@ try {
+         'merge_id' => $mergeId,
+         'deleted_paths' => count($moves),
+         'cleanup_warning' => $cleanupWarning,
++        'cleanup_queued' => $cleanupQueued,
++        'quarantine_name' => basename($quarantine),
+     ]);
+ } catch (Throwable $error) {
+     try {
+diff --git a/web/remote_station/cleanup_generated_merge_quarantine.php b/web/remote_station/cleanup_generated_merge_quarantine.php
+new file mode 100755
+index 0000000..0000000
+--- /dev/null
++++ b/web/remote_station/cleanup_generated_merge_quarantine.php
+@@ -0,0 +1,250 @@
++<?php
++declare(strict_types=1);
++
++if (PHP_SAPI !== 'cli') {
++    fwrite(STDERR, "CLI only\n");
++    exit(1);
++}
++
++const GENERATED_MERGE_CLEANUP_DEFAULT_ROOT =
++    '/home/makler/web/remote_station/output';
++
++function generated_merge_cleanup_root(): string
++{
++    $configured = getenv('SFM_GENERATED_MERGE_OUTPUT_ROOT');
++    $root = is_string($configured) && $configured !== ''
++        ? rtrim($configured, DIRECTORY_SEPARATOR)
++        : GENERATED_MERGE_CLEANUP_DEFAULT_ROOT;
++
++    if ($root === '' || $root[0] !== DIRECTORY_SEPARATOR) {
++        throw new RuntimeException('Cleanup root must be absolute');
++    }
++    if (is_link($root) || !is_dir($root)) {
++        throw new RuntimeException('Cleanup root is missing or unsafe');
++    }
++
++    $real = realpath($root);
++    if ($real === false || $real !== $root) {
++        throw new RuntimeException(
++            'Cleanup root must be a canonical directory'
++        );
++    }
++    return $root;
++}
++
++function generated_merge_cleanup_name_is_valid(string $name): bool
++{
++    return preg_match(
++        '/^\.delete_merge_[1-9][0-9]*_[a-f0-9]{12}$/D',
++        $name
++    ) === 1;
++}
++
++function generated_merge_cleanup_tree_size(string $path): int
++{
++    $stat = @lstat($path);
++    if ($stat === false) {
++        return 0;
++    }
++    if (is_link($path) || !is_dir($path)) {
++        return (int)($stat['size'] ?? 0);
++    }
++
++    $size = (int)($stat['size'] ?? 0);
++    $iterator = new RecursiveIteratorIterator(
++        new RecursiveDirectoryIterator(
++            $path,
++            FilesystemIterator::SKIP_DOTS
++        ),
++        RecursiveIteratorIterator::SELF_FIRST
++    );
++    foreach ($iterator as $item) {
++        $itemStat = @lstat($item->getPathname());
++        if ($itemStat !== false) {
++            $size += (int)($itemStat['size'] ?? 0);
++        }
++    }
++    return $size;
++}
++
++function generated_merge_cleanup_delete_tree(string $path): void
++{
++    if (!file_exists($path) && !is_link($path)) {
++        return;
++    }
++    if (is_link($path) || is_file($path)) {
++        if (!@unlink($path)) {
++            throw new RuntimeException(
++                'Cannot remove quarantined file: ' . $path
++            );
++        }
++        return;
++    }
++
++    $iterator = new RecursiveIteratorIterator(
++        new RecursiveDirectoryIterator(
++            $path,
++            FilesystemIterator::SKIP_DOTS
++        ),
++        RecursiveIteratorIterator::CHILD_FIRST
++    );
++    foreach ($iterator as $item) {
++        $itemPath = $item->getPathname();
++        if ($item->isLink() || $item->isFile()) {
++            if (!@unlink($itemPath)) {
++                throw new RuntimeException(
++                    'Cannot remove quarantined file: ' . $itemPath
++                );
++            }
++            continue;
++        }
++        if (!@rmdir($itemPath)) {
++            throw new RuntimeException(
++                'Cannot remove quarantined directory: ' . $itemPath
++            );
++        }
++    }
++
++    if (!@rmdir($path)) {
++        throw new RuntimeException(
++            'Cannot remove quarantine directory: ' . $path
++        );
++    }
++}
++
++function generated_merge_cleanup_sweep(
++    int $minimumAgeSeconds,
++    bool $dryRun = false
++): array {
++    $root = generated_merge_cleanup_root();
++    $minimumAgeSeconds = max(0, $minimumAgeSeconds);
++    $now = time();
++    $result = [
++        'ok' => true,
++        'root' => $root,
++        'dry_run' => $dryRun,
++        'minimum_age_seconds' => $minimumAgeSeconds,
++        'examined' => 0,
++        'deleted' => 0,
++        'would_delete' => 0,
++        'freed_bytes' => 0,
++        'would_free_bytes' => 0,
++        'skipped' => [],
++        'errors' => [],
++        'paths' => [],
++    ];
++
++    foreach (glob($root . '/.delete_merge_*') ?: [] as $path) {
++        $result['examined']++;
++        $name = basename($path);
++        $entry = [
++            'name' => $name,
++            'path' => $path,
++            'deleted' => false,
++        ];
++
++        try {
++            if (!generated_merge_cleanup_name_is_valid($name)) {
++                throw new RuntimeException('invalid quarantine name');
++            }
++            if (dirname($path) !== $root) {
++                throw new RuntimeException('path escaped cleanup root');
++            }
++
++            $stat = @lstat($path);
++            if ($stat === false) {
++                $entry['status'] = 'ALREADY_ABSENT';
++                $result['paths'][] = $entry;
++                continue;
++            }
++            if (is_link($path) || (($stat['mode'] & 0170000) !== 0040000)) {
++                throw new RuntimeException(
++                    'quarantine entry is not a real directory'
++                );
++            }
++
++            $age = max(0, $now - (int)$stat['mtime']);
++            $entry['age_seconds'] = $age;
++            if ($age < $minimumAgeSeconds) {
++                $entry['status'] = 'TOO_NEW';
++                $result['skipped'][] = $entry;
++                continue;
++            }
++
++            $bytes = generated_merge_cleanup_tree_size($path);
++            $entry['size_bytes'] = $bytes;
++            $result['would_free_bytes'] += $bytes;
++
++            if ($dryRun) {
++                $entry['status'] = 'WOULD_DELETE';
++                $result['would_delete']++;
++                $result['paths'][] = $entry;
++                continue;
++            }
++
++            generated_merge_cleanup_delete_tree($path);
++            $entry['status'] = 'DELETED';
++            $entry['deleted'] = true;
++            $result['deleted']++;
++            $result['freed_bytes'] += $bytes;
++            $result['paths'][] = $entry;
++        } catch (Throwable $error) {
++            $entry['status'] = 'ERROR';
++            $entry['error'] = $error->getMessage();
++            $result['errors'][] = $entry;
++        }
++    }
++
++    $result['ok'] = $result['errors'] === [];
++    return $result;
++}
++
++function generated_merge_cleanup_cli(array $argv): int
++{
++    $dryRun = in_array('--dry-run', $argv, true);
++    $minimumAge = max(
++        0,
++        (int)(getenv(
++            'SFM_GENERATED_MERGE_DELETE_MIN_AGE_SECONDS'
++        ) ?: 30)
++    );
++    foreach ($argv as $argument) {
++        if (str_starts_with($argument, '--min-age=')) {
++            $minimumAge = max(
++                0,
++                (int)substr($argument, strlen('--min-age='))
++            );
++        }
++    }
++
++    try {
++        $result = generated_merge_cleanup_sweep(
++            $minimumAge,
++            $dryRun
++        );
++        echo json_encode(
++            $result,
++            JSON_PRETTY_PRINT
++                | JSON_UNESCAPED_SLASHES
++                | JSON_UNESCAPED_UNICODE
++        ) . PHP_EOL;
++        return $result['ok'] ? 0 : 2;
++    } catch (Throwable $error) {
++        fwrite(
++            STDERR,
++            json_encode(
++                ['ok' => false, 'error' => $error->getMessage()],
++                JSON_UNESCAPED_SLASHES
++                    | JSON_UNESCAPED_UNICODE
++            ) . PHP_EOL
++        );
++        return 1;
++    }
++}
++
++if (
++    realpath((string)($_SERVER['SCRIPT_FILENAME'] ?? ''))
++    === __FILE__
++) {
++    exit(generated_merge_cleanup_cli($argv));
++}
+diff --git a/web/remote_station/makler-generated-merge-cleanup.service b/web/remote_station/makler-generated-merge-cleanup.service
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/web/remote_station/makler-generated-merge-cleanup.service
+@@ -0,0 +1,17 @@
++[Unit]
++Description=MaklerTour generated model quarantine cleanup
++After=local-fs.target
++
++[Service]
++Type=oneshot
++User=root
++Group=root
++WorkingDirectory=/home/makler/web
++Environment=SFM_GENERATED_MERGE_DELETE_MIN_AGE_SECONDS=30
++ExecStart=/usr/bin/env php /home/makler/web/remote_station/cleanup_generated_merge_quarantine.php
++Nice=10
++IOSchedulingClass=best-effort
++IOSchedulingPriority=7
++StandardOutput=journal
++StandardError=journal
++
+diff --git a/web/remote_station/makler-generated-merge-cleanup.timer b/web/remote_station/makler-generated-merge-cleanup.timer
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/web/remote_station/makler-generated-merge-cleanup.timer
+@@ -0,0 +1,13 @@
++[Unit]
++Description=Run generated model quarantine cleanup
++
++[Timer]
++OnBootSec=2min
++OnUnitActiveSec=1min
++AccuracySec=10s
++RandomizedDelaySec=5s
++Persistent=true
++Unit=makler-generated-merge-cleanup.service
++
++[Install]
++WantedBy=timers.target
+diff --git a/web/remote_station/WEB_WORKER_SETUP.md b/web/remote_station/WEB_WORKER_SETUP.md
+index fefe0cf..0000000 100644
+--- a/web/remote_station/WEB_WORKER_SETUP.md
++++ b/web/remote_station/WEB_WORKER_SETUP.md
+@@ -34,6 +34,21 @@ systemctl enable --now makler-sfm-cleanup-worker.service
+ journalctl -u makler-sfm-cleanup-worker.service -f
+ ```
+
++## Установка очистки удалённых сборок
++
++Веб-интерфейс атомарно переносит удаляемую сборку в
++`.delete_merge_<id>_<token>`. Рекурсивное удаление выполняет отдельный
++root-side timer, поэтому `apache` не получает права на root-owned результаты:
++
++```bash
++cp web/remote_station/makler-generated-merge-cleanup.service /etc/systemd/system/
++cp web/remote_station/makler-generated-merge-cleanup.timer /etc/systemd/system/
++systemctl daemon-reload
++systemctl enable --now makler-generated-merge-cleanup.timer
++systemctl start makler-generated-merge-cleanup.service
++journalctl -u makler-generated-merge-cleanup.service -n 100 --no-pager
++```
++
+ ## Установка metrics timer
+
+ Метрики собирает root-side updater в JSON cache, а PHP API только читает готовый файл.
+diff --git a/web/tests/generated_merge_quarantine_cleanup_test.php b/web/tests/generated_merge_quarantine_cleanup_test.php
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/web/tests/generated_merge_quarantine_cleanup_test.php
+@@ -0,0 +1,58 @@
++<?php
++declare(strict_types=1);
++
++$base = sys_get_temp_dir()
++    . '/generated_merge_cleanup_'
++    . bin2hex(random_bytes(5));
++mkdir($base, 0775, true);
++putenv('SFM_GENERATED_MERGE_OUTPUT_ROOT=' . $base);
++
++require_once dirname(__DIR__)
++    . '/remote_station/cleanup_generated_merge_quarantine.php';
++
++function cleanup_test_ok(bool $condition, string $message): void
++{
++    if (!$condition) {
++        throw new RuntimeException($message);
++    }
++}
++
++try {
++    $queue = $base . '/.delete_merge_31_abcdef123456';
++    mkdir($queue . '/nested', 0755, true);
++    file_put_contents($queue . '/nested/model.ply', 'ply test');
++    touch($queue, time() - 120);
++
++    $dry = generated_merge_cleanup_sweep(30, true);
++    cleanup_test_ok($dry['ok'], 'dry-run failed');
++    cleanup_test_ok(
++        $dry['would_delete'] === 1,
++        'valid quarantine was not planned'
++    );
++    cleanup_test_ok(is_dir($queue), 'dry-run deleted quarantine');
++
++    $invalid = $base . '/.delete_merge_bad';
++    mkdir($invalid, 0755, true);
++    touch($invalid, time() - 120);
++
++    $run = generated_merge_cleanup_sweep(30, false);
++    cleanup_test_ok(!$run['ok'], 'invalid entry must be reported');
++    cleanup_test_ok($run['deleted'] === 1, 'valid quarantine not deleted');
++    cleanup_test_ok(!file_exists($queue), 'quarantine still exists');
++    cleanup_test_ok(is_dir($invalid), 'invalid entry was deleted');
++
++    echo "OK\n";
++} finally {
++    $iterator = new RecursiveIteratorIterator(
++        new RecursiveDirectoryIterator(
++            $base,
++            FilesystemIterator::SKIP_DOTS
++        ),
++        RecursiveIteratorIterator::CHILD_FIRST
++    );
++    foreach ($iterator as $item) {
++        $path = $item->getPathname();
++        $item->isDir() ? @rmdir($path) : @unlink($path);
++    }
++    @rmdir($base);
++}
