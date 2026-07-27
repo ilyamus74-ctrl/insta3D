@@ -48,6 +48,10 @@ $managerChecks = [
     'HEARTBEAT_INTERVAL_MS',
     'HEARTBEAT_TIMEOUT_MS',
     'capabilityProbe.buildReport(settings)',
+    'allowedPhases',
+    'reportCommandError',
+    'lastError',
+    'is not allowed in',
 ];
 
 foreach ($managerChecks as $token) {
@@ -61,6 +65,11 @@ if (!str_contains($settingsText, 'val masterHost: String? = null')) {
 }
 if (!str_contains($uiText, 'START +3s')) {
     throw new RuntimeException('DP02 control UI is missing');
+}
+foreach (['enabled = canArm', 'enabled = canStart', 'enabled = canStop'] as $token) {
+    if (!str_contains($uiText, $token)) {
+        throw new RuntimeException('DP02 state-gated control missing: ' . $token);
+    }
 }
 if (!str_contains($mainText, 'DualPhoneControlSettingsCard(')) {
     throw new RuntimeException('DP02 control UI is not connected to SettingsScreen');

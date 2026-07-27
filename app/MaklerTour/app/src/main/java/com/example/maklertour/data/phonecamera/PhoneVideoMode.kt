@@ -1,22 +1,34 @@
 package com.maklertour.data.phonecamera
 
+enum class PhoneVideoModeSupport(val wireValue: String) {
+    REGULAR("regular"),
+    CAMERA2_HIGH_SPEED("camera2_high_speed"),
+}
+
 data class PhoneVideoMode(
     val width: Int,
     val height: Int,
     val fps: Int,
     val qualityKey: String,
+    val support: PhoneVideoModeSupport = PhoneVideoModeSupport.REGULAR,
 ) {
     val id: String
         get() = "${width}x${height}@${fps}"
 
     val label: String
-        get() = "${width}×${height} · ${fps} FPS"
+        get() = buildString {
+            append("${width}×${height} · ${fps} FPS")
+            if (support == PhoneVideoModeSupport.CAMERA2_HIGH_SPEED) {
+                append(" · Camera2 HS")
+            }
+        }
 }
 
 data class PhoneVideoSizeCapability(
     val width: Int,
     val height: Int,
     val maxFps: Int,
+    val highSpeedFpsRanges: List<IntRange> = emptyList(),
 )
 
 object PhoneVideoModePolicy {
@@ -45,19 +57,30 @@ object PhoneVideoModePolicy {
                 profile.width to profile.height
             ] ?: return@flatMap emptyList()
 
-            listOf(30, 60)
-                .filter { fps ->
+            listOf(30, 60).mapNotNull { fps ->
+                val regularSupported =
                     capability.maxFps >= fps &&
                         supportedFpsRanges.any { fps in it }
-                }
-                .map { fps ->
+                val highSpeedSupported =
+                    fps > 30 &&
+                        capability.highSpeedFpsRanges.any { fps in it }
+
+                if (!regularSupported && !highSpeedSupported) {
+                    null
+                } else {
                     PhoneVideoMode(
                         width = profile.width,
                         height = profile.height,
                         fps = fps,
                         qualityKey = profile.qualityKey,
+                        support = if (regularSupported) {
+                            PhoneVideoModeSupport.REGULAR
+                        } else {
+                            PhoneVideoModeSupport.CAMERA2_HIGH_SPEED
+                        },
                     )
                 }
+            }
         }.sortedWith(
             compareByDescending<PhoneVideoMode> { it.width * it.height }
                 .thenByDescending { it.fps },

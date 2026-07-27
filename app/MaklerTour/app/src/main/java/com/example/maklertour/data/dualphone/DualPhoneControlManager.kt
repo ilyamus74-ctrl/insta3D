@@ -51,6 +51,8 @@ data class DualPhoneControlSnapshot(
     val connected: Boolean = false,
     val lastMessage: String = "Control channel stopped",
     val lastRxElapsedMs: Long? = null,
+    val lastCommand: String? = null,
+    val lastError: String? = null,
 )
 
 class DualPhoneControlManager private constructor(context: Context) : Closeable {
@@ -198,7 +200,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     }
 
     fun arm() {
-        requireMasterConnection {
+        requireMasterConnection(
+            command = DualPhoneControlType.ARM,
+            allowedPhases = setOf(DualPhoneControlPhase.CONNECTED),
+        ) {
             send(
                 DualPhoneControlType.ARM,
                 JSONObject()
@@ -206,13 +211,18 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     .put("requested_at_master_ns", SystemClock.elapsedRealtimeNanos()),
             )
             mutableState.value = mutableState.value.copy(
+                lastCommand = DualPhoneControlType.ARM,
+                lastError = null,
                 lastMessage = "ARM sent; waiting for Slave acknowledgement",
             )
         }
     }
 
     fun startAfter(delayMs: Long = 3_000L) {
-        requireMasterConnection {
+        requireMasterConnection(
+            command = DualPhoneControlType.START_AT,
+            allowedPhases = setOf(DualPhoneControlPhase.ARMED),
+        ) {
             val safeDelay = delayMs.coerceIn(1_000L, 30_000L)
             val startAt = SystemClock.elapsedRealtimeNanos() + safeDelay * 1_000_000L
             send(
@@ -224,6 +234,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             )
             mutableState.value = mutableState.value.copy(
                 phase = DualPhoneControlPhase.START_SCHEDULED,
+                lastCommand = DualPhoneControlType.START_AT,
+                lastError = null,
                 lastMessage = "START_AT sent for +${safeDelay} ms (control test only)",
             )
             scheduledStartJob?.cancel()
@@ -242,7 +254,15 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     }
 
     fun stopCapture() {
-        requireMasterConnection {
+        requireMasterConnection(
+            command = DualPhoneControlType.STOP,
+            allowedPhases = setOf(
+                DualPhoneControlPhase.CONNECTED,
+                DualPhoneControlPhase.ARMED,
+                DualPhoneControlPhase.START_SCHEDULED,
+                DualPhoneControlPhase.RECORDING,
+            ),
+        ) {
             send(
                 DualPhoneControlType.STOP,
                 JSONObject()
@@ -251,6 +271,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             )
             scheduledStartJob?.cancel()
             mutableState.value = mutableState.value.copy(
+                lastCommand = DualPhoneControlType.STOP,
+                lastError = null,
                 lastMessage = "STOP sent; waiting for Slave acknowledgement",
             )
         }
@@ -353,7 +375,6 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 )
                 DualPhoneControlType.PONG -> {
                     mutableState.value = mutableState.value.copy(
-                        lastMessage = "Heartbeat OK",
                         lastRxElapsedMs = lastRxElapsedMs,
                     )
                 }
@@ -371,6 +392,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 DualPhoneControlType.ARM_ACK -> if (localRole == DualPhoneRole.MASTER) {
                     mutableState.value = mutableState.value.copy(
                         phase = DualPhoneControlPhase.ARMED,
+                        lastCommand = DualPhoneControlType.ARM,
+                        lastError = null,
                         lastMessage = "Slave acknowledged ARM",
                     )
                 }
@@ -379,6 +402,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 }
                 DualPhoneControlType.START_ACK -> if (localRole == DualPhoneRole.MASTER) {
                     mutableState.value = mutableState.value.copy(
+                        lastCommand = DualPhoneControlType.START_AT,
+                        lastError = null,
                         lastMessage = "Slave acknowledged START_AT",
                     )
                 }
@@ -394,12 +419,21 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     scheduledStartJob?.cancel()
                     mutableState.value = mutableState.value.copy(
                         phase = DualPhoneControlPhase.CONNECTED,
+                        lastCommand = DualPhoneControlType.STOP,
+                        lastError = null,
                         lastMessage = "Slave acknowledged STOP",
                     )
                 }
-                DualPhoneControlType.ERROR -> throw IllegalStateException(
-                    payload.optString("code", "Peer returned ERROR"),
-                )
+                DualPhoneControlType.ERROR -> {
+                    val code = payload.optString(
+                        "code",
+                        "Peer returned ERROR",
+                    )
+                    mutableState.value = mutableState.value.copy(
+                        lastError = "Peer error: $code",
+                        lastMessage = "Peer error: $code",
+                    )
+                }
             }
         }
     }
@@ -433,15 +467,21 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
 
     private fun sendCapabilities() {
         val settings = settingsStore.load()
+        val report = capabilityProbe.buildReport(settings)
+        val preferredModeId = report
+            .optString("preferred_video_mode_id")
+            .takeIf {
+                it.isNotBlank() && it != "null"
+            }
         send(
             DualPhoneControlType.CAPABILITIES,
             JSONObject()
                 .put("device_id", settings.deviceId)
                 .put(
                     "preferred_video_mode_id",
-                    settings.preferredVideoModeId ?: JSONObject.NULL,
+                    preferredModeId ?: JSONObject.NULL,
                 )
-                .put("report", capabilityProbe.buildReport(settings)),
+                .put("report", report),
         )
     }
 
@@ -529,16 +569,41 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
     }
 
-    private fun requireMasterConnection(block: () -> Unit) {
+    private fun requireMasterConnection(
+        command: String,
+        allowedPhases: Set<DualPhoneControlPhase>,
+        block: () -> Unit,
+    ) {
         if (settingsStore.load().role != DualPhoneRole.MASTER ||
             !mutableState.value.connected
         ) {
-            updateError("Master is not connected to a Slave")
+            reportCommandError(
+                command,
+                "Master is not connected to a Slave",
+            )
+            return
+        }
+        if (mutableState.value.phase !in allowedPhases) {
+            reportCommandError(
+                command,
+                "$command is not allowed in ${mutableState.value.phase.name}",
+            )
             return
         }
         runCatching(block).onFailure {
-            updateError("Control command failed: ${it.message}")
+            reportCommandError(
+                command,
+                "Control command failed: ${it.message}",
+            )
         }
+    }
+
+    private fun reportCommandError(command: String, message: String) {
+        mutableState.value = mutableState.value.copy(
+            lastCommand = command,
+            lastError = message,
+            lastMessage = message,
+        )
     }
 
     private fun currentCaptureId(): String =
@@ -555,6 +620,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             phase = DualPhoneControlPhase.ERROR,
             connected = false,
             lastMessage = message,
+            lastError = message,
         )
     }
 

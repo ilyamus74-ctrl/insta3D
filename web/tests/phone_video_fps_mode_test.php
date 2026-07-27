@@ -35,6 +35,8 @@ foreach ([
     'object PhoneVideoModePolicy',
     'listOf(30, 60)',
     'PhoneVideoSizeCapability',
+    'PhoneVideoModeSupport',
+    'CAMERA2_HIGH_SPEED',
     '1280 && it.height == 720 && it.fps == 30',
 ] as $required) {
     if (!str_contains($modeSource, $required)) {
@@ -47,6 +49,9 @@ foreach ([
     'supportedVideoModes: List<PhoneVideoMode>',
     'PhoneVideoModePolicy.availableModes',
     'saveSelectedVideoMode',
+    'highSpeedVideoConfigurations',
+    'REQUEST_AVAILABLE_CAPABILITIES_CONSTRAINED_HIGH_SPEED_VIDEO',
+    'high_speed_video_configurations',
     'getSelectedVideoMode',
 ] as $required) {
     if (!str_contains($lensSource, $required)) {

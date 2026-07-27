@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.graphics.Rect
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.params.StreamConfigurationMap
 import android.os.Build
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.CameraFilter
@@ -46,6 +47,7 @@ data class PhoneCameraLensOption(
     val activeArraySize: ActiveArraySize?,
     val supportedVideoSizes: List<VideoSizeInfo>,
     val supportedFpsRanges: List<FpsRangeInfo>,
+    val highSpeedVideoConfigurations: List<HighSpeedVideoConfiguration>,
     val supportedVideoModes: List<PhoneVideoMode>,
     val approximateFovDeg: FovInfo?,
     val logicalMultiCameraCapable: Boolean = false,
@@ -65,6 +67,12 @@ data class SensorPhysicalSize(val width: Float, val height: Float)
 data class ActiveArraySize(val left: Int, val top: Int, val right: Int, val bottom: Int, val width: Int, val height: Int)
 data class VideoSizeInfo(val width: Int, val height: Int)
 data class FpsRangeInfo(val lower: Int, val upper: Int)
+data class HighSpeedVideoConfiguration(
+    val width: Int,
+    val height: Int,
+    val lowerFps: Int,
+    val upperFps: Int,
+)
 data class FovInfo(val horizontal: Double, val vertical: Double)
 data class PhoneLensPreset(val label: String, val zoomRatio: Float)
 
@@ -162,6 +170,10 @@ class PhoneCameraLensRepository(private val context: Context) {
 
     fun rawMetadataJson(cameraId: String): JSONObject {
         val chars = manager.getCameraCharacteristics(cameraId)
+        val streamMap = chars.get(
+            CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP,
+        )
+        val highSpeedConfigurations = highSpeedVideoConfigurations(streamMap)
         val capabilities = chars.get(
             CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES,
         )?.toList() ?: emptyList()
@@ -169,6 +181,25 @@ class PhoneCameraLensRepository(private val context: Context) {
             .put("hardware_level", chars.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL) ?: JSONObject.NULL)
             .put("capabilities", JSONArray(capabilities))
             .put("logical_multi_camera_capable", isLogicalMultiCamera(chars))
+            .put(
+                "constrained_high_speed_video_capable",
+                capabilities.contains(
+                    CameraCharacteristics
+                        .REQUEST_AVAILABLE_CAPABILITIES_CONSTRAINED_HIGH_SPEED_VIDEO,
+                ),
+            )
+            .put(
+                "high_speed_video_configurations",
+                JSONArray(
+                    highSpeedConfigurations.map { configuration ->
+                        JSONObject()
+                            .put("width", configuration.width)
+                            .put("height", configuration.height)
+                            .put("lower_fps", configuration.lowerFps)
+                            .put("upper_fps", configuration.upperFps)
+                    },
+                ),
+            )
             .put("physical_camera_ids", JSONArray(physicalCameraIds(chars)))
             .put("available_stabilization_modes", JSONArray(chars.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)?.toList() ?: emptyList<Int>()))
             .put(
@@ -200,7 +231,16 @@ class PhoneCameraLensRepository(private val context: Context) {
             ?.distinct()
             ?: emptyList()
         val fps = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.map { FpsRangeInfo(it.lower, it.upper) } ?: emptyList()
+        val highSpeedConfigurations = highSpeedVideoConfigurations(streamMap)
+        val highSpeedBySize = highSpeedConfigurations.groupBy {
+            it.width to it.height
+        }
         val sizeCapabilities = sizes.map { size ->
+            val highSpeedRanges = highSpeedBySize[
+                size.width to size.height
+            ].orEmpty().map {
+                it.lowerFps..it.upperFps
+            }
             val minFrameDurationNs = runCatching {
                 streamMap?.getOutputMinFrameDuration(
                     android.media.MediaRecorder::class.java,
@@ -218,6 +258,7 @@ class PhoneCameraLensRepository(private val context: Context) {
                 width = size.width,
                 height = size.height,
                 maxFps = maxFps,
+                highSpeedFpsRanges = highSpeedRanges,
             )
         }
         val videoModes = PhoneVideoModePolicy.availableModes(
@@ -236,11 +277,36 @@ class PhoneCameraLensRepository(private val context: Context) {
             activeArraySize = active,
             supportedVideoSizes = sizes,
             supportedFpsRanges = fps,
+            highSpeedVideoConfigurations = highSpeedConfigurations,
             supportedVideoModes = videoModes,
             approximateFovDeg = fov,
             logicalMultiCameraCapable = logical,
             physicalCameraIds = physicalIds,
         )
+    }
+
+    private fun highSpeedVideoConfigurations(
+        streamMap: StreamConfigurationMap?,
+    ): List<HighSpeedVideoConfiguration> {
+        if (streamMap == null) return emptyList()
+        return runCatching {
+            streamMap.highSpeedVideoSizes.orEmpty().flatMap { size ->
+                streamMap.getHighSpeedVideoFpsRangesFor(size)
+                    .orEmpty()
+                    .map { range ->
+                        HighSpeedVideoConfiguration(
+                            width = size.width,
+                            height = size.height,
+                            lowerFps = range.lower,
+                            upperFps = range.upper,
+                        )
+                    }
+            }.distinct().sortedWith(
+                compareByDescending<HighSpeedVideoConfiguration> {
+                    it.width * it.height
+                }.thenByDescending { it.upperFps },
+            )
+        }.getOrDefault(emptyList())
     }
 
     private fun listBackFocals(): List<Float> = manager.cameraIdList.mapNotNull { id ->
@@ -276,6 +342,28 @@ fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = nu
     .put("physical_camera_ids", JSONArray(physicalCameraIds))
     .put("min_zoom_ratio", minZoomRatioOverride ?: minZoomRatio ?: JSONObject.NULL)
     .put("max_zoom_ratio", maxZoomRatioOverride ?: maxZoomRatio ?: JSONObject.NULL)
+    .put(
+        "ae_fps_ranges",
+        JSONArray(
+            supportedFpsRanges.map { range ->
+                JSONObject()
+                    .put("lower", range.lower)
+                    .put("upper", range.upper)
+            },
+        ),
+    )
+    .put(
+        "high_speed_video_configurations",
+        JSONArray(
+            highSpeedVideoConfigurations.map { configuration ->
+                JSONObject()
+                    .put("width", configuration.width)
+                    .put("height", configuration.height)
+                    .put("lower_fps", configuration.lowerFps)
+                    .put("upper_fps", configuration.upperFps)
+            },
+        ),
+    )
     .put("ultrawide_zoom_ratio_note", if (minZoomRatioOverride != null && minZoomRatioOverride <= 0.5f && kotlin.math.abs(effectiveZoomRatio - 0.5f) <= 0.05f) "CameraX confirmed ultrawide-like 0.5x zoom ratio." else JSONObject.NULL)
     .put("lens_facing", lensFacing)
     .put("focal_length_mm", primaryFocalLengthMm ?: JSONObject.NULL)
@@ -285,7 +373,7 @@ fun PhoneCameraLensOption.toJson(selectedVideoInfo: SelectedPhoneVideoInfo? = nu
     .put("approximate_fov_deg", approximateFovDeg?.let { JSONObject().put("horizontal", it.horizontal).put("vertical", it.vertical) } ?: JSONObject.NULL)
     .put("resolution", JSONObject().put("width", selectedVideoInfo?.width ?: JSONObject.NULL).put("height", selectedVideoInfo?.height ?: JSONObject.NULL))
     .put("fps", selectedVideoInfo?.fps ?: JSONObject.NULL)
-    .put("video_mode_candidates", JSONArray(supportedVideoModes.map { mode -> JSONObject().put("id", mode.id).put("width", mode.width).put("height", mode.height).put("fps", mode.fps).put("quality", mode.qualityKey) }))
+    .put("video_mode_candidates", JSONArray(supportedVideoModes.map { mode -> JSONObject().put("id", mode.id).put("width", mode.width).put("height", mode.height).put("fps", mode.fps).put("quality", mode.qualityKey).put("support", mode.support.wireValue) }))
     .put("requested_profile_width", calibrationResolutionInfo?.requestedProfileWidth ?: JSONObject.NULL)
     .put("requested_profile_height", calibrationResolutionInfo?.requestedProfileHeight ?: JSONObject.NULL)
     .put("requested_calibration_width", calibrationResolutionInfo?.requestedWidth ?: JSONObject.NULL)

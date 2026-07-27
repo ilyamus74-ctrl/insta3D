@@ -21,11 +21,15 @@ class DualPhoneCapabilityProbe(context: Context) {
             }.getOrNull()
 
         val cameras = JSONArray()
+        var selectedModeId: String? = null
         lensRepository.listBackCameras().forEach { camera ->
             val selectedMode = lensRepository.getSelectedVideoMode(
                 camera.cameraId,
                 camera.supportedVideoModes,
             )
+            if (camera.cameraId == selectedCameraId) {
+                selectedModeId = selectedMode?.id
+            }
             cameras.put(
                 camera.toJson(
                     selectedVideoInfo = SelectedPhoneVideoInfo(
@@ -39,6 +43,9 @@ class DualPhoneCapabilityProbe(context: Context) {
                 ),
             )
         }
+        val effectivePreferredModeId =
+            settings.preferredVideoModeId
+                ?: selectedModeId
 
         return JSONObject()
             .put("schema_version", 1)
@@ -54,7 +61,7 @@ class DualPhoneCapabilityProbe(context: Context) {
             .put("selected_camera_id", selectedCameraId ?: JSONObject.NULL)
             .put(
                 "preferred_video_mode_id",
-                settings.preferredVideoModeId ?: JSONObject.NULL,
+                effectivePreferredModeId ?: JSONObject.NULL,
             )
             .put("cameras", cameras)
             .put("generated_at", Instant.now().toString())

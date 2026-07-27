@@ -1,4 +1,5 @@
 import com.maklertour.data.phonecamera.PhoneVideoModePolicy
+import com.maklertour.data.phonecamera.PhoneVideoModeSupport
 import com.maklertour.data.phonecamera.PhoneVideoSizeCapability
 
 private fun check(condition: Boolean, message: String) {
@@ -36,6 +37,29 @@ fun main() {
         supportedFpsRanges = listOf(15..60),
     )
     check(no60.none { it.fps == 60 }, "60 FPS hidden per resolution")
+
+    val camera2HighSpeed = PhoneVideoModePolicy.availableModes(
+        sizeCapabilities = listOf(
+            PhoneVideoSizeCapability(
+                width = 1920,
+                height = 1080,
+                maxFps = 30,
+                highSpeedFpsRanges = listOf(30..120, 120..120),
+            ),
+        ),
+        supportedFpsRanges = listOf(15..30, 30..30),
+    )
+    val highSpeedFhd60 = camera2HighSpeed.firstOrNull {
+        it.id == "1920x1080@60"
+    }
+    check(
+        highSpeedFhd60 != null,
+        "FHD60 exposed from Camera2 high-speed configuration",
+    )
+    check(
+        highSpeedFhd60?.support == PhoneVideoModeSupport.CAMERA2_HIGH_SPEED,
+        "FHD60 provenance is marked as Camera2 high-speed",
+    )
 
     val onlyFhd = PhoneVideoModePolicy.availableModes(
         sizeCapabilities = listOf(

@@ -12,6 +12,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.maklertour.data.dualphone.DualPhoneControlPhase
 import com.maklertour.data.dualphone.DualPhoneControlSnapshot
@@ -47,6 +48,9 @@ fun DualPhoneControlSettingsCard(
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(snapshot.lastMessage, style = MaterialTheme.typography.bodySmall)
+            snapshot.lastError?.let { error ->
+                Text(error, color = Color.Red, style = MaterialTheme.typography.bodySmall)
+            }
 
             if (settings.role == DualPhoneRole.STANDALONE) {
                 Text(
@@ -135,6 +139,13 @@ fun DualPhoneControlSettingsCard(
             }
 
             if (settings.role == DualPhoneRole.MASTER && snapshot.connected) {
+                val canArm = snapshot.phase == DualPhoneControlPhase.CONNECTED
+                val canStart = snapshot.phase == DualPhoneControlPhase.ARMED
+                val canStop = snapshot.phase in setOf(
+                    DualPhoneControlPhase.ARMED,
+                    DualPhoneControlPhase.START_SCHEDULED,
+                    DualPhoneControlPhase.RECORDING,
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -142,12 +153,14 @@ fun DualPhoneControlSettingsCard(
                     Button(
                         onClick = onArm,
                         modifier = Modifier.weight(1f),
+                        enabled = canArm,
                     ) {
                         Text("ARM")
                     }
                     Button(
                         onClick = onStartTest,
                         modifier = Modifier.weight(1f),
+                        enabled = canStart,
                     ) {
                         Text("START +3s")
                     }
@@ -155,6 +168,7 @@ fun DualPhoneControlSettingsCard(
                 Button(
                     onClick = onStopCapture,
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = canStop,
                 ) {
                     Text("STOP")
                 }
