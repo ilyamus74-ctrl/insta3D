@@ -8,7 +8,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-enum class CameraModeSource { PHONE_CAMERA, USB_UVC }
+enum class CameraModeSource { PHONE_CAMERA, USB_UVC, REMOTE_PHONE }
+enum class StereoRigTopology { PHONE_USB, DUAL_PHONE }
 enum class CameraModeSelection { AUTO, MANUAL }
 enum class CalibrationStatus { NOT_CALIBRATED, CAPTURED, CALIBRATED }
 enum class CalibrationBoardType { CHESSBOARD_LEGACY, CHARUCO }
@@ -49,6 +50,11 @@ data class StereoRigProfile(
     val lastCalibrationSessionPath: String? = null,
     val calibrationResultPath: String? = null,
     val calibrationResult: JSONObject? = null,
+    val topology: StereoRigTopology = StereoRigTopology.PHONE_USB,
+    val cam0DeviceId: String? = null,
+    val cam1DeviceId: String? = null,
+    val cam0CameraId: String? = null,
+    val cam1CameraId: String? = null,
 ) {
     companion object
 }
@@ -120,6 +126,11 @@ fun StereoRigProfile.toJson(): JSONObject = JSONObject()
     .put("lastCalibrationSessionPath", lastCalibrationSessionPath)
     .put("calibrationResultPath", calibrationResultPath)
     .put("calibrationResult", calibrationResult)
+    .put("topology", topology.name)
+    .put("cam0DeviceId", cam0DeviceId)
+    .put("cam1DeviceId", cam1DeviceId)
+    .put("cam0CameraId", cam0CameraId)
+    .put("cam1CameraId", cam1CameraId)
 
 fun CameraMode.toJson(): JSONObject = JSONObject()
     .put("source", source.name)
@@ -155,6 +166,13 @@ private fun StereoRigProfile.Companion.fromJson(json: JSONObject): StereoRigProf
     lastCalibrationSessionPath = json.optString("lastCalibrationSessionPath").takeIf { it.isNotBlank() },
     calibrationResultPath = json.optString("calibrationResultPath").takeIf { it.isNotBlank() },
     calibrationResult = json.optJSONObject("calibrationResult"),
+    topology = runCatching {
+        StereoRigTopology.valueOf(json.optString("topology"))
+    }.getOrDefault(StereoRigTopology.PHONE_USB),
+    cam0DeviceId = json.optString("cam0DeviceId").takeIf { it.isNotBlank() },
+    cam1DeviceId = json.optString("cam1DeviceId").takeIf { it.isNotBlank() },
+    cam0CameraId = json.optString("cam0CameraId").takeIf { it.isNotBlank() },
+    cam1CameraId = json.optString("cam1CameraId").takeIf { it.isNotBlank() },
 )
 
 private fun JSONObject.toCameraMode(): CameraMode = CameraMode(

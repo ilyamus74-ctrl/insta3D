@@ -162,12 +162,26 @@ class PhoneCameraLensRepository(private val context: Context) {
 
     fun rawMetadataJson(cameraId: String): JSONObject {
         val chars = manager.getCameraCharacteristics(cameraId)
+        val capabilities = chars.get(
+            CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES,
+        )?.toList() ?: emptyList()
         return JSONObject()
             .put("hardware_level", chars.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL) ?: JSONObject.NULL)
-            .put("capabilities", JSONArray(chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.toList() ?: emptyList<Int>()))
+            .put("capabilities", JSONArray(capabilities))
             .put("logical_multi_camera_capable", isLogicalMultiCamera(chars))
             .put("physical_camera_ids", JSONArray(physicalCameraIds(chars)))
             .put("available_stabilization_modes", JSONArray(chars.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)?.toList() ?: emptyList<Int>()))
+            .put(
+                "sensor_timestamp_source",
+                chars.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE)
+                    ?: JSONObject.NULL,
+            )
+            .put(
+                "manual_sensor_capable",
+                capabilities.contains(
+                    CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR,
+                ),
+            )
             .put("timestamp", Instant.now().toString())
     }
 

@@ -1142,9 +1142,9 @@ function launch_job(mysqli $db, array $job): void
         $sparse = (int)($params['sparse_job_id'] ?? $job['parent_remote_job_id'] ?? 0);
         $model = (int)($params['model_id'] ?? 0);
         $runSettings=worker_run_parameters($db,$job); $dense=$runSettings['dense'] ?? [];
-        $target = (int)($dense['target_images_per_chunk'] ?? $params['target_images_per_chunk'] ?? ($mode === 'hq' ? 60 : 50));
-        $max = (int)($dense['max_images_per_chunk'] ?? $params['max_images_per_chunk'] ?? ($mode === 'hq' ? 100 : 80));
-        $overlap = (int)($dense['chunk_overlap'] ?? $params['overlap_images'] ?? ($mode === 'hq' ? 20 : 15));
+        $target = (int)($params['target_images_per_chunk'] ?? $dense['target_images_per_chunk'] ?? ($mode === 'hq' ? 60 : 50));
+        $max = (int)($params['max_images_per_chunk'] ?? $dense['max_images_per_chunk'] ?? ($mode === 'hq' ? 100 : 80));
+        $overlap = (int)($params['overlap_images'] ?? $dense['chunk_overlap'] ?? ($mode === 'hq' ? 20 : 15));
         $reserve = (int)($params['ram_reserve_mb'] ?? 3000);
         $outDir = remote_output_dir($remoteJobId);
         if (!is_dir($outDir)) { @mkdir($outDir, 0775, true); }

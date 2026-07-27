@@ -122,6 +122,10 @@ import com.maklertour.data.camera.Insta360OscProvider
 import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
+import com.maklertour.data.dualphone.DualPhoneCapabilityProbe
+import com.maklertour.data.dualphone.DualPhoneRole
+import com.maklertour.data.dualphone.DualPhoneStereoSettings
+import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
 import com.maklertour.data.phonecamera.DeviceOrientationTracker
 import com.maklertour.data.phonecamera.PhoneDualCameraProbe
@@ -169,6 +173,7 @@ import com.maklertour.data.rig.CalibrationStatus
 import com.maklertour.data.rig.CameraMode
 import com.maklertour.data.rig.CameraModeSelection
 import com.maklertour.data.rig.CameraModeSource
+import com.maklertour.data.rig.StereoRigTopology
 import com.maklertour.data.rig.StereoRigProfile
 import com.maklertour.data.rig.StereoRigProfileStore
 import com.maklertour.data.rig.toJson
@@ -1188,8 +1193,34 @@ private fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val store = remember(context) { StereoRigProfileStore(context) }
+    val phoneLensRepository = remember(context) {
+        PhoneCameraLensRepository(context.applicationContext)
+    }
+    val dualPhoneStore = remember(context) {
+        DualPhoneStereoSettingsStore(context.applicationContext)
+    }
     var activeProfile by remember { mutableStateOf(store.loadActiveProfile()) }
+    var dualPhoneSettings by remember {
+        mutableStateOf(dualPhoneStore.load())
+    }
     var dialog by remember { mutableStateOf<String?>(null) }
+    var capabilityReportPath by remember { mutableStateOf<String?>(null) }
+    val selectedPhoneLens = remember {
+        runCatching { phoneLensRepository.selectedOrDefault().first }
+            .getOrNull()
+    }
+    val availablePhoneVideoModes =
+        selectedPhoneLens?.supportedVideoModes.orEmpty()
+    var selectedVideoModeId by remember(selectedPhoneLens?.cameraId) {
+        mutableStateOf(
+            selectedPhoneLens?.let { lens ->
+                phoneLensRepository.getSelectedVideoMode(
+                    lens.cameraId,
+                    lens.supportedVideoModes,
+                )?.id
+            },
+        )
+    }
     val refreshProfile: (StereoRigProfile) -> Unit = { profile ->
         store.saveActiveProfile(profile)
         activeProfile = profile
@@ -1205,6 +1236,109 @@ private fun SettingsScreen(
             onEditProfile = { dialog = "edit" },
             onCameraModes = { dialog = "modes" },
             onCalibrationSetup = { dialog = "calibration" },
+        )
+        PhoneRecordingSettingsSection(
+            cameraLabel = selectedPhoneLens?.summary
+                ?: "Phone camera unavailable",
+            modes = availablePhoneVideoModes,
+            selectedModeId = selectedVideoModeId,
+            onSelectMode = { mode ->
+                selectedPhoneLens?.let { lens ->
+                    val previous = activeProfile.cam0Mode
+                    val changed = previous?.width != mode.width ||
+                        previous?.height != mode.height ||
+                        previous?.fps != mode.fps
+                    phoneLensRepository.saveSelectedVideoMode(
+                        lens.cameraId,
+                        mode,
+                    )
+                    selectedVideoModeId = mode.id
+                    val updatedSettings = dualPhoneSettings.copy(
+                        preferredVideoModeId = mode.id,
+                    )
+                    dualPhoneStore.save(updatedSettings)
+                    dualPhoneSettings = updatedSettings
+                    refreshProfile(
+                        activeProfile.copy(
+                            cam0Mode = CameraMode(
+                                source = CameraModeSource.PHONE_CAMERA,
+                                format = mode.qualityKey,
+                                width = mode.width,
+                                height = mode.height,
+                                fps = mode.fps,
+                                selectedBy = CameraModeSelection.MANUAL,
+                            ),
+                            cam0DeviceId = dualPhoneSettings.deviceId,
+                            cam0CameraId = lens.cameraId,
+                            calibrationStatus = if (changed) {
+                                CalibrationStatus.NOT_CALIBRATED
+                            } else {
+                                activeProfile.calibrationStatus
+                            },
+                            calibrationResultPath = if (changed) {
+                                null
+                            } else {
+                                activeProfile.calibrationResultPath
+                            },
+                            calibrationResult = if (changed) {
+                                null
+                            } else {
+                                activeProfile.calibrationResult
+                            },
+                        ),
+                    )
+                }
+            },
+        )
+        DualPhoneStereoSettingsSection(
+            settings = dualPhoneSettings,
+            capabilityReportPath = capabilityReportPath,
+            onRoleSelected = { role ->
+                val updatedSettings = dualPhoneSettings.copy(role = role)
+                dualPhoneStore.save(updatedSettings)
+                dualPhoneSettings = updatedSettings
+                val topology = if (role == DualPhoneRole.STANDALONE) {
+                    StereoRigTopology.PHONE_USB
+                } else {
+                    StereoRigTopology.DUAL_PHONE
+                }
+                val topologyChanged = activeProfile.topology != topology
+                refreshProfile(
+                    activeProfile.copy(
+                        topology = topology,
+                        cam0DeviceId = if (role == DualPhoneRole.MASTER) {
+                            updatedSettings.deviceId
+                        } else {
+                            activeProfile.cam0DeviceId
+                        },
+                        cam1DeviceId = if (role == DualPhoneRole.SLAVE) {
+                            updatedSettings.deviceId
+                        } else {
+                            activeProfile.cam1DeviceId
+                        },
+                        calibrationStatus = if (topologyChanged) {
+                            CalibrationStatus.NOT_CALIBRATED
+                        } else {
+                            activeProfile.calibrationStatus
+                        },
+                        calibrationResultPath = if (topologyChanged) {
+                            null
+                        } else {
+                            activeProfile.calibrationResultPath
+                        },
+                        calibrationResult = if (topologyChanged) {
+                            null
+                        } else {
+                            activeProfile.calibrationResult
+                        },
+                    ),
+                )
+            },
+            onExportCapabilities = {
+                capabilityReportPath = DualPhoneCapabilityProbe(context)
+                    .writeReport(dualPhoneSettings)
+                    .absolutePath
+            },
         )
         Text("System", style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.app_language))
@@ -1234,6 +1368,106 @@ private fun SettingsScreen(
         "edit" -> EditRigProfileDialog(activeProfile, onDismiss = { dialog = null }) { refreshProfile(it); dialog = null }
         "modes" -> CameraModesDialog(activeProfile, onDismiss = { dialog = null }) { refreshProfile(it); dialog = null }
         "calibration" -> CalibrationSetupDialog(activeProfile, store, onDismiss = { dialog = null }) { activeProfile = it; dialog = null }
+    }
+}
+
+@Composable
+private fun PhoneRecordingSettingsSection(
+    cameraLabel: String,
+    modes: List<PhoneVideoMode>,
+    selectedModeId: String?,
+    onSelectMode: (PhoneVideoMode) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "Phone recording quality",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(cameraLabel, style = MaterialTheme.typography.bodySmall)
+            if (modes.isEmpty()) {
+                Text(
+                    "No verified recording modes were reported by Camera2.",
+                    color = Color.Red,
+                )
+            } else {
+                modes.forEach { mode ->
+                    Button(
+                        onClick = { onSelectMode(mode) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            (if (mode.id == selectedModeId) "✓ " else "") +
+                                mode.label,
+                        )
+                    }
+                }
+            }
+            Text(
+                "Resolution and FPS are saved per physical camera. " +
+                    "60 FPS is shown only when the selected camera reports " +
+                    "that mode as supported.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DualPhoneStereoSettingsSection(
+    settings: DualPhoneStereoSettings,
+    capabilityReportPath: String?,
+    onRoleSelected: (DualPhoneRole) -> Unit,
+    onExportCapabilities: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "Dual-phone stereo",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text("Device ID: ${settings.deviceId}")
+            Text("Primary transport: Wi-Fi LAN")
+            Text(
+                "Bluetooth is reserved for optional discovery only; " +
+                    "video is always recorded locally.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            DualPhoneRole.entries.forEach { role ->
+                Button(
+                    onClick = { onRoleSelected(role) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        (if (settings.role == role) "✓ " else "") +
+                            role.name.lowercase().replaceFirstChar {
+                                it.uppercase()
+                            },
+                    )
+                }
+            }
+            Text(
+                "The Master owns the dual_capture_id and controls start, " +
+                    "stop, upload state and final bundle readiness for both " +
+                    "phones.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(
+                onClick = onExportCapabilities,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Export camera capability report")
+            }
+            capabilityReportPath?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
@@ -1296,31 +1530,124 @@ private fun EditRigProfileDialog(profile: StereoRigProfile, onDismiss: () -> Uni
 
 @Composable
 private fun CameraModesDialog(profile: StereoRigProfile, onDismiss: () -> Unit, onSave: (StereoRigProfile) -> Unit) {
-    val cam0Options = listOf(
-        CameraMode(CameraModeSource.PHONE_CAMERA, "Auto", 1920, 1080, 30, CameraModeSelection.AUTO),
-        CameraMode(CameraModeSource.PHONE_CAMERA, "Default", 1920, 1080, 30, CameraModeSelection.MANUAL),
-        CameraMode(CameraModeSource.PHONE_CAMERA, "Default", 1280, 720, 30, CameraModeSelection.MANUAL),
-    )
-    val cam1Options = listOf(
+    val context = LocalContext.current
+    val phoneLensRepository = remember(context) {
+        PhoneCameraLensRepository(context.applicationContext)
+    }
+    val selectedPhoneLens = remember {
+        runCatching { phoneLensRepository.selectedOrDefault().first }
+            .getOrNull()
+    }
+    val detectedPhoneModes = selectedPhoneLens?.supportedVideoModes
+        .orEmpty()
+        .map { mode ->
+            CameraMode(
+                source = CameraModeSource.PHONE_CAMERA,
+                format = mode.qualityKey,
+                width = mode.width,
+                height = mode.height,
+                fps = mode.fps,
+                selectedBy = CameraModeSelection.MANUAL,
+            )
+        }
+    val cam0Options = detectedPhoneModes.ifEmpty {
+        listOf(
+            CameraMode(CameraModeSource.PHONE_CAMERA, "FHD", 1920, 1080, 30, CameraModeSelection.MANUAL),
+            CameraMode(CameraModeSource.PHONE_CAMERA, "HD", 1280, 720, 30, CameraModeSelection.MANUAL),
+        )
+    }
+    val usbCam1Options = listOf(
         CameraMode(CameraModeSource.USB_UVC, "MJPEG", 640, 480, 30, CameraModeSelection.AUTO),
         CameraMode(CameraModeSource.USB_UVC, "MJPEG", 1920, 1080, 30, CameraModeSelection.MANUAL),
         CameraMode(CameraModeSource.USB_UVC, "MJPEG", 1280, 720, 30, CameraModeSelection.MANUAL),
         CameraMode(CameraModeSource.USB_UVC, "MJPEG", 640, 480, 30, CameraModeSelection.MANUAL),
         CameraMode(CameraModeSource.USB_UVC, "YUYV", 640, 480, 30, CameraModeSelection.MANUAL),
     )
-    var cam0 by remember(profile) { mutableStateOf(profile.cam0Mode ?: cam0Options.first()) }
-    var cam1 by remember(profile) { mutableStateOf(profile.cam1Mode ?: cam1Options.first()) }
+    val remoteCam1Options = cam0Options.map {
+        it.copy(source = CameraModeSource.REMOTE_PHONE)
+    }
+    val cam1Options = if (profile.topology == StereoRigTopology.DUAL_PHONE) {
+        remoteCam1Options
+    } else {
+        usbCam1Options
+    }
+    var cam0 by remember(profile) {
+        mutableStateOf(
+            profile.cam0Mode?.takeIf { it.source == CameraModeSource.PHONE_CAMERA }
+                ?: cam0Options.first(),
+        )
+    }
+    var cam1 by remember(profile) {
+        mutableStateOf(
+            profile.cam1Mode?.takeIf { saved ->
+                cam1Options.any {
+                    it.source == saved.source &&
+                        it.width == saved.width &&
+                        it.height == saved.height &&
+                        it.fps == saved.fps
+                }
+            } ?: cam1Options.first(),
+        )
+    }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Camera modes") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Phone cam0 options")
             cam0Options.forEach { Button(onClick = { cam0 = it }, modifier = Modifier.fillMaxWidth()) { Text((if (cam0 == it) "✓ " else "") + it.modeLabel()) } }
-            Text("USB UVC cam1 options")
+            Text(
+                if (profile.topology == StereoRigTopology.DUAL_PHONE) {
+                    "Remote phone cam1 target mode"
+                } else {
+                    "USB UVC cam1 options"
+                },
+            )
             cam1Options.forEach { Button(onClick = { cam1 = it }, modifier = Modifier.fillMaxWidth()) { Text((if (cam1 == it) "✓ " else "") + it.modeLabel()) } }
             Text("Prefer stability")
-            Text("Prefer MJPEG for USB camera")
+            if (profile.topology == StereoRigTopology.PHONE_USB) {
+                Text("Prefer MJPEG for USB camera")
+            } else {
+                Text("The final common mode is negotiated after the Slave capability report is received.")
+            }
             Text("Mode applies on next camera refresh", style = MaterialTheme.typography.bodySmall)
         }
-    }, confirmButton = { TextButton(onClick = { onSave(profile.copy(cam0Mode = cam0, cam1Mode = cam1)) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+    }, confirmButton = {
+        TextButton(onClick = {
+            selectedPhoneLens?.let { lens ->
+                lens.supportedVideoModes.firstOrNull {
+                    it.width == cam0.width &&
+                        it.height == cam0.height &&
+                        it.fps == cam0.fps
+                }?.let { mode ->
+                    phoneLensRepository.saveSelectedVideoMode(
+                        lens.cameraId,
+                        mode,
+                    )
+                }
+            }
+            val modeChanged =
+                profile.cam0Mode != cam0 || profile.cam1Mode != cam1
+            onSave(
+                profile.copy(
+                    cam0Mode = cam0,
+                    cam1Mode = cam1,
+                    calibrationStatus = if (modeChanged) {
+                        CalibrationStatus.NOT_CALIBRATED
+                    } else {
+                        profile.calibrationStatus
+                    },
+                    calibrationResultPath = if (modeChanged) {
+                        null
+                    } else {
+                        profile.calibrationResultPath
+                    },
+                    calibrationResult = if (modeChanged) {
+                        null
+                    } else {
+                        profile.calibrationResult
+                    },
+                ),
+            )
+        }) { Text("Save") }
+    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable

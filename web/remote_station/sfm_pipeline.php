@@ -85,6 +85,61 @@ function sfm_pipeline_integrate_sparse_artifacts(mysqli $db, int $pipelineRunId,
     $trajPath = $modelDir . '/camera_trajectory.json';
     $alignPath = $modelDir . '/world_alignment.json';
     $extra = [];
+    $apriltagSource = dirname($modelDir, 2) . '/apriltag_assist.json';
+    if (is_file($apriltagSource) && filesize($apriltagSource) > 0) {
+        $pipelineDir = sfm_pipeline_output_dir($pipelineRunId);
+        if (!is_dir($pipelineDir)) { @mkdir($pipelineDir, 0775, true); }
+        $apriltagDestination = $pipelineDir . '/apriltag_assist.json';
+        if (@copy($apriltagSource, $apriltagDestination)) {
+            $apriltag = json_decode(
+                (string)file_get_contents($apriltagSource),
+                true
+            );
+            $apriltag = is_array($apriltag) ? $apriltag : [];
+            $summary = [
+                'path' => $apriltagDestination,
+                'status' => $apriltag['status'] ?? null,
+                'sim3_applied' => (bool)($apriltag['sim3_applied'] ?? false),
+                'models_before' => $apriltag['models_before'] ?? null,
+                'models_after' => $apriltag['models_after'] ?? null,
+                'aligned_components' => $apriltag['aligned_components'] ?? [],
+                'unaligned_components' => $apriltag['unaligned_components'] ?? [],
+                'components_stitched' => $apriltag['components_stitched'] ?? null,
+                'warning_code' => $apriltag['warning_code'] ?? null,
+            ];
+            $runResult = $db->query(
+                'SELECT parameters_json FROM sfm_pipeline_runs WHERE id=' .
+                (int)$pipelineRunId . ' LIMIT 1'
+            );
+            $runRow = $runResult ? $runResult->fetch_assoc() : [];
+            if ($runResult) { $runResult->close(); }
+            $parameters = json_decode(
+                (string)($runRow['parameters_json'] ?? '{}'),
+                true
+            );
+            $parameters = is_array($parameters) ? $parameters : [];
+            $parameters['apriltag_assist'] = $summary;
+            $parametersJson = json_encode(
+                $parameters,
+                JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            );
+            $st = $db->prepare(
+                'UPDATE sfm_pipeline_runs SET parameters_json=? WHERE id=?'
+            );
+            if ($st && $parametersJson !== false) {
+                $st->bind_param('si', $parametersJson, $pipelineRunId);
+                $st->execute();
+                $st->close();
+            }
+            pipeline_log($pipelineRunId, 'INFO', 'APRILTAG_METRIC', sprintf(
+                'Preserved report status=%s sim3=%s models=%s->%s',
+                (string)($summary['status'] ?? 'unknown'),
+                !empty($summary['sim3_applied']) ? 'true' : 'false',
+                (string)($summary['models_before'] ?? '?'),
+                (string)($summary['models_after'] ?? '?')
+            ));
+        }
+    }
     if (is_file($diagPath)) { $extra['sparse_diagnostics_path'] = $diagPath; }
     if (is_file($trajPath)) { $extra['camera_trajectory_path'] = $trajPath; }
     if (is_file($alignPath)) { $extra['world_alignment_path'] = $alignPath; }

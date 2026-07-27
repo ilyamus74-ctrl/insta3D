@@ -51,6 +51,17 @@ Video SfM LightGlue bridge
 Stereo odometry LightGlue matcher
 ```
 
+### C. Dual-phone stereo capture frontend
+
+The planned two-phone Master/Slave capture frontend is documented separately:
+
+```text
+docs/llm/tasks/APP-DUAL-PHONE-STEREO-ROADMAP.md
+```
+
+It is an additional source for the stereo processing branch and does not replace
+the current phone + USB UVC runtime until dual-phone synchronization is proven.
+
 ## Implemented stereo runtime
 
 `MAKLERTOUR_SYNCED_DENSE` currently runs:
