@@ -45,6 +45,7 @@ internal object DualPhoneControlType {
     const val HELLO = "HELLO"
     const val WELCOME = "WELCOME"
     const val CAPABILITIES = "CAPABILITIES"
+    const val CLOCK_SYNC_STATUS = "CLOCK_SYNC_STATUS"
     const val PING = "PING"
     const val PONG = "PONG"
     const val ARM = "ARM"

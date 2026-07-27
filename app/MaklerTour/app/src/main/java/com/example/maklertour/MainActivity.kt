@@ -17,6 +17,7 @@ import android.widget.Toast
 import android.widget.FrameLayout
 import android.util.Log
 import android.view.TextureView
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -203,6 +204,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         RoomDatabaseProvider.get(this)
         deviceOrientationTracker = DeviceOrientationTracker(this)
         appDeviceOrientationTracker = deviceOrientationTracker

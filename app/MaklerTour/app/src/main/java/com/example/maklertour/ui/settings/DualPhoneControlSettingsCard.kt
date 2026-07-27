@@ -14,10 +14,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.maklertour.data.dualphone.DualPhoneClockSyncQuality
 import com.maklertour.data.dualphone.DualPhoneControlPhase
 import com.maklertour.data.dualphone.DualPhoneControlSnapshot
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
+import java.util.Locale
 
 @Composable
 fun DualPhoneControlSettingsCard(
@@ -40,7 +42,7 @@ fun DualPhoneControlSettingsCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                "Dual-phone Wi-Fi control (DP02)",
+                "Dual-phone Wi-Fi control + clock sync (DP03)",
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
@@ -136,10 +138,51 @@ fun DualPhoneControlSettingsCard(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+
+                val sync = snapshot.clockSync
+                Text(
+                    "Clock sync: ${sync.quality.name}",
+                    color = sync.quality.displayColor(),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    "UDP port: ${settings.clockSyncPort} · ${sync.message}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                sync.offsetNs?.let {
+                    Text(
+                        "Offset Slave−Master: ${formatOffset(it)}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (sync.medianRttNs != null || sync.p95RttNs != null) {
+                    Text(
+                        "RTT median/P95: ${formatMs(sync.medianRttNs)} / " +
+                            formatMs(sync.p95RttNs),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                sync.uncertaintyNs?.let {
+                    Text(
+                        "Estimated timing uncertainty: ${formatMs(it)}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                sync.driftPpm?.let {
+                    Text(
+                        "Clock drift: ${String.format(Locale.US, "%+.2f ppm", it)}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Text(
+                    "Clock samples: ${sync.acceptedSamples}/${sync.totalSamples}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
 
             if (settings.role == DualPhoneRole.MASTER && snapshot.connected) {
-                val canArm = snapshot.phase == DualPhoneControlPhase.CONNECTED
+                val canArm = snapshot.phase == DualPhoneControlPhase.CONNECTED &&
+                    snapshot.clockSync.ready
                 val canStart = snapshot.phase == DualPhoneControlPhase.ARMED
                 val canStop = snapshot.phase in setOf(
                     DualPhoneControlPhase.ARMED,
@@ -172,8 +215,17 @@ fun DualPhoneControlSettingsCard(
                 ) {
                     Text("STOP")
                 }
+                if (!snapshot.clockSync.ready &&
+                    snapshot.phase == DualPhoneControlPhase.CONNECTED
+                ) {
+                    Text(
+                        "ARM unlocks after clock quality reaches EXCELLENT or GOOD.",
+                        color = Color(0xFFFFA000),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Text(
-                    "DP02 changes protocol state only. Camera recording is connected in DP04.",
+                    "DP03 uses corrected monotonic time. Camera recording is connected in DP04.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -194,4 +246,23 @@ fun DualPhoneControlSettingsCard(
             }
         }
     }
+}
+
+private fun DualPhoneClockSyncQuality.displayColor(): Color = when (this) {
+    DualPhoneClockSyncQuality.EXCELLENT,
+    DualPhoneClockSyncQuality.GOOD -> Color(0xFF2E7D32)
+    DualPhoneClockSyncQuality.FAIR -> Color(0xFFF9A825)
+    DualPhoneClockSyncQuality.POOR,
+    DualPhoneClockSyncQuality.ERROR -> Color.Red
+    DualPhoneClockSyncQuality.UNSYNCED,
+    DualPhoneClockSyncQuality.SYNCING -> Color.Gray
+}
+
+private fun formatMs(valueNs: Long?): String = valueNs?.let {
+    String.format(Locale.US, "%.3f ms", it.toDouble() / 1_000_000.0)
+} ?: "—"
+
+private fun formatOffset(valueNs: Long): String {
+    val seconds = valueNs.toDouble() / 1_000_000_000.0
+    return String.format(Locale.US, "%+.6f s", seconds)
 }

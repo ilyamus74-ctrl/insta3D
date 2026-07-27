@@ -53,6 +53,7 @@ data class DualPhoneControlSnapshot(
     val lastRxElapsedMs: Long? = null,
     val lastCommand: String? = null,
     val lastError: String? = null,
+    val clockSync: DualPhoneClockSyncSnapshot = DualPhoneClockSyncSnapshot(),
 )
 
 class DualPhoneControlManager private constructor(context: Context) : Closeable {
@@ -63,6 +64,17 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
 
     private val mutableState = MutableStateFlow(DualPhoneControlSnapshot())
     val state: StateFlow<DualPhoneControlSnapshot> = mutableState.asStateFlow()
+    private val clockSyncController = DualPhoneClockSyncController(
+        scope = scope,
+        onSnapshot = { clockSync ->
+            mutableState.value = mutableState.value.copy(clockSync = clockSync)
+        },
+        onStatusForSlave = { payload ->
+            runCatching {
+                send(DualPhoneControlType.CLOCK_SYNC_STATUS, payload)
+            }
+        },
+    )
 
     private val writeLock = Any()
     private var serverSocket: ServerSocket? = null
@@ -181,6 +193,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     lastMessage = "Paired with Master",
                     lastRxElapsedMs = lastRxElapsedMs,
                 )
+                clockSyncController.startSlave(
+                    port = settings.clockSyncPort,
+                    expectedMasterHost = host,
+                    dualCaptureId = captureId,
+                )
                 sendCapabilities()
                 startHeartbeat(DualPhoneRole.SLAVE)
                 readLoop(DualPhoneRole.SLAVE)
@@ -204,6 +221,12 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             command = DualPhoneControlType.ARM,
             allowedPhases = setOf(DualPhoneControlPhase.CONNECTED),
         ) {
+            val sync = clockSyncController.currentSnapshot()
+            if (!sync.ready) {
+                throw IllegalStateException(
+                    "Clock sync is not ready (${sync.quality.name})",
+                )
+            }
             send(
                 DualPhoneControlType.ARM,
                 JSONObject()
@@ -225,22 +248,33 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         ) {
             val safeDelay = delayMs.coerceIn(1_000L, 30_000L)
             val startAt = SystemClock.elapsedRealtimeNanos() + safeDelay * 1_000_000L
+            val slaveStartAt = clockSyncController.masterToSlaveNs(startAt)
+                ?: throw IllegalStateException("Clock sync model is unavailable or stale")
+            val sync = clockSyncController.currentSnapshot()
             send(
                 DualPhoneControlType.START_AT,
                 JSONObject()
                     .put("dual_capture_id", currentCaptureId())
                     .put("master_elapsed_realtime_ns", startAt)
+                    .put("slave_elapsed_realtime_ns", slaveStartAt)
+                    .put("clock_offset_ns", sync.offsetNs ?: JSONObject.NULL)
+                    .put("clock_uncertainty_ns", sync.uncertaintyNs ?: JSONObject.NULL)
+                    .put("clock_drift_ppm", sync.driftPpm ?: JSONObject.NULL)
                     .put("delay_ms", safeDelay),
             )
             mutableState.value = mutableState.value.copy(
                 phase = DualPhoneControlPhase.START_SCHEDULED,
                 lastCommand = DualPhoneControlType.START_AT,
                 lastError = null,
-                lastMessage = "START_AT sent for +${safeDelay} ms (control test only)",
+                lastMessage = "START_AT sent using ${sync.quality.name} clock model",
             )
             scheduledStartJob?.cancel()
             scheduledStartJob = scope.launch {
-                delay(safeDelay)
+                val remainingNs = startAt - SystemClock.elapsedRealtimeNanos()
+                val remainingMs = (
+                    (remainingNs.coerceAtLeast(0L) + 999_999L) / 1_000_000L
+                )
+                delay(remainingMs)
                 if (mutableState.value.connected &&
                     mutableState.value.phase == DualPhoneControlPhase.START_SCHEDULED
                 ) {
@@ -333,6 +367,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 lastRxElapsedMs = lastRxElapsedMs,
             )
             sendCapabilities()
+            clockSyncController.startMaster(
+                peerHost = accepted.inetAddress.hostAddress,
+                port = settings.clockSyncPort,
+                dualCaptureId = captureId,
+            )
             startHeartbeat(DualPhoneRole.MASTER)
             readLoop(DualPhoneRole.MASTER)
         } catch (t: Throwable) {
@@ -379,6 +418,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     )
                 }
                 DualPhoneControlType.CAPABILITIES -> applyPeerCapabilities(payload)
+                DualPhoneControlType.CLOCK_SYNC_STATUS -> {
+                    if (localRole == DualPhoneRole.SLAVE) {
+                        clockSyncController.applyRemoteStatus(payload)
+                    }
+                }
                 DualPhoneControlType.ARM -> if (localRole == DualPhoneRole.SLAVE) {
                     mutableState.value = mutableState.value.copy(
                         phase = DualPhoneControlPhase.ARMED,
@@ -401,10 +445,24 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     handleSlaveStart(payload)
                 }
                 DualPhoneControlType.START_ACK -> if (localRole == DualPhoneRole.MASTER) {
+                    val accepted = payload.optBoolean("accepted", false)
+                    val rejectionReason = payload.optString(
+                        "reason",
+                        "Slave rejected START_AT",
+                    )
                     mutableState.value = mutableState.value.copy(
+                        phase = if (accepted) {
+                            mutableState.value.phase
+                        } else {
+                            DualPhoneControlPhase.ARMED
+                        },
                         lastCommand = DualPhoneControlType.START_AT,
-                        lastError = null,
-                        lastMessage = "Slave acknowledged START_AT",
+                        lastError = if (accepted) null else rejectionReason,
+                        lastMessage = if (accepted) {
+                            "Slave scheduled START_AT on its corrected clock"
+                        } else {
+                            "Slave rejected START_AT: $rejectionReason"
+                        },
                     )
                 }
                 DualPhoneControlType.STOP -> if (localRole == DualPhoneRole.SLAVE) {
@@ -439,27 +497,58 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     }
 
     private fun handleSlaveStart(payload: JSONObject) {
-        val delayMs = payload.optLong("delay_ms", 3_000L)
+        val receivedAtNs = SystemClock.elapsedRealtimeNanos()
+        val targetSlaveNs = payload.optLong("slave_elapsed_realtime_ns", 0L)
+        val fallbackDelayMs = payload.optLong("delay_ms", 3_000L)
             .coerceIn(0L, 30_000L)
+        val remainingNs = if (targetSlaveNs > 0L) {
+            targetSlaveNs - receivedAtNs
+        } else {
+            fallbackDelayMs * 1_000_000L
+        }
+        if (remainingNs < -MAX_START_LATE_NS) {
+            val lateByNs = -remainingNs
+            mutableState.value = mutableState.value.copy(
+                phase = DualPhoneControlPhase.ARMED,
+                lastError = "START_AT arrived too late by ${lateByNs / 1_000_000L} ms",
+                lastMessage = "START_AT rejected",
+            )
+            send(
+                DualPhoneControlType.START_ACK,
+                JSONObject()
+                    .put("accepted", false)
+                    .put("reason", "START_AT_LATE")
+                    .put("late_by_ns", lateByNs)
+                    .put("local_received_ns", receivedAtNs),
+            )
+            return
+        }
+
+        val scheduleDelayMs = (
+            (remainingNs.coerceAtLeast(0L) + 999_999L) / 1_000_000L
+        ).coerceIn(0L, 30_000L)
         scheduledStartJob?.cancel()
         mutableState.value = mutableState.value.copy(
             phase = DualPhoneControlPhase.START_SCHEDULED,
-            lastMessage = "START_AT received; provisional +${delayMs} ms",
+            lastError = null,
+            lastMessage = "START_AT received; corrected local delay ${scheduleDelayMs} ms",
         )
         send(
             DualPhoneControlType.START_ACK,
             JSONObject()
                 .put("accepted", true)
-                .put("local_received_ns", SystemClock.elapsedRealtimeNanos()),
+                .put("local_received_ns", receivedAtNs)
+                .put("scheduled_slave_ns", targetSlaveNs)
+                .put("scheduled_delay_ms", scheduleDelayMs),
         )
         scheduledStartJob = scope.launch {
-            delay(delayMs)
+            delay(scheduleDelayMs)
             if (mutableState.value.connected &&
                 mutableState.value.phase == DualPhoneControlPhase.START_SCHEDULED
             ) {
                 mutableState.value = mutableState.value.copy(
                     phase = DualPhoneControlPhase.RECORDING,
-                    lastMessage = "Control test entered RECORDING state",
+                    lastMessage = "Control test entered RECORDING state on corrected clock",
                 )
             }
         }
@@ -659,6 +748,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     }
 
     private fun closeConnection() {
+        clockSyncController.stop()
         heartbeatJob?.cancel()
         heartbeatJob = null
         scheduledStartJob?.cancel()
@@ -681,6 +771,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         private const val HANDSHAKE_TIMEOUT_MS = 10_000
         private const val HEARTBEAT_INTERVAL_MS = 2_000L
         private const val HEARTBEAT_TIMEOUT_MS = 8_000L
+        private const val MAX_START_LATE_NS = 100_000_000L
 
         @Volatile
         private var instance: DualPhoneControlManager? = null
