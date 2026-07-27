@@ -21,6 +21,8 @@ PARENT_DIR="$BASE/output/job_${PARENT_JOB_ID}"; SPARSE_JOB_DIR="$BASE/output/job
 CHUNK_DIR="$PARENT_DIR/chunks/chunk_${CHUNK_ID}"; SANITIZED_IMAGES_DIR="$CHUNK_DIR/sanitized_images"; UNDISTORTED_DIR="$CHUNK_DIR/undistorted"; LOG_DIR="$CHUNK_DIR/logs"; FUSED_PLY="$CHUNK_DIR/fused.ply"; STATUS_FILE="$BASE/status/job_${JOB_ID}.json"
 MODEL_TEXT_DIR="$CHUNK_DIR/workspace_model_text"
 VALIDATION_JSON="$LOG_DIR/dense_workspace_validation.json"
+NORMALIZATION_JSON="$LOG_DIR/dense_workspace_normalization.json"
+PATCH_MATCH_MAX_IMAGE_SIZE=1
 mkdir -p "$BASE/status" "$BASE/logs" "$CHUNK_DIR" "$LOG_DIR"
 
 TARGET_IMAGE_LIST="$CHUNK_DIR/image_list.txt"
@@ -68,7 +70,7 @@ print('\n'.join(interesting[-8:]))
 PY
 }
 result(){ local st="$1" code="$2" msg="$3" stage="${4:-}" log_path="${5:-}" count size vertices summary; count=$(wc -l < "$CHUNK_DIR/image_list.txt"|tr -d ' '); size=0; [[ -f "$FUSED_PLY" ]] && size=$(stat -c '%s' "$FUSED_PLY"); vertices=$(ply_vertices); summary="$(printf '%s' "$msg" | jqstr)"; cat > "$CHUNK_DIR/result.json" <<JSON
-{"job_id":"$JOB_ID","parent_job_id":"$PARENT_JOB_ID","sparse_job_id":"$SPARSE_JOB_ID","model_id":$MODEL_ID,"chunk_id":$CHUNK_ID,"status":"$st","exit_code":$code,"failed_stage":"$stage","log_path":"$log_path","error_summary":"$summary","message":"$summary","images_count":$count,"max_image_size":$MAX_IMAGE_SIZE,"patchmatch_cache_size":$PMC,"fusion_cache_size":$FC,"available_ram_before_start_mb":$AVAIL_BEFORE,"fused_ply":"$FUSED_PLY","fused_ply_size_bytes":$size,"fused_vertices":$vertices,"finished_at":"$(date -Iseconds)"}
+{"job_id":"$JOB_ID","parent_job_id":"$PARENT_JOB_ID","sparse_job_id":"$SPARSE_JOB_ID","model_id":$MODEL_ID,"chunk_id":$CHUNK_ID,"status":"$st","exit_code":$code,"failed_stage":"$stage","log_path":"$log_path","error_summary":"$summary","message":"$summary","images_count":$count,"max_image_size":$MAX_IMAGE_SIZE,"patchmatch_max_image_size":$PATCH_MATCH_MAX_IMAGE_SIZE,"workspace_normalization_report":"$NORMALIZATION_JSON","patchmatch_cache_size":$PMC,"fusion_cache_size":$FC,"available_ram_before_start_mb":$AVAIL_BEFORE,"fused_ply":"$FUSED_PLY","fused_ply_size_bytes":$size,"fused_vertices":$vertices,"finished_at":"$(date -Iseconds)"}
 JSON
 }
 run_colmap() {
@@ -112,7 +114,7 @@ PY
 [[ -d "$FRAMES_DIR" ]] || { status ERROR 0 "frames_dir missing"; exit 1; }
 status RUNNING 2 "Resetting dense chunk $CHUNK_ID workspace"
 rm -rf "$SANITIZED_IMAGES_DIR" "$UNDISTORTED_DIR" "$MODEL_TEXT_DIR"
-rm -f "$FUSED_PLY" "$VALIDATION_JSON"
+rm -f "$FUSED_PLY" "$VALIDATION_JSON" "$NORMALIZATION_JSON"
 
 status RUNNING 3 "Sanitizing dense chunk $CHUNK_ID images"
 python3 "$(dirname "$0")/sanitize_dense_images.py" \
@@ -193,12 +195,51 @@ if (( CFG_LINES < 4 || CFG_LINES % 2 != 0 )); then
     exit 2
 fi
 
-status RUNNING 45 "PatchMatch chunk $CHUNK_ID"
+status RUNNING 8 \
+  "Checking decoded dimensions and normalizing dense workspace"
+set +e
+PATCH_MATCH_MAX_IMAGE_SIZE="$(
+  python3 "$(dirname "$0")/normalize_colmap_dense_workspace.py" \
+    "$MODEL_TEXT_DIR" \
+    "$UNDISTORTED_DIR/images" \
+    "$UNDISTORTED_DIR/stereo/patch-match.cfg" \
+    "$NORMALIZATION_JSON" \
+    2> "$LOG_DIR/dense_workspace_normalization.log"
+)"
+normalization_ec=$?
+set -e
+if [[ "$normalization_ec" -ne 0 ]] \
+  || [[ ! "$PATCH_MATCH_MAX_IMAGE_SIZE" =~ ^[1-9][0-9]*$ ]]; then
+    summary="Dense workspace decoded-dimension normalization failed"
+    if [[ -s "$NORMALIZATION_JSON" ]]; then
+      summary="$(python3 - "$NORMALIZATION_JSON" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1]))
+print(
+    "Dense workspace normalization failed: "
+    f"before={data.get('mismatch_count_before', 0)} "
+    f"normalized={data.get('normalized_image_count', 0)} "
+    f"after={data.get('mismatch_count_after', 0)} "
+    f"missing_files={len(data.get('missing_files', []))} "
+    f"missing_model_images={len(data.get('missing_model_images', []))}"
+)
+PY
+)"
+    fi
+    status ERROR 0 "$summary"
+    result ERROR "$normalization_ec" "$summary" \
+      WORKSPACE_NORMALIZATION \
+      "$LOG_DIR/dense_workspace_normalization.log"
+    exit "${normalization_ec:-2}"
+fi
+
+status RUNNING 45 \
+  "PatchMatch chunk $CHUNK_ID with bitmap normalization"
 set +e
 run_colmap patch_match_stereo \
   --workspace_path "$UNDISTORTED_DIR" \
   --workspace_format COLMAP \
-  --PatchMatchStereo.max_image_size "$MAX_IMAGE_SIZE" \
+  --PatchMatchStereo.max_image_size "$PATCH_MATCH_MAX_IMAGE_SIZE" \
   --PatchMatchStereo.geom_consistency true \
   --PatchMatchStereo.allow_missing_files true \
   --PatchMatchStereo.cache_size "$PMC" \

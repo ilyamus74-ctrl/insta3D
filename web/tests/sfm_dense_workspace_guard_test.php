@@ -9,8 +9,13 @@ $health = $root . '/remote_station/get_remote_job_health.sh';
 $cancel = $root . '/remote_station/cancel_remote_job.sh';
 $validator = $root
     . '/remote_station/scripts/validate_colmap_dense_workspace.py';
+$normalizer = $root
+    . '/remote_station/scripts/normalize_colmap_dense_workspace.py';
 
-foreach ([$worker, $process, $health, $cancel, $validator] as $path) {
+foreach (
+    [$worker, $process, $health, $cancel, $validator, $normalizer]
+    as $path
+) {
     if (!is_file($path)) {
         throw new RuntimeException('missing file: ' . $path);
     }
@@ -37,8 +42,11 @@ foreach ([
     'validate_colmap_dense_workspace.py',
     'dense_workspace_validation.json',
     'WORKSPACE_PREFLIGHT',
+    'WORKSPACE_NORMALIZATION',
     'model_converter',
-    '--PatchMatchStereo.max_image_size "$MAX_IMAGE_SIZE"',
+    'normalize_colmap_dense_workspace.py',
+    'dense_workspace_normalization.json',
+    '--PatchMatchStereo.max_image_size "$PATCH_MATCH_MAX_IMAGE_SIZE"',
 ] as $token) {
     if (!str_contains($processText, $token)) {
         throw new RuntimeException(
@@ -70,6 +78,22 @@ if (str_contains($cancelText, 'index($0,p)')) {
 }
 if (!str_contains($cancelText, 'makler_job_${rid}')) {
     throw new RuntimeException('exact remote container cleanup missing');
+}
+
+$normalizerText = (string)file_get_contents($normalizer);
+foreach ([
+    'ffprobe',
+    'ffmpeg',
+    'mismatch_count_before',
+    'normalized_image_count',
+    'mismatch_count_after',
+    'force_patchmatch_bitmap_rescale',
+] as $token) {
+    if (!str_contains($normalizerText, $token)) {
+        throw new RuntimeException(
+            'decoded-dimension normalizer missing: ' . $token
+        );
+    }
 }
 
 echo "OK\n";
