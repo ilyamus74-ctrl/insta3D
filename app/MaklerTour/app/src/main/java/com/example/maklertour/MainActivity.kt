@@ -123,6 +123,7 @@ import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
 import com.maklertour.data.dualphone.DualPhoneCapabilityProbe
+import com.maklertour.data.dualphone.DualPhoneControlManager
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
 import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
@@ -151,6 +152,7 @@ import com.maklertour.i18n.DebugPreferences
 import com.maklertour.i18n.withAppLanguage
 import com.maklertour.ui.components.AppSectionCard
 import com.maklertour.ui.components.AppStorageStatusRow
+import com.maklertour.ui.settings.DualPhoneControlSettingsCard
 import com.example.maklertour.auth.AuthStorage
 import com.example.maklertour.auth.LoginResult
 import com.example.maklertour.auth.MobileAuthApi
@@ -1199,12 +1201,22 @@ private fun SettingsScreen(
     val dualPhoneStore = remember(context) {
         DualPhoneStereoSettingsStore(context.applicationContext)
     }
+    val dualPhoneControl = remember(context) {
+        DualPhoneControlManager.get(context.applicationContext)
+    }
+    val dualPhoneControlState by dualPhoneControl.state.collectAsState()
     var activeProfile by remember { mutableStateOf(store.loadActiveProfile()) }
     var dualPhoneSettings by remember {
         mutableStateOf(dualPhoneStore.load())
     }
     var dialog by remember { mutableStateOf<String?>(null) }
     var capabilityReportPath by remember { mutableStateOf<String?>(null) }
+    var masterHostInput by remember(dualPhoneSettings.masterHost) {
+        mutableStateOf(dualPhoneSettings.masterHost.orEmpty())
+    }
+    var pairingCodeInput by remember {
+        mutableStateOf("")
+    }
     val selectedPhoneLens = remember {
         runCatching { phoneLensRepository.selectedOrDefault().first }
             .getOrNull()
@@ -1224,6 +1236,69 @@ private fun SettingsScreen(
     val refreshProfile: (StereoRigProfile) -> Unit = { profile ->
         store.saveActiveProfile(profile)
         activeProfile = profile
+    }
+    LaunchedEffect(
+        dualPhoneControlState.peerDeviceId,
+        dualPhoneControlState.peerCameraId,
+        dualPhoneSettings.role,
+    ) {
+        val role = dualPhoneSettings.role
+        val peerDeviceId = dualPhoneControlState.peerDeviceId
+            ?.takeIf { it.isNotBlank() }
+            ?: return@LaunchedEffect
+        if (role == DualPhoneRole.STANDALONE) {
+            return@LaunchedEffect
+        }
+        val peerCameraId = dualPhoneControlState.peerCameraId
+            ?.takeIf { it.isNotBlank() }
+        val previousPeerDeviceId = if (role == DualPhoneRole.MASTER) {
+            activeProfile.cam1DeviceId
+        } else {
+            activeProfile.cam0DeviceId
+        }
+        val previousPeerCameraId = if (role == DualPhoneRole.MASTER) {
+            activeProfile.cam1CameraId
+        } else {
+            activeProfile.cam0CameraId
+        }
+        val identityChanged =
+            previousPeerDeviceId != peerDeviceId ||
+                previousPeerCameraId != peerCameraId
+        val updatedSettings = dualPhoneSettings.copy(
+            peerDeviceId = peerDeviceId,
+        )
+        dualPhoneStore.save(updatedSettings)
+        dualPhoneSettings = updatedSettings
+        val withPeerIdentity = if (role == DualPhoneRole.MASTER) {
+            activeProfile.copy(
+                cam1DeviceId = peerDeviceId,
+                cam1CameraId = peerCameraId,
+            )
+        } else {
+            activeProfile.copy(
+                cam0DeviceId = peerDeviceId,
+                cam0CameraId = peerCameraId,
+            )
+        }
+        refreshProfile(
+            withPeerIdentity.copy(
+                calibrationStatus = if (identityChanged) {
+                    CalibrationStatus.NOT_CALIBRATED
+                } else {
+                    withPeerIdentity.calibrationStatus
+                },
+                calibrationResultPath = if (identityChanged) {
+                    null
+                } else {
+                    withPeerIdentity.calibrationResultPath
+                },
+                calibrationResult = if (identityChanged) {
+                    null
+                } else {
+                    withPeerIdentity.calibrationResult
+                },
+            ),
+        )
     }
 
     Column(
@@ -1294,6 +1369,7 @@ private fun SettingsScreen(
             settings = dualPhoneSettings,
             capabilityReportPath = capabilityReportPath,
             onRoleSelected = { role ->
+                dualPhoneControl.stop()
                 val updatedSettings = dualPhoneSettings.copy(role = role)
                 dualPhoneStore.save(updatedSettings)
                 dualPhoneSettings = updatedSettings
@@ -1338,6 +1414,41 @@ private fun SettingsScreen(
                 capabilityReportPath = DualPhoneCapabilityProbe(context)
                     .writeReport(dualPhoneSettings)
                     .absolutePath
+            },
+        )
+        DualPhoneControlSettingsCard(
+            settings = dualPhoneSettings,
+            snapshot = dualPhoneControlState,
+            masterHost = masterHostInput,
+            pairingCode = pairingCodeInput,
+            onMasterHostChanged = { masterHostInput = it },
+            onPairingCodeChanged = { pairingCodeInput = it },
+            onStartMaster = {
+                dualPhoneControl.startMaster()
+            },
+            onConnectSlave = {
+                val host = masterHostInput.trim()
+                val updatedSettings = dualPhoneSettings.copy(
+                    masterHost = host,
+                )
+                dualPhoneStore.save(updatedSettings)
+                dualPhoneSettings = updatedSettings
+                dualPhoneControl.connectSlave(
+                    masterHost = host,
+                    pairingCode = pairingCodeInput,
+                )
+            },
+            onDisconnect = {
+                dualPhoneControl.stop()
+            },
+            onArm = {
+                dualPhoneControl.arm()
+            },
+            onStartTest = {
+                dualPhoneControl.startAfter()
+            },
+            onStopCapture = {
+                dualPhoneControl.stopCapture()
             },
         )
         Text("System", style = MaterialTheme.typography.titleMedium)

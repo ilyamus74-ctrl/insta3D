@@ -4,8 +4,9 @@
 
 ```text
 ACTIVE
-DP01 FOUNDATION IMPLEMENTED IN SOURCE
-NETWORK PAIRING AND RECORDING NOT IMPLEMENTED YET
+DP01 FOUNDATION VERIFIED ON A REAL PHONE
+DP02 WI-FI CONTROL POC IMPLEMENTED IN SOURCE
+CLOCK SYNC AND CAMERA RECORDING NOT IMPLEMENTED YET
 ```
 
 ## Goal
@@ -139,13 +140,22 @@ physical_camera_id
 
 ### DP02 — Wi-Fi pairing and reliable control
 
+Implemented POC:
+
 - Master TCP server;
 - Slave TCP client;
-- one-time session token;
-- manual IP entry first;
-- QR bootstrap after the protocol is stable;
-- HELLO, CAPABILITIES, ARM, START_AT, STOP and health messages;
+- six-digit one-time pairing code;
+- manual Master IPv4 entry;
+- stable `dual_capture_id` while the Master server remains active;
+- HELLO, WELCOME, CAPABILITIES, ARM, START_AT, STOP, ACK and heartbeat;
+- peer identity, model and selected recording mode shown in the UI;
 - reconnect without changing `dual_capture_id`.
+
+Not part of DP02:
+
+- no camera recording is started by the commands yet;
+- `START_AT` uses a provisional relative delay until DP03 provides a clock model;
+- no QR/bootstrap or automatic hotspot yet.
 
 ### DP03 — UDP clock synchronization
 
@@ -190,6 +200,14 @@ physical_camera_id
 
 ## Immediate next task
 
-DP02 starts only after DP01 builds on a real phone and the capability report
-shows the intended resolution/FPS modes. The existing USB stereo capture type
-and processing pipeline remain unchanged.
+Validate DP02 on two real phones connected to the same Wi-Fi network:
+
+1. start the Master pairing server;
+2. enter the shown IPv4 address and code on the Slave;
+3. confirm that both sides show the same `dual_capture_id`;
+4. confirm peer model and selected recording mode exchange;
+5. run ARM, START +3s and STOP state tests;
+6. disconnect and reconnect while the Master server remains active.
+
+After this acceptance, implement DP03 four-timestamp UDP synchronization. The
+existing USB stereo capture type and processing pipeline remain unchanged.

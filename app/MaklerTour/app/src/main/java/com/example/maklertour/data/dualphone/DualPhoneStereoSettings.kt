@@ -19,17 +19,19 @@ data class DualPhoneStereoSettings(
     val role: DualPhoneRole = DualPhoneRole.STANDALONE,
     val transport: DualPhoneTransport = DualPhoneTransport.WIFI_LAN,
     val peerDeviceId: String? = null,
+    val masterHost: String? = null,
     val masterControlsUpload: Boolean = true,
     val controlPort: Int = 48621,
     val clockSyncPort: Int = 48622,
     val preferredVideoModeId: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
-        .put("schema_version", 1)
+        .put("schema_version", 2)
         .put("device_id", deviceId)
         .put("role", role.name)
         .put("transport", transport.name)
         .put("peer_device_id", peerDeviceId ?: JSONObject.NULL)
+        .put("master_host", masterHost ?: JSONObject.NULL)
         .put("master_controls_upload", true)
         .put("control_port", controlPort)
         .put("clock_sync_port", clockSyncPort)
@@ -61,6 +63,8 @@ class DualPhoneStereoSettingsStore(context: Context) {
             ),
             peerDeviceId = prefs.getString(KEY_PEER_DEVICE_ID, null)
                 ?.takeIf { it.isNotBlank() },
+            masterHost = prefs.getString(KEY_MASTER_HOST, null)
+                ?.takeIf { it.isNotBlank() },
             masterControlsUpload = true,
             controlPort = prefs.getInt(KEY_CONTROL_PORT, 48621)
                 .coerceIn(1024, 65535),
@@ -79,6 +83,7 @@ class DualPhoneStereoSettingsStore(context: Context) {
             .putString(KEY_ROLE, settings.role.name)
             .putString(KEY_TRANSPORT, DualPhoneTransport.WIFI_LAN.name)
             .putString(KEY_PEER_DEVICE_ID, settings.peerDeviceId)
+            .putString(KEY_MASTER_HOST, settings.masterHost)
             .putBoolean(KEY_MASTER_CONTROLS_UPLOAD, true)
             .putInt(KEY_CONTROL_PORT, settings.controlPort)
             .putInt(KEY_CLOCK_SYNC_PORT, settings.clockSyncPort)
@@ -102,6 +107,7 @@ class DualPhoneStereoSettingsStore(context: Context) {
         private const val KEY_ROLE = "role"
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_PEER_DEVICE_ID = "peer_device_id"
+        private const val KEY_MASTER_HOST = "master_host"
         private const val KEY_MASTER_CONTROLS_UPLOAD =
             "master_controls_upload"
         private const val KEY_CONTROL_PORT = "control_port"
