@@ -22,24 +22,46 @@ patterns=(
   "process_colmap_mesh\.sh ${rid}([[:space:]]|$)"
   "build_clean_mesh\.py .*job_${rid}(/|[[:space:]]|$)"
 )
-mapfile -t pids < <({ for pat in "${patterns[@]}"; do pgrep -af "$pat" || true; done; } | awk '{print $1}' | sort -u)
+mapfile -t pids < <(
+  { for pat in "${patterns[@]}"; do pgrep -af "$pat" || true; done; } |
+  awk '{print $1}' |
+  sort -u
+)
 containers=()
 if command -v podman >/dev/null 2>&1; then
-  if podman container exists "makler_job_${rid}" 2>/dev/null; then containers+=("makler_job_${rid}"); fi
-  while IFS= read -r cid; do [[ -n "$cid" ]] && containers+=("$cid"); done < <(podman ps -a --format '{{.ID}} {{.Names}} {{.Command}}' 2>/dev/null | awk -v r="job_${rid}" -v p="job_${parent}/" '($0 ~ "(^|[^0-9])" r "([^0-9]|$)") || index($0,p){print $1}')
-  seen=""
-  for c in "${containers[@]}"; do [[ " $seen " == *" $c "* ]] && continue; seen="$seen $c"; podman rm -f "$c" >/dev/null 2>&1 || true; done
+  if podman container exists "makler_job_${rid}" 2>/dev/null; then
+    containers+=("makler_job_${rid}")
+  fi
+  for c in "${containers[@]}"; do
+    podman rm -f "$c" >/dev/null 2>&1 || true
+  done
 fi
 for p in "${pids[@]}"; do kill -TERM "$p" >/dev/null 2>&1 || true; done
 sleep 2
 for p in "${pids[@]}"; do kill -KILL "$p" >/dev/null 2>&1 || true; done
-mapfile -t remaining < <({ for pat in "${patterns[@]}"; do pgrep -af "$pat" || true; done; command -v podman >/dev/null 2>&1 && podman ps -a --format '{{.Names}} {{.Command}}' 2>/dev/null | awk -v n="makler_job_${rid}" -v r="job_${rid}" -v p="job_${parent}/" 'index($0,n)||($0 ~ "(^|[^0-9])" r "([^0-9]|$)")||index($0,p)'; } | sed '/^$/d')
+mapfile -t remaining < <(
+  {
+    for pat in "${patterns[@]}"; do pgrep -af "$pat" || true; done
+    if command -v podman >/dev/null 2>&1; then
+      podman ps -a --format '{{.Names}}' 2>/dev/null |
+        grep -Fx "makler_job_${rid}" || true
+    fi
+  } |
+  sed '/^$/d'
+)
 export PIDS_JSON=$(json_array "${pids[@]}")
 export CONTAINERS_JSON=$(json_array "${containers[@]}")
 export REMAINING_JSON=$(json_array "${remaining[@]}")
 python3 - <<PY
 import json, os
-pids=json.loads(os.environ['PIDS_JSON']); containers=json.loads(os.environ['CONTAINERS_JSON']); remaining=json.loads(os.environ['REMAINING_JSON'])
-print(json.dumps({'cancelled': len(remaining)==0, 'pids': pids, 'containers': containers, 'remaining_processes': remaining}, ensure_ascii=False))
+pids=json.loads(os.environ['PIDS_JSON'])
+containers=json.loads(os.environ['CONTAINERS_JSON'])
+remaining=json.loads(os.environ['REMAINING_JSON'])
+print(json.dumps({
+    'cancelled': len(remaining)==0,
+    'pids': pids,
+    'containers': containers,
+    'remaining_processes': remaining,
+}, ensure_ascii=False))
 PY
 REMOTE

@@ -19,6 +19,8 @@ ARG_NUM_SRC_IMAGES="${9:-}"
 BASE="${STATION_BASE:-/home/makler_storage}"; COLMAP_MODE="${COLMAP_MODE:-native}"; COLMAP_BIN="${COLMAP_BIN:-colmap}"; COLMAP_IMAGE="${COLMAP_IMAGE:-}"
 PARENT_DIR="$BASE/output/job_${PARENT_JOB_ID}"; SPARSE_JOB_DIR="$BASE/output/job_${SPARSE_JOB_ID}/colmap"; SPARSE_MODEL_DIR="$SPARSE_JOB_DIR/sparse/${MODEL_ID}"
 CHUNK_DIR="$PARENT_DIR/chunks/chunk_${CHUNK_ID}"; SANITIZED_IMAGES_DIR="$CHUNK_DIR/sanitized_images"; UNDISTORTED_DIR="$CHUNK_DIR/undistorted"; LOG_DIR="$CHUNK_DIR/logs"; FUSED_PLY="$CHUNK_DIR/fused.ply"; STATUS_FILE="$BASE/status/job_${JOB_ID}.json"
+MODEL_TEXT_DIR="$CHUNK_DIR/workspace_model_text"
+VALIDATION_JSON="$LOG_DIR/dense_workspace_validation.json"
 mkdir -p "$BASE/status" "$BASE/logs" "$CHUNK_DIR" "$LOG_DIR"
 
 TARGET_IMAGE_LIST="$CHUNK_DIR/image_list.txt"
@@ -108,16 +110,66 @@ import json,sys; print(json.load(open(sys.argv[1])).get('frames_dir',''))
 PY
 )
 [[ -d "$FRAMES_DIR" ]] || { status ERROR 0 "frames_dir missing"; exit 1; }
+status RUNNING 2 "Resetting dense chunk $CHUNK_ID workspace"
+rm -rf "$SANITIZED_IMAGES_DIR" "$UNDISTORTED_DIR" "$MODEL_TEXT_DIR"
+rm -f "$FUSED_PLY" "$VALIDATION_JSON"
+
 status RUNNING 3 "Sanitizing dense chunk $CHUNK_ID images"
-rm -rf "$SANITIZED_IMAGES_DIR"
 python3 "$(dirname "$0")/sanitize_dense_images.py" \
   "$FRAMES_DIR" \
   "$CHUNK_DIR/image_list.txt" \
   "$SANITIZED_IMAGES_DIR" \
   "$LOG_DIR/sanitize_images_stats.json" \
   > "$LOG_DIR/sanitize_images.log" 2>&1
+
 status RUNNING 5 "Preparing dense chunk $CHUNK_ID"
-run_colmap image_undistorter --image_path "$SANITIZED_IMAGES_DIR" --input_path "$SPARSE_MODEL_DIR" --output_path "$UNDISTORTED_DIR" --output_type COLMAP --image_list_path "$CHUNK_DIR/image_list.txt" --max_image_size "$MAX_IMAGE_SIZE" --num_patch_match_src_images "$SRC" > "$LOG_DIR/image_undistorter.log" 2>&1
+run_colmap image_undistorter \
+  --image_path "$SANITIZED_IMAGES_DIR" \
+  --input_path "$SPARSE_MODEL_DIR" \
+  --output_path "$UNDISTORTED_DIR" \
+  --output_type COLMAP \
+  --image_list_path "$CHUNK_DIR/image_list.txt" \
+  --max_image_size "$MAX_IMAGE_SIZE" \
+  --num_patch_match_src_images "$SRC" \
+  > "$LOG_DIR/image_undistorter.log" 2>&1
+
+mkdir -p "$MODEL_TEXT_DIR"
+run_colmap model_converter \
+  --input_path "$UNDISTORTED_DIR/sparse" \
+  --output_path "$MODEL_TEXT_DIR" \
+  --output_type TXT \
+  > "$LOG_DIR/workspace_model_converter.log" 2>&1
+
+set +e
+python3 "$(dirname "$0")/validate_colmap_dense_workspace.py" \
+  "$MODEL_TEXT_DIR" \
+  "$UNDISTORTED_DIR/images" \
+  "$CHUNK_DIR/image_list.txt" \
+  "$VALIDATION_JSON" \
+  > "$LOG_DIR/dense_workspace_validation.log" 2>&1
+validation_ec=$?
+set -e
+if [[ "$validation_ec" -ne 0 ]]; then
+  summary="Dense workspace dimension validation failed"
+  if [[ -s "$VALIDATION_JSON" ]]; then
+    summary="$(python3 - "$VALIDATION_JSON" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1]))
+print(
+    "Dense workspace validation failed: "
+    f"mismatches={data.get('dimension_mismatch_count', 0)} "
+    f"missing_files={data.get('missing_file_count', 0)} "
+    f"missing_model_images={data.get('missing_model_image_count', 0)}"
+)
+PY
+)"
+  fi
+  status ERROR 0 "$summary"
+  result ERROR "$validation_ec" "$summary" \
+    WORKSPACE_PREFLIGHT "$LOG_DIR/dense_workspace_validation.log"
+  exit "$validation_ec"
+fi
+
 python3 "$(dirname "$0")/filter_patch_match_cfg.py" \
   "$UNDISTORTED_DIR/stereo/patch-match.cfg" \
   "$UNDISTORTED_DIR/images" \

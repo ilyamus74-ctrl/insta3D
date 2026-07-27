@@ -49,6 +49,7 @@ const AUTO_SFM_DENSE_AFTER_SPARSE = false;
 const MIN_REGISTERED_IMAGES_PREVIEW = 10;
 const MIN_REGISTERED_IMAGES_HQ = 20;
 define('SFM_DENSE_STALE_TIMEOUT_SECONDS', max(60, (int)(getenv('SFM_DENSE_STALE_TIMEOUT_SECONDS') ?: 900)));
+define('SFM_DENSE_HEALTH_GRACE_SECONDS', max(60, (int)(getenv('SFM_DENSE_HEALTH_GRACE_SECONDS') ?: 120)));
 
 
 
@@ -1557,26 +1558,84 @@ function sync_running_jobs(mysqli $db): void
         $remoteStatus = strtoupper((string)($json['status'] ?? 'RUNNING'));
         $progress = (int)($json['progress_percent'] ?? $json['progress'] ?? $job['progress_percent'] ?? 0);
         $message = (string)($json['message'] ?? $raw);
-        if ($type === 'COLMAP_DENSE_CHUNK' && $remoteStatus === 'RUNNING') {
+        if ($type === 'COLMAP_DENSE_CHUNK') {
             $statusAge = null;
             if (!empty($json['updated_at'])) {
                 $ts = strtotime((string)$json['updated_at']);
-                if ($ts !== false) { $statusAge = time() - $ts; }
+                if ($ts !== false) { $statusAge = max(0, time() - $ts); }
             }
-            if ($statusAge !== null && $statusAge > SFM_DENSE_STALE_TIMEOUT_SECONDS
-                && $progress === (int)($job['progress_percent'] ?? -1)
-                && $message === (string)($job['message'] ?? '')
-            ) {
+            $createdTs = strtotime((string)($job['created_at'] ?? ''));
+            $jobAge = $createdTs === false ? 0 : max(0, time() - $createdTs);
+            $needsHealth = (
+                $remoteStatus === 'UNKNOWN'
+                && $jobAge > SFM_DENSE_HEALTH_GRACE_SECONDS
+            ) || (
+                $remoteStatus === 'RUNNING'
+                && $statusAge !== null
+                && $statusAge > SFM_DENSE_HEALTH_GRACE_SECONDS
+            );
+
+            if ($needsHealth) {
                 try {
-                    [$hCode, $hRaw, $hCmd] = run_command([SFM_REMOTE_BASE . '/get_remote_job_health.sh', SFM_REMOTE_CONF, (string)$remote, (string)($job['parent_remote_job_id'] ?? 0)]);
-                    $health = $hCode === 0 ? (json_decode($hRaw, true) ?: []) : [];
+                    [$hCode, $hRaw, $hCmd] = run_command([
+                        SFM_REMOTE_BASE . '/get_remote_job_health.sh',
+                        SFM_REMOTE_CONF,
+                        (string)$remote,
+                        (string)($job['parent_remote_job_id'] ?? 0),
+                        (string)($job['chunk_index'] ?? ''),
+                    ]);
+                    $health = $hCode === 0
+                        ? (json_decode($hRaw, true) ?: [])
+                        : [];
                 } catch (Throwable $e) {
                     $health = [];
                 }
-                $deadOrAborted = (($health['process_present'] ?? true) === false && ($health['container_present'] ?? true) === false) || (($health['log_has_sigabrt'] ?? false) === true);
-                if ($deadOrAborted) {
-                    $staleMessage = 'Dense chunk stale: remote status not updated for ' . $statusAge . 's; process/container absent or PatchMatch log shows SIGABRT';
-                    pipeline_job_log($db, $job, 'ERROR', 'DENSE_CHUNK', $staleMessage);
+
+                $aborted = ($health['log_has_sigabrt'] ?? false) === true;
+                $processPresent = ($health['process_present'] ?? true) === true;
+                $containerPresent = ($health['container_present'] ?? true) === true;
+                $dead = !$processPresent && !$containerPresent;
+
+                if ($aborted || $dead) {
+                    try {
+                        run_command([
+                            SFM_REMOTE_BASE . '/cancel_remote_job.sh',
+                            SFM_REMOTE_CONF,
+                            (string)$remote,
+                            (string)($job['parent_remote_job_id'] ?? 0),
+                        ]);
+                    } catch (Throwable $cancelError) {
+                        worker_log(
+                            "WARNING dense watchdog cleanup failed id={$id} "
+                            . "remote={$remote}: "
+                            . $cancelError->getMessage()
+                        );
+                    }
+
+                    if ($aborted) {
+                        $staleMessage =
+                            'Dense chunk aborted: PatchMatch log contains '
+                            . 'SIGABRT/Check failed; stale process and container '
+                            . 'were cancelled automatically';
+                    } elseif ($remoteStatus === 'UNKNOWN') {
+                        $staleMessage =
+                            'Dense chunk launch failed: remote status is absent '
+                            . 'and process/container were not found after '
+                            . $jobAge . 's';
+                    } else {
+                        $staleMessage =
+                            'Dense chunk stopped unexpectedly: status was not '
+                            . 'updated for ' . (int)$statusAge
+                            . 's and process/container are absent';
+                    }
+
+                    pipeline_job_log(
+                        $db,
+                        $job,
+                        'ERROR',
+                        'DENSE_CHUNK',
+                        $staleMessage
+                    );
                     set_job($db, $id, 'ERROR', 0, $staleMessage);
                     continue;
                 }
