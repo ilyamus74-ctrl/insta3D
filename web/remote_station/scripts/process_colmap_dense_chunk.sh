@@ -198,6 +198,7 @@ set +e
 run_colmap patch_match_stereo \
   --workspace_path "$UNDISTORTED_DIR" \
   --workspace_format COLMAP \
+  --PatchMatchStereo.max_image_size "$MAX_IMAGE_SIZE" \
   --PatchMatchStereo.geom_consistency true \
   --PatchMatchStereo.allow_missing_files true \
   --PatchMatchStereo.cache_size "$PMC" \

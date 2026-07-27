@@ -38,6 +38,7 @@ foreach ([
     'dense_workspace_validation.json',
     'WORKSPACE_PREFLIGHT',
     'model_converter',
+    '--PatchMatchStereo.max_image_size "$MAX_IMAGE_SIZE"',
 ] as $token) {
     if (!str_contains($processText, $token)) {
         throw new RuntimeException(
