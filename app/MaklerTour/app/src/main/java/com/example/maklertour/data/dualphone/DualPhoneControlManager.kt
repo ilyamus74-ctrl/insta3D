@@ -200,7 +200,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     }
 
     fun arm() {
-        requireMasterConnection(
+        launchMasterCommand(
             command = DualPhoneControlType.ARM,
             allowedPhases = setOf(DualPhoneControlPhase.CONNECTED),
         ) {
@@ -219,7 +219,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     }
 
     fun startAfter(delayMs: Long = 3_000L) {
-        requireMasterConnection(
+        launchMasterCommand(
             command = DualPhoneControlType.START_AT,
             allowedPhases = setOf(DualPhoneControlPhase.ARMED),
         ) {
@@ -254,7 +254,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     }
 
     fun stopCapture() {
-        requireMasterConnection(
+        launchMasterCommand(
             command = DualPhoneControlType.STOP,
             allowedPhases = setOf(
                 DualPhoneControlPhase.CONNECTED,
@@ -569,6 +569,20 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
     }
 
+    private fun launchMasterCommand(
+        command: String,
+        allowedPhases: Set<DualPhoneControlPhase>,
+        block: () -> Unit,
+    ) {
+        scope.launch {
+            requireMasterConnection(
+                command = command,
+                allowedPhases = allowedPhases,
+                block = block,
+            )
+        }
+    }
+
     private fun requireMasterConnection(
         command: String,
         allowedPhases: Set<DualPhoneControlPhase>,
@@ -593,7 +607,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         runCatching(block).onFailure {
             reportCommandError(
                 command,
-                "Control command failed: ${it.message}",
+                "Control command failed: " +
+                    (it.message ?: it.javaClass.simpleName),
             )
         }
     }
