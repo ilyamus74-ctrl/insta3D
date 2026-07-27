@@ -782,8 +782,47 @@ function set_job(mysqli $db, int $id, string $status, int $progress, string $mes
     $st->execute();
     $st->close();
     if (in_array($status, ['ERROR','FAILED','ERROR_EMPTY'], true)) {
-        $q=$db->prepare('SELECT pipeline_run_id, job_type, chunk_index FROM sfm_remote_jobs WHERE id=? LIMIT 1');
-        if($q){ $q->bind_param('i',$id); $q->execute(); $j=$q->get_result()->fetch_assoc(); $q->close(); $pid=(int)($j['pipeline_run_id'] ?? 0); if($pid>0){ $userMessage = ((string)($j['job_type'] ?? '') === 'COLMAP_DENSE_CHUNK') ? dense_patchmatch_user_error($message) : (((string)($j['job_type'] ?? '') === 'EXTRACT_FRAMES') ? mb_substr($message !== '' ? $message : 'Frame extraction failed', 0, 4000) : 'Pipeline stage failed: '.(string)($j['job_type'] ?? 'job')); sfm_pipeline_fail($db,$pid,$userMessage,['child_job_id'=>$id,'child_job_type'=>$j['job_type'] ?? '', 'technical_message'=>$message]); } }
+        $q=$db->prepare(
+            'SELECT pipeline_run_id,job_type,chunk_index,retry_count
+             FROM sfm_remote_jobs WHERE id=? LIMIT 1'
+        );
+        if($q){
+            $q->bind_param('i',$id);
+            $q->execute();
+            $j=$q->get_result()->fetch_assoc();
+            $q->close();
+            $pid=(int)($j['pipeline_run_id'] ?? 0);
+            $jobType=(string)($j['job_type'] ?? '');
+            $retryCount=(int)($j['retry_count'] ?? 0);
+            if($pid>0){
+                if($jobType==='COLMAP_DENSE_CHUNK' && $retryCount<=0){
+                    pipeline_log(
+                        $pid,
+                        'WARNING',
+                        'DENSE_CHUNK',
+                        'Initial dense chunk failure recorded; pipeline remains active for automatic retry'
+                    );
+                    sfm_pipeline_update(
+                        $db,
+                        $pid,
+                        'RUNNING',
+                        'DENSE',
+                        max(40,$progress),
+                        'Dense chunk failed; preparing automatic retry'
+                    );
+                } else {
+                    $userMessage=$jobType==='COLMAP_DENSE_CHUNK'
+                        ? dense_patchmatch_user_error($message)
+                        : ($jobType==='EXTRACT_FRAMES'
+                            ? mb_substr($message!==''?$message:'Frame extraction failed',0,4000)
+                            : 'Pipeline stage failed: '.$jobType);
+                    sfm_pipeline_fail(
+                        $db,$pid,$userMessage,
+                        ['child_job_id'=>$id,'child_job_type'=>$jobType,'technical_message'=>$message]
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1402,7 +1441,23 @@ function orchestrate_reconstruction_parents(mysqli $db): void
             if(!$st->bind_param('iiisiissiiis',$orderId,$sessionId,$pipelineRunId,$jt,$rid,$parentRemote,$msg,$mode,$failedIdx,$total,$retry,$pj)){ $err='SQL bind_param failed while queuing retry dense chunk: '.$st->error; worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); $st->close(); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
             if(!$st->execute()){ $err='SQL execute failed while queuing retry dense chunk: '.$st->error; worker_log("ERROR {$err}; parent_remote_job_id={$parentRemote} chunk_index={$failedIdx} model_id={$model}"); $st->close(); set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),$err); continue; }
             $st->close(); if($pipelineRunId>0){ pipeline_log($pipelineRunId,'WARNING','DENSE_CHUNK','chunk=' . ($failedIdx+1) . '/' . $total . ' retry queued with 75% images'); sfm_pipeline_update($db,$pipelineRunId,'RUNNING','DENSE',sfm_pipeline_progress('DENSE',$done,$total),'Dense reconstruction: retry chunk '.($failedIdx+1).' of '.$total); } set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),"Retry queued for chunk {$failedIdx}"); continue;
-        } elseif($failed) { set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),'Chunk failed after retry; merge skipped'); continue; }
+        } elseif($failed && $active>0) {
+            if($pipelineRunId>0){
+                sfm_pipeline_update(
+                    $db,
+                    $pipelineRunId,
+                    'RUNNING',
+                    'DENSE',
+                    sfm_pipeline_progress('DENSE',$done,$total),
+                    'Dense reconstruction: retry in progress'
+                );
+            }
+            set_job($db,$pid,'RUNNING_CHUNKS',(int)(5+($done/$total)*85),'Retry chunk is active');
+            continue;
+        } elseif($failed) {
+            set_job($db,$pid,'ERROR',(int)(5+($done/$total)*85),'Chunk failed after retry; merge skipped');
+            continue;
+        }
         if($done >= $total){
             $verticesTotal=0; for($i=0;$i<$total;$i++){ $verticesTotal+=chunk_result_vertices($parentRemote,$i); } if($verticesTotal<=0){ set_job($db,$pid,'ERROR',95,'Dense fusion produced zero vertices'); continue; }
             try {
