@@ -43,6 +43,9 @@ class PhoneCameraScanProvider(
 
     companion object {
         @Volatile private var sessionCalibration: PhoneScanCalibrationMetadata? = null
+        private const val DUAL_CAPTURE_MIN_FREE_BYTES =
+            256L * 1024L * 1024L
+
 
         fun setSessionCalibration(metadata: PhoneScanCalibrationMetadata) {
             sessionCalibration = metadata
@@ -467,9 +470,4 @@ class PhoneCameraScanProvider(
         val startedAt: Instant,
         val calibration: PhoneScanCalibrationMetadata?,
     )
-
-    private companion object {
-        const val DUAL_CAPTURE_MIN_FREE_BYTES =
-            256L * 1024L * 1024L
-    }
 }
