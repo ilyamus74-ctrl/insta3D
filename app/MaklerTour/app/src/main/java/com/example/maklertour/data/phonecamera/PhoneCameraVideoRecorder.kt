@@ -7,6 +7,7 @@ import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
+import android.os.SystemClock
 import android.util.Log
 import android.util.Range
 import android.util.Size
@@ -39,7 +40,30 @@ import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.math.roundToLong
 
-data class PhoneVideoRecordingResult(val path: String, val durationSec: Long, val fileSizeBytes: Long)
+data class PhoneVideoRecordingResult(
+    val path: String,
+    val durationSec: Long,
+    val fileSizeBytes: Long,
+    val recordedDurationNs: Long = durationSec * 1_000_000_000L,
+    val startCallElapsedNs: Long? = null,
+    val cameraXStartElapsedNs: Long? = null,
+    val finalizeElapsedNs: Long? = null,
+)
+
+data class PhoneVideoRecordingStart(
+    val path: String,
+    val startCallElapsedNs: Long,
+    val cameraXStartElapsedNs: Long?,
+)
+
+data class PhoneVideoRecorderReadiness(
+    val ready: Boolean,
+    val reason: String? = null,
+    val cameraId: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val fps: Int? = null,
+)
 
 class PhoneCameraVideoRecorder(private val context: Context, private val lifecycleOwner: LifecycleOwner) {
     private var recording: Recording? = null
@@ -74,6 +98,9 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var lastAcceptedCalibrationAnalysisNs = 0L
     private var loggedOversizedCalibrationFrameWarning = false
     private var currentTargetRotation: Int = Surface.ROTATION_0
+    @Volatile private var lastStartCallElapsedNs: Long? = null
+    @Volatile private var lastCameraXStartElapsedNs: Long? = null
+    @Volatile private var lastFinalizeElapsedNs: Long? = null
 
     suspend fun bindPreview(
         previewView: PreviewView,
@@ -433,6 +460,51 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     fun getZoomWarning(): String? = if (kotlin.math.abs(requestedZoomRatio - effectiveZoomRatio) > 0.01f) "requested ${zoomPresetLabel(requestedZoomRatio)} but CameraX applied ${zoomPresetLabel(effectiveZoomRatio)}" else null
 
+    fun getRecordingReadiness(): PhoneVideoRecorderReadiness {
+        val info = selectedVideoInfo
+        val lens = selectedLensOption
+        return when {
+            recording != null -> PhoneVideoRecorderReadiness(
+                ready = false,
+                reason = "Phone camera is already recording",
+                cameraId = lens?.cameraId,
+                width = info?.width,
+                height = info?.height,
+                fps = info?.fps,
+            )
+            boundCamera == null || videoCapture == null ->
+                PhoneVideoRecorderReadiness(
+                    ready = false,
+                    reason =
+                        "Camera preview with video capture is not bound",
+                    cameraId = lens?.cameraId,
+                    width = info?.width,
+                    height = info?.height,
+                    fps = info?.fps,
+                )
+            lens == null || info?.width == null ||
+                info.height == null || info.fps == null ->
+                PhoneVideoRecorderReadiness(
+                    ready = false,
+                    reason =
+                        "Resolved camera/video mode is unavailable",
+                    cameraId = lens?.cameraId,
+                    width = info?.width,
+                    height = info?.height,
+                    fps = info?.fps,
+                )
+            else -> PhoneVideoRecorderReadiness(
+                ready = true,
+                cameraId = lens.cameraId,
+                width = info.width,
+                height = info.height,
+                fps = info.fps,
+            )
+        }
+    }
+
+    fun isRecording(): Boolean = recording != null
+
     suspend fun startRecording(sessionId: String, scanId: String): File {
         val dir = File(context.filesDir, "sessions/$sessionId/phone_scans/$scanId").apply { mkdirs() }
         val file = File(dir, "video.mp4")
@@ -445,9 +517,20 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         return outputFile.parentFile ?: outputFile
     }
 
-    private suspend fun startRecordingInternal(file: File) {
-        val preparedVideoCapture = videoCapture ?: error("Camera preview is not bound")
-        val lens = selectedLensOption ?: lensRepository.selectedOrDefault().first
+    suspend fun startRecordingToFileWithTelemetry(
+        outputFile: File,
+    ): PhoneVideoRecordingStart = startRecordingInternal(outputFile)
+
+    private suspend fun startRecordingInternal(
+        file: File,
+    ): PhoneVideoRecordingStart {
+        check(recording == null) {
+            "Phone video recording is already active"
+        }
+        val preparedVideoCapture =
+            videoCapture ?: error("Camera preview is not bound")
+        val lens =
+            selectedLensOption ?: lensRepository.selectedOrDefault().first
         file.parentFile?.mkdirs()
         boundCamera?.let { applySelectedZoom(it) }
         Log.d(TAG, "startRecording(): output path=${file.absolutePath} camera_id=${lens.cameraId} lens=${lens.lensLabel} requestedZoom=$requestedZoomRatio effectiveZoom=$effectiveZoomRatio")
@@ -455,30 +538,91 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         finalizeDeferred = deferred
         startedAtMs = System.currentTimeMillis()
         outputFile = file
+        val startCallNs = SystemClock.elapsedRealtimeNanos()
+        lastStartCallElapsedNs = startCallNs
+        lastCameraXStartElapsedNs = null
+        lastFinalizeElapsedNs = null
         try {
-            recording = preparedVideoCapture.output.prepareRecording(context, FileOutputOptions.Builder(file).build())
-                .start(ContextCompat.getMainExecutor(context)) { event ->
-                    if (event is VideoRecordEvent.Finalize) {
-                        val durationMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(0L)
+            recording = preparedVideoCapture.output.prepareRecording(
+                context,
+                FileOutputOptions.Builder(file).build(),
+            ).start(ContextCompat.getMainExecutor(context)) { event ->
+                when (event) {
+                    is VideoRecordEvent.Start -> {
+                        lastCameraXStartElapsedNs =
+                            SystemClock.elapsedRealtimeNanos()
+                        Log.d(
+                            TAG,
+                            "startRecording(): CameraX Start path=${file.absolutePath} elapsed_ns=$lastCameraXStartElapsedNs",
+                        )
+                    }
+                    is VideoRecordEvent.Finalize -> {
+                        val finalizeNs =
+                            SystemClock.elapsedRealtimeNanos()
+                        lastFinalizeElapsedNs = finalizeNs
+                        val durationMs = (
+                            System.currentTimeMillis() - startedAtMs
+                        ).coerceAtLeast(0L)
+                        val cameraXDurationNs =
+                            event.recordingStats.recordedDurationNanos
+                                .coerceAtLeast(0L)
+                        val durationNs =
+                            cameraXDurationNs.takeIf { it > 0L }
+                                ?: durationMs * 1_000_000L
                         val size = file.length()
                         Log.d(TAG, "startRecording(): finalize path=${file.absolutePath}, size=$size, error=${event.error}")
                         if (event.hasError()) {
-                            deferred.completeExceptionally(IllegalStateException("recording stop failed: ${event.cause?.message ?: event.error}"))
+                            deferred.completeExceptionally(
+                                IllegalStateException(
+                                    "recording stop failed: " +
+                                        (event.cause?.message
+                                            ?: event.error),
+                                ),
+                            )
                         } else if (!file.exists() || size <= 0L) {
-                            deferred.completeExceptionally(IllegalStateException("output file missing or size == 0"))
+                            deferred.completeExceptionally(
+                                IllegalStateException(
+                                    "output file missing or size == 0",
+                                ),
+                            )
                         } else {
                             Log.d(TAG, "Captured phone video with camera_id=${lens.cameraId} lens=${lens.lensLabel}")
-                            deferred.complete(PhoneVideoRecordingResult(file.absolutePath, durationMs / 1000L, size))
+                            deferred.complete(
+                                PhoneVideoRecordingResult(
+                                    path = file.absolutePath,
+                                    durationSec =
+                                        durationNs / 1_000_000_000L,
+                                    fileSizeBytes = size,
+                                    recordedDurationNs = durationNs,
+                                    startCallElapsedNs =
+                                        lastStartCallElapsedNs,
+                                    cameraXStartElapsedNs =
+                                        lastCameraXStartElapsedNs,
+                                    finalizeElapsedNs = finalizeNs,
+                                ),
+                            )
                         }
                     }
                 }
+            }
         } catch (e: Throwable) {
             finalizeDeferred = null
             recording = null
             Log.e(TAG, "startRecording(): failed", e)
-            throw IllegalStateException("recording start failed: ${e.message}", e)
+            throw IllegalStateException(
+                "recording start failed: ${e.message}",
+                e,
+            )
         }
-        Log.d(TAG, "startRecording(): started")
+        Log.d(
+            TAG,
+            "startRecording(): start requested elapsed_ns=$startCallNs",
+        )
+        return PhoneVideoRecordingStart(
+            path = file.absolutePath,
+            startCallElapsedNs = startCallNs,
+            cameraXStartElapsedNs = lastCameraXStartElapsedNs,
+        )
     }
 
     suspend fun stopRecording(): PhoneVideoRecordingResult {

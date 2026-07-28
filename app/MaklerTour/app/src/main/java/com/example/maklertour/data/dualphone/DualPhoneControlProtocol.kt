@@ -52,6 +52,7 @@ internal object DualPhoneControlType {
     const val ARM_ACK = "ARM_ACK"
     const val START_AT = "START_AT"
     const val START_ACK = "START_ACK"
+    const val CAPTURE_STARTED = "CAPTURE_STARTED"
     const val STOP = "STOP"
     const val STOP_ACK = "STOP_ACK"
     const val ERROR = "ERROR"
