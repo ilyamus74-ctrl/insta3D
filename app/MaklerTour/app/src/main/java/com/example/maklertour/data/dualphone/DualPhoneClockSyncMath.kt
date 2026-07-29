@@ -57,6 +57,10 @@ data class DualPhoneClockSyncRound(
     val uncertaintyNs: Long,
     val acceptedSamples: Int,
     val totalSamples: Int,
+    val validSamples: Int,
+    val acceptedRttNs: List<Long>,
+    val rejectedRttNs: List<Long>,
+    val acceptedOffsetNs: List<Long>,
 )
 
 data class DualPhoneClockSyncModel(
@@ -97,7 +101,15 @@ data class DualPhoneClockSyncModel(
     )
 }
 
+data class DualPhoneClockSyncStabilityDecision(
+    val model: DualPhoneClockSyncModel,
+    val consecutiveNonReadyRounds: Int,
+    val retainedReadyQuality: Boolean,
+)
+
 object DualPhoneClockSyncMath {
+    const val REQUIRED_CONSECUTIVE_NON_READY_ROUNDS = 3
+
     private const val MAX_VALID_RTT_NS = 100_000_000L
     private const val MAX_HISTORY_ROUNDS = 12
     private const val MIN_DRIFT_SPAN_NS = 5_000_000_000L
@@ -120,6 +132,7 @@ object DualPhoneClockSyncMath {
             maxOf(3, (valid.size + 1) / 2),
         ).coerceAtMost(valid.size)
         val accepted = valid.take(acceptedCount)
+        val rejected = valid.drop(acceptedCount)
         val offsets = accepted.map { it.offsetNs }.sorted()
         val rtts = accepted.map { it.roundTripNs }.sorted()
         val midpoints = accepted.map { it.masterMidpointNs }.sorted()
@@ -140,6 +153,10 @@ object DualPhoneClockSyncMath {
             uncertaintyNs = uncertainty,
             acceptedSamples = accepted.size,
             totalSamples = totalProbes,
+            validSamples = valid.size,
+            acceptedRttNs = accepted.map { it.roundTripNs },
+            rejectedRttNs = rejected.map { it.roundTripNs },
+            acceptedOffsetNs = accepted.map { it.offsetNs },
         )
     }
 
@@ -161,6 +178,37 @@ object DualPhoneClockSyncMath {
             acceptedSamples = latest.acceptedSamples,
             totalSamples = latest.totalSamples,
             quality = quality,
+        )
+    }
+
+    fun stabilizeModel(
+        previous: DualPhoneClockSyncModel?,
+        candidate: DualPhoneClockSyncModel,
+        consecutiveNonReadyRounds: Int,
+    ): DualPhoneClockSyncStabilityDecision {
+        if (candidate.quality.isReady) {
+            return DualPhoneClockSyncStabilityDecision(
+                model = candidate,
+                consecutiveNonReadyRounds = 0,
+                retainedReadyQuality = false,
+            )
+        }
+
+        if (previous?.quality?.isReady == true) {
+            val nextCount = consecutiveNonReadyRounds.coerceAtLeast(0) + 1
+            if (nextCount < REQUIRED_CONSECUTIVE_NON_READY_ROUNDS) {
+                return DualPhoneClockSyncStabilityDecision(
+                    model = candidate.copy(quality = previous.quality),
+                    consecutiveNonReadyRounds = nextCount,
+                    retainedReadyQuality = true,
+                )
+            }
+        }
+
+        return DualPhoneClockSyncStabilityDecision(
+            model = candidate,
+            consecutiveNonReadyRounds = 0,
+            retainedReadyQuality = false,
         )
     }
 

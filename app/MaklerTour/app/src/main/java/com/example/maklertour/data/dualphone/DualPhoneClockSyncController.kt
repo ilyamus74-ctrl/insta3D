@@ -1,6 +1,7 @@
 package com.maklertour.data.dualphone
 
 import android.os.SystemClock
+import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -16,6 +17,7 @@ import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
 import java.util.ArrayDeque
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 internal class DualPhoneClockSyncController(
@@ -31,6 +33,7 @@ internal class DualPhoneClockSyncController(
 
     private val rounds = ArrayDeque<DualPhoneClockSyncRound>()
     private val probeSequence = AtomicLong(1L)
+    private var consecutiveNonReadyRounds = 0
     private var job: Job? = null
     private var datagramSocket: DatagramSocket? = null
 
@@ -88,11 +91,32 @@ internal class DualPhoneClockSyncController(
                             rounds.toList(),
                         )
                         if (newModel != null) {
-                            model = newModel
+                            val decision = DualPhoneClockSyncMath.stabilizeModel(
+                                previous = model,
+                                candidate = newModel,
+                                consecutiveNonReadyRounds = consecutiveNonReadyRounds,
+                            )
+                            consecutiveNonReadyRounds =
+                                decision.consecutiveNonReadyRounds
+                            model = decision.model
                             val nowNs = SystemClock.elapsedRealtimeNanos()
-                            val next = newModel.toSnapshot(
+                            val message = if (decision.retainedReadyQuality) {
+                                "Transient ${newModel.quality.name} clock round " +
+                                    "${decision.consecutiveNonReadyRounds}/" +
+                                    "${DualPhoneClockSyncMath.REQUIRED_CONSECUTIVE_NON_READY_ROUNDS}; " +
+                                    "keeping ${decision.model.quality.name} readiness"
+                            } else {
+                                "UDP clock model updated"
+                            }
+                            val next = decision.model.toSnapshot(
                                 updatedAtElapsedNs = nowNs,
-                                message = "UDP clock model updated",
+                                message = message,
+                            )
+                            logRound(
+                                round = round,
+                                responseCount = samples.size,
+                                candidate = newModel,
+                                decision = decision,
                             )
                             publish(next)
                             runCatching {
@@ -100,6 +124,11 @@ internal class DualPhoneClockSyncController(
                             }
                         }
                     } else {
+                        Log.w(
+                            TAG,
+                            "DP03_CLOCK_ROUND incomplete total=$probeCount " +
+                                "responses=${samples.size}",
+                        )
                         val previous = snapshot
                         val nowNs = SystemClock.elapsedRealtimeNanos()
                         val modelAgeNs = previous.updatedAtElapsedNs?.let {
@@ -247,6 +276,7 @@ internal class DualPhoneClockSyncController(
         job = null
         closeSocket()
         rounds.clear()
+        consecutiveNonReadyRounds = 0
         model = null
         publish(DualPhoneClockSyncSnapshot())
     }
@@ -301,6 +331,42 @@ internal class DualPhoneClockSyncController(
         }
         return samples
     }
+
+    private fun logRound(
+        round: DualPhoneClockSyncRound,
+        responseCount: Int,
+        candidate: DualPhoneClockSyncModel,
+        decision: DualPhoneClockSyncStabilityDecision,
+    ) {
+        val missing = (round.totalSamples - responseCount).coerceAtLeast(0)
+        val invalid = (responseCount - round.validSamples).coerceAtLeast(0)
+        val offsetDeltas = round.acceptedOffsetNs.map { it - round.offsetNs }
+        Log.i(
+            TAG,
+            "DP03_CLOCK_ROUND total=${round.totalSamples} " +
+                "responses=$responseCount valid=${round.validSamples} " +
+                "accepted=${round.acceptedSamples} missing=$missing invalid=$invalid " +
+                "candidate=${candidate.quality.name} " +
+                "applied=${decision.model.quality.name} " +
+                "retained_ready=${decision.retainedReadyQuality} " +
+                "non_ready_streak=${decision.consecutiveNonReadyRounds} " +
+                "median_rtt_ms=${formatNsMs(round.medianRttNs)} " +
+                "p95_rtt_ms=${formatNsMs(round.p95RttNs)} " +
+                "uncertainty_ms=${formatNsMs(round.uncertaintyNs)} " +
+                "drift_ppm=${String.format(Locale.US, "%+.3f", candidate.driftPpm)} " +
+                "accepted_rtt_ms=${formatNsListMs(round.acceptedRttNs)} " +
+                "rejected_rtt_ms=${formatNsListMs(round.rejectedRttNs)} " +
+                "accepted_offset_delta_ms=${formatNsListMs(offsetDeltas)}",
+        )
+    }
+
+    private fun formatNsMs(value: Long): String =
+        String.format(Locale.US, "%.3f", value.toDouble() / 1_000_000.0)
+
+    private fun formatNsListMs(values: List<Long>): String = values.joinToString(
+        prefix = "[",
+        postfix = "]",
+    ) { formatNsMs(it) }
 
     private fun statusPayload(value: DualPhoneClockSyncSnapshot): JSONObject =
         JSONObject()
@@ -370,11 +436,12 @@ internal class DualPhoneClockSyncController(
         if (!has(key) || isNull(key)) null else optDouble(key)
 
     companion object {
+        private const val TAG = "DualPhoneClockSync"
         private const val PROTOCOL_VERSION = 1
         private const val TYPE_REQUEST = "CLOCK_SYNC_REQUEST"
         private const val TYPE_RESPONSE = "CLOCK_SYNC_RESPONSE"
         private const val INITIAL_PROBES = 16
-        private const val PERIODIC_PROBES = 8
+        private const val PERIODIC_PROBES = 12
         private const val PROBE_TIMEOUT_MS = 250
         private const val SLAVE_RECEIVE_TIMEOUT_MS = 1_000
         private const val PROBE_INTERVAL_MS = 60L

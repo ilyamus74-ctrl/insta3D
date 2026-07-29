@@ -25,6 +25,10 @@ foreach ([
     'masterToSlaveNs',
     'EXCELLENT',
     'GOOD',
+    'REQUIRED_CONSECUTIVE_NON_READY_ROUNDS',
+    'stabilizeModel',
+    'acceptedRttNs',
+    'rejectedRttNs',
 ] as $token) {
     if (!str_contains($mathText, $token)) {
         throw new RuntimeException('Clock math contract missing: ' . $token);
@@ -41,6 +45,9 @@ foreach ([
     't3_slave_ns',
     'PROBE_TIMEOUT_MS',
     'PERIODIC_SYNC_INTERVAL_MS',
+    'PERIODIC_PROBES = 12',
+    'DP03_CLOCK_ROUND',
+    'retainedReadyQuality',
     'applyRemoteStatus',
 ] as $token) {
     if (!str_contains($controllerText, $token)) {
