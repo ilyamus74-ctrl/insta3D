@@ -1,6 +1,7 @@
 package com.maklertour.state
 
 import androidx.lifecycle.ViewModel
+import android.content.Context
 import android.util.Log
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.viewModelScope
@@ -35,6 +36,9 @@ import com.maklertour.domain.ScanVideoRole
 import com.maklertour.data.phonecamera.PhoneCameraBindResult
 import com.maklertour.data.phonecamera.PhoneCameraScanProvider
 import com.maklertour.data.phonecamera.PhoneVideoMode
+import com.maklertour.data.dualphone.DualPhoneAggregateUploadEndpoint
+import com.maklertour.data.dualphone.DualPhoneAggregateUploadResult
+import com.maklertour.data.dualphone.DualPhoneAggregateUploadRuntime
 import com.example.maklertour.auth.MobileOrder
 import com.example.maklertour.auth.MobileUploadApi
 import com.example.maklertour.data.capture.CaptureBundlePackager
@@ -102,6 +106,7 @@ class AppStateViewModel(
     private val syncRepository: SyncRepository? = null,
     private val oscFileDownloader: OscFileDownloader? = null,
     private val mobileUploadApi: MobileUploadApi? = null,
+    private val appContext: Context? = null,
 ) : ViewModel() {
 
     private val selectedSessionId = MutableStateFlow<String?>(null)
@@ -114,9 +119,23 @@ class AppStateViewModel(
     private val uploadError = MutableStateFlow<String?>(null)
     private val captureBundleNotice = MutableStateFlow<CaptureBundleNotice?>(null)
     private val isAutoUploadRunning = MutableStateFlow(false)
+    private var dualPhoneUploadEndpoint: DualPhoneAggregateUploadEndpoint? = null
 
     init {
         uploadQueueRepository.resetInterruptedUploadsOnStartup()
+        if (appContext != null) {
+            val endpoint = object : DualPhoneAggregateUploadEndpoint {
+                override suspend fun enqueue(
+                    bundleFile: File,
+                    dualCaptureId: String,
+                ): DualPhoneAggregateUploadResult = enqueueDualPhoneAggregateBundle(
+                    bundleFile = bundleFile,
+                    dualCaptureId = dualCaptureId,
+                )
+            }
+            dualPhoneUploadEndpoint = endpoint
+            DualPhoneAggregateUploadRuntime.register(endpoint)
+        }
     }
 
     val uiState: StateFlow<AppUiState> = combine(
@@ -720,6 +739,53 @@ class AppStateViewModel(
         }
     }
 
+    private suspend fun enqueueDualPhoneAggregateBundle(
+        bundleFile: File,
+        dualCaptureId: String,
+    ): DualPhoneAggregateUploadResult {
+        if (!bundleFile.isFile || bundleFile.length() <= 0L) {
+            return DualPhoneAggregateUploadResult(
+                queued = false,
+                message = "Aggregate dual-phone bundle is missing or empty",
+            )
+        }
+        val selectedId = uiState.value.selectedSessionId
+            ?: return DualPhoneAggregateUploadResult(
+                queued = false,
+                message = "Aggregate bundle retained locally: select an app session before capture",
+            )
+        val session = uiState.value.sessions.firstOrNull { it.id == selectedId }
+            ?: return DualPhoneAggregateUploadResult(
+                queued = false,
+                message = "Aggregate bundle retained locally: selected app session was not found",
+            )
+        val order = selectedOrder.value
+        val orderId = session.serverOrderId ?: order?.id
+            ?: return DualPhoneAggregateUploadResult(
+                queued = false,
+                message = "Aggregate bundle retained locally: attach the session to a server order",
+            )
+        uploadQueueRepository.enqueueCaptureBundle(
+            sessionId = session.id,
+            sessionTitle = session.name,
+            orderId = orderId,
+            orderTitle = session.orderTitle ?: order?.title,
+            orderAddress = session.orderAddress ?: order?.address,
+            uploadAppSessionUuid = "${session.id}_$orderId",
+            appBundleUuid = dualCaptureId,
+            serverCaptureSessionId = session.serverCaptureSessionId,
+            captureType = "dual_phone_stereo_video",
+            localFilePath = bundleFile.absolutePath,
+            displayName = "Dual-phone stereo capture $dualCaptureId",
+            mimeType = "application/gzip",
+        )
+        processQueuedUploadsOnWifi()
+        return DualPhoneAggregateUploadResult(
+            queued = true,
+            message = "Dual-phone aggregate bundle queued for server upload",
+        )
+    }
+
     fun enqueueSyncedDepthCaptureBundle(
         context: android.content.Context,
         sessionId: String?,
@@ -1313,6 +1379,14 @@ class AppStateViewModel(
             })
             put("debugMode", debugMode)
         }.toString(2)
+    }
+
+    override fun onCleared() {
+        dualPhoneUploadEndpoint?.let {
+            DualPhoneAggregateUploadRuntime.unregister(it)
+        }
+        dualPhoneUploadEndpoint = null
+        super.onCleared()
     }
 }
 

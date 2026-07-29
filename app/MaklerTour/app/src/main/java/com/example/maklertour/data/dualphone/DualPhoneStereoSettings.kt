@@ -23,10 +23,11 @@ data class DualPhoneStereoSettings(
     val masterControlsUpload: Boolean = true,
     val controlPort: Int = 48621,
     val clockSyncPort: Int = 48622,
+    val bundleTransferPort: Int = 48623,
     val preferredVideoModeId: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
-        .put("schema_version", 2)
+        .put("schema_version", 3)
         .put("device_id", deviceId)
         .put("role", role.name)
         .put("transport", transport.name)
@@ -35,6 +36,7 @@ data class DualPhoneStereoSettings(
         .put("master_controls_upload", true)
         .put("control_port", controlPort)
         .put("clock_sync_port", clockSyncPort)
+        .put("bundle_transfer_port", bundleTransferPort)
         .put("preferred_video_mode_id", preferredVideoModeId ?: JSONObject.NULL)
 }
 
@@ -70,6 +72,8 @@ class DualPhoneStereoSettingsStore(context: Context) {
                 .coerceIn(1024, 65535),
             clockSyncPort = prefs.getInt(KEY_CLOCK_SYNC_PORT, 48622)
                 .coerceIn(1024, 65535),
+            bundleTransferPort = prefs.getInt(KEY_BUNDLE_TRANSFER_PORT, 48623)
+                .coerceIn(1024, 65535),
             preferredVideoModeId = prefs.getString(
                 KEY_PREFERRED_VIDEO_MODE_ID,
                 null,
@@ -87,6 +91,7 @@ class DualPhoneStereoSettingsStore(context: Context) {
             .putBoolean(KEY_MASTER_CONTROLS_UPLOAD, true)
             .putInt(KEY_CONTROL_PORT, settings.controlPort)
             .putInt(KEY_CLOCK_SYNC_PORT, settings.clockSyncPort)
+            .putInt(KEY_BUNDLE_TRANSFER_PORT, settings.bundleTransferPort)
             .putString(
                 KEY_PREFERRED_VIDEO_MODE_ID,
                 settings.preferredVideoModeId,
@@ -112,6 +117,7 @@ class DualPhoneStereoSettingsStore(context: Context) {
             "master_controls_upload"
         private const val KEY_CONTROL_PORT = "control_port"
         private const val KEY_CLOCK_SYNC_PORT = "clock_sync_port"
+        private const val KEY_BUNDLE_TRANSFER_PORT = "bundle_transfer_port"
         private const val KEY_PREFERRED_VIDEO_MODE_ID =
             "preferred_video_mode_id"
     }

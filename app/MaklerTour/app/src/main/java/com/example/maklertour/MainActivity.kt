@@ -318,6 +318,7 @@ private fun MaklerTourApp() {
             syncRepository = SyncRepository(MockSyncApi()),
             mobileUploadApi = MobileUploadApi(authStorage),
             oscFileDownloader = downloader,
+            appContext = baseContext.applicationContext,
         )
     }
     val state by viewModel.uiState.collectAsState()

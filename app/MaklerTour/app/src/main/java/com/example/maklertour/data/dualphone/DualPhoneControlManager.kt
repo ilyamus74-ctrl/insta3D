@@ -59,6 +59,10 @@ data class DualPhoneControlSnapshot(
     val peerManifestPath: String? = null,
     val localStartLatenessNs: Long? = null,
     val peerStartLatenessNs: Long? = null,
+    val localRolePackagePath: String? = null,
+    val peerRolePackagePath: String? = null,
+    val aggregatePackagePath: String? = null,
+    val aggregateUploadState: String = "IDLE",
     val clockSync: DualPhoneClockSyncSnapshot = DualPhoneClockSyncSnapshot(),
 )
 
@@ -94,6 +98,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     private var masterPairingCode: String? = null
     private var masterDualCaptureId: String? = null
     private var localArmResult: DualPhoneCaptureArmResult? = null
+    private val bundleCoordinator = DualPhoneBundleCoordinator(appContext, scope)
+    private var localRolePackage: DualPhoneRolePackage? = null
+    private var slaveTransferOffer: DualPhoneTransferOffer? = null
 
     fun startMaster() {
         val settings = settingsStore.load()
@@ -240,6 +247,15 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             }
             val settings = settingsStore.load()
             val captureId = currentCaptureId()
+            slaveTransferOffer?.serverJob?.cancel()
+            slaveTransferOffer = null
+            localRolePackage = null
+            mutableState.value = mutableState.value.copy(
+                localRolePackagePath = null,
+                peerRolePackagePath = null,
+                aggregatePackagePath = null,
+                aggregateUploadState = "IDLE",
+            )
             val endpoint = DualPhoneCaptureRuntime.requireEndpoint()
             val local = endpoint.arm(
                 DualPhoneCaptureArmRequest(
@@ -363,14 +379,22 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             scheduledStartJob?.cancel()
             scheduledStartJob = null
             val localResult = stopLocalCapture()
+            val rolePackage = bundleCoordinator.packageRole(
+                stopResult = localResult,
+                dualCaptureId = currentCaptureId(),
+                role = DualPhoneRole.MASTER,
+            )
+            localRolePackage = rolePackage
             localArmResult = null
             mutableState.value = mutableState.value.copy(
                 lastCommand = DualPhoneControlType.STOP,
                 lastError = null,
                 localVideoPath = localResult.videoPath,
                 localManifestPath = localResult.manifestPath,
+                localRolePackagePath = rolePackage.file.absolutePath,
+                aggregateUploadState = "WAITING_FOR_SLAVE_PACKAGE",
                 lastMessage =
-                    "Local recording finalized; waiting for Slave STOP_ACK",
+                    "Master role package ready; waiting for Slave STOP_ACK",
             )
         }
     }
@@ -627,9 +651,26 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     scope.launch {
                         try {
                             val result = stopLocalCapture()
+                            val captureId = payload.getString("dual_capture_id")
+                            val rolePackage = bundleCoordinator.packageRole(
+                                stopResult = result,
+                                dualCaptureId = captureId,
+                                role = DualPhoneRole.SLAVE,
+                            )
+                            localRolePackage = rolePackage
+                            slaveTransferOffer?.serverJob?.cancel()
+                            val offer = bundleCoordinator.serveOnce(
+                                rolePackage = rolePackage,
+                                port = settingsStore.load().bundleTransferPort,
+                            )
+                            slaveTransferOffer = offer
                             send(
                                 DualPhoneControlType.STOP_ACK,
-                                stopResultPayload(result),
+                                offer.toJson(
+                                    stopResultPayload(result)
+                                        .put("dual_capture_id", captureId)
+                                        .put("role", DualPhoneRole.SLAVE.name),
+                                ),
                             )
                             mutableState.value =
                                 mutableState.value.copy(
@@ -639,9 +680,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                                         result.videoPath,
                                     localManifestPath =
                                         result.manifestPath,
+                                    localRolePackagePath =
+                                        rolePackage.file.absolutePath,
+                                    aggregateUploadState =
+                                        "WAITING_FOR_MASTER_PULL",
                                     lastError = null,
                                     lastMessage =
-                                        "Slave MP4 finalized",
+                                        "Slave package ready for automatic Master transfer",
                                 )
                         } catch (error: Throwable) {
                             DualPhoneCaptureRuntime.current()?.abort(
@@ -672,8 +717,33 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         peerManifestPath = payload.optNullableString(
                             "manifest_path",
                         ),
+                        aggregateUploadState = "SLAVE_PACKAGE_OFFER_RECEIVED",
                         lastMessage =
-                            "Both phone recordings finalized",
+                            "Both recordings finalized; fetching Slave package",
+                    )
+                    handleMasterRolePackageOffer(payload)
+                }
+                DualPhoneControlType.PACKAGE_RECEIVED -> if (
+                    localRole == DualPhoneRole.SLAVE
+                ) {
+                    val receivedHash = payload.optString("sha256").lowercase()
+                    val localHash = localRolePackage?.sha256
+                    mutableState.value = mutableState.value.copy(
+                        aggregateUploadState = if (receivedHash == localHash) {
+                            "TRANSFERRED_TO_MASTER"
+                        } else {
+                            "MASTER_RECEIPT_HASH_MISMATCH"
+                        },
+                        lastError = if (receivedHash == localHash) {
+                            null
+                        } else {
+                            "Master package receipt SHA-256 mismatch"
+                        },
+                        lastMessage = if (receivedHash == localHash) {
+                            "Slave package transferred and verified by Master"
+                        } else {
+                            "Master receipt did not match Slave package"
+                        },
                     )
                 }
                 DualPhoneControlType.ERROR -> {
@@ -686,6 +756,83 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         lastMessage = "Peer error: $code",
                     )
                 }
+            }
+        }
+    }
+
+    private fun handleMasterRolePackageOffer(payload: JSONObject) {
+        val offer = DualPhoneTransferOffer.fromJson(payload)
+        if (offer == null) {
+            mutableState.value = mutableState.value.copy(
+                aggregateUploadState = "SLAVE_PACKAGE_OFFER_MISSING",
+                lastError = "Slave finalized recording but did not provide a DP04.3 role package",
+                lastMessage = "Both recordings finalized; Slave package offer is missing",
+            )
+            return
+        }
+        val peerHost = mutableState.value.peerHost
+        if (peerHost.isNullOrBlank()) {
+            mutableState.value = mutableState.value.copy(
+                aggregateUploadState = "PEER_HOST_MISSING",
+                lastError = "Slave host is unavailable for package transfer",
+            )
+            return
+        }
+        scope.launch {
+            try {
+                val masterPackage = localRolePackage
+                    ?: throw IllegalStateException("Master role package is unavailable")
+                mutableState.value = mutableState.value.copy(
+                    aggregateUploadState = "DOWNLOADING_SLAVE_PACKAGE",
+                    lastMessage = "Downloading Slave role package",
+                )
+                val slavePackage = bundleCoordinator.download(
+                    peerHost = peerHost,
+                    offer = offer,
+                )
+                runCatching {
+                    send(
+                        DualPhoneControlType.PACKAGE_RECEIVED,
+                        JSONObject()
+                            .put("dual_capture_id", offer.dualCaptureId)
+                            .put("role", offer.role.name)
+                            .put("sha256", slavePackage.sha256)
+                            .put("size_bytes", slavePackage.sizeBytes),
+                    )
+                }
+                mutableState.value = mutableState.value.copy(
+                    peerRolePackagePath = slavePackage.file.absolutePath,
+                    aggregateUploadState = "BUILDING_AGGREGATE_BUNDLE",
+                    lastMessage = "Slave package verified; building aggregate bundle",
+                )
+                val aggregate = bundleCoordinator.packageAggregate(
+                    masterPackage = masterPackage,
+                    slavePackage = slavePackage,
+                )
+                mutableState.value = mutableState.value.copy(
+                    aggregatePackagePath = aggregate.absolutePath,
+                    aggregateUploadState = "ENQUEUEING_SERVER_UPLOAD",
+                    lastMessage = "Aggregate bundle ready; enqueueing server upload",
+                )
+                val upload = DualPhoneAggregateUploadRuntime.enqueue(
+                    bundleFile = aggregate,
+                    dualCaptureId = offer.dualCaptureId,
+                )
+                mutableState.value = mutableState.value.copy(
+                    aggregateUploadState = if (upload.queued) {
+                        "QUEUED_FOR_SERVER"
+                    } else {
+                        "READY_NOT_QUEUED"
+                    },
+                    lastError = if (upload.queued) null else upload.message,
+                    lastMessage = upload.message,
+                )
+            } catch (error: Throwable) {
+                mutableState.value = mutableState.value.copy(
+                    aggregateUploadState = "TRANSFER_OR_PACKAGING_FAILED",
+                    lastError = error.message ?: error.javaClass.simpleName,
+                    lastMessage = "Automatic dual-phone bundle transfer failed",
+                )
             }
         }
     }
@@ -1123,6 +1270,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         masterPairingCode = null
         masterDualCaptureId = null
         localArmResult = null
+        slaveTransferOffer?.serverJob?.cancel()
+        slaveTransferOffer = null
+        localRolePackage = null
         mutableState.value = mutableState.value.copy(
             phase = DualPhoneControlPhase.STOPPED,
             connected = false,

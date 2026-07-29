@@ -150,6 +150,10 @@ fun DualPhoneControlSettingsCard(
                     "UDP port: ${settings.clockSyncPort} · ${sync.message}",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Text(
+                    "Bundle transfer port: ${settings.bundleTransferPort}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 sync.offsetNs?.let {
                     Text(
                         "Offset Slave−Master: ${formatOffset(it)}",
@@ -241,6 +245,19 @@ fun DualPhoneControlSettingsCard(
                     "DP04 prepares the CameraX recorder automatically during ARM.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Text(
+                    "Bundle state: ${snapshot.aggregateUploadState}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                snapshot.localRolePackagePath?.let {
+                    Text("Master package: $it", style = MaterialTheme.typography.bodySmall)
+                }
+                snapshot.peerRolePackagePath?.let {
+                    Text("Slave package: $it", style = MaterialTheme.typography.bodySmall)
+                }
+                snapshot.aggregatePackagePath?.let {
+                    Text("Aggregate bundle: $it", style = MaterialTheme.typography.bodySmall)
+                }
             }
 
             if (snapshot.phase != DualPhoneControlPhase.STOPPED) {
