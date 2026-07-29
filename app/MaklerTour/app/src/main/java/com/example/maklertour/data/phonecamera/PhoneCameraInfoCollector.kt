@@ -3,6 +3,7 @@ package com.maklertour.data.phonecamera
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraMetadata
 import android.os.Build
 import org.json.JSONArray
 import org.json.JSONObject
@@ -16,6 +17,16 @@ class PhoneCameraInfoCollector(private val context: Context) {
         val lens = selectedLens ?: lensRepository.selectedOrDefault().first
         val manager = context.getSystemService(CameraManager::class.java)
         val chars = manager.getCameraCharacteristics(lens.cameraId)
+        val sensorTimestampSource = chars.get(
+            CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE,
+        )
+        val sensorTimestampSourceName = when (sensorTimestampSource) {
+            CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME ->
+                "REALTIME"
+            CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_UNKNOWN ->
+                "UNKNOWN"
+            else -> "UNAVAILABLE"
+        }
         val file = File(baseDir, "camera_info.json")
         val json = JSONObject()
             .put("device_manufacturer", Build.MANUFACTURER)
@@ -44,6 +55,14 @@ class PhoneCameraInfoCollector(private val context: Context) {
             .put("focal_lengths_mm", JSONArray(lens.focalLengthsMm))
             .put("active_array_size", lens.activeArraySize?.let { JSONObject().put("left", it.left).put("top", it.top).put("right", it.right).put("bottom", it.bottom).put("width", it.width).put("height", it.height) } ?: JSONObject.NULL)
             .put("pixel_array_size", chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)?.let { JSONObject().put("width", it.width).put("height", it.height) } ?: JSONObject.NULL)
+            .put(
+                "sensor_timestamp_source",
+                sensorTimestampSource ?: JSONObject.NULL,
+            )
+            .put(
+                "sensor_timestamp_source_name",
+                sensorTimestampSourceName,
+            )
             .put("selected_video_width", selectedVideoInfo?.width ?: JSONObject.NULL)
             .put("selected_video_height", selectedVideoInfo?.height ?: JSONObject.NULL)
             .put("selected_fps", selectedVideoInfo?.fps ?: JSONObject.NULL)

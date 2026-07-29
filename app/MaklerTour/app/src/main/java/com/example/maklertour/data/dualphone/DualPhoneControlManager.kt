@@ -599,15 +599,22 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 }
                 DualPhoneControlType.CAPTURE_STARTED -> {
                     if (localRole == DualPhoneRole.MASTER) {
-                        mutableState.value = mutableState.value.copy(
+                        val current = mutableState.value
+                        val keepStopMessage =
+                            current.phase == DualPhoneControlPhase.CONNECTED &&
+                                current.lastCommand == DualPhoneControlType.STOP
+                        mutableState.value = current.copy(
                             peerStartLatenessNs = payload.optLong(
                                 "start_lateness_ns",
                             ),
                             peerVideoPath = payload.optNullableString(
                                 "video_path",
                             ),
-                            lastMessage =
-                                "Slave CameraX recording started",
+                            lastMessage = if (keepStopMessage) {
+                                current.lastMessage
+                            } else {
+                                "Slave CameraX recording started"
+                            },
                         )
                     }
                 }

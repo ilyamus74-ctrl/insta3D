@@ -4,14 +4,15 @@
 
 ```text
 ACTIVE
-REPOSITORY BASELINE: ff208280a43737907ded5f08036766802148e4f2
+REPOSITORY BASELINE: b02acaace22271311f05126d2832e66600b0cede
 DP01 IDENTITY / ROLE / CAMERA MODE VERIFIED ON REAL PHONES
 DP02 TCP PAIRING AND CONTROL VERIFIED ON TWO REAL PHONES
 DP03 UDP CLOCK MODEL IMPLEMENTED AND VERIFIED ON TWO REAL PHONES
 DP03.1 PERIODIC CLOCK STABILIZATION IMPLEMENTED
 DP03.2 STABLE-FAIR CAPTURE SCHEDULING IMPLEMENTED
 DP04.1 HEADLESS CAMERAX ARM / START_AT / STOP RECORDING VERIFIED
-IMMEDIATE NEXT: DP04.2 PER-FRAME SIDECARS, IMU, BUNDLE AND SYNC VALIDATION
+DP04.2 CAPTURE-RESULT / MP4 PTS / IMU SIDECARS IMPLEMENTED IN SOURCE
+IMMEDIATE NEXT: DP04.2 RUNTIME ACCEPTANCE, THEN DP05 SYNC VALIDATION
 ```
 
 The previous status text that said clock synchronization and camera recording
@@ -492,16 +493,27 @@ shared timing and calibration:
 
 ## Immediate next task
 
-Implement **DP04.2** against the current real dual-phone recording path:
+Runtime-accept **DP04.2** on both real phones:
 
-1. bind a metadata-only `ImageAnalysis` stream together with `VideoCapture` in
-   headless dual-phone mode;
-2. write `frames.jsonl` beside each role's `video.mp4`;
-3. start/stop an `ImuRecorder` beside each dual-phone recording;
-4. write `camera_info.json` for both phones;
-5. persist clock-sync and capture timing diagnostics;
-6. add bundle completeness checks and a local sync-validator CLI;
-7. verify a new two-phone recording before starting dual-phone calibration.
+1. record one 10–20 second `1920x1080@60` dual capture;
+2. confirm that both role directories contain `video.mp4`, `frames.jsonl`,
+   `encoder_pts.jsonl`, `imu.jsonl`, `camera_info.json`, `clock_sync.json` and
+   `dual_capture_manifest.json`;
+3. confirm non-zero Camera2 capture-result and encoded-sample counts;
+4. run `dual_phone_capture_sync_validator.py` against the two role directories;
+5. record the selected timestamp source, matched ratio, median/P95/max delta and
+   count mismatch between capture results and encoded samples;
+6. perform the LED or fast-screen DP05 validation before claiming exact encoded
+   frame synchronization;
+7. start DP06 dual-phone ChArUco calibration only after the timing artifacts are
+   accepted.
+
+DP04.2 uses a read-only Camera2 session capture-result callback attached through
+Camera2Interop rather than adding a second `ImageAnalysis` output stream. This
+avoids increasing the CameraX stream combination during FHD60 recording. MP4
+sample PTS are extracted after finalize with Android `MediaExtractor`. The two
+sources remain explicitly separate until DP05 proves or rejects deterministic
+mapping.
 
 The existing phone + USB UVC runtime remains supported and provides reusable
 calibration and processing components, but it remains a different calibrated

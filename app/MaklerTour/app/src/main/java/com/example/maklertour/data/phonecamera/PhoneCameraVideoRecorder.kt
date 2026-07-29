@@ -7,11 +7,16 @@ import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.TotalCaptureResult
 import android.os.SystemClock
 import android.util.Log
 import android.util.Range
 import android.util.Size
 import android.view.Surface
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -50,6 +55,7 @@ data class PhoneVideoRecordingResult(
     val startCallElapsedNs: Long? = null,
     val cameraXStartElapsedNs: Long? = null,
     val finalizeElapsedNs: Long? = null,
+    val frameTelemetrySummary: PhoneFrameTelemetrySummary? = null,
 )
 
 data class PhoneVideoRecordingStart(
@@ -103,6 +109,17 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     @Volatile private var lastStartCallElapsedNs: Long? = null
     @Volatile private var lastCameraXStartElapsedNs: Long? = null
     @Volatile private var lastFinalizeElapsedNs: Long? = null
+    private val frameTelemetryRecorder = DualPhoneFrameTelemetryRecorder()
+    private val frameCaptureCallback =
+        object : CameraCaptureSession.CaptureCallback() {
+            override fun onCaptureCompleted(
+                session: CameraCaptureSession,
+                request: CaptureRequest,
+                result: TotalCaptureResult,
+            ) {
+                frameTelemetryRecorder.record(result)
+            }
+        }
 
     suspend fun bindPreview(
         previewView: PreviewView,
@@ -239,6 +256,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         ) ?: PhoneVideoMode(1280, 720, 30, "HD")
     }
 
+    @OptIn(ExperimentalCamera2Interop::class)
     private fun buildVideoCapture(mode: PhoneVideoMode): VideoCapture<Recorder> {
         val quality = when (mode.qualityKey) {
             "UHD" -> Quality.UHD
@@ -248,10 +266,12 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         val recorder = Recorder.Builder()
             .setQualitySelector(QualitySelector.from(quality))
             .build()
-        return VideoCapture.Builder(recorder)
+        val builder = VideoCapture.Builder(recorder)
             .setTargetRotation(currentTargetRotation)
             .setTargetFrameRate(Range(mode.fps, mode.fps))
-            .build()
+        Camera2Interop.Extender(builder)
+            .setSessionCaptureCallback(frameCaptureCallback)
+        return builder.build()
     }
 
     fun getLatestCalibrationFrame(): CalibrationFrame? = synchronized(latestFrameLock) { latestCalibrationFrame }
@@ -584,10 +604,15 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     suspend fun startRecordingToFileWithTelemetry(
         outputFile: File,
-    ): PhoneVideoRecordingStart = startRecordingInternal(outputFile)
+        telemetryContext: PhoneVideoTelemetryContext,
+    ): PhoneVideoRecordingStart = startRecordingInternal(
+        outputFile,
+        telemetryContext,
+    )
 
     private suspend fun startRecordingInternal(
         file: File,
+        telemetryContext: PhoneVideoTelemetryContext? = null,
     ): PhoneVideoRecordingStart {
         check(recording == null) {
             "Phone video recording is already active"
@@ -607,6 +632,27 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         lastStartCallElapsedNs = startCallNs
         lastCameraXStartElapsedNs = null
         lastFinalizeElapsedNs = null
+        if (telemetryContext != null) {
+            val info = selectedVideoInfo
+            frameTelemetryRecorder.start(
+                baseDir = file.parentFile ?: file,
+                context = telemetryContext,
+                cameraId = lens.cameraId,
+                videoModeId = info?.let {
+                    "${it.width}x${it.height}@${it.fps}"
+                },
+                width = info?.width,
+                height = info?.height,
+                fps = info?.fps,
+                rotationDegrees = when (currentTargetRotation) {
+                    Surface.ROTATION_90 -> 90
+                    Surface.ROTATION_180 -> 180
+                    Surface.ROTATION_270 -> 270
+                    else -> 0
+                },
+                startCallElapsedNs = startCallNs,
+            )
+        }
         try {
             recording = preparedVideoCapture.output.prepareRecording(
                 context,
@@ -671,6 +717,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 }
             }
         } catch (e: Throwable) {
+            frameTelemetryRecorder.stop()
             finalizeDeferred = null
             recording = null
             Log.e(TAG, "startRecording(): failed", e)
@@ -696,11 +743,19 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         Log.d(TAG, "stopRecording(): stopping")
         current.stop()
         recording = null
-        val result = withTimeoutOrNull(10_000L) { deferred.await() } ?: throw IllegalStateException("recording stop failed: CameraX finalize timeout")
+        var frameSummary: PhoneFrameTelemetrySummary? = null
+        val result = try {
+            withTimeoutOrNull(10_000L) { deferred.await() }
+                ?: throw IllegalStateException(
+                    "recording stop failed: CameraX finalize timeout",
+                )
+        } finally {
+            frameSummary = frameTelemetryRecorder.stop()
+        }
         finalizeDeferred = null
         outputFile = null
         Log.d(TAG, "stopRecording(): finalized path=${result.path}, size=${result.fileSizeBytes}")
-        return result
+        return result.copy(frameTelemetrySummary = frameSummary)
     }
 
     private suspend fun applySelectedZoom(camera: Camera) {
