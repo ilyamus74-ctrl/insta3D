@@ -21,9 +21,14 @@ data class DualPhoneCaptureArmResult(
     val width: Int? = null,
     val height: Int? = null,
     val fps: Int? = null,
+    val requestedVideoModeId: String? = null,
+    val modeFallbackReason: String? = null,
     val physicalRecordingStarted: Boolean = false,
     val physicalStartCallElapsedRealtimeNs: Long? = null,
     val physicalCameraXStartElapsedRealtimeNs: Long? = null,
+    val validEncodedDataObserved: Boolean = false,
+    val preRollBytesAtReady: Long = 0L,
+    val preRollDurationNsAtReady: Long = 0L,
 )
 
 data class DualPhoneCaptureStartRequest(

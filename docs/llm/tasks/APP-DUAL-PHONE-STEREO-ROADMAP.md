@@ -415,6 +415,16 @@ processing_quality.json
 - explicit encoder mapping status;
 - fix stale `CAPTURE_STARTED` UI messages after STOP.
 
+#### DP04.4A1 — Recorder health and OEM FPS fallback
+
+- headless CameraX binds `VideoCapture` with a consumed keep-alive analysis stream;
+- ARM is accepted only after CameraX reports non-zero encoded bytes and duration;
+- a requested mode that produces no valid data is retried with a regular 30 FPS mode;
+- requested FPS and effective recorder mode are preserved separately;
+- different role FPS values do not reject capture when resolution matches;
+- server pairing uses sensor/common-timeline timestamps rather than frame indexes;
+- actual encoded FPS is measured from MP4 PTS after finalize.
+
 #### DP05 — Synchronization validator
 
 - match cam0/cam1 frames by corrected timestamps;

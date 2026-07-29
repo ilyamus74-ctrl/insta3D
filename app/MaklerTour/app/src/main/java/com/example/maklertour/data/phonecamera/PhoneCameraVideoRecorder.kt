@@ -62,7 +62,20 @@ data class PhoneVideoRecordingStart(
     val path: String,
     val startCallElapsedNs: Long,
     val cameraXStartElapsedNs: Long?,
+    val validEncodedDataObserved: Boolean = false,
+    val recordedBytesAtReady: Long = 0L,
+    val recordedDurationNsAtReady: Long = 0L,
 )
+
+data class PhoneVideoDataHealth(
+    val recordedBytes: Long,
+    val recordedDurationNs: Long,
+    val observedAtElapsedNs: Long,
+)
+
+class PhoneVideoNoValidDataException(
+    message: String,
+) : IllegalStateException(message)
 
 data class PhoneVideoRecorderReadiness(
     val ready: Boolean,
@@ -79,6 +92,8 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var outputFile: File? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var finalizeDeferred: CompletableDeferred<PhoneVideoRecordingResult>? = null
+    private var validDataDeferred: CompletableDeferred<PhoneVideoDataHealth>? = null
+    private var headlessKeepAliveAnalysis: ImageAnalysis? = null
     private val lensRepository = PhoneCameraLensRepository(context)
     private var selectedVideoInfo: SelectedPhoneVideoInfo? = null
     private var selectedLensOption: PhoneCameraLensOption? = null
@@ -184,6 +199,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             )
             boundCamera = camera
             videoCapture = preparedVideoCapture
+            headlessKeepAliveAnalysis = null
             selectedLensOption = lens
             applySelectedZoom(camera)
         } catch (e: Throwable) {
@@ -204,6 +220,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     )
                     boundCamera = camera
                     videoCapture = previousVideoCapture
+                    headlessKeepAliveAnalysis = null
                     selectedLensOption = previousLens
                     applySelectedZoom(camera)
                     Log.w(TAG, "bindPreview(): kept previous working camera_id=${previousLens.cameraId}")
@@ -223,6 +240,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     )
                     boundCamera = camera
                     videoCapture = fallbackVideoCapture
+                    headlessKeepAliveAnalysis = null
                     selectedLensOption = recoveryLens
                     applySelectedZoom(camera)
                     Log.w(TAG, "bindPreview(): selected camera failed; fallback camera_id=${recoveryLens.cameraId} lens=${recoveryLens.lensLabel}")
@@ -273,6 +291,28 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             .setSessionCaptureCallback(frameCaptureCallback)
         return builder.build()
     }
+
+    private fun buildHeadlessKeepAliveAnalysis(): ImageAnalysis =
+        ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setTargetRotation(currentTargetRotation)
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(
+                        AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY,
+                    )
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(640, 360),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
+                        ),
+                    )
+                    .build(),
+            )
+            .build()
+            .also { analysis ->
+                analysis.setAnalyzer(analysisExecutor) { image -> image.close() }
+            }
 
     fun getLatestCalibrationFrame(): CalibrationFrame? = synchronized(latestFrameLock) { latestCalibrationFrame }
 
@@ -527,12 +567,14 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     suspend fun ensureRecordingReady(
         preferredVideoModeId: String?,
+        forceRebind: Boolean = false,
     ): PhoneVideoRecorderReadiness =
         withContext(Dispatchers.Main.immediate) {
             val current = getRecordingReadiness()
-            if (current.ready || recording != null) {
+            if (!forceRebind && (current.ready || recording != null)) {
                 return@withContext current
             }
+            check(recording == null) { "Cannot rebind CameraX while recording" }
 
             try {
                 val lens = lensRepository.selectedOrDefault().first
@@ -548,6 +590,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
                 val cameraProvider = getCameraProvider()
                 val preparedVideoCapture = buildVideoCapture(mode)
+                val keepAliveAnalysis = buildHeadlessKeepAliveAnalysis()
                 requestedZoomRatio = lensRepository.getSelectedZoomRatio()
                 selectedVideoInfo = SelectedPhoneVideoInfo(
                     width = mode.width,
@@ -561,13 +604,15 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     lifecycleOwner,
                     lensRepository.cameraSelectorFor(lens.cameraId),
                     preparedVideoCapture,
+                    keepAliveAnalysis,
                 )
                 boundCamera = camera
                 videoCapture = preparedVideoCapture
+                headlessKeepAliveAnalysis = keepAliveAnalysis
                 applySelectedZoom(camera)
                 Log.i(
                     TAG,
-                    "ensureRecordingReady(): headless bind camera_id=" +
+                    "ensureRecordingReady(): headless bind with keep-alive analysis camera_id=" +
                         "${lens.cameraId} mode=${mode.id}",
                 )
                 getRecordingReadiness()
@@ -575,6 +620,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 Log.e(TAG, "ensureRecordingReady(): failed", error)
                 boundCamera = null
                 videoCapture = null
+                headlessKeepAliveAnalysis = null
                 val info = selectedVideoInfo
                 PhoneVideoRecorderReadiness(
                     ready = false,
@@ -587,6 +633,35 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 )
             }
         }
+
+    fun regular30FpsFallbackModeId(
+        preferredVideoModeId: String?,
+    ): String? {
+        val lens = lensRepository.selectedOrDefault().first
+        val modes = lens.supportedVideoModes
+        val preferred = modes.firstOrNull { it.id == preferredVideoModeId }
+            ?: selectedVideoInfo?.let { selected ->
+                modes.firstOrNull {
+                    it.width == selected.width &&
+                        it.height == selected.height &&
+                        it.fps == selected.fps
+                }
+            }
+        return modes.firstOrNull {
+            it.support == PhoneVideoModeSupport.REGULAR &&
+                it.fps == 30 &&
+                preferred != null &&
+                it.width == preferred.width &&
+                it.height == preferred.height
+        }?.id ?: modes.firstOrNull {
+            it.support == PhoneVideoModeSupport.REGULAR &&
+                it.fps == 30 &&
+                it.width == 1920 &&
+                it.height == 1080
+        }?.id ?: modes.firstOrNull {
+            it.support == PhoneVideoModeSupport.REGULAR && it.fps == 30
+        }?.id
+    }
 
     fun isRecording(): Boolean = recording != null
 
@@ -626,6 +701,8 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         Log.d(TAG, "startRecording(): output path=${file.absolutePath} camera_id=${lens.cameraId} lens=${lens.lensLabel} requestedZoom=$requestedZoomRatio effectiveZoom=$effectiveZoomRatio")
         val deferred = CompletableDeferred<PhoneVideoRecordingResult>()
         finalizeDeferred = deferred
+        val healthDeferred = telemetryContext?.let { CompletableDeferred<PhoneVideoDataHealth>() }
+        validDataDeferred = healthDeferred
         startedAtMs = System.currentTimeMillis()
         outputFile = file
         val startCallNs = SystemClock.elapsedRealtimeNanos()
@@ -667,6 +744,30 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                             "startRecording(): CameraX Start path=${file.absolutePath} elapsed_ns=$lastCameraXStartElapsedNs",
                         )
                     }
+                    is VideoRecordEvent.Status -> {
+                        val bytes = event.recordingStats.numBytesRecorded
+                            .coerceAtLeast(0L)
+                        val durationNs = event.recordingStats.recordedDurationNanos
+                            .coerceAtLeast(0L)
+                        if (
+                            healthDeferred != null &&
+                            !healthDeferred.isCompleted &&
+                            bytes >= MIN_VALID_ENCODED_BYTES &&
+                            durationNs >= MIN_VALID_ENCODED_DURATION_NS
+                        ) {
+                            val health = PhoneVideoDataHealth(
+                                recordedBytes = bytes,
+                                recordedDurationNs = durationNs,
+                                observedAtElapsedNs =
+                                    SystemClock.elapsedRealtimeNanos(),
+                            )
+                            healthDeferred.complete(health)
+                            Log.i(
+                                TAG,
+                                "startRecording(): valid encoded data path=${file.absolutePath} bytes=$bytes duration_ns=$durationNs",
+                            )
+                        }
+                    }
                     is VideoRecordEvent.Finalize -> {
                         val finalizeNs =
                             SystemClock.elapsedRealtimeNanos()
@@ -681,21 +782,25 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                             cameraXDurationNs.takeIf { it > 0L }
                                 ?: durationMs * 1_000_000L
                         val size = file.length()
-                        Log.d(TAG, "startRecording(): finalize path=${file.absolutePath}, size=$size, error=${event.error}")
+                        val errorLabel = finalizeErrorLabel(event.error)
+                        Log.d(TAG, "startRecording(): finalize path=${file.absolutePath}, size=$size, error=$errorLabel")
                         if (event.hasError()) {
-                            deferred.completeExceptionally(
-                                IllegalStateException(
-                                    "recording stop failed: " +
-                                        (event.cause?.message
-                                            ?: event.error),
-                                ),
+                            val failure = PhoneVideoNoValidDataException(
+                                "recording finalize failed: $errorLabel: " +
+                                    (event.cause?.message ?: "CameraX returned no usable MP4 data"),
                             )
+                            if (healthDeferred?.isCompleted == false) {
+                                healthDeferred.completeExceptionally(failure)
+                            }
+                            deferred.completeExceptionally(failure)
                         } else if (!file.exists() || size <= 0L) {
-                            deferred.completeExceptionally(
-                                IllegalStateException(
-                                    "output file missing or size == 0",
-                                ),
+                            val failure = PhoneVideoNoValidDataException(
+                                "output file missing or size == 0",
                             )
+                            if (healthDeferred?.isCompleted == false) {
+                                healthDeferred.completeExceptionally(failure)
+                            }
+                            deferred.completeExceptionally(failure)
                         } else {
                             Log.d(TAG, "Captured phone video with camera_id=${lens.cameraId} lens=${lens.lensLabel}")
                             deferred.complete(
@@ -718,12 +823,43 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             }
         } catch (e: Throwable) {
             frameTelemetryRecorder.stop()
+            validDataDeferred = null
             finalizeDeferred = null
             recording = null
             Log.e(TAG, "startRecording(): failed", e)
             throw IllegalStateException(
                 "recording start failed: ${e.message}",
                 e,
+            )
+        }
+        val health = if (healthDeferred != null) {
+            runCatching {
+                withTimeoutOrNull(VALID_ENCODED_DATA_TIMEOUT_MS) {
+                    healthDeferred.await()
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
+        if (healthDeferred != null && health == null) {
+            Log.e(
+                TAG,
+                "startRecording(): no valid encoded data within ${VALID_ENCODED_DATA_TIMEOUT_MS}ms path=${file.absolutePath}",
+            )
+            runCatching { recording?.stop() }
+            recording = null
+            runCatching {
+                withTimeoutOrNull(FAILED_START_FINALIZE_TIMEOUT_MS) {
+                    deferred.await()
+                }
+            }
+            frameTelemetryRecorder.stop()
+            validDataDeferred = null
+            finalizeDeferred = null
+            outputFile = null
+            file.delete()
+            throw PhoneVideoNoValidDataException(
+                "No valid encoded video data after ${VALID_ENCODED_DATA_TIMEOUT_MS} ms",
             )
         }
         Log.d(
@@ -734,6 +870,9 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             path = file.absolutePath,
             startCallElapsedNs = startCallNs,
             cameraXStartElapsedNs = lastCameraXStartElapsedNs,
+            validEncodedDataObserved = health != null,
+            recordedBytesAtReady = health?.recordedBytes ?: 0L,
+            recordedDurationNsAtReady = health?.recordedDurationNs ?: 0L,
         )
     }
 
@@ -752,6 +891,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         } finally {
             frameSummary = frameTelemetryRecorder.stop()
         }
+        validDataDeferred = null
         finalizeDeferred = null
         outputFile = null
         Log.d(TAG, "stopRecording(): finalized path=${result.path}, size=${result.fileSizeBytes}")
@@ -821,6 +961,26 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         bindStatus = if (success) "bound" else "failed",
     )
 
+    private fun finalizeErrorLabel(error: Int): String = when (error) {
+        VideoRecordEvent.Finalize.ERROR_NONE -> "ERROR_NONE(0)"
+        VideoRecordEvent.Finalize.ERROR_UNKNOWN -> "ERROR_UNKNOWN($error)"
+        VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED ->
+            "ERROR_FILE_SIZE_LIMIT_REACHED($error)"
+        VideoRecordEvent.Finalize.ERROR_INSUFFICIENT_STORAGE ->
+            "ERROR_INSUFFICIENT_STORAGE($error)"
+        VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE ->
+            "ERROR_SOURCE_INACTIVE($error)"
+        VideoRecordEvent.Finalize.ERROR_INVALID_OUTPUT_OPTIONS ->
+            "ERROR_INVALID_OUTPUT_OPTIONS($error)"
+        VideoRecordEvent.Finalize.ERROR_ENCODING_FAILED ->
+            "ERROR_ENCODING_FAILED($error)"
+        VideoRecordEvent.Finalize.ERROR_RECORDER_ERROR ->
+            "ERROR_RECORDER_ERROR($error)"
+        VideoRecordEvent.Finalize.ERROR_NO_VALID_DATA ->
+            "ERROR_NO_VALID_DATA($error)"
+        else -> "ERROR_$error"
+    }
+
     private suspend fun getCameraProvider(): ProcessCameraProvider =
         withTimeoutOrNull(CAMERA_PROVIDER_TIMEOUT_MS) {
             suspendCancellableCoroutine { cont ->
@@ -851,5 +1011,9 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         private const val CAMERA_PROVIDER_TIMEOUT_MS = 5_000L
         private const val ZOOM_APPLY_TIMEOUT_MS = 2_000L
         private const val ZOOM_RATIO_TOLERANCE = 0.01f
+        private const val MIN_VALID_ENCODED_BYTES = 4_096L
+        private const val MIN_VALID_ENCODED_DURATION_NS = 500_000_000L
+        private const val VALID_ENCODED_DATA_TIMEOUT_MS = 3_500L
+        private const val FAILED_START_FINALIZE_TIMEOUT_MS = 5_000L
     }
 }

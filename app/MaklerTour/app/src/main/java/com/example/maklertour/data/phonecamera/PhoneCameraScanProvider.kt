@@ -191,7 +191,7 @@ class PhoneCameraScanProvider(
             )
         }
 
-        val readiness = videoRecorder.ensureRecordingReady(
+        var readiness = videoRecorder.ensureRecordingReady(
             request.preferredVideoModeId,
         )
         val root = File(
@@ -199,7 +199,7 @@ class PhoneCameraScanProvider(
             "dual_phone_captures",
         ).apply { mkdirs() }
         val availableBytes = root.usableSpace
-        val modeId = listOf(
+        var modeId = listOf(
             readiness.width,
             readiness.height,
             readiness.fps,
@@ -306,7 +306,54 @@ class PhoneCameraScanProvider(
             baseDir = baseDir,
             videoStartTNs = armedAtNs,
         )
+        var fallbackReason: String? = null
         val physicalStarted = try {
+            videoRecorder.startRecordingToFileWithTelemetry(
+                outputFile = videoFile,
+                telemetryContext = PhoneVideoTelemetryContext(
+                    dualCaptureId = request.dualCaptureId,
+                    role = request.role.name,
+                    scheduledElapsedRealtimeNs = armedAtNs,
+                    clockOffsetNs = null,
+                    clockUncertaintyNs = null,
+                    clockDriftPpm = null,
+                ),
+            )
+        } catch (noData: PhoneVideoNoValidDataException) {
+            val fallbackModeId = videoRecorder.regular30FpsFallbackModeId(
+                request.preferredVideoModeId,
+            )
+            if (fallbackModeId == null || fallbackModeId == modeId) {
+                throw noData
+            }
+            fallbackReason =
+                "REQUESTED_MODE_PRODUCED_NO_VALID_DATA: " +
+                    (noData.message ?: "CameraX recorder health timeout")
+            timeline.event(
+                name = "MODE_FALLBACK_SELECTED",
+                localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
+                commandId = request.commandId,
+                details = JSONObject()
+                    .putNullable("requested_video_mode_id", modeId)
+                    .put("fallback_video_mode_id", fallbackModeId)
+                    .put("reason", fallbackReason),
+            )
+            videoFile.delete()
+            readiness = videoRecorder.ensureRecordingReady(
+                preferredVideoModeId = fallbackModeId,
+                forceRebind = true,
+            )
+            check(readiness.ready) {
+                readiness.reason ?: "30 FPS CameraX fallback preparation failed"
+            }
+            modeId = listOf(
+                readiness.width,
+                readiness.height,
+                readiness.fps,
+            ).takeIf { values -> values.all { it != null } }
+                ?.let { values ->
+                    "${values[0]}x${values[1]}@${values[2]}"
+                }
             videoRecorder.startRecordingToFileWithTelemetry(
                 outputFile = videoFile,
                 telemetryContext = PhoneVideoTelemetryContext(
@@ -332,6 +379,17 @@ class PhoneCameraScanProvider(
             timeline.close()
             throw error
         }
+        cameraInfoCollector.writeCameraInfo(
+            baseDir = baseDir,
+            selectedVideoInfo = videoRecorder.getSelectedVideoInfo(),
+            selectedLens = videoRecorder.getSelectedLensOption(),
+            requestedZoomRatio = videoRecorder.getRequestedZoomRatio(),
+            effectiveZoomRatio = videoRecorder.getEffectiveZoomRatio(),
+            minZoomRatio = videoRecorder.getMinZoomRatio(),
+            maxZoomRatio = videoRecorder.getMaxZoomRatio(),
+            calibrationResolutionInfo =
+                videoRecorder.getCalibrationResolutionInfo(),
+        )
         timeline.event(
             name = "PHYSICAL_RECORDING_STARTED",
             localElapsedNs = physicalStarted.startCallElapsedNs,
@@ -342,6 +400,10 @@ class PhoneCameraScanProvider(
                     "camerax_start_elapsed_ns",
                     physicalStarted.cameraXStartElapsedNs,
                 ),
+                .put("valid_encoded_data_observed", physicalStarted.validEncodedDataObserved)
+                .put("pre_roll_bytes_at_ready", physicalStarted.recordedBytesAtReady)
+                .put("pre_roll_duration_ns_at_ready", physicalStarted.recordedDurationNsAtReady)
+                .putNullable("mode_fallback_reason", fallbackReason),
         )
 
         val armResult = DualPhoneCaptureArmResult(
@@ -353,11 +415,16 @@ class PhoneCameraScanProvider(
             width = readiness.width,
             height = readiness.height,
             fps = readiness.fps,
+            requestedVideoModeId = request.preferredVideoModeId,
+            modeFallbackReason = fallbackReason,
             physicalRecordingStarted = true,
             physicalStartCallElapsedRealtimeNs =
                 physicalStarted.startCallElapsedNs,
             physicalCameraXStartElapsedRealtimeNs =
                 physicalStarted.cameraXStartElapsedNs,
+            validEncodedDataObserved = physicalStarted.validEncodedDataObserved,
+            preRollBytesAtReady = physicalStarted.recordedBytesAtReady,
+            preRollDurationNsAtReady = physicalStarted.recordedDurationNsAtReady,
         )
         dualCapture = ActiveDualPhoneCapture(
             request = request,
@@ -567,6 +634,21 @@ class PhoneCameraScanProvider(
                 "preferred_video_mode_id",
                 current.request.preferredVideoModeId,
             )
+            .putNullable(
+                "requested_video_mode_id",
+                current.armResult.requestedVideoModeId,
+            )
+            .putNullable(
+                "effective_video_mode_id",
+                current.armResult.videoModeId,
+            )
+            .putNullable(
+                "mode_fallback_reason",
+                current.armResult.modeFallbackReason,
+            )
+            .put("pre_roll_valid_encoded_data", current.armResult.validEncodedDataObserved)
+            .put("pre_roll_bytes_at_ready", current.armResult.preRollBytesAtReady)
+            .put("pre_roll_duration_ns_at_ready", current.armResult.preRollDurationNsAtReady)
             .put("arm_command_id", current.request.commandId)
             .put("armed_at_elapsed_ns", current.armedAtElapsedNs)
             .put("physical_recording_started_during_arm", true)

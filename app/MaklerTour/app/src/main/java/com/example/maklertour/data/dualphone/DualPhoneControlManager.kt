@@ -295,7 +295,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         .put("command_id", commandId)
                         .put(
                             "preferred_video_mode_id",
-                            settings.preferredVideoModeId
+                            local.videoModeId ?: settings.preferredVideoModeId
                                 ?: JSONObject.NULL,
                         )
                         .put(
@@ -625,16 +625,24 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     val peerWidth = payload.optNullableInt("width")
                     val peerHeight = payload.optNullableInt("height")
                     val peerFps = payload.optNullableInt("fps")
-                    val modeMismatch = ready && local != null && (
+                    val peerEncodedReady = payload.optBoolean(
+                        "valid_encoded_data_observed",
+                        false,
+                    )
+                    val modeMismatch = ready && peerEncodedReady && local != null && (
                         local.width != peerWidth ||
-                            local.height != peerHeight ||
-                            local.fps != peerFps
+                            local.height != peerHeight
                         )
-                    if (!ready || modeMismatch) {
+                    val fpsMismatch =
+                        ready && peerEncodedReady && local != null &&
+                            local.fps != peerFps
+                    if (!ready || !peerEncodedReady || modeMismatch) {
                         val reason = if (modeMismatch) {
                             "VIDEO_MODE_MISMATCH local=" +
                                 "${local?.width}x${local?.height}@${local?.fps} " +
                                 "peer=${peerWidth}x${peerHeight}@${peerFps}"
+                        } else if (ready && !peerEncodedReady) {
+                            "SLAVE_NO_VALID_ENCODED_DATA"
                         } else {
                             payload.optString(
                                 "reason",
@@ -657,8 +665,16 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             peerVideoPath = payload.optNullableString(
                                 "output_path",
                             ),
-                            lastMessage =
-                                "Both pre-roll recordings are active",
+                            peerVideoModeId = payload.optNullableString(
+                                "video_mode_id",
+                            ) ?: mutableState.value.peerVideoModeId,
+                            lastMessage = if (fpsMismatch) {
+                                "Both pre-roll recordings are active; " +
+                                    "FPS differs local=${local?.fps} peer=$peerFps " +
+                                    "and will be aligned by timestamps"
+                            } else {
+                                "Both pre-roll recordings are active"
+                            },
                         )
                     }
                 }
@@ -1112,6 +1128,15 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         .putNullable("width", result.width)
         .putNullable("height", result.height)
         .putNullable("fps", result.fps)
+        .putNullable("requested_video_mode_id", result.requestedVideoModeId)
+        .putNullable("mode_fallback_reason", result.modeFallbackReason)
+        .put("physical_recording_started", result.physicalRecordingStarted)
+        .put("valid_encoded_data_observed", result.validEncodedDataObserved)
+        .put("pre_roll_bytes_at_ready", result.preRollBytesAtReady)
+        .put(
+            "pre_roll_duration_ns_at_ready",
+            result.preRollDurationNsAtReady,
+        )
 
     private fun startResultPayload(
         result: DualPhoneCaptureStartResult,
@@ -1424,7 +1449,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         private const val HEARTBEAT_INTERVAL_MS = 2_000L
         private const val HEARTBEAT_TIMEOUT_MS = 8_000L
         private const val MAX_START_LATE_NS = 100_000_000L
-        private const val ARM_PREPARE_TIMEOUT_MS = 15_000L
+        private const val ARM_PREPARE_TIMEOUT_MS = 30_000L
 
         @Volatile
         private var instance: DualPhoneControlManager? = null
