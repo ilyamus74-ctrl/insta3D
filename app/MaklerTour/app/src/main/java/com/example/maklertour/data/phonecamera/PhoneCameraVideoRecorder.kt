@@ -31,7 +31,9 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -502,6 +504,69 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             )
         }
     }
+
+    suspend fun ensureRecordingReady(
+        preferredVideoModeId: String?,
+    ): PhoneVideoRecorderReadiness =
+        withContext(Dispatchers.Main.immediate) {
+            val current = getRecordingReadiness()
+            if (current.ready || recording != null) {
+                return@withContext current
+            }
+
+            try {
+                val lens = lensRepository.selectedOrDefault().first
+                val modes = lens.supportedVideoModes
+                val mode = modes.firstOrNull {
+                    it.id == preferredVideoModeId
+                } ?: lensRepository.getSelectedVideoMode(
+                    lens.cameraId,
+                    modes,
+                ) ?: throw IllegalStateException(
+                    "No supported video mode for camera ${lens.cameraId}",
+                )
+
+                val cameraProvider = getCameraProvider()
+                val preparedVideoCapture = buildVideoCapture(mode)
+                requestedZoomRatio = lensRepository.getSelectedZoomRatio()
+                selectedVideoInfo = SelectedPhoneVideoInfo(
+                    width = mode.width,
+                    height = mode.height,
+                    fps = mode.fps,
+                )
+                selectedLensOption = lens
+
+                cameraProvider.unbindAll()
+                val camera = cameraProvider.bindToLifecycle(
+                    lifecycleOwner,
+                    lensRepository.cameraSelectorFor(lens.cameraId),
+                    preparedVideoCapture,
+                )
+                boundCamera = camera
+                videoCapture = preparedVideoCapture
+                applySelectedZoom(camera)
+                Log.i(
+                    TAG,
+                    "ensureRecordingReady(): headless bind camera_id=" +
+                        "${lens.cameraId} mode=${mode.id}",
+                )
+                getRecordingReadiness()
+            } catch (error: Throwable) {
+                Log.e(TAG, "ensureRecordingReady(): failed", error)
+                boundCamera = null
+                videoCapture = null
+                val info = selectedVideoInfo
+                PhoneVideoRecorderReadiness(
+                    ready = false,
+                    reason = "Automatic CameraX preparation failed: " +
+                        (error.message ?: error.javaClass.simpleName),
+                    cameraId = selectedLensOption?.cameraId,
+                    width = info?.width,
+                    height = info?.height,
+                    fps = info?.fps,
+                )
+            }
+        }
 
     fun isRecording(): Boolean = recording != null
 

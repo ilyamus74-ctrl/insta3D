@@ -186,7 +186,9 @@ class PhoneCameraScanProvider(
             )
         }
 
-        val readiness = videoRecorder.getRecordingReadiness()
+        val readiness = videoRecorder.ensureRecordingReady(
+            request.preferredVideoModeId,
+        )
         val root = File(
             appContext.filesDir,
             "dual_phone_captures",

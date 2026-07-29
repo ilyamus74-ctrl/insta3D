@@ -1,6 +1,7 @@
 import com.maklertour.data.dualphone.DualPhoneClockSyncMath
 import com.maklertour.data.dualphone.DualPhoneClockSyncQuality
 import com.maklertour.data.dualphone.DualPhoneClockSyncSample
+import com.maklertour.data.dualphone.captureSchedulingAllowed
 
 private fun check(value: Boolean, message: String) {
     if (!value) error(message)
@@ -52,6 +53,26 @@ fun main() {
         quality = DualPhoneClockSyncQuality.FAIR,
         medianRttNs = 10_000_000L,
         uncertaintyNs = 5_000_000L,
+    )
+    val fairCaptureSnapshot = degraded.toSnapshot(
+        updatedAtElapsedNs = 2_500_000_000L,
+        message = "test",
+    )
+    check(
+        fairCaptureSnapshot.captureSchedulingAllowed,
+        "stable FAIR model must allow scheduled capture",
+    )
+    check(
+        !fairCaptureSnapshot.copy(
+            uncertaintyNs = 8_000_001L,
+        ).captureSchedulingAllowed,
+        "high FAIR uncertainty must block scheduled capture",
+    )
+    check(
+        !fairCaptureSnapshot.copy(
+            driftPpm = 200.01,
+        ).captureSchedulingAllowed,
+        "high FAIR drift must block scheduled capture",
     )
     val heldOnce = DualPhoneClockSyncMath.stabilizeModel(
         previous = periodicTwelveModel,

@@ -229,9 +229,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             allowedPhases = setOf(DualPhoneControlPhase.CONNECTED),
         ) {
             val sync = clockSyncController.currentSnapshot()
-            if (!sync.ready) {
+            if (!sync.captureSchedulingAllowed) {
                 throw IllegalStateException(
-                    "Clock sync is not ready (${sync.quality.name})",
+                    "Clock sync cannot schedule capture " +
+                        "(${sync.quality.name}, samples=" +
+                        "${sync.acceptedSamples}/${sync.totalSamples}, " +
+                        "median_rtt_ns=${sync.medianRttNs}, " +
+                        "uncertainty_ns=${sync.uncertaintyNs})",
                 )
             }
             val settings = settingsStore.load()
@@ -495,7 +499,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                                 peerDeviceId =
                                     settings.peerDeviceId,
                                 preferredVideoModeId =
-                                    settings.preferredVideoModeId,
+                                    payload.optNullableString(
+                                        "preferred_video_mode_id",
+                                    ) ?: settings.preferredVideoModeId,
                             ),
                         )
                     } catch (error: Throwable) {

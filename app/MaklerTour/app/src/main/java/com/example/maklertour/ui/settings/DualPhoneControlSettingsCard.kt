@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.maklertour.data.dualphone.DualPhoneClockSyncQuality
+import com.maklertour.data.dualphone.captureSchedulingAllowed
 import com.maklertour.data.dualphone.DualPhoneControlPhase
 import com.maklertour.data.dualphone.DualPhoneControlSnapshot
 import com.maklertour.data.dualphone.DualPhoneRole
@@ -182,7 +183,7 @@ fun DualPhoneControlSettingsCard(
 
             if (settings.role == DualPhoneRole.MASTER && snapshot.connected) {
                 val canArm = snapshot.phase == DualPhoneControlPhase.CONNECTED &&
-                    snapshot.clockSync.ready
+                    snapshot.clockSync.captureSchedulingAllowed
                 val canStart = snapshot.phase == DualPhoneControlPhase.ARMED
                 val canStop = snapshot.phase in setOf(
                     DualPhoneControlPhase.ARMED,
@@ -215,17 +216,29 @@ fun DualPhoneControlSettingsCard(
                 ) {
                     Text("STOP")
                 }
-                if (!snapshot.clockSync.ready &&
+                if (!snapshot.clockSync.captureSchedulingAllowed &&
                     snapshot.phase == DualPhoneControlPhase.CONNECTED
                 ) {
                     Text(
-                        "ARM unlocks after clock quality reaches EXCELLENT or GOOD.",
+                        "ARM waits for GOOD/EXCELLENT or stable FAIR " +
+                            "(6+ samples, RTT ≤20 ms, uncertainty ≤8 ms).",
                         color = Color(0xFFFFA000),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else if (
+                    snapshot.clockSync.quality == DualPhoneClockSyncQuality.FAIR &&
+                    snapshot.clockSync.captureSchedulingAllowed &&
+                    snapshot.phase == DualPhoneControlPhase.CONNECTED
+                ) {
+                    Text(
+                        "ARM is allowed with stable FAIR clock; frame pairing " +
+                            "will use recorded timing metadata.",
+                        color = Color(0xFFF9A825),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 Text(
-                    "DP03 uses corrected monotonic time. Camera recording is connected in DP04.",
+                    "DP04 prepares the CameraX recorder automatically during ARM.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

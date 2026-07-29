@@ -29,6 +29,7 @@ foreach ([
     'stabilizeModel',
     'acceptedRttNs',
     'rejectedRttNs',
+    'captureSchedulingAllowed',
 ] as $token) {
     if (!str_contains($mathText, $token)) {
         throw new RuntimeException('Clock math contract missing: ' . $token);
@@ -48,6 +49,7 @@ foreach ([
     'PERIODIC_PROBES = 12',
     'DP03_CLOCK_ROUND',
     'retainedReadyQuality',
+    'current.captureSchedulingAllowed',
     'applyRemoteStatus',
 ] as $token) {
     if (!str_contains($controllerText, $token)) {
@@ -63,6 +65,7 @@ foreach ([
     'slave_elapsed_realtime_ns',
     'CLOCK_SYNC_STATUS',
     'MAX_START_LATE_NS',
+    'sync.captureSchedulingAllowed',
 ] as $token) {
     if (!str_contains($managerText, $token)) {
         throw new RuntimeException('Manager DP03 wiring missing: ' . $token);
@@ -79,7 +82,8 @@ foreach ([
     'clock sync (DP03)',
     'Clock sync:',
     'Estimated timing uncertainty:',
-    'snapshot.clockSync.ready',
+    'snapshot.clockSync.captureSchedulingAllowed',
+    'stable FAIR',
 ] as $token) {
     if (!str_contains($uiText, $token)) {
         throw new RuntimeException('DP03 operator UI missing: ' . $token);

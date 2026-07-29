@@ -31,6 +31,19 @@ data class DualPhoneClockSyncSnapshot(
     val message: String = "Clock sync not started",
 )
 
+val DualPhoneClockSyncSnapshot.captureSchedulingAllowed: Boolean
+    get() {
+        if (ready) return true
+        val medianRtt = medianRttNs ?: return false
+        val uncertainty = uncertaintyNs ?: return false
+        val drift = driftPpm ?: return false
+        return quality == DualPhoneClockSyncQuality.FAIR &&
+            acceptedSamples >= 6 &&
+            medianRtt <= 20_000_000L &&
+            uncertainty <= 8_000_000L &&
+            abs(drift) <= 200.0
+    }
+
 data class DualPhoneClockSyncSample(
     val t1MasterNs: Long,
     val t2SlaveNs: Long,

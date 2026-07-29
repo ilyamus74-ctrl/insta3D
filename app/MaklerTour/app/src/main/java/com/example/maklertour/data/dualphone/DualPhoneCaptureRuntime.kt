@@ -83,6 +83,6 @@ object DualPhoneCaptureRuntime {
 
     fun requireEndpoint(): DualPhoneCaptureEndpoint =
         endpoint ?: throw IllegalStateException(
-            "Phone recorder is unavailable; open the phone camera screen first",
+            "Phone recorder endpoint is unavailable",
         )
 }

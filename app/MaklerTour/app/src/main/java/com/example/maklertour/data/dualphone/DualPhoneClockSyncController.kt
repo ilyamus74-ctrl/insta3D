@@ -43,7 +43,9 @@ internal class DualPhoneClockSyncController(
         val current = snapshot
         val updatedAt = current.updatedAtElapsedNs ?: return null
         val ageNs = SystemClock.elapsedRealtimeNanos() - updatedAt
-        if (!current.ready || ageNs > MAX_MODEL_AGE_NS) return null
+        if (!current.captureSchedulingAllowed || ageNs > MAX_MODEL_AGE_NS) {
+            return null
+        }
         return model?.masterToSlaveNs(masterElapsedNs)
     }
 
