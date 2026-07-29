@@ -45,6 +45,58 @@ REMOTE_INPUT="$STATION_BASE/incoming/job_${JOB_ID}_${SAFE_VIDEO_NAME}"
 REMOTE_OUTPUT="$STATION_BASE/output/job_${JOB_ID}/frames"
 REMOTE_LOG="$STATION_BASE/logs/job_${JOB_ID}.nohup.log"
 REMOTE_IMU="$STATION_BASE/input/job_${JOB_ID}/scan_imu.jsonl"
+REMOTE_CAMERA_INFO="$STATION_BASE/input/job_${JOB_ID}/camera_info.json"
+REMOTE_MANIFEST="$STATION_BASE/input/job_${JOB_ID}/manifest.json"
+
+LOCAL_CAMERA_INFO=""
+LOCAL_MANIFEST=""
+if [[ -n "$EXTRACT_PARAMS_JSON" ]]; then
+  mapfile -t SOURCE_SIDECARS < <(
+    python3 - "$EXTRACT_PARAMS_JSON" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception:
+    payload = {}
+
+source = payload.get("source_video")
+if not isinstance(source, dict):
+    source = {}
+
+print(source.get("camera_info_path") or "")
+print(source.get("manifest_path") or "")
+PY
+  )
+  LOCAL_CAMERA_INFO="${SOURCE_SIDECARS[0]:-}"
+  LOCAL_MANIFEST="${SOURCE_SIDECARS[1]:-}"
+fi
+
+upload_optional_sidecar() {
+  local local_path="$1"
+  local remote_path="$2"
+  local label="$3"
+
+  if [[ -z "$local_path" || ! -f "$local_path" ]]; then
+    echo "==> ${label} sidecar is empty or file not found: ${local_path:-none}"
+    return 0
+  fi
+
+  echo "==> Upload ${label} metadata to ${STATION_HOST}:${remote_path}"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -az -e "ssh -i '$STATION_SSH_KEY' -o StrictHostKeyChecking=accept-new" \
+      "$local_path" "${STATION_USER}@${STATION_HOST}:$remote_path"
+  else
+    scp -i "$STATION_SSH_KEY" -o StrictHostKeyChecking=accept-new \
+      "$local_path" "${STATION_USER}@${STATION_HOST}:$remote_path"
+  fi
+
+  "${SSH[@]}" "test -s '$remote_path'" || {
+    echo "ERROR: ${label} upload failed or remote file is empty: $remote_path" >&2
+    exit 23
+  }
+}
 
 echo "==> Prepare station dirs"
 ####"${SSH[@]}" "mkdir -p '$STATION_BASE/incoming' '$STATION_BASE/output/job_${JOB_ID}' '$STATION_BASE/logs' '$STATION_BASE/status'"
@@ -75,15 +127,49 @@ else
   echo "==> LOCAL_IMU is empty or file not found: ${LOCAL_IMU:-none}"
 fi
 
+upload_optional_sidecar "$LOCAL_CAMERA_INFO" "$REMOTE_CAMERA_INFO" "camera_info"
+upload_optional_sidecar "$LOCAL_MANIFEST" "$REMOTE_MANIFEST" "manifest"
+
 echo "==> Start extract frames job $JOB_ID"
 printf -v Q_FPS '%q' "$EXTRACT_FPS"; printf -v Q_MAX '%q' "$EXTRACT_MAX_FRAMES"; printf -v Q_W '%q' "$EXTRACT_SCALE_WIDTH"; printf -v Q_Q '%q' "$EXTRACT_JPEG_QUALITY"
 if [[ -n "$EXTRACT_PARAMS_JSON" ]]; then
   printf -v Q_JSON '%q' "$EXTRACT_PARAMS_JSON"
-  "${SSH[@]}" "mkdir -p '$STATION_BASE/input/job_${JOB_ID}' && printf %s $Q_JSON > '$STATION_BASE/input/job_${JOB_ID}/parameters.json' && if test -f '$REMOTE_IMU'; then python3 - '$STATION_BASE/input/job_${JOB_ID}/parameters.json' '$REMOTE_IMU' <<'PY'
-import json,sys
-p=sys.argv[1]; d=json.load(open(p)); d['imu_jsonl_path']=sys.argv[2]; open(p,'w').write(json.dumps(d))
+  "${SSH[@]}" "mkdir -p '$STATION_BASE/input/job_${JOB_ID}' && printf %s $Q_JSON > '$STATION_BASE/input/job_${JOB_ID}/parameters.json' && python3 - '$STATION_BASE/input/job_${JOB_ID}/parameters.json' '$REMOTE_IMU' '$REMOTE_CAMERA_INFO' '$REMOTE_MANIFEST' <<'PY'
+import json
+import os
+import sys
+
+parameter_path, imu_path, camera_info_path, manifest_path = sys.argv[1:5]
+with open(parameter_path, encoding='utf-8') as handle:
+    payload = json.load(handle)
+
+if imu_path and os.path.isfile(imu_path):
+    payload['imu_jsonl_path'] = imu_path
+else:
+    payload.pop('imu_jsonl_path', None)
+
+source = payload.get('source_video')
+if not isinstance(source, dict):
+    source = {}
+
+for key, path in (
+    ('camera_info_path', camera_info_path),
+    ('manifest_path', manifest_path),
+):
+    if path and os.path.isfile(path):
+        source[key] = path
+    else:
+        source.pop(key, None)
+
+if source:
+    payload['source_video'] = source
+else:
+    payload.pop('source_video', None)
+
+with open(parameter_path, 'w', encoding='utf-8') as handle:
+    json.dump(payload, handle, ensure_ascii=False)
 PY
-fi && nohup '$STATION_BASE/scripts/process_extract_frames.sh' '$JOB_ID' '$REMOTE_INPUT' '$REMOTE_OUTPUT' > '$REMOTE_LOG' 2>&1 &"
+nohup '$STATION_BASE/scripts/process_extract_frames.sh' '$JOB_ID' '$REMOTE_INPUT' '$REMOTE_OUTPUT' > '$REMOTE_LOG' 2>&1 &"
 else
   "${SSH[@]}" "mkdir -p '$STATION_BASE/input/job_${JOB_ID}' && printf '{\"extract\":{\"fps\":%s,\"max_frames\":%s,\"scale_width\":%s,\"jpeg_quality\":%s}}\n' $Q_FPS $Q_MAX $Q_W $Q_Q > '$STATION_BASE/input/job_${JOB_ID}/parameters.json' && EXTRACT_FPS=$Q_FPS EXTRACT_MAX_FRAMES=$Q_MAX EXTRACT_SCALE_WIDTH=$Q_W EXTRACT_JPEG_QUALITY=$Q_Q nohup '$STATION_BASE/scripts/process_extract_frames.sh' '$JOB_ID' '$REMOTE_INPUT' '$REMOTE_OUTPUT' > '$REMOTE_LOG' 2>&1 &"
 fi
