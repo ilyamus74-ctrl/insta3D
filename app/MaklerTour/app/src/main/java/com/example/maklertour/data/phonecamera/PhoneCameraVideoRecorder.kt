@@ -766,8 +766,27 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         maxZoomRatio = max
         val clamped = requestedZoomRatio.coerceIn(min, max)
         selectedLensOption = selectedLensOption?.copy(minZoomRatio = min, maxZoomRatio = max)
-        runCatching { awaitZoomSet(camera, clamped) }
-            .onFailure { lastZoomApplyResult = "error: ${it.message}" }
+        lastZoomApplyResult = null
+        val currentRatio = before?.zoomRatio
+        if (
+            currentRatio == null ||
+            kotlin.math.abs(currentRatio - clamped) > ZOOM_RATIO_TOLERANCE
+        ) {
+            val completed = withTimeoutOrNull(ZOOM_APPLY_TIMEOUT_MS) {
+                awaitZoomSet(camera, clamped)
+                true
+            } == true
+            if (!completed) {
+                lastZoomApplyResult = "error: zoom apply timeout"
+                throw IllegalStateException(
+                    "Camera zoom apply timed out after " +
+                        "$ZOOM_APPLY_TIMEOUT_MS ms",
+                )
+            }
+            lastZoomApplyResult?.takeIf { it.startsWith("error") }?.let {
+                throw IllegalStateException(it)
+            }
+        }
         val after = camera.cameraInfo.zoomState.value
         val effective = after?.zoomRatio ?: clamped
         effectiveZoomRatio = effective
@@ -802,10 +821,24 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         bindStatus = if (success) "bound" else "failed",
     )
 
-    private suspend fun getCameraProvider(): ProcessCameraProvider = suspendCancellableCoroutine { cont ->
-        val future = ProcessCameraProvider.getInstance(context)
-        future.addListener({ cont.resume(future.get()) }, ContextCompat.getMainExecutor(context))
-    }
+    private suspend fun getCameraProvider(): ProcessCameraProvider =
+        withTimeoutOrNull(CAMERA_PROVIDER_TIMEOUT_MS) {
+            suspendCancellableCoroutine { cont ->
+                val future = ProcessCameraProvider.getInstance(context)
+                cont.invokeOnCancellation { future.cancel(true) }
+                future.addListener(
+                    {
+                        if (cont.isActive) {
+                            cont.resumeWith(runCatching { future.get() })
+                        }
+                    },
+                    ContextCompat.getMainExecutor(context),
+                )
+            }
+        } ?: throw IllegalStateException(
+            "CameraProvider initialization timed out after " +
+                "$CAMERA_PROVIDER_TIMEOUT_MS ms",
+        )
 
     private companion object {
         const val TAG = "PhoneCameraVideoRecorder"
@@ -815,5 +848,8 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         private const val CALIBRATION_ANALYSIS_MAX_PIXELS_FOR_CONVERSION = CALIBRATION_ANALYSIS_MAX_WIDTH * CALIBRATION_ANALYSIS_MAX_HEIGHT * 2
         private const val CALIBRATION_ANALYSIS_MIN_INTERVAL_NS = 1_000_000_000L / CALIBRATION_ANALYSIS_MAX_FPS
         private const val CALIBRATION_CAP_REASON = "calibration_analysis_capped_for_latency"
+        private const val CAMERA_PROVIDER_TIMEOUT_MS = 5_000L
+        private const val ZOOM_APPLY_TIMEOUT_MS = 2_000L
+        private const val ZOOM_RATIO_TOLERANCE = 0.01f
     }
 }

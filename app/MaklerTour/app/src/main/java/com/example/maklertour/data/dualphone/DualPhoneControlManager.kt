@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -31,6 +32,7 @@ enum class DualPhoneControlPhase {
     LISTENING,
     CONNECTING,
     CONNECTED,
+    ARMING,
     ARMED,
     START_SCHEDULED,
     RECORDING,
@@ -251,21 +253,30 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             slaveTransferOffer = null
             localRolePackage = null
             mutableState.value = mutableState.value.copy(
+                phase = DualPhoneControlPhase.ARMING,
+                lastCommand = DualPhoneControlType.ARM,
+                lastError = null,
+                lastMessage = "Preparing local CameraX recorder",
                 localRolePackagePath = null,
                 peerRolePackagePath = null,
                 aggregatePackagePath = null,
                 aggregateUploadState = "IDLE",
             )
             val endpoint = DualPhoneCaptureRuntime.requireEndpoint()
-            val local = endpoint.arm(
-                DualPhoneCaptureArmRequest(
-                    dualCaptureId = captureId,
-                    role = DualPhoneRole.MASTER,
-                    deviceId = settings.deviceId,
-                    peerDeviceId = settings.peerDeviceId,
-                    preferredVideoModeId =
-                        settings.preferredVideoModeId,
-                ),
+            val local = withTimeoutOrNull(ARM_PREPARE_TIMEOUT_MS) {
+                endpoint.arm(
+                    DualPhoneCaptureArmRequest(
+                        dualCaptureId = captureId,
+                        role = DualPhoneRole.MASTER,
+                        deviceId = settings.deviceId,
+                        peerDeviceId = settings.peerDeviceId,
+                        preferredVideoModeId =
+                            settings.preferredVideoModeId,
+                    ),
+                )
+            } ?: throw IllegalStateException(
+                "Local CameraX ARM preparation timed out after " +
+                    "${ARM_PREPARE_TIMEOUT_MS / 1_000L} seconds",
             )
             if (!local.ready) {
                 throw IllegalStateException(
@@ -1232,7 +1243,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     }
 
     private fun reportCommandError(command: String, message: String) {
-        mutableState.value = mutableState.value.copy(
+        val current = mutableState.value
+        mutableState.value = current.copy(
+            phase = if (current.phase == DualPhoneControlPhase.ARMING) {
+                DualPhoneControlPhase.CONNECTED
+            } else {
+                current.phase
+            },
             lastCommand = command,
             lastError = message,
             lastMessage = message,
@@ -1305,6 +1322,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         private const val HEARTBEAT_INTERVAL_MS = 2_000L
         private const val HEARTBEAT_TIMEOUT_MS = 8_000L
         private const val MAX_START_LATE_NS = 100_000_000L
+        private const val ARM_PREPARE_TIMEOUT_MS = 15_000L
 
         @Volatile
         private var instance: DualPhoneControlManager? = null
