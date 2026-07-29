@@ -47,6 +47,22 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+private fun stableUploadQueueItemId(
+    sessionId: String,
+    orderId: Long?,
+    uploadType: String,
+    bindingId: String?,
+): String {
+    val identity = listOf(
+        "maklertour-upload-v1",
+        uploadType,
+        sessionId,
+        orderId?.toString().orEmpty(),
+        bindingId.orEmpty(),
+    ).joinToString("|")
+    return UUID.nameUUIDFromBytes(identity.toByteArray(Charsets.UTF_8)).toString()
+}
+
 interface SessionRepository {
     val sessions: StateFlow<List<Session>>
     val rooms: StateFlow<List<RoomDraft>>
@@ -453,22 +469,20 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
         serverCaptureSessionId: Long?,
     ) {
         val uploadType = if (bindingId.isNullOrBlank()) "MEDIA" else "VIDEO"
-        if (_queue.value.any {
-                it.sessionId == sessionId &&
-                    it.orderId == orderId &&
-                    it.uploadType == uploadType &&
-                    it.bindingId == bindingId
-            }
-        ) {
-            Log.d(
-                "UploadQueue",
-                "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId uploadType=$uploadType bindingId=$bindingId",
-            )
-            return
-        }
-        _queue.update {
-            it + UploadItem(
-                id = UUID.randomUUID().toString(),
+        val itemId = stableUploadQueueItemId(
+            sessionId = sessionId,
+            orderId = orderId,
+            uploadType = uploadType,
+            bindingId = bindingId,
+        )
+        _queue.update { items ->
+            items.filterNot { item ->
+                item.uploadType == uploadType &&
+                    item.sessionId == sessionId &&
+                    item.orderId == orderId &&
+                    item.bindingId == bindingId
+            } + UploadItem(
+                id = itemId,
                 sessionId = sessionId,
                 sessionTitle = sessionTitle,
                 orderId = orderId,
@@ -704,22 +718,20 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
         serverCaptureSessionId: Long?,
     ) {
         val uploadType = if (bindingId.isNullOrBlank()) "MEDIA" else "VIDEO"
-        if (_queue.value.any {
-                it.sessionId == sessionId &&
-                    it.orderId == orderId &&
-                    it.uploadType == uploadType &&
-                    it.bindingId == bindingId
-            }
-        ) {
-            Log.d(
-                "UploadQueue",
-                "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId uploadType=$uploadType bindingId=$bindingId",
-            )
-            return
-        }
-        _queue.update {
-            it + UploadItem(
-                id = UUID.randomUUID().toString(),
+        val itemId = stableUploadQueueItemId(
+            sessionId = sessionId,
+            orderId = orderId,
+            uploadType = uploadType,
+            bindingId = bindingId,
+        )
+        _queue.update { items ->
+            items.filterNot { item ->
+                item.uploadType == uploadType &&
+                    item.sessionId == sessionId &&
+                    item.orderId == orderId &&
+                    item.bindingId == bindingId
+            } + UploadItem(
+                id = itemId,
                 sessionId = sessionId,
                 sessionTitle = sessionTitle,
                 orderId = orderId,
@@ -1268,24 +1280,20 @@ class RoomUploadQueueRepository(
         serverCaptureSessionId: Long?,
     ) {
         val uploadType = if (bindingId.isNullOrBlank()) "MEDIA" else "VIDEO"
-        if (queue.value.any {
-                it.sessionId == sessionId &&
-                    it.orderId == orderId &&
-                    it.uploadType == uploadType &&
-                    it.bindingId == bindingId
-            }
-        ) {
-            Log.d(
-                "UploadQueue",
-                "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId uploadType=$uploadType bindingId=$bindingId",
-            )
-            return
-        }
+        val itemId = stableUploadQueueItemId(
+            sessionId = sessionId,
+            orderId = orderId,
+            uploadType = uploadType,
+            bindingId = bindingId,
+        )
         val now = Instant.now().toEpochMilli()
         scope.launch {
+            if (uploadType == "VIDEO" && !bindingId.isNullOrBlank()) {
+                uploadItemDao.clearForVideo(bindingId)
+            }
             uploadItemDao.upsert(
                 UploadItemEntity(
-                    id = UUID.randomUUID().toString(),
+                    id = itemId,
                     syncState = SyncState.PENDING_CREATE.name,
                     createdAtEpochMs = now,
                     updatedAtEpochMs = now,
@@ -1301,6 +1309,10 @@ class RoomUploadQueueRepository(
                     retryCount = 0,
                     uploadType = uploadType,
                 )
+            )
+            Log.d(
+                "UploadQueue",
+                "enqueue stable item id=$itemId sessionId=$sessionId orderId=$orderId uploadType=$uploadType bindingId=$bindingId",
             )
         }
     }
