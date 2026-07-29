@@ -116,4 +116,9 @@ with tempfile.TemporaryDirectory() as tmp:
         assert np.linalg.norm(a-b)<1e-5,(a,b)
     scales=sorted(round(e['scale_m_per_model_unit'],6) for e in report['alignment_edges'])
     assert scales==[1.7,2.5],scales
+    for edge in report['alignment_edges']:
+        assert edge['orientation_median_error_deg'] < 0.1, edge
+        assert edge['orientation_max_error_deg'] < 0.1, edge
+        assert edge['sim3_orientation_error_deg'] < 0.1, edge
+        assert len(edge['pnp_branch_by_image']) == 5, edge
     print('OK')

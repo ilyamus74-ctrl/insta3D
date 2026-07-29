@@ -17,6 +17,15 @@ from typing import Any, Iterable
 import cv2  # type: ignore
 import numpy as np
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from apriltag_pose_branch_selection import (  # noqa: E402
+    rotation_distance_deg,
+    select_consistent_pnp_branches,
+)
+
 
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
@@ -69,6 +78,12 @@ class EdgeEstimate:
     median_residual_m: float
     max_residual_m: float
     pnp_reprojection_median_px: float
+    pnp_branch_by_image: dict[str, int]
+    pnp_candidate_count: int
+    orientation_rejected_images: list[str]
+    orientation_median_error_deg: float
+    orientation_max_error_deg: float
+    sim3_orientation_error_deg: float
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,6 +94,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--marker-size-m", type=float, default=0.160)
     parser.add_argument("--min-observations", type=int, default=3)
     parser.add_argument("--max-pnp-error-px", type=float, default=4.0)
+    parser.add_argument("--max-orientation-error-deg", type=float, default=12.0)
     parser.add_argument("--alignment-max-error-m", type=float, default=0.04)
     parser.add_argument("--min-baseline-m", type=float, default=0.05)
     parser.add_argument("--apply", action="store_true")
@@ -332,11 +348,11 @@ def undistort_fov(points: np.ndarray, camera_matrix: np.ndarray, omega: float) -
     return result
 
 
-def solve_tag_pose(
+def solve_tag_pose_candidates(
     corners: np.ndarray,
     camera: Camera,
     marker_size_m: float,
-) -> tuple[np.ndarray, np.ndarray, float]:
+) -> list[dict[str, Any]]:
     camera_matrix, distortion, mode = camera_calibration(camera)
     image_points = np.asarray(corners, dtype=np.float64).reshape(4, 2)
     solve_matrix = camera_matrix
@@ -379,8 +395,8 @@ def solve_tag_pose(
 
     rvecs = list(result[1])
     tvecs = list(result[2])
-    candidates: list[tuple[float, np.ndarray, np.ndarray]] = []
-    for rvec, tvec in zip(rvecs, tvecs):
+    candidates: list[dict[str, Any]] = []
+    for branch_index, (rvec, tvec) in enumerate(zip(rvecs, tvecs)):
         rotation, _ = cv2.Rodrigues(np.asarray(rvec, dtype=np.float64))
         translation = np.asarray(tvec, dtype=np.float64).reshape(3)
         camera_points = (rotation @ object_points.T).T + translation
@@ -396,14 +412,37 @@ def solve_tag_pose(
         reprojection = float(
             np.sqrt(np.mean(np.sum((projected.reshape(-1, 2) - image_points) ** 2, axis=1)))
         )
-        candidates.append((reprojection, rotation, translation))
+        candidates.append(
+            {
+                "branch_index": branch_index,
+                "camera_center_in_tag": -rotation.T @ translation,
+                "rotation_tag_to_camera": rotation,
+                "pnp_reprojection_px": reprojection,
+            }
+        )
 
     if not candidates:
         raise RuntimeError("AprilTag pose has no positive-depth PnP solution")
-    candidates.sort(key=lambda item: item[0])
-    reprojection, rotation_tag_to_camera, translation_tag_to_camera = candidates[0]
-    camera_center_in_tag = -rotation_tag_to_camera.T @ translation_tag_to_camera
-    return camera_center_in_tag, rotation_tag_to_camera, reprojection
+    candidates.sort(
+        key=lambda item: (
+            float(item["pnp_reprojection_px"]),
+            int(item["branch_index"]),
+        )
+    )
+    return candidates
+
+
+def solve_tag_pose(
+    corners: np.ndarray,
+    camera: Camera,
+    marker_size_m: float,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    candidate = solve_tag_pose_candidates(corners, camera, marker_size_m)[0]
+    return (
+        np.asarray(candidate["camera_center_in_tag"], dtype=np.float64),
+        np.asarray(candidate["rotation_tag_to_camera"], dtype=np.float64),
+        float(candidate["pnp_reprojection_px"]),
+    )
 
 
 def umeyama_similarity(source: np.ndarray, target: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
@@ -586,7 +625,7 @@ def detection_observations(
             if camera is None:
                 continue
             try:
-                tag_center, _, reprojection = solve_tag_pose(
+                pose_candidates = solve_tag_pose_candidates(
                     np.asarray(corners, dtype=np.float64),
                     camera,
                     marker_size_m,
@@ -601,22 +640,53 @@ def detection_observations(
                     }
                 )
                 continue
-            if reprojection > max_pnp_error_px:
+
+            valid_candidates = [
+                candidate
+                for candidate in pose_candidates
+                if float(candidate["pnp_reprojection_px"]) <= max_pnp_error_px
+            ]
+            if not valid_candidates:
+                best_reprojection = float(pose_candidates[0]["pnp_reprojection_px"])
                 rejected.append(
                     {
                         "component": component,
                         "tag_id": marker_id,
                         "image_name": image_name,
-                        "reason": f"PnP reprojection {reprojection:.3f}px exceeds {max_pnp_error_px:.3f}px",
+                        "reason": f"PnP reprojection {best_reprojection:.3f}px exceeds {max_pnp_error_px:.3f}px",
                     }
                 )
                 continue
+
+            rotation_camera_from_component = qvec_to_rotmat(image.qvec)
+            pnp_candidates = []
+            for candidate in valid_candidates:
+                rotation_tag_to_camera = np.asarray(
+                    candidate["rotation_tag_to_camera"],
+                    dtype=np.float64,
+                )
+                pnp_candidates.append(
+                    {
+                        "branch_index": int(candidate["branch_index"]),
+                        "tag_center_m": np.asarray(
+                            candidate["camera_center_in_tag"],
+                            dtype=np.float64,
+                        ),
+                        "pnp_reprojection_px": float(
+                            candidate["pnp_reprojection_px"]
+                        ),
+                        "rotation_tag_from_component": (
+                            rotation_tag_to_camera.T
+                            @ rotation_camera_from_component
+                        ),
+                    }
+                )
+
             grouped[(component, marker_id)].append(
                 {
                     "image_name": image_name,
                     "component_center": camera_center(image),
-                    "tag_center_m": tag_center,
-                    "pnp_reprojection_px": reprojection,
+                    "pnp_candidates": pnp_candidates,
                 }
             )
     return grouped, rejected
@@ -627,6 +697,7 @@ def estimate_edges(
     minimum_observations: int,
     max_error_m: float,
     min_baseline_m: float,
+    max_orientation_error_deg: float,
 ) -> tuple[list[EdgeEstimate], list[dict[str, Any]]]:
     edges: list[EdgeEstimate] = []
     failures: list[dict[str, Any]] = []
@@ -645,13 +716,39 @@ def estimate_edges(
                 }
             )
             continue
-        source = np.asarray([item["component_center"] for item in observations], dtype=np.float64)
-        target = np.asarray([item["tag_center_m"] for item in observations], dtype=np.float64)
+
+        try:
+            branch_selection = select_consistent_pnp_branches(
+                observations,
+                minimum_observations,
+                max_orientation_error_deg,
+            )
+        except Exception as exc:
+            failures.append(
+                {
+                    "component": component,
+                    "tag_id": tag_id,
+                    "status": "PNP_BRANCH_SELECTION_FAILED",
+                    "observations": len(observations),
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        selected_observations = branch_selection["selected_observations"]
+        source = np.asarray(
+            [item["component_center"] for item in selected_observations],
+            dtype=np.float64,
+        )
+        target = np.asarray(
+            [item["tag_center_m"] for item in selected_observations],
+            dtype=np.float64,
+        )
         try:
             matrix, inlier_mask, residuals = estimate_similarity_ransac(
                 source,
                 target,
-                [item["image_name"] for item in observations],
+                [item["image_name"] for item in selected_observations],
                 max_error_m,
                 min_baseline_m,
             )
@@ -662,12 +759,37 @@ def estimate_edges(
                     "tag_id": tag_id,
                     "status": "ALIGNMENT_FAILED",
                     "observations": len(observations),
+                    "orientation_inliers": len(selected_observations),
+                    "orientation_median_error_deg": branch_selection[
+                        "orientation_median_error_deg"
+                    ],
                     "error": str(exc),
                 }
             )
             continue
+
+        scale = matrix_scale(matrix)
+        rotation_tag_from_component = matrix[:3, :3] / scale
+        sim3_orientation_error_deg = rotation_distance_deg(
+            rotation_tag_from_component,
+            branch_selection["consensus_rotation_tag_from_component"],
+        )
+        if sim3_orientation_error_deg > max_orientation_error_deg:
+            failures.append(
+                {
+                    "component": component,
+                    "tag_id": tag_id,
+                    "status": "SIM3_ORIENTATION_MISMATCH",
+                    "observations": len(observations),
+                    "orientation_inliers": len(selected_observations),
+                    "sim3_orientation_error_deg": sim3_orientation_error_deg,
+                    "limit_deg": max_orientation_error_deg,
+                }
+            )
+            continue
+
         inlier_names = [
-            observations[index]["image_name"]
+            selected_observations[index]["image_name"]
             for index, keep in enumerate(inlier_mask)
             if bool(keep)
         ]
@@ -677,7 +799,7 @@ def estimate_edges(
             if bool(keep)
         ]
         pnp_errors = [
-            observations[index]["pnp_reprojection_px"]
+            selected_observations[index]["pnp_reprojection_px"]
             for index, keep in enumerate(inlier_mask)
             if bool(keep)
         ]
@@ -688,21 +810,43 @@ def estimate_edges(
                     "tag_id": tag_id,
                     "status": "INSUFFICIENT_INLIERS",
                     "observations": len(observations),
+                    "orientation_inliers": len(selected_observations),
                     "inliers": len(inlier_names),
                 }
             )
             continue
+
+        inlier_name_set = set(inlier_names)
+        branch_by_image = {
+            image_name: int(branch_index)
+            for image_name, branch_index in branch_selection[
+                "branch_by_image"
+            ].items()
+            if image_name in inlier_name_set
+        }
         edges.append(
             EdgeEstimate(
                 component=component,
                 tag_id=tag_id,
                 matrix_tag_from_component=matrix,
-                scale=matrix_scale(matrix),
+                scale=scale,
                 inlier_images=inlier_names,
                 residuals_m=[float(value) for value in inlier_residuals],
                 median_residual_m=float(np.median(inlier_residuals)),
                 max_residual_m=float(np.max(inlier_residuals)),
                 pnp_reprojection_median_px=float(np.median(pnp_errors)),
+                pnp_branch_by_image=branch_by_image,
+                pnp_candidate_count=int(branch_selection["candidate_count"]),
+                orientation_rejected_images=list(
+                    branch_selection["orientation_rejected_images"]
+                ),
+                orientation_median_error_deg=float(
+                    branch_selection["orientation_median_error_deg"]
+                ),
+                orientation_max_error_deg=float(
+                    branch_selection["orientation_max_error_deg"]
+                ),
+                sim3_orientation_error_deg=float(sim3_orientation_error_deg),
             )
         )
     return edges, failures
@@ -1046,6 +1190,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         minimum,
         float(args.alignment_max_error_m),
         float(args.min_baseline_m),
+        float(args.max_orientation_error_deg),
     )
 
     edge_payload = [
@@ -1058,6 +1203,12 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "median_alignment_error_m": edge.median_residual_m,
             "max_alignment_error_m": edge.max_residual_m,
             "median_pnp_reprojection_px": edge.pnp_reprojection_median_px,
+            "pnp_branch_by_image": edge.pnp_branch_by_image,
+            "pnp_candidate_count": edge.pnp_candidate_count,
+            "orientation_rejected_images": edge.orientation_rejected_images,
+            "orientation_median_error_deg": edge.orientation_median_error_deg,
+            "orientation_max_error_deg": edge.orientation_max_error_deg,
+            "sim3_orientation_error_deg": edge.sim3_orientation_error_deg,
             "matrix_tag_from_component": edge.matrix_tag_from_component.tolist(),
         }
         for edge in edges
@@ -1076,8 +1227,10 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "marker_size_m": float(args.marker_size_m),
         "min_observations": minimum,
         "max_pnp_error_px": float(args.max_pnp_error_px),
+        "max_orientation_error_deg": float(args.max_orientation_error_deg),
         "alignment_max_error_m": float(args.alignment_max_error_m),
         "min_baseline_m": float(args.min_baseline_m),
+        "pnp_branch_selection": "component_rotation_consensus",
     }
     report["models_before"] = len(models)
 
