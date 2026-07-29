@@ -550,14 +550,20 @@ class AppStateViewModel(
 
     private fun hasPendingUploadMedia(session: Session, scanVideos: List<ScanVideo>): Boolean {
         val hasPendingPhoto = session.points.any { point ->
-            point.serverUploadState != ServerUploadState.CONFIRMED || point.serverMediaId.isNullOrBlank()
+            point.serverUploadState in setOf(
+                ServerUploadState.NOT_QUEUED,
+                ServerUploadState.ERROR,
+            )
         }
         val hasPendingVideo = scanVideos.any { scan ->
             val file = scan.localVideoPath?.let { File(it) }
             scan.captureStatus == ScanVideoCaptureStatus.CAPTURED &&
                 !scan.localVideoPath.isNullOrBlank() &&
                 file?.exists() == true &&
-                scan.uploadState !in setOf(ScanVideoUploadState.CONFIRMED, ScanVideoUploadState.UPLOADED)
+                scan.uploadState in setOf(
+                    ScanVideoUploadState.LOCAL_ONLY,
+                    ScanVideoUploadState.UPLOAD_ERROR,
+                )
         }
         return hasPendingPhoto || hasPendingVideo
     }
@@ -597,8 +603,10 @@ class AppStateViewModel(
         }
         val pendingPhotos = if (!forceVideoUpload && onlyScanVideoId == null) {
             session.points.filter { point ->
-                point.serverUploadState != ServerUploadState.CONFIRMED ||
-                    point.serverMediaId.isNullOrBlank()
+                point.serverUploadState in setOf(
+                    ServerUploadState.NOT_QUEUED,
+                    ServerUploadState.ERROR,
+                )
             }
         } else {
             emptyList()
@@ -606,11 +614,14 @@ class AppStateViewModel(
         val pendingVideos = sessionScanVideos.filter { scan ->
             val file = scan.localVideoPath?.let(::File)
             val selected = onlyScanVideoId == null || scan.id == onlyScanVideoId
-            val uploadStateAllows = forceVideoUpload ||
-                scan.uploadState !in setOf(
-                    ScanVideoUploadState.CONFIRMED,
-                    ScanVideoUploadState.UPLOADED,
+            val uploadStateAllows = if (forceVideoUpload) {
+                selected
+            } else {
+                scan.uploadState in setOf(
+                    ScanVideoUploadState.LOCAL_ONLY,
+                    ScanVideoUploadState.UPLOAD_ERROR,
                 )
+            }
             selected &&
                 uploadStateAllows &&
                 scan.captureStatus == ScanVideoCaptureStatus.CAPTURED &&
@@ -1137,7 +1148,7 @@ class AppStateViewModel(
 
             if (item.uploadType != "VIDEO") {
                 session.points.forEach { point ->
-                if (point.serverUploadState == ServerUploadState.CONFIRMED && !point.serverMediaId.isNullOrBlank()) {
+                if (point.serverUploadState == ServerUploadState.CONFIRMED) {
                     Log.d("Upload", "skip confirmed photo pointId=${point.id}")
                     return@forEach
                 }
