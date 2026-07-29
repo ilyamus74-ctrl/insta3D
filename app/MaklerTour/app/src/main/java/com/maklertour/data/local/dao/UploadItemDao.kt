@@ -110,4 +110,7 @@ interface UploadItemDao {
 
     @Query("DELETE FROM upload_items WHERE captureSessionId = :sessionId")
     suspend fun clearForSession(sessionId: String)
+
+    @Query("DELETE FROM upload_items WHERE uploadType = 'VIDEO' AND bindingId = :scanVideoId")
+    suspend fun clearForVideo(scanVideoId: String)
 }

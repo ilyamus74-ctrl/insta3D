@@ -46,12 +46,25 @@ def norm_label(v):
     if v is None: return None
     return str(v).strip().lower().replace(' ', '_')
 
+def fov_value(v):
+    direct=num(v)
+    if direct is not None: return direct
+    if isinstance(v,dict):
+        for key in ('horizontal','diagonal','vertical','x','width'):
+            candidate=num(v.get(key))
+            if candidate is not None: return candidate
+    if isinstance(v,(list,tuple)):
+        for item in v:
+            candidate=num(item)
+            if candidate is not None: return candidate
+    return None
+
 def collect(ci, mf):
     src={'camera_info':ci,'manifest':mf}
     label=find(src,['lens_label','lensLabel','selected_lens_label','camera_lens','lens','camera_type'])
     focal=num(find(src,['focal_length_mm','focalLengthMm','focal_length','focalLengths','android.lens.info.availableFocalLengths']))
     sensor=pair(find(src,['sensor_physical_size_mm','sensorPhysicalSizeMm','physical_sensor_size','sensor_size_mm','android.sensor.info.physicalSize']))
-    fov=num(find(src,['approximate_fov_deg','approximateFovDeg','fov_deg','field_of_view_deg','horizontal_fov_deg']))
+    fov=fov_value(find(src,['approximate_fov_deg','approximateFovDeg','fov_deg','field_of_view_deg','horizontal_fov_deg']))
     resolution=pair(find(src,['resolution','video_resolution','capture_resolution','size','dimensions']))
     fps=num(find(src,['fps','frame_rate','frameRate','video_fps']))
     selected=find(src,['selected_camera_id','selectedCameraId','camera_id','cameraId','id'])

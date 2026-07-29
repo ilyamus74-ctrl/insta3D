@@ -2,6 +2,7 @@ package com.example.maklertour.auth
 
 import com.example.maklertour.network.ApiConfig
 import com.maklertour.domain.CapturePoint
+import com.maklertour.domain.ScanSource
 import com.maklertour.domain.ScanVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -36,6 +37,16 @@ class MobileUploadApi(
         val bytesTotal: Long,
     )
 
+    private data class PhoneScanMetadataFiles(
+        val cameraInfo: File,
+        val manifest: File,
+        val imu: File,
+    ) {
+        val requiredReady: Boolean
+            get() = cameraInfo.isFile && cameraInfo.length() > 0L &&
+                manifest.isFile && manifest.length() > 0L
+    }
+
     suspend fun createSession(orderId: Long, appSessionUuid: String): Long = withContext(Dispatchers.IO) {
         val token = authStorage.getToken().orEmpty()
         val request = Request.Builder()
@@ -66,15 +77,94 @@ class MobileUploadApi(
         }
     }
 
-    suspend fun uploadVideoScan(orderId: Long, captureSessionId: Long, scan: ScanVideo, onProgress: ((UploadProgress) -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
-
-        val file = scan.localVideoPath?.let { File(it) }
-        if (file == null || !file.exists()) return@withContext false
-        if (file.length() > CHUNK_UPLOAD_THRESHOLD_BYTES) {
-            uploadVideoScanChunked(orderId, captureSessionId, scan, file, onProgress)
-        } else {
-            uploadVideoScanSingle(orderId, captureSessionId, scan, file, onProgress)
+    suspend fun uploadVideoScan(
+        orderId: Long,
+        captureSessionId: Long,
+        scan: ScanVideo,
+        onProgress: ((UploadProgress) -> Unit)? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val file = scan.localVideoPath?.let(::File)
+        if (file?.isFile != true || file.length() <= 0L) {
+            Log.e(
+                "MobileUploadApi",
+                "video missing scanId=${scan.id} path=${scan.localVideoPath}",
+            )
+            return@withContext false
         }
+
+        if (scan.source == ScanSource.PHONE_CAMERA) {
+            val metadata = phoneScanMetadataFiles(file)
+            if (!metadata.requiredReady) {
+                Log.e(
+                    "MobileUploadApi",
+                    "PHONE_CAMERA upload rejected before network transfer: required metadata missing scanId=${scan.id} cameraInfo=${metadata.cameraInfo.absolutePath}:${metadata.cameraInfo.length()} manifest=${metadata.manifest.absolutePath}:${metadata.manifest.length()}",
+                )
+                return@withContext false
+            }
+        }
+
+        if (file.length() > CHUNK_UPLOAD_THRESHOLD_BYTES) {
+            uploadVideoScanChunked(
+                orderId,
+                captureSessionId,
+                scan,
+                file,
+                onProgress,
+            )
+        } else {
+            uploadVideoScanSingle(
+                orderId,
+                captureSessionId,
+                scan,
+                file,
+                onProgress,
+            )
+        }
+    }
+
+    private fun phoneScanMetadataFiles(videoFile: File): PhoneScanMetadataFiles {
+        val dir = videoFile.parentFile
+            ?: throw IllegalStateException("Video parent directory is unavailable")
+        return PhoneScanMetadataFiles(
+            cameraInfo = File(dir, "camera_info.json"),
+            manifest = File(dir, "manifest.json"),
+            imu = File(dir, "imu.jsonl"),
+        )
+    }
+
+    private fun uploadResponseAccepted(
+        responseText: String,
+        requirePhoneMetadata: Boolean,
+    ): Boolean {
+        val json = runCatching { JSONObject(responseText) }
+            .onFailure {
+                Log.e(
+                    "MobileUploadApi",
+                    "upload response is not valid JSON: $responseText",
+                    it,
+                )
+            }
+            .getOrNull() ?: return false
+        if (!json.optBoolean("ok", false)) return false
+
+        val warnings = json.optJSONArray("metadata_warnings")
+        if (warnings != null && warnings.length() > 0) {
+            Log.w("MobileUploadApi", "server metadata warnings=$warnings")
+        }
+        if (!requirePhoneMetadata) return true
+
+        val metadata = json.optJSONObject("metadata") ?: return false
+        val cameraInfoStored = !metadata.isNull("camera_info") &&
+            metadata.optString("camera_info").isNotBlank()
+        val manifestStored = !metadata.isNull("manifest") &&
+            metadata.optString("manifest").isNotBlank()
+        if (!cameraInfoStored || !manifestStored) {
+            Log.e(
+                "MobileUploadApi",
+                "PHONE_CAMERA server acknowledgement missing required metadata camera_info=$cameraInfoStored manifest=$manifestStored response=$responseText",
+            )
+        }
+        return cameraInfoStored && manifestStored
     }
 
     private fun uploadVideoScanSingle(orderId: Long, captureSessionId: Long, scan: ScanVideo, videoFile: File, onProgress: ((UploadProgress) -> Unit)?): Boolean {
@@ -118,15 +208,18 @@ class MobileUploadApi(
         return client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             Log.d("MobileUploadApi", "upload_video_scan response http=${response.code} body=$text")
-            response.isSuccessful && text.contains("\"ok\":true")
+            response.isSuccessful && uploadResponseAccepted(
+                responseText = text,
+                requirePhoneMetadata = scan.source == ScanSource.PHONE_CAMERA,
+            )
         }
     }
 
     private fun addPhoneScanMetadataPartsIfAvailable(bodyBuilder: MultipartBody.Builder, scan: ScanVideo, videoFile: File) {
-        val dir = videoFile.parentFile ?: return
-        addFilePartIfAvailable(bodyBuilder, scan, File(dir, "camera_info.json"), "camera_info", "application/json")
-        addFilePartIfAvailable(bodyBuilder, scan, File(dir, "manifest.json"), "manifest", "application/json")
-        addFilePartIfAvailable(bodyBuilder, scan, File(dir, "imu.jsonl"), "imu", "application/x-ndjson")
+        val metadata = phoneScanMetadataFiles(videoFile)
+        addFilePartIfAvailable(bodyBuilder, scan, metadata.cameraInfo, "camera_info", "application/json")
+        addFilePartIfAvailable(bodyBuilder, scan, metadata.manifest, "manifest", "application/json")
+        addFilePartIfAvailable(bodyBuilder, scan, metadata.imu, "imu", "application/x-ndjson")
     }
 
     private fun addFilePartIfAvailable(bodyBuilder: MultipartBody.Builder, scan: ScanVideo, file: File, partName: String, mediaType: String) {
@@ -193,9 +286,20 @@ class MobileUploadApi(
                     client.newCall(request).execute().use { response ->
                         val text = response.body?.string().orEmpty()
                         Log.d("UploadChunk", "upload_id=$uploadId chunk=$chunkIndex/$totalChunks attempt=${attempt + 1} http=${response.code} body=$text")
-                        val ok = runCatching { JSONObject(text).optBoolean("ok", false) }.getOrDefault(false)
-                        val complete = runCatching { JSONObject(text).optBoolean("upload_complete", false) }.getOrDefault(false)
-                        success = response.isSuccessful && ok && (if (chunkIndex == totalChunks - 1) complete else true)
+                        val responseJson = runCatching { JSONObject(text) }.getOrNull()
+                        val ok = responseJson?.optBoolean("ok", false) == true
+                        val complete = responseJson?.optBoolean("upload_complete", false) == true
+                        success = if (chunkIndex == totalChunks - 1) {
+                            response.isSuccessful &&
+                                complete &&
+                                uploadResponseAccepted(
+                                    responseText = text,
+                                    requirePhoneMetadata =
+                                        scan.source == ScanSource.PHONE_CAMERA,
+                                )
+                        } else {
+                            response.isSuccessful && ok
+                        }
                     }
                 }.onFailure { Log.e("UploadChunk", "chunk failed upload_id=$uploadId chunk=$chunkIndex attempt=${attempt + 1}", it) }
                 attempt += 1

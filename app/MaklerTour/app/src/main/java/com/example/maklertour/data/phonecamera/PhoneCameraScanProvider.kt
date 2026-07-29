@@ -97,6 +97,9 @@ class PhoneCameraScanProvider(
         val baseDir = videoRecorder.startRecording(sessionId, scanId)
         val imuFile = imuRecorder.start(sessionId, scanId, baseDir)
         val cameraInfoFile = cameraInfoCollector.writeCameraInfo(baseDir, videoRecorder.getSelectedVideoInfo(), videoRecorder.getSelectedLensOption(), videoRecorder.getRequestedZoomRatio(), videoRecorder.getEffectiveZoomRatio(), videoRecorder.getMinZoomRatio(), videoRecorder.getMaxZoomRatio(), videoRecorder.getCalibrationResolutionInfo())
+        check(cameraInfoFile.isFile && cameraInfoFile.length() > 0L) {
+            "Phone camera metadata file was not created"
+        }
         active = ActivePhoneScan(scanId, sessionId, scanName, sequenceNumber, baseDir, cameraInfoFile, imuFile, startedAt, sessionCalibration)
         return ScanVideo(
             id = scanId,
@@ -118,7 +121,7 @@ class PhoneCameraScanProvider(
         val video = videoRecorder.stopRecording()
         imuRecorder.stop()
         val finishedAt = Instant.now()
-        manifestWriter.write(
+        val manifestFile = manifestWriter.write(
             baseDir = current.baseDir,
             scanId = current.scanId,
             sessionId = current.sessionId,
@@ -137,6 +140,9 @@ class PhoneCameraScanProvider(
             minZoomRatio = videoRecorder.getMinZoomRatio(),
             maxZoomRatio = videoRecorder.getMaxZoomRatio(),
         )
+        check(manifestFile.isFile && manifestFile.length() > 0L) {
+            "Phone scan manifest file was not created"
+        }
         active = null
         return ScanVideo(
             id = current.scanId,

@@ -452,8 +452,18 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
         uploadAppSessionUuid: String?,
         serverCaptureSessionId: Long?,
     ) {
-        if (_queue.value.any { it.sessionId == sessionId && it.orderId == orderId }) {
-            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId")
+        val uploadType = if (bindingId.isNullOrBlank()) "MEDIA" else "VIDEO"
+        if (_queue.value.any {
+                it.sessionId == sessionId &&
+                    it.orderId == orderId &&
+                    it.uploadType == uploadType &&
+                    it.bindingId == bindingId
+            }
+        ) {
+            Log.d(
+                "UploadQueue",
+                "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId uploadType=$uploadType bindingId=$bindingId",
+            )
             return
         }
         _queue.update {
@@ -469,6 +479,7 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
                 serverCaptureSessionId = serverCaptureSessionId,
                 status = UploadStatus.Queued,
                 updatedAt = Instant.now(),
+                uploadType = uploadType,
             )
         }
     }
@@ -666,7 +677,13 @@ class InMemoryUploadQueueRepository : UploadQueueRepository {
     override fun clearCompletedUploadQueue() { _queue.update { it.filterNot { item -> item.status == UploadStatus.Success } } }
     override fun clearFailedUploadQueue() { _queue.update { it.filterNot { item -> item.status == UploadStatus.Error } } }
     override fun clearUploadQueueForSession(sessionId: String) { _queue.update { it.filterNot { item -> item.sessionId == sessionId } } }
-    override fun clearUploadQueueForVideo(scanVideoId: String) = Unit
+    override fun clearUploadQueueForVideo(scanVideoId: String) {
+        _queue.update { items ->
+            items.filterNot { item ->
+                item.uploadType == "VIDEO" && item.bindingId == scanVideoId
+            }
+        }
+    }
 }
 
 
@@ -686,8 +703,18 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
         uploadAppSessionUuid: String?,
         serverCaptureSessionId: Long?,
     ) {
-        if (_queue.value.any { it.sessionId == sessionId && it.orderId == orderId }) {
-            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId")
+        val uploadType = if (bindingId.isNullOrBlank()) "MEDIA" else "VIDEO"
+        if (_queue.value.any {
+                it.sessionId == sessionId &&
+                    it.orderId == orderId &&
+                    it.uploadType == uploadType &&
+                    it.bindingId == bindingId
+            }
+        ) {
+            Log.d(
+                "UploadQueue",
+                "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId uploadType=$uploadType bindingId=$bindingId",
+            )
             return
         }
         _queue.update {
@@ -703,6 +730,7 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
                 serverCaptureSessionId = serverCaptureSessionId,
                 status = UploadStatus.Queued,
                 updatedAt = Instant.now(),
+                uploadType = uploadType,
             )
         }
         persist()
@@ -918,7 +946,14 @@ class SharedPrefsUploadQueueRepository(context: Context) : UploadQueueRepository
     override fun clearCompletedUploadQueue() { _queue.update { it.filterNot { item -> item.status == UploadStatus.Success } }; persist() }
     override fun clearFailedUploadQueue() { _queue.update { it.filterNot { item -> item.status == UploadStatus.Error } }; persist() }
     override fun clearUploadQueueForSession(sessionId: String) { _queue.update { it.filterNot { item -> item.sessionId == sessionId } }; persist() }
-    override fun clearUploadQueueForVideo(scanVideoId: String) = Unit
+    override fun clearUploadQueueForVideo(scanVideoId: String) {
+        _queue.update { items ->
+            items.filterNot { item ->
+                item.uploadType == "VIDEO" && item.bindingId == scanVideoId
+            }
+        }
+        persist()
+    }
 
     private fun persist() {
         val payload = JSONArray().apply {
@@ -1232,8 +1267,18 @@ class RoomUploadQueueRepository(
         uploadAppSessionUuid: String?,
         serverCaptureSessionId: Long?,
     ) {
-        if (queue.value.any { it.sessionId == sessionId && it.orderId == orderId }) {
-            Log.d("UploadQueue", "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId")
+        val uploadType = if (bindingId.isNullOrBlank()) "MEDIA" else "VIDEO"
+        if (queue.value.any {
+                it.sessionId == sessionId &&
+                    it.orderId == orderId &&
+                    it.uploadType == uploadType &&
+                    it.bindingId == bindingId
+            }
+        ) {
+            Log.d(
+                "UploadQueue",
+                "enqueue duplicate ignored sessionId=$sessionId orderId=$orderId uploadType=$uploadType bindingId=$bindingId",
+            )
             return
         }
         val now = Instant.now().toEpochMilli()
@@ -1254,6 +1299,7 @@ class RoomUploadQueueRepository(
                     serverCaptureSessionId = serverCaptureSessionId,
                     status = UploadStatus.Queued.name,
                     retryCount = 0,
+                    uploadType = uploadType,
                 )
             )
         }
@@ -1543,7 +1589,9 @@ class RoomUploadQueueRepository(
     override fun clearCompletedUploadQueue() { scope.launch { uploadItemDao.clearCompleted() } }
     override fun clearFailedUploadQueue() { scope.launch { uploadItemDao.clearFailed() } }
     override fun clearUploadQueueForSession(sessionId: String) { scope.launch { uploadItemDao.clearForSession(sessionId) } }
-    override fun clearUploadQueueForVideo(scanVideoId: String) = Unit
+    override fun clearUploadQueueForVideo(scanVideoId: String) {
+        scope.launch { uploadItemDao.clearForVideo(scanVideoId) }
+    }
 }
 
 private fun CapturePointEntity.toDomain(): CapturePoint = CapturePoint(

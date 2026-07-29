@@ -564,67 +564,149 @@ class AppStateViewModel(
 
     fun enqueueUpload(): EnqueueUploadResult = enqueueUploadInternal(false)
 
-    private fun enqueueUploadInternal(forceVideoUpload: Boolean): EnqueueUploadResult {
-        val session = uiState.value.sessions.firstOrNull { it.id == uiState.value.selectedSessionId }
-            ?: return EnqueueUploadResult.Rejected("Сессия не выбрана.")
+    private fun enqueueUploadInternal(
+        forceVideoUpload: Boolean,
+        onlyScanVideoId: String? = null,
+    ): EnqueueUploadResult {
+        val session = uiState.value.sessions.firstOrNull {
+            it.id == uiState.value.selectedSessionId
+        } ?: return EnqueueUploadResult.Rejected("Сессия не выбрана.")
 
         val selectedOrderSnapshot = selectedOrder.value
-
         val targetOrderId = session.serverOrderId
             ?: selectedOrderSnapshot?.id
-            ?: return EnqueueUploadResult.Rejected("Сессия не привязана к заявке. Выберите заявку перед загрузкой.")
-
+            ?: return EnqueueUploadResult.Rejected(
+                "Сессия не привязана к заявке. Выберите заявку перед загрузкой.",
+            )
         val targetOrderTitle = session.orderTitle ?: selectedOrderSnapshot?.title
         val targetOrderAddress = session.orderAddress ?: selectedOrderSnapshot?.address
 
         if (
             selectedOrderSnapshot?.id == targetOrderId &&
             (
-                    selectedOrderSnapshot.status.uppercase() in setOf("READY", "COMPLETED", "CLOSED") ||
-                            selectedOrderSnapshot.operatorClosedAt != null
-                    )
+                selectedOrderSnapshot.status.uppercase() in
+                    setOf("READY", "COMPLETED", "CLOSED") ||
+                    selectedOrderSnapshot.operatorClosedAt != null
+            )
         ) {
             return EnqueueUploadResult.Rejected("Заявка закрыта для загрузки.")
         }
 
-        val sessionScanVideos = sessionRepository.scanVideos.value.filter { it.sessionId == session.id }
-        if (!forceVideoUpload && !hasPendingUploadMedia(session, sessionScanVideos)) {
-            return EnqueueUploadResult.Rejected("Нет новых файлов для загрузки. Все фото/видео уже синхронизированы.")
+        val sessionScanVideos = sessionRepository.scanVideos.value.filter {
+            it.sessionId == session.id
+        }
+        val pendingPhotos = if (!forceVideoUpload && onlyScanVideoId == null) {
+            session.points.filter { point ->
+                point.serverUploadState != ServerUploadState.CONFIRMED ||
+                    point.serverMediaId.isNullOrBlank()
+            }
+        } else {
+            emptyList()
+        }
+        val pendingVideos = sessionScanVideos.filter { scan ->
+            val file = scan.localVideoPath?.let(::File)
+            val selected = onlyScanVideoId == null || scan.id == onlyScanVideoId
+            val uploadStateAllows = forceVideoUpload ||
+                scan.uploadState !in setOf(
+                    ScanVideoUploadState.CONFIRMED,
+                    ScanVideoUploadState.UPLOADED,
+                )
+            selected &&
+                uploadStateAllows &&
+                scan.captureStatus == ScanVideoCaptureStatus.CAPTURED &&
+                file?.isFile == true &&
+                (file?.length() ?: 0L) > 0L
         }
 
-        val existing = uiState.value.uploadQueue.firstOrNull {
-            it.sessionId == session.id && it.orderId == targetOrderId
-        }
-
-        if (existing != null) {
-            Log.d(
-                "UploadQueue",
-                "enqueue existing reset for new media sessionId=${session.id} orderId=$targetOrderId"
+        if (pendingPhotos.isEmpty() && pendingVideos.isEmpty()) {
+            return EnqueueUploadResult.Rejected(
+                "Нет новых файлов для загрузки. Все фото/видео уже синхронизированы.",
             )
-            uploadQueueRepository.resetQueueItem(existing.id)
-            uploadQueueRepository.updateProgress(existing.id, 0, 0L, 0L, null, "Queued new media")
-            return EnqueueUploadResult.RequeuedNewMedia
         }
 
         val uploadAppSessionUuid = "${session.id}_${targetOrderId}"
+        var createdItems = 0
+        var resetItems = 0
+
+        if (pendingPhotos.isNotEmpty()) {
+            val existingMedia = uiState.value.uploadQueue.firstOrNull { item ->
+                item.sessionId == session.id &&
+                    item.orderId == targetOrderId &&
+                    item.uploadType == "MEDIA" &&
+                    item.bindingId == null
+            }
+            if (existingMedia != null) {
+                uploadQueueRepository.resetQueueItem(existingMedia.id)
+                uploadQueueRepository.updateProgress(
+                    existingMedia.id,
+                    0,
+                    0L,
+                    0L,
+                    null,
+                    "Queued new photos",
+                )
+                resetItems++
+            } else {
+                uploadQueueRepository.enqueue(
+                    sessionId = session.id,
+                    sessionTitle = session.name,
+                    orderId = targetOrderId,
+                    orderTitle = targetOrderTitle,
+                    orderAddress = targetOrderAddress,
+                    bindingId = null,
+                    uploadAppSessionUuid = uploadAppSessionUuid,
+                    serverCaptureSessionId = session.serverCaptureSessionId,
+                )
+                createdItems++
+            }
+        }
+
+        pendingVideos.forEach { scan ->
+            val existingVideo = uiState.value.uploadQueue.firstOrNull { item ->
+                item.sessionId == session.id &&
+                    item.orderId == targetOrderId &&
+                    item.uploadType == "VIDEO" &&
+                    item.bindingId == scan.id
+            }
+            if (existingVideo != null) {
+                uploadQueueRepository.resetQueueItem(existingVideo.id)
+                uploadQueueRepository.updateProgress(
+                    existingVideo.id,
+                    0,
+                    0L,
+                    scan.fileSizeBytes ?: 0L,
+                    scan.name,
+                    "Queued video ${scan.id}",
+                )
+                resetItems++
+            } else {
+                uploadQueueRepository.enqueue(
+                    sessionId = session.id,
+                    sessionTitle = session.name,
+                    orderId = targetOrderId,
+                    orderTitle = targetOrderTitle,
+                    orderAddress = targetOrderAddress,
+                    bindingId = scan.id,
+                    uploadAppSessionUuid = uploadAppSessionUuid,
+                    serverCaptureSessionId = session.serverCaptureSessionId,
+                )
+                createdItems++
+            }
+            sessionRepository.updateScanVideoUploadState(
+                scanVideoId = scan.id,
+                state = ScanVideoUploadState.QUEUED,
+            )
+        }
 
         Log.d(
             "UploadQueue",
-            "enqueue requested sessionId=${session.id} orderId=$targetOrderId"
+            "enqueue incremental sessionId=${session.id} orderId=$targetOrderId photos=${pendingPhotos.size} videos=${pendingVideos.map { it.id }} created=$createdItems reset=$resetItems",
         )
-
-        uploadQueueRepository.enqueue(
-            sessionId = session.id,
-            sessionTitle = session.name,
-            orderId = targetOrderId,
-            orderTitle = targetOrderTitle,
-            orderAddress = targetOrderAddress,
-            bindingId = null,
-            uploadAppSessionUuid = uploadAppSessionUuid,
-            serverCaptureSessionId = null,
-        )
-
-        return EnqueueUploadResult.Enqueued
+        return if (createdItems > 0) {
+            EnqueueUploadResult.Enqueued
+        } else {
+            EnqueueUploadResult.RequeuedNewMedia
+        }
     }
 
     fun enqueueSyncedDepthCaptureBundle(
@@ -784,9 +866,13 @@ class AppStateViewModel(
         if (scan.localVideoPath.isNullOrBlank() || file?.exists() != true) {
             return EnqueueUploadResult.Rejected("Локальный файл видео не найден. Сначала скачайте/снимите видео заново.")
         }
-        uploadQueueRepository.clearUploadQueueForSession(scan.sessionId)
+        uploadQueueRepository.clearUploadQueueForVideo(scan.id)
         sessionRepository.updateScanVideoUploadState(scan.id, ScanVideoUploadState.LOCAL_ONLY)
-        val result = enqueueUploadForSession(scan.sessionId, forceVideoUpload = true)
+        val result = enqueueUploadForSession(
+            sessionId = scan.sessionId,
+            forceVideoUpload = true,
+            onlyScanVideoId = scan.id,
+        )
         if (result !is EnqueueUploadResult.Rejected) {
             sessionRepository.updateScanVideoUploadState(scan.id, ScanVideoUploadState.QUEUED)
         }
@@ -828,9 +914,18 @@ class AppStateViewModel(
         return "Добавлено видео: $added, пропущено: $skipped" + if (errors > 0) ", ошибок: $errors" else ""
     }
 
-    private fun enqueueUploadForSession(sessionId: String, forceVideoUpload: Boolean = false): EnqueueUploadResult {
+    private fun enqueueUploadForSession(
+        sessionId: String,
+        forceVideoUpload: Boolean = false,
+        onlyScanVideoId: String? = null,
+    ): EnqueueUploadResult {
         val previousSelected = uiState.value.selectedSessionId
-        return if (previousSelected == sessionId) enqueueUploadInternal(forceVideoUpload) else {
+        return if (previousSelected == sessionId) {
+            enqueueUploadInternal(
+                forceVideoUpload = forceVideoUpload,
+                onlyScanVideoId = onlyScanVideoId,
+            )
+        } else {
             EnqueueUploadResult.Rejected("Сессия не выбрана.")
         }
     }
@@ -866,8 +961,19 @@ class AppStateViewModel(
             Log.d("Upload", "serverOrderId=${session?.serverOrderId}")
             Log.d("Upload", "serverCaptureSessionId=${session?.serverCaptureSessionId}")
             Log.d("Upload", "points count=${session?.points?.size ?: 0}")
-            val scanVideos = sessionRepository.scanVideos.value.filter { it.sessionId == item.sessionId }
-            Log.d("Upload", "scanVideos count=${scanVideos.size}")
+            val scanVideos = sessionRepository.scanVideos.value.filter {
+                it.sessionId == item.sessionId
+            }
+            val targetScanVideos = when {
+                item.uploadType == "VIDEO" && !item.bindingId.isNullOrBlank() ->
+                    scanVideos.filter { scan -> scan.id == item.bindingId }
+                item.uploadType == "VIDEO" -> emptyList()
+                else -> emptyList()
+            }
+            Log.d(
+                "Upload",
+                "scanVideos count=${scanVideos.size} uploadType=${item.uploadType} bindingId=${item.bindingId} targetScanVideos=${targetScanVideos.map { it.id }}",
+            )
             scanVideos.forEach { scan ->
                 Log.d(
                     "Upload",
@@ -900,7 +1006,9 @@ class AppStateViewModel(
             }
             Log.d("Upload", "mobileUploadApi configured=true")
 
-        val captureSessionId = item.serverCaptureSessionId ?: run {
+        val captureSessionId = item.serverCaptureSessionId
+            ?: session.serverCaptureSessionId
+            ?: run {
             Log.d("Upload", "create_session request orderId=$orderId appSessionUuid=$appSessionUuid")
             val created = uploader.createSession(orderId = orderId, appSessionUuid = appSessionUuid)
                 Log.d("Upload", "create_session response captureSessionId=$created")
@@ -947,7 +1055,17 @@ class AppStateViewModel(
                 }
                 return
             }
-            scanVideos.forEach { scan ->
+            if (item.uploadType == "VIDEO" && targetScanVideos.isEmpty()) {
+                uploadError.value = "Видео очереди не найдено: ${item.bindingId ?: "bindingId отсутствует"}"
+                uploadQueueRepository.markUploadError(
+                    uploadId,
+                    item.currentFileName,
+                    "Bound video not found",
+                )
+                return
+            }
+
+            targetScanVideos.forEach { scan ->
                 val file = scan.localVideoPath?.let { path -> File(path) }
                 val exists = file?.exists() == true
                 val size = if (exists) file?.length() ?: 0L else 0L
@@ -1017,7 +1135,8 @@ class AppStateViewModel(
 
             }
 
-            session.points.forEach { point ->
+            if (item.uploadType != "VIDEO") {
+                session.points.forEach { point ->
                 if (point.serverUploadState == ServerUploadState.CONFIRMED && !point.serverMediaId.isNullOrBlank()) {
                     Log.d("Upload", "skip confirmed photo pointId=${point.id}")
                     return@forEach
@@ -1058,6 +1177,7 @@ class AppStateViewModel(
                     )
                     allUploaded = false
                 }
+            }
             }
 
             if (allUploaded) {

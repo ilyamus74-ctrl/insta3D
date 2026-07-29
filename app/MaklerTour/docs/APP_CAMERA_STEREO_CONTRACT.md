@@ -431,3 +431,44 @@ A synced depth capture bundle contains:
 - `rig/active_rig_profile.json`
 
 Dense/processing is not run on the phone. Server/GrafikStation processing starts only after the capture bundle has been uploaded through the queue. Raw frames remain unrotated and are archived as saved; the app must not rotate or recompress JPG frames during bundle creation.
+
+## Android build and phone-video upload contract (2026-07-28)
+
+The Android module uses Kotlin `2.0.21`. Room annotation processing must use KSP:
+
+```text
+alias(libs.plugins.ksp)
+ksp("androidx.room:room-compiler:2.6.1")
+```
+
+`kotlin("kapt")`, `kapt(...)`, `kaptDebugKotlin`, and `kaptGenerateStubsDebugKotlin` are forbidden in the active build. The minimum build gate after Android source or Gradle changes is:
+
+```bash
+cd app/MaklerTour
+python3 tools/stereo_contract_audit.py
+./gradlew :app:compileDebugKotlin --no-build-cache
+```
+
+`PhoneCameraScanProvider` owns exactly one `PhoneCameraVideoRecorder` and contains at most one `companion object`.
+
+A completed standalone `PHONE_CAMERA` scan must contain non-empty files in the same scan directory:
+
+```text
+video.mp4
+camera_info.json
+manifest.json
+imu.jsonl        # optional only when no supported sensor data exists
+```
+
+For `PHONE_CAMERA`, upload must be rejected before transferring video bytes when either `camera_info.json` or `manifest.json` is missing or empty. Upload is successful only when the server response confirms stored `camera_info` and `manifest` paths.
+
+Upload queue granularity is immutable media artifact granularity:
+
+```text
+MEDIA item: session photos only, bindingId = null
+VIDEO item: exactly one ScanVideo, bindingId = app_scan_uuid
+```
+
+Adding or retrying one video must not iterate over or transfer other videos in the same session. `clearUploadQueueForVideo(scanVideoId)` removes only the queue item bound to that video. Previously `UPLOADED` or `CONFIRMED` videos must never be retransmitted by a new-video queue item.
+
+The canonical edited tree is `/home/ilyamus/Документы/Insta3D/app/MaklerTour`. When a separate Android Studio build tree is used, changed Gradle files (`build.gradle.kts`, `app/build.gradle.kts`, `gradle/libs.versions.toml`) must be copied together with source files before the build gate is run.
