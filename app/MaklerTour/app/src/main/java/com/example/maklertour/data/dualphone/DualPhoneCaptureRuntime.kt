@@ -1,11 +1,14 @@
 package com.maklertour.data.dualphone
 
+const val DUAL_PHONE_DEFAULT_POST_ROLL_MS = 1_500L
+
 data class DualPhoneCaptureArmRequest(
     val dualCaptureId: String,
     val role: DualPhoneRole,
     val deviceId: String,
     val peerDeviceId: String?,
     val preferredVideoModeId: String?,
+    val commandId: String = "legacy-arm",
 )
 
 data class DualPhoneCaptureArmResult(
@@ -18,6 +21,9 @@ data class DualPhoneCaptureArmResult(
     val width: Int? = null,
     val height: Int? = null,
     val fps: Int? = null,
+    val physicalRecordingStarted: Boolean = false,
+    val physicalStartCallElapsedRealtimeNs: Long? = null,
+    val physicalCameraXStartElapsedRealtimeNs: Long? = null,
 )
 
 data class DualPhoneCaptureStartRequest(
@@ -27,6 +33,9 @@ data class DualPhoneCaptureStartRequest(
     val clockOffsetNs: Long?,
     val clockUncertaintyNs: Long?,
     val clockDriftPpm: Double?,
+    val commandId: String = "legacy-start",
+    val commandCreatedMasterElapsedRealtimeNs: Long? = null,
+    val commandReceivedLocalElapsedRealtimeNs: Long? = null,
 )
 
 data class DualPhoneCaptureStartResult(
@@ -34,10 +43,22 @@ data class DualPhoneCaptureStartResult(
     val scheduledElapsedRealtimeNs: Long,
     val startCallElapsedRealtimeNs: Long,
     val cameraXStartElapsedRealtimeNs: Long?,
+    val commandId: String = "legacy-start",
+    val physicalStartCallElapsedRealtimeNs: Long? = null,
+    val markerAppliedElapsedRealtimeNs: Long = startCallElapsedRealtimeNs,
 ) {
     val startLatenessNs: Long
-        get() = startCallElapsedRealtimeNs - scheduledElapsedRealtimeNs
+        get() = markerAppliedElapsedRealtimeNs - scheduledElapsedRealtimeNs
 }
+
+data class DualPhoneCaptureStopRequest(
+    val dualCaptureId: String,
+    val role: DualPhoneRole,
+    val commandId: String,
+    val commandCreatedMasterElapsedRealtimeNs: Long?,
+    val commandReceivedLocalElapsedRealtimeNs: Long,
+    val postRollMs: Long = DUAL_PHONE_DEFAULT_POST_ROLL_MS,
+)
 
 data class DualPhoneCaptureStopResult(
     val captured: Boolean,
@@ -49,6 +70,10 @@ data class DualPhoneCaptureStopResult(
     val startCallElapsedRealtimeNs: Long?,
     val cameraXStartElapsedRealtimeNs: Long?,
     val finalizeElapsedRealtimeNs: Long?,
+    val captureWindowStartMarkerElapsedRealtimeNs: Long? = null,
+    val captureWindowStopMarkerElapsedRealtimeNs: Long? = null,
+    val captureEventsPath: String? = null,
+    val clockSyncHistoryPath: String? = null,
 )
 
 interface DualPhoneCaptureEndpoint {
@@ -60,7 +85,11 @@ interface DualPhoneCaptureEndpoint {
         request: DualPhoneCaptureStartRequest,
     ): DualPhoneCaptureStartResult
 
+    suspend fun markStop(request: DualPhoneCaptureStopRequest) = Unit
+
     suspend fun stop(): DualPhoneCaptureStopResult
+
+    fun recordClockSync(snapshot: DualPhoneClockSyncSnapshot) = Unit
 
     suspend fun abort(reason: String)
 }

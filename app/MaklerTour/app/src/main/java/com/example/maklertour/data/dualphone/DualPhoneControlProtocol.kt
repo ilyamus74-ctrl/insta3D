@@ -15,6 +15,9 @@ internal object DualPhoneControlProtocol {
 
     fun dualCaptureId(): String = UUID.randomUUID().toString()
 
+    fun commandId(prefix: String): String =
+        "${prefix.trim().ifBlank { "command" }}-${UUID.randomUUID()}"
+
     fun message(
         type: String,
         payload: JSONObject = JSONObject(),

@@ -521,6 +521,8 @@ internal class DualPhoneBundleCoordinator(
             "imu.jsonl",
             "camera_info.json",
             "clock_sync.json",
+            "capture_events.jsonl",
+            "clock_sync_history.jsonl",
         )
     }
 }

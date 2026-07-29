@@ -257,6 +257,7 @@ internal class DualPhoneClockSyncController(
             DualPhoneClockSyncSnapshot(
                 quality = quality,
                 ready = payload.optBoolean("ready", quality.isReady),
+                referenceMasterNs = payload.optNullableLong("reference_master_ns"),
                 offsetNs = payload.optNullableLong("offset_ns"),
                 medianRttNs = payload.optNullableLong("median_rtt_ns"),
                 p95RttNs = payload.optNullableLong("p95_rtt_ns"),
@@ -374,6 +375,7 @@ internal class DualPhoneClockSyncController(
         JSONObject()
             .put("quality", value.quality.name)
             .put("ready", value.ready)
+            .putNullable("reference_master_ns", value.referenceMasterNs)
             .putNullable("offset_ns", value.offsetNs)
             .putNullable("median_rtt_ns", value.medianRttNs)
             .putNullable("p95_rtt_ns", value.p95RttNs)

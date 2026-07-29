@@ -493,27 +493,29 @@ shared timing and calibration:
 
 ## Immediate next task
 
-Runtime-accept **DP04.2** on both real phones:
+Implement and runtime-accept **DP04.4 asynchronous capture timeline** before
+claiming synchronized stereo capture:
 
-1. record one 10–20 second `1920x1080@60` dual capture;
-2. confirm that both role directories contain `video.mp4`, `frames.jsonl`,
-   `encoder_pts.jsonl`, `imu.jsonl`, `camera_info.json`, `clock_sync.json` and
-   `dual_capture_manifest.json`;
-3. confirm non-zero Camera2 capture-result and encoded-sample counts;
-4. run `dual_phone_capture_sync_validator.py` against the two role directories;
-5. record the selected timestamp source, matched ratio, median/P95/max delta and
-   count mismatch between capture results and encoded samples;
-6. perform the LED or fast-screen DP05 validation before claiming exact encoded
-   frame synchronization;
-7. start DP06 dual-phone ChArUco calibration only after the timing artifacts are
-   accepted.
+1. ARM starts independent physical pre-roll MP4, frame telemetry and IMU on both
+   phones;
+2. START/STOP are durable logical capture-window markers, not encoder start/stop
+   synchronization primitives;
+3. late START delivery is accepted and its intended/received/applied timestamps are
+   recorded;
+4. each role stores `capture_events.jsonl` and `clock_sync_history.jsonl` alongside
+   the DP04.2 artifacts;
+5. STOP adds bounded post-roll and each role finalizes independently;
+6. the server builds a piecewise common timeline, pairs frames by corrected sensor
+   time and rejects pairs outside the measured timing envelope;
+7. only accepted stereo depth and optimized poses may enter the metric room mesh;
+8. then perform DP05 visual timing validation and DP06 two-phone ChArUco calibration.
 
-DP04.2 uses a read-only Camera2 session capture-result callback attached through
-Camera2Interop rather than adding a second `ImageAnalysis` output stream. This
-avoids increasing the CameraX stream combination during FHD60 recording. MP4
-sample PTS are extracted after finalize with Android `MediaExtractor`. The two
-sources remain explicitly separate until DP05 proves or rejects deterministic
-mapping.
+The detailed contract is in
+`APP-DUAL-PHONE-DP04-4-ASYNC-TIMELINE.md`.
+
+DP04.2 still uses a read-only Camera2 session capture-result callback attached
+through Camera2Interop rather than adding a second `ImageAnalysis` output stream.
+MP4 sample PTS remain a separate timeline until DP05 establishes a bounded mapping.
 
 The existing phone + USB UVC runtime remains supported and provides reusable
 calibration and processing components, but it remains a different calibrated

@@ -80,6 +80,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         scope = scope,
         onSnapshot = { clockSync ->
             mutableState.value = mutableState.value.copy(clockSync = clockSync)
+            DualPhoneCaptureRuntime.current()?.recordClockSync(clockSync)
         },
         onStatusForSlave = { payload ->
             runCatching {
@@ -249,6 +250,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             }
             val settings = settingsStore.load()
             val captureId = currentCaptureId()
+            val commandId = DualPhoneControlProtocol.commandId("arm")
             slaveTransferOffer?.serverJob?.cancel()
             slaveTransferOffer = null
             localRolePackage = null
@@ -256,7 +258,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 phase = DualPhoneControlPhase.ARMING,
                 lastCommand = DualPhoneControlType.ARM,
                 lastError = null,
-                lastMessage = "Preparing local CameraX recorder",
+                lastMessage = "Starting local pre-roll recording",
                 localRolePackagePath = null,
                 peerRolePackagePath = null,
                 aggregatePackagePath = null,
@@ -272,6 +274,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         peerDeviceId = settings.peerDeviceId,
                         preferredVideoModeId =
                             settings.preferredVideoModeId,
+                        commandId = commandId,
                     ),
                 )
             } ?: throw IllegalStateException(
@@ -289,6 +292,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     DualPhoneControlType.ARM,
                     JSONObject()
                         .put("dual_capture_id", captureId)
+                        .put("command_id", commandId)
                         .put(
                             "preferred_video_mode_id",
                             settings.preferredVideoModeId
@@ -309,7 +313,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 lastError = null,
                 localVideoPath = local.outputPath,
                 lastMessage =
-                    "Local recorder armed; waiting for Slave ARM_ACK",
+                    "Local pre-roll recording active; waiting for Slave ARM_ACK",
             )
         }
     }
@@ -320,52 +324,72 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             allowedPhases = setOf(DualPhoneControlPhase.ARMED),
         ) {
             val safeDelay = delayMs.coerceIn(1_000L, 30_000L)
-            val startAt = SystemClock.elapsedRealtimeNanos() +
-                safeDelay * 1_000_000L
+            val commandCreatedMasterNs = SystemClock.elapsedRealtimeNanos()
+            val startAt = commandCreatedMasterNs + safeDelay * 1_000_000L
+            val commandId = DualPhoneControlProtocol.commandId("start")
             val slaveStartAt =
                 clockSyncController.masterToSlaveNs(startAt)
                     ?: throw IllegalStateException(
                         "Clock sync model is unavailable or stale",
                     )
             val sync = clockSyncController.currentSnapshot()
-            send(
-                DualPhoneControlType.START_AT,
-                JSONObject()
-                    .put("dual_capture_id", currentCaptureId())
-                    .put("master_elapsed_realtime_ns", startAt)
-                    .put("slave_elapsed_realtime_ns", slaveStartAt)
-                    .put(
-                        "clock_offset_ns",
-                        sync.offsetNs ?: JSONObject.NULL,
-                    )
-                    .put(
-                        "clock_uncertainty_ns",
-                        sync.uncertaintyNs ?: JSONObject.NULL,
-                    )
-                    .put(
-                        "clock_drift_ppm",
-                        sync.driftPpm ?: JSONObject.NULL,
-                    )
-                    .put("delay_ms", safeDelay),
+            val localStartRequest = DualPhoneCaptureStartRequest(
+                dualCaptureId = currentCaptureId(),
+                role = DualPhoneRole.MASTER,
+                scheduledElapsedRealtimeNs = startAt,
+                clockOffsetNs = sync.offsetNs,
+                clockUncertaintyNs = sync.uncertaintyNs,
+                clockDriftPpm = sync.driftPpm,
+                commandId = commandId,
+                commandCreatedMasterElapsedRealtimeNs =
+                    commandCreatedMasterNs,
+                commandReceivedLocalElapsedRealtimeNs =
+                    commandCreatedMasterNs,
             )
             mutableState.value = mutableState.value.copy(
                 phase = DualPhoneControlPhase.START_SCHEDULED,
                 lastCommand = DualPhoneControlType.START_AT,
                 lastError = null,
                 lastMessage =
-                    "START_AT sent using ${sync.quality.name} clock model",
+                    "Logical START marker scheduled using ${sync.quality.name} clock model",
             )
             scheduleLocalCaptureStart(
-                request = DualPhoneCaptureStartRequest(
-                    dualCaptureId = currentCaptureId(),
-                    role = DualPhoneRole.MASTER,
-                    scheduledElapsedRealtimeNs = startAt,
-                    clockOffsetNs = sync.offsetNs,
-                    clockUncertaintyNs = sync.uncertaintyNs,
-                    clockDriftPpm = sync.driftPpm,
-                ),
+                request = localStartRequest,
                 notifyPeer = false,
             )
+            val deliveryError = runCatching {
+                send(
+                    DualPhoneControlType.START_AT,
+                    JSONObject()
+                        .put("dual_capture_id", currentCaptureId())
+                        .put("command_id", commandId)
+                        .put("command_created_master_ns", commandCreatedMasterNs)
+                        .put("master_elapsed_realtime_ns", startAt)
+                        .put("slave_elapsed_realtime_ns", slaveStartAt)
+                        .put("marker_semantics", "LOGICAL_CAPTURE_WINDOW_START")
+                        .put(
+                            "clock_offset_ns",
+                            sync.offsetNs ?: JSONObject.NULL,
+                        )
+                        .put(
+                            "clock_uncertainty_ns",
+                            sync.uncertaintyNs ?: JSONObject.NULL,
+                        )
+                        .put(
+                            "clock_drift_ppm",
+                            sync.driftPpm ?: JSONObject.NULL,
+                        )
+                        .put("delay_ms", safeDelay),
+                )
+            }.exceptionOrNull()
+            if (deliveryError != null) {
+                mutableState.value = mutableState.value.copy(
+                    lastError = "Slave START marker delivery failed: " +
+                        (deliveryError.message ?: deliveryError.javaClass.simpleName),
+                    lastMessage =
+                        "Local START marker remains scheduled; Slave delivery failed",
+                )
+            }
         }
     }
 
@@ -378,34 +402,60 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 DualPhoneControlPhase.RECORDING,
             ),
         ) {
-            send(
-                DualPhoneControlType.STOP,
-                JSONObject()
-                    .put("dual_capture_id", currentCaptureId())
-                    .put(
-                        "requested_at_master_ns",
-                        SystemClock.elapsedRealtimeNanos(),
-                    ),
+            val captureId = currentCaptureId()
+            val commandId = DualPhoneControlProtocol.commandId("stop")
+            val stopMarkerMasterNs = SystemClock.elapsedRealtimeNanos()
+            val localStopRequest = DualPhoneCaptureStopRequest(
+                dualCaptureId = captureId,
+                role = DualPhoneRole.MASTER,
+                commandId = commandId,
+                commandCreatedMasterElapsedRealtimeNs = stopMarkerMasterNs,
+                commandReceivedLocalElapsedRealtimeNs = stopMarkerMasterNs,
+                postRollMs = DUAL_PHONE_DEFAULT_POST_ROLL_MS,
             )
+            DualPhoneCaptureRuntime.requireEndpoint().markStop(localStopRequest)
             scheduledStartJob?.cancel()
             scheduledStartJob = null
+            mutableState.value = mutableState.value.copy(
+                lastCommand = DualPhoneControlType.STOP,
+                lastError = null,
+                aggregateUploadState = "LOCAL_POST_ROLL_AND_FINALIZE",
+                lastMessage =
+                    "STOP marker written; finalizing Master independently after post-roll",
+            )
+            val deliveryError = runCatching {
+                send(
+                    DualPhoneControlType.STOP,
+                    JSONObject()
+                        .put("dual_capture_id", captureId)
+                        .put("command_id", commandId)
+                        .put("command_created_master_ns", stopMarkerMasterNs)
+                        .put("marker_semantics", "LOGICAL_CAPTURE_WINDOW_STOP")
+                        .put("post_roll_ms", DUAL_PHONE_DEFAULT_POST_ROLL_MS)
+                        .put("requested_at_master_ns", stopMarkerMasterNs),
+                )
+            }.exceptionOrNull()
             val localResult = stopLocalCapture()
             val rolePackage = bundleCoordinator.packageRole(
                 stopResult = localResult,
-                dualCaptureId = currentCaptureId(),
+                dualCaptureId = captureId,
                 role = DualPhoneRole.MASTER,
             )
             localRolePackage = rolePackage
             localArmResult = null
             mutableState.value = mutableState.value.copy(
+                phase = DualPhoneControlPhase.CONNECTED,
                 lastCommand = DualPhoneControlType.STOP,
-                lastError = null,
+                lastError = deliveryError?.let {
+                    "Slave STOP marker delivery failed: " +
+                        (it.message ?: it.javaClass.simpleName)
+                },
                 localVideoPath = localResult.videoPath,
                 localManifestPath = localResult.manifestPath,
                 localRolePackagePath = rolePackage.file.absolutePath,
                 aggregateUploadState = "WAITING_FOR_SLAVE_PACKAGE",
                 lastMessage =
-                    "Master role package ready; waiting for Slave STOP_ACK",
+                    "Master finalized independently; waiting for Slave package",
             )
         }
     }
@@ -537,6 +587,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                                     payload.optNullableString(
                                         "preferred_video_mode_id",
                                     ) ?: settings.preferredVideoModeId,
+                                commandId = payload.optString(
+                                    "command_id",
+                                    "legacy-arm",
+                                ),
                             ),
                         )
                     } catch (error: Throwable) {
@@ -555,7 +609,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         localVideoPath = result.outputPath,
                         lastError = result.reason,
                         lastMessage = if (result.ready) {
-                            "Slave recorder armed"
+                            "Slave pre-roll recording active"
                         } else {
                             "Slave ARM rejected: ${result.reason}"
                         },
@@ -604,7 +658,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                                 "output_path",
                             ),
                             lastMessage =
-                                "Both phone recorders are armed",
+                                "Both pre-roll recordings are active",
                         )
                     }
                 }
@@ -626,7 +680,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         lastCommand = DualPhoneControlType.START_AT,
                         lastError = if (accepted) null else rejectionReason,
                         lastMessage = if (accepted) {
-                            "Slave scheduled real recording START_AT"
+                            "Slave accepted logical START marker"
                         } else {
                             "Slave rejected START_AT: $rejectionReason"
                         },
@@ -648,7 +702,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             lastMessage = if (keepStopMessage) {
                                 current.lastMessage
                             } else {
-                                "Slave CameraX recording started"
+                                "Slave logical START marker applied"
                             },
                         )
                     }
@@ -656,13 +710,34 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 DualPhoneControlType.STOP -> if (localRole == DualPhoneRole.SLAVE) {
                     scheduledStartJob?.cancel()
                     scheduledStartJob = null
+                    val receivedAtNs = SystemClock.elapsedRealtimeNanos()
+                    val captureId = payload.getString("dual_capture_id")
+                    val commandId = payload.optString(
+                        "command_id",
+                        "legacy-stop",
+                    )
+                    val stopRequest = DualPhoneCaptureStopRequest(
+                        dualCaptureId = captureId,
+                        role = DualPhoneRole.SLAVE,
+                        commandId = commandId,
+                        commandCreatedMasterElapsedRealtimeNs =
+                            payload.optNullableLong(
+                                "command_created_master_ns",
+                            ),
+                        commandReceivedLocalElapsedRealtimeNs = receivedAtNs,
+                        postRollMs = payload.optLong(
+                            "post_roll_ms",
+                            DUAL_PHONE_DEFAULT_POST_ROLL_MS,
+                        ),
+                    )
+                    DualPhoneCaptureRuntime.requireEndpoint().markStop(stopRequest)
                     mutableState.value = mutableState.value.copy(
-                        lastMessage = "STOP received; finalizing local MP4",
+                        lastMessage =
+                            "STOP marker received; finalizing independently after post-roll",
                     )
                     scope.launch {
                         try {
                             val result = stopLocalCapture()
-                            val captureId = payload.getString("dual_capture_id")
                             val rolePackage = bundleCoordinator.packageRole(
                                 stopResult = result,
                                 dualCaptureId = captureId,
@@ -700,17 +775,30 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                                         "Slave package ready for automatic Master transfer",
                                 )
                         } catch (error: Throwable) {
+                            val failure = error.message
+                                ?: error.javaClass.simpleName
                             DualPhoneCaptureRuntime.current()?.abort(
-                                "STOP failed: ${error.message}",
+                                "STOP failed: $failure",
                             )
-                            sendError("LOCAL_STOP_FAILED")
+                            runCatching {
+                                send(
+                                    DualPhoneControlType.STOP_ACK,
+                                    JSONObject()
+                                        .put("dual_capture_id", captureId)
+                                        .put("role", DualPhoneRole.SLAVE.name)
+                                        .put("captured", false)
+                                        .put("finalize_error", failure),
+                                )
+                            }
                             mutableState.value =
                                 mutableState.value.copy(
                                     phase =
-                                        DualPhoneControlPhase.ERROR,
-                                    lastError = error.message,
+                                        DualPhoneControlPhase.CONNECTED,
+                                    aggregateUploadState =
+                                        "LOCAL_FINALIZE_FAILED",
+                                    lastError = failure,
                                     lastMessage =
-                                        "Slave MP4 finalize failed",
+                                        "Slave finalize failed independently",
                                 )
                         }
                     }
@@ -718,21 +806,35 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 DualPhoneControlType.STOP_ACK -> if (localRole == DualPhoneRole.MASTER) {
                     scheduledStartJob?.cancel()
                     scheduledStartJob = null
+                    val captured = payload.optBoolean("captured", false)
+                    val finalizeError = payload.optString(
+                        "finalize_error",
+                        "Slave capture was not finalized",
+                    )
                     mutableState.value = mutableState.value.copy(
                         phase = DualPhoneControlPhase.CONNECTED,
                         lastCommand = DualPhoneControlType.STOP,
-                        lastError = null,
+                        lastError = if (captured) null else finalizeError,
                         peerVideoPath = payload.optNullableString(
                             "video_path",
                         ),
                         peerManifestPath = payload.optNullableString(
                             "manifest_path",
                         ),
-                        aggregateUploadState = "SLAVE_PACKAGE_OFFER_RECEIVED",
-                        lastMessage =
-                            "Both recordings finalized; fetching Slave package",
+                        aggregateUploadState = if (captured) {
+                            "SLAVE_PACKAGE_OFFER_RECEIVED"
+                        } else {
+                            "SLAVE_FINALIZE_FAILED"
+                        },
+                        lastMessage = if (captured) {
+                            "Both recordings finalized; fetching Slave package"
+                        } else {
+                            "Master finalized; Slave finalize failed independently"
+                        },
                     )
-                    handleMasterRolePackageOffer(payload)
+                    if (captured) {
+                        handleMasterRolePackageOffer(payload)
+                    }
                 }
                 DualPhoneControlType.PACKAGE_RECEIVED -> if (
                     localRole == DualPhoneRole.SLAVE

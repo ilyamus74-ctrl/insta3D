@@ -29,6 +29,7 @@ data class DualPhoneClockSyncSnapshot(
     val totalSamples: Int = 0,
     val updatedAtElapsedNs: Long? = null,
     val message: String = "Clock sync not started",
+    val referenceMasterNs: Long? = null,
 )
 
 val DualPhoneClockSyncSnapshot.captureSchedulingAllowed: Boolean
@@ -102,6 +103,7 @@ data class DualPhoneClockSyncModel(
     ): DualPhoneClockSyncSnapshot = DualPhoneClockSyncSnapshot(
         quality = quality,
         ready = quality.isReady,
+        referenceMasterNs = referenceMasterNs,
         offsetNs = offsetAtReferenceNs,
         medianRttNs = medianRttNs,
         p95RttNs = p95RttNs,

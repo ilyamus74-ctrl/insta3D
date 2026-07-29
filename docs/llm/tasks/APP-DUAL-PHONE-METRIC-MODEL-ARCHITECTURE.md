@@ -153,6 +153,10 @@ cam0_camera_info.json
 cam1_camera_info.json
 imu0.jsonl
 imu1.jsonl
+capture_events_cam0.jsonl
+capture_events_cam1.jsonl
+clock_sync_history_cam0.jsonl
+clock_sync_history_cam1.jsonl
 clock_sync.json
 dual_phone_stereo_manifest.json
 dual_phone_stereo_extrinsics.json
@@ -185,9 +189,10 @@ room_dimensions.json
 
 ```text
 DP04.2 per-frame sidecars / IMU / bundle
+→ DP04.4 asynchronous pre-roll / logical markers / clock history
 → DP05 synchronization validation
 → DP06 dual-phone intrinsics and stereo calibration
-→ DP07 upload and aggregate processing registration
+→ DP07 independent role upload and server-side aggregate registration
 → MM01 paired-frame dataset
 → MM02 metric depth and trajectory baseline
 → MM03 submaps and global optimization

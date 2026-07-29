@@ -210,7 +210,7 @@ fun DualPhoneControlSettingsCard(
                         modifier = Modifier.weight(1f),
                         enabled = canStart,
                     ) {
-                        Text("START +3s")
+                        Text("MARK START +3s")
                     }
                 }
                 Button(
@@ -242,7 +242,9 @@ fun DualPhoneControlSettingsCard(
                     )
                 }
                 Text(
-                    "DP04 prepares the CameraX recorder automatically during ARM.",
+                    "DP04.4 starts physical pre-roll during ARM. START/STOP are " +
+                        "logical timeline markers; server pairing uses frame, IMU " +
+                        "and clock-history timestamps.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(

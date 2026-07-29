@@ -9,7 +9,9 @@ import com.maklertour.data.dualphone.DualPhoneCaptureEndpoint
 import com.maklertour.data.dualphone.DualPhoneCaptureRuntime
 import com.maklertour.data.dualphone.DualPhoneCaptureStartRequest
 import com.maklertour.data.dualphone.DualPhoneCaptureStartResult
+import com.maklertour.data.dualphone.DualPhoneCaptureStopRequest
 import com.maklertour.data.dualphone.DualPhoneCaptureStopResult
+import com.maklertour.data.dualphone.DualPhoneClockSyncSnapshot
 import com.maklertour.domain.CameraDeleteResult
 import com.maklertour.domain.CameraProvider
 import com.maklertour.domain.CameraStatus
@@ -24,6 +26,7 @@ import com.maklertour.domain.ScanVideoUploadState
 import java.io.File
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -179,7 +182,7 @@ class PhoneCameraScanProvider(
             if (
                 existing.request.dualCaptureId == request.dualCaptureId &&
                 existing.request.role == request.role &&
-                existing.started == null
+                existing.request.commandId == request.commandId
             ) {
                 return existing.armResult
             }
@@ -246,6 +249,8 @@ class PhoneCameraScanProvider(
         val imuFile = File(baseDir, "imu.jsonl")
         val cameraInfoFile = File(baseDir, "camera_info.json")
         val clockSyncFile = File(baseDir, "clock_sync.json")
+        val eventsFile = File(baseDir, "capture_events.jsonl")
+        val clockSyncHistoryFile = File(baseDir, "clock_sync_history.jsonl")
         listOf(
             videoFile,
             manifestFile,
@@ -254,6 +259,8 @@ class PhoneCameraScanProvider(
             imuFile,
             cameraInfoFile,
             clockSyncFile,
+            eventsFile,
+            clockSyncHistoryFile,
         ).forEach { it.delete() }
         cameraInfoCollector.writeCameraInfo(
             baseDir = baseDir,
@@ -267,6 +274,76 @@ class PhoneCameraScanProvider(
                 videoRecorder.getCalibrationResolutionInfo(),
         )
 
+        val armedAtNs = android.os.SystemClock.elapsedRealtimeNanos()
+        val timeline = DualPhoneCaptureTimeline()
+        timeline.open(
+            baseDir = baseDir,
+            dualCaptureId = request.dualCaptureId,
+            role = request.role.name,
+            deviceId = request.deviceId,
+            armedAtElapsedNs = armedAtNs,
+        )
+        clockSyncFile.writeText(
+            JSONObject()
+                .put("schema_version", 2)
+                .put("timeline_mode", "ASYNC_PRE_ROLL_POST_ROLL")
+                .put("dual_capture_id", request.dualCaptureId)
+                .put("role", request.role.name)
+                .put("armed_at_elapsed_ns", armedAtNs)
+                .put("clock_domain", "CLOCK_BOOTTIME")
+                .put("capture_window_start_written", false)
+                .toString(2) + "\n",
+            Charsets.UTF_8,
+        )
+        timeline.event(
+            name = "ARM_RECEIVED",
+            localElapsedNs = armedAtNs,
+            commandId = request.commandId,
+        )
+        imuRecorder.start(
+            sessionId = request.dualCaptureId,
+            scanId = request.role.name.lowercase(),
+            baseDir = baseDir,
+            videoStartTNs = armedAtNs,
+        )
+        val physicalStarted = try {
+            videoRecorder.startRecordingToFileWithTelemetry(
+                outputFile = videoFile,
+                telemetryContext = PhoneVideoTelemetryContext(
+                    dualCaptureId = request.dualCaptureId,
+                    role = request.role.name,
+                    scheduledElapsedRealtimeNs = armedAtNs,
+                    clockOffsetNs = null,
+                    clockUncertaintyNs = null,
+                    clockDriftPpm = null,
+                ),
+            )
+        } catch (error: Throwable) {
+            imuRecorder.stop()
+            timeline.event(
+                name = "ARM_RECORDING_START_FAILED",
+                localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
+                commandId = request.commandId,
+                details = JSONObject().put(
+                    "error",
+                    error.message ?: error.javaClass.simpleName,
+                ),
+            )
+            timeline.close()
+            throw error
+        }
+        timeline.event(
+            name = "PHYSICAL_RECORDING_STARTED",
+            localElapsedNs = physicalStarted.startCallElapsedNs,
+            commandId = request.commandId,
+            details = JSONObject()
+                .put("video_path", physicalStarted.path)
+                .putNullable(
+                    "camerax_start_elapsed_ns",
+                    physicalStarted.cameraXStartElapsedNs,
+                ),
+        )
+
         val armResult = DualPhoneCaptureArmResult(
             ready = true,
             outputPath = videoFile.absolutePath,
@@ -276,6 +353,11 @@ class PhoneCameraScanProvider(
             width = readiness.width,
             height = readiness.height,
             fps = readiness.fps,
+            physicalRecordingStarted = true,
+            physicalStartCallElapsedRealtimeNs =
+                physicalStarted.startCallElapsedNs,
+            physicalCameraXStartElapsedRealtimeNs =
+                physicalStarted.cameraXStartElapsedNs,
         )
         dualCapture = ActiveDualPhoneCapture(
             request = request,
@@ -288,8 +370,12 @@ class PhoneCameraScanProvider(
             imuFile = imuFile,
             cameraInfoFile = cameraInfoFile,
             clockSyncFile = clockSyncFile,
-            armedAtElapsedNs =
-                android.os.SystemClock.elapsedRealtimeNanos(),
+            eventsFile = eventsFile,
+            clockSyncHistoryFile = clockSyncHistoryFile,
+            timeline = timeline,
+            armedAtElapsedNs = armedAtNs,
+            physicalStarted = physicalStarted,
+            imuStarted = true,
         )
         return armResult
     }
@@ -309,18 +395,30 @@ class PhoneCameraScanProvider(
         require(current.request.role == request.role) {
             "Dual-phone role changed after ARM"
         }
-        check(current.started == null) {
-            "Dual-phone recording has already started"
+        current.started?.let { existing ->
+            if (current.startRequest?.commandId == request.commandId) {
+                return existing
+            }
+            throw IllegalStateException(
+                "Capture window START marker was already written",
+            )
         }
 
+        val markerAppliedNs = android.os.SystemClock.elapsedRealtimeNanos()
         current.clockSyncFile.writeText(
             JSONObject()
-                .put("schema_version", 1)
+                .put("schema_version", 2)
+                .put("timeline_mode", "ASYNC_PRE_ROLL_POST_ROLL")
                 .put("dual_capture_id", request.dualCaptureId)
                 .put("role", request.role.name)
+                .put("command_id", request.commandId)
                 .put(
-                    "scheduled_start_elapsed_ns",
+                    "capture_window_start_target_elapsed_ns",
                     request.scheduledElapsedRealtimeNs,
+                )
+                .put(
+                    "capture_window_start_applied_elapsed_ns",
+                    markerAppliedNs,
                 )
                 .putNullable("clock_offset_ns", request.clockOffsetNs)
                 .putNullable(
@@ -329,63 +427,99 @@ class PhoneCameraScanProvider(
                 )
                 .putNullable("clock_drift_ppm", request.clockDriftPpm)
                 .put("clock_domain", "CLOCK_BOOTTIME")
-                .put(
-                    "written_at_elapsed_ns",
-                    android.os.SystemClock.elapsedRealtimeNanos(),
-                )
                 .toString(2) + "\n",
             Charsets.UTF_8,
         )
-        imuRecorder.start(
-            sessionId = request.dualCaptureId,
-            scanId = request.role.name.lowercase(),
-            baseDir = current.baseDir,
-            videoStartTNs = request.scheduledElapsedRealtimeNs,
+        current.timeline.event(
+            name = "CAPTURE_WINDOW_START",
+            localElapsedNs = markerAppliedNs,
+            commandId = request.commandId,
+            commandCreatedMasterNs =
+                request.commandCreatedMasterElapsedRealtimeNs,
+            scheduledLocalNs = request.scheduledElapsedRealtimeNs,
+            details = JSONObject()
+                .putNullable(
+                    "command_received_local_ns",
+                    request.commandReceivedLocalElapsedRealtimeNs,
+                )
+                .put("marker_delta_ns", markerAppliedNs - request.scheduledElapsedRealtimeNs),
         )
-        val started = try {
-            videoRecorder.startRecordingToFileWithTelemetry(
-                outputFile = current.videoFile,
-                telemetryContext = PhoneVideoTelemetryContext(
-                    dualCaptureId = request.dualCaptureId,
-                    role = request.role.name,
-                    scheduledElapsedRealtimeNs =
-                        request.scheduledElapsedRealtimeNs,
-                    clockOffsetNs = request.clockOffsetNs,
-                    clockUncertaintyNs = request.clockUncertaintyNs,
-                    clockDriftPpm = request.clockDriftPpm,
-                ),
-            )
-        } catch (error: Throwable) {
-            imuRecorder.stop()
-            throw error
-        }
         val result = DualPhoneCaptureStartResult(
-            videoPath = started.path,
+            videoPath = current.physicalStarted.path,
             scheduledElapsedRealtimeNs =
                 request.scheduledElapsedRealtimeNs,
-            startCallElapsedRealtimeNs = started.startCallElapsedNs,
+            startCallElapsedRealtimeNs = markerAppliedNs,
             cameraXStartElapsedRealtimeNs =
-                started.cameraXStartElapsedNs,
+                current.physicalStarted.cameraXStartElapsedNs,
+            commandId = request.commandId,
+            physicalStartCallElapsedRealtimeNs =
+                current.physicalStarted.startCallElapsedNs,
+            markerAppliedElapsedRealtimeNs = markerAppliedNs,
         )
         dualCapture = current.copy(
             startRequest = request,
             started = result,
-            imuStarted = true,
         )
         return result
     }
 
-    override suspend fun stop(): DualPhoneCaptureStopResult {
+    override suspend fun markStop(
+        request: DualPhoneCaptureStopRequest,
+    ) {
         val current = dualCapture
             ?: throw IllegalStateException(
                 "Dual-phone recorder is not armed",
             )
+        require(current.request.dualCaptureId == request.dualCaptureId) {
+            "dual_capture_id does not match active capture"
+        }
+        require(current.request.role == request.role) {
+            "Dual-phone role changed before STOP"
+        }
+        current.stopRequest?.let { existing ->
+            if (existing.commandId == request.commandId) return
+            throw IllegalStateException(
+                "Capture window STOP marker was already written",
+            )
+        }
+        current.timeline.event(
+            name = "CAPTURE_WINDOW_STOP",
+            localElapsedNs = request.commandReceivedLocalElapsedRealtimeNs,
+            commandId = request.commandId,
+            commandCreatedMasterNs =
+                request.commandCreatedMasterElapsedRealtimeNs,
+            details = JSONObject().put("post_roll_ms", request.postRollMs),
+        )
+        dualCapture = current.copy(stopRequest = request)
+    }
+
+    override suspend fun stop(): DualPhoneCaptureStopResult {
+        val initial = dualCapture
+            ?: throw IllegalStateException(
+                "Dual-phone recorder is not armed",
+            )
+        val request = initial.stopRequest ?: DualPhoneCaptureStopRequest(
+            dualCaptureId = initial.request.dualCaptureId,
+            role = initial.request.role,
+            commandId = "local-stop-${System.currentTimeMillis()}",
+            commandCreatedMasterElapsedRealtimeNs = null,
+            commandReceivedLocalElapsedRealtimeNs =
+                android.os.SystemClock.elapsedRealtimeNanos(),
+        ).also { markStop(it) }
+        val current = dualCapture ?: initial
+        val stopMarkerNs = request.commandReceivedLocalElapsedRealtimeNs
+        val postRollMs = request.postRollMs.coerceIn(0L, 10_000L)
+        if (postRollMs > 0L) {
+            delay(postRollMs)
+        }
+        current.timeline.event(
+            name = "PHYSICAL_RECORDING_FINALIZE_REQUESTED",
+            localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
+            commandId = request.commandId,
+        )
 
         val recordingResult = try {
-            if (
-                current.started != null &&
-                videoRecorder.isRecording()
-            ) {
+            if (videoRecorder.isRecording()) {
                 videoRecorder.stopRecording()
             } else {
                 null
@@ -408,9 +542,20 @@ class PhoneCameraScanProvider(
         val frameSummary = recordingResult?.frameTelemetrySummary
         val finishedAtElapsedNs =
             android.os.SystemClock.elapsedRealtimeNanos()
+        current.timeline.event(
+            name = "PHYSICAL_RECORDING_FINALIZED",
+            localElapsedNs = finishedAtElapsedNs,
+            commandId = request.commandId,
+            details = JSONObject()
+                .put("captured", recordingResult != null)
+                .put("file_size_bytes", recordingResult?.fileSizeBytes ?: 0L),
+        )
+        val timelinePaths = current.timeline.paths()
+        current.timeline.close()
         val manifest = JSONObject()
-            .put("schema_version", 2)
+            .put("schema_version", 3)
             .put("capture_type", "dual_phone_stereo_video_member")
+            .put("timeline_mode", "ASYNC_PRE_ROLL_POST_ROLL")
             .put("dual_capture_id", current.request.dualCaptureId)
             .put("role", current.request.role.name)
             .put("device_id", current.request.deviceId)
@@ -422,12 +567,52 @@ class PhoneCameraScanProvider(
                 "preferred_video_mode_id",
                 current.request.preferredVideoModeId,
             )
+            .put("arm_command_id", current.request.commandId)
             .put("armed_at_elapsed_ns", current.armedAtElapsedNs)
+            .put("physical_recording_started_during_arm", true)
+            .put(
+                "physical_start_call_elapsed_ns",
+                recordingResult?.startCallElapsedNs
+                    ?: current.physicalStarted.startCallElapsedNs,
+            )
+            .putNullable(
+                "physical_camerax_start_elapsed_ns",
+                recordingResult?.cameraXStartElapsedNs
+                    ?: current.physicalStarted.cameraXStartElapsedNs,
+            )
+            .putNullable(
+                "capture_window_start_command_id",
+                current.startRequest?.commandId,
+            )
+            .putNullable(
+                "capture_window_start_target_elapsed_ns",
+                current.startRequest?.scheduledElapsedRealtimeNs,
+            )
+            .putNullable(
+                "capture_window_start_applied_elapsed_ns",
+                current.started?.markerAppliedElapsedRealtimeNs,
+            )
+            // DP04.2 compatibility aliases for the existing local validator.
             .putNullable(
                 "scheduled_start_elapsed_ns",
-                current.startRequest
-                    ?.scheduledElapsedRealtimeNs,
+                current.startRequest?.scheduledElapsedRealtimeNs,
             )
+            .put(
+                "start_call_elapsed_ns",
+                recordingResult?.startCallElapsedNs
+                    ?: current.physicalStarted.startCallElapsedNs,
+            )
+            .putNullable(
+                "camerax_start_elapsed_ns",
+                recordingResult?.cameraXStartElapsedNs
+                    ?: current.physicalStarted.cameraXStartElapsedNs,
+            )
+            .put("capture_window_stop_command_id", request.commandId)
+            .put(
+                "capture_window_stop_received_elapsed_ns",
+                stopMarkerNs,
+            )
+            .put("post_roll_ms", postRollMs)
             .putNullable(
                 "clock_offset_ns",
                 current.startRequest?.clockOffsetNs,
@@ -441,16 +626,6 @@ class PhoneCameraScanProvider(
                 current.startRequest?.clockDriftPpm,
             )
             .putNullable(
-                "start_call_elapsed_ns",
-                recordingResult?.startCallElapsedNs
-                    ?: current.started
-                        ?.startCallElapsedRealtimeNs,
-            )
-            .putNullable(
-                "camerax_start_elapsed_ns",
-                recordingResult?.cameraXStartElapsedNs,
-            )
-            .putNullable(
                 "finalize_elapsed_ns",
                 recordingResult?.finalizeElapsedNs,
             )
@@ -462,6 +637,11 @@ class PhoneCameraScanProvider(
             .put("fps_requested", current.armResult.fps)
             .put("camera_info_path", current.cameraInfoFile.absolutePath)
             .put("clock_sync_path", current.clockSyncFile.absolutePath)
+            .put("capture_events_path", current.eventsFile.absolutePath)
+            .put(
+                "clock_sync_history_path",
+                current.clockSyncHistoryFile.absolutePath,
+            )
             .putNullable(
                 "imu_path",
                 current.imuFile.takeIf { it.isFile }?.absolutePath,
@@ -534,23 +714,36 @@ class PhoneCameraScanProvider(
             fileSizeBytes =
                 recordingResult?.fileSizeBytes ?: 0L,
             scheduledElapsedRealtimeNs =
-                current.startRequest
-                    ?.scheduledElapsedRealtimeNs,
+                current.startRequest?.scheduledElapsedRealtimeNs,
             startCallElapsedRealtimeNs =
                 recordingResult?.startCallElapsedNs
-                    ?: current.started
-                        ?.startCallElapsedRealtimeNs,
+                    ?: current.physicalStarted.startCallElapsedNs,
             cameraXStartElapsedRealtimeNs =
-                recordingResult?.cameraXStartElapsedNs,
+                recordingResult?.cameraXStartElapsedNs
+                    ?: current.physicalStarted.cameraXStartElapsedNs,
             finalizeElapsedRealtimeNs =
                 recordingResult?.finalizeElapsedNs,
+            captureWindowStartMarkerElapsedRealtimeNs =
+                current.started?.markerAppliedElapsedRealtimeNs,
+            captureWindowStopMarkerElapsedRealtimeNs = stopMarkerNs,
+            captureEventsPath = timelinePaths.first,
+            clockSyncHistoryPath = timelinePaths.second,
         )
         dualCapture = null
         return result
     }
 
+    override fun recordClockSync(snapshot: DualPhoneClockSyncSnapshot) {
+        dualCapture?.timeline?.clock(snapshot)
+    }
+
     override suspend fun abort(reason: String) {
         val current = dualCapture ?: return
+        current.timeline.event(
+            name = "CAPTURE_ABORTED",
+            localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
+            details = JSONObject().put("reason", reason),
+        )
         if (videoRecorder.isRecording()) {
             try {
                 videoRecorder.stopRecording()
@@ -559,10 +752,12 @@ class PhoneCameraScanProvider(
             }
         }
         imuRecorder.stop()
+        current.timeline.close()
         runCatching {
             current.manifestFile.writeText(
                 JSONObject()
-                    .put("schema_version", 1)
+                    .put("schema_version", 3)
+                    .put("timeline_mode", "ASYNC_PRE_ROLL_POST_ROLL")
                     .put(
                         "dual_capture_id",
                         current.request.dualCaptureId,
@@ -571,6 +766,11 @@ class PhoneCameraScanProvider(
                     .put("captured", false)
                     .put("aborted", true)
                     .put("reason", reason)
+                    .put("capture_events_path", current.eventsFile.absolutePath)
+                    .put(
+                        "clock_sync_history_path",
+                        current.clockSyncHistoryFile.absolutePath,
+                    )
                     .toString(2) + "\n",
                 Charsets.UTF_8,
             )
@@ -607,9 +807,14 @@ class PhoneCameraScanProvider(
         val imuFile: File,
         val cameraInfoFile: File,
         val clockSyncFile: File,
+        val eventsFile: File,
+        val clockSyncHistoryFile: File,
+        val timeline: DualPhoneCaptureTimeline,
         val armedAtElapsedNs: Long,
+        val physicalStarted: PhoneVideoRecordingStart,
         val startRequest: DualPhoneCaptureStartRequest? = null,
         val started: DualPhoneCaptureStartResult? = null,
+        val stopRequest: DualPhoneCaptureStopRequest? = null,
         val imuStarted: Boolean = false,
     )
 
