@@ -399,7 +399,7 @@ class PhoneCameraScanProvider(
                 .putNullable(
                     "camerax_start_elapsed_ns",
                     physicalStarted.cameraXStartElapsedNs,
-                ),
+                )
                 .put("valid_encoded_data_observed", physicalStarted.validEncodedDataObserved)
                 .put("pre_roll_bytes_at_ready", physicalStarted.recordedBytesAtReady)
                 .put("pre_roll_duration_ns_at_ready", physicalStarted.recordedDurationNsAtReady)
