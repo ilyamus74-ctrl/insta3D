@@ -94,6 +94,7 @@ data class CalibrationFrame(
     val timestampNs: Long,
     val sequence: Long,
     val rotationDegreesApplied: Int = 0,
+    val imageProxyRotationDegrees: Int = 0,
     val rawWidth: Int? = null,
     val rawHeight: Int? = null,
     val savedWidth: Int = bitmap.width,

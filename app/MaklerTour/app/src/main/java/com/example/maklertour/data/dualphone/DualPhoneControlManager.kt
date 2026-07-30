@@ -67,9 +67,20 @@ data class DualPhoneControlSnapshot(
     val aggregateUploadState: String = "IDLE",
     val calibrationActive: Boolean = false,
     val calibrationRunId: String? = null,
-    val calibrationInstruction: String = "Place the ChArUco board in the centre",
+    val calibrationInstruction: String =
+        DualPhoneCalibrationPosePlan.first.instruction,
     val calibrationAcceptedPoseCount: Int = 0,
     val calibrationTargetPoseCount: Int = 24,
+    val calibrationTargetPoseIndex: Int = 0,
+    val calibrationTargetPoseId: String = DualPhoneCalibrationPosePlan.first.id,
+    val calibrationAcceptanceSerial: Long = 0L,
+    val calibrationLastAcceptedPoseIndex: Int? = null,
+    val calibrationLastAcceptedPoseId: String? = null,
+    val calibrationLastAcceptedLocalFrameSequence: Long? = null,
+    val calibrationLastAcceptedPeerFrameSequence: Long? = null,
+    val calibrationLocalObservation: DualPhoneCalibrationObservation? = null,
+    val calibrationPeerObservation: DualPhoneCalibrationObservation? = null,
+    val calibrationCollectionComplete: Boolean = false,
     val clockSync: DualPhoneClockSyncSnapshot = DualPhoneClockSyncSnapshot(),
 )
 
@@ -113,6 +124,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     private var pendingSlaveTransferOffer: DualPhoneTransferOffer? = null
     private var aggregateTransferJob: Job? = null
     private var aggregateTransferCaptureId: String? = null
+    private val calibrationObservationLock = Any()
+    private var localCalibrationObservation: DualPhoneCalibrationObservation? = null
+    private var peerCalibrationObservation: DualPhoneCalibrationObservation? = null
+    private var localCalibrationReceivedAtMs: Long = 0L
+    private var peerCalibrationReceivedAtMs: Long = 0L
 
     fun startMaster() {
         val settings = settingsStore.load()
@@ -272,13 +288,25 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
 
         val runId = DualPhoneControlProtocol.calibrationRunId()
-        val instruction = "Place the ChArUco board in the centre"
+        val target = DualPhoneCalibrationPosePlan.first
+        val instruction = target.instruction
+        resetCalibrationGateLocked()
         mutableState.value = current.copy(
             calibrationActive = true,
             calibrationRunId = runId,
             calibrationInstruction = instruction,
             calibrationAcceptedPoseCount = 0,
             calibrationTargetPoseCount = CALIBRATION_TARGET_POSE_COUNT,
+            calibrationTargetPoseIndex = target.index,
+            calibrationTargetPoseId = target.id,
+            calibrationAcceptanceSerial = 0L,
+            calibrationLastAcceptedPoseIndex = null,
+            calibrationLastAcceptedPoseId = null,
+            calibrationLastAcceptedLocalFrameSequence = null,
+            calibrationLastAcceptedPeerFrameSequence = null,
+            calibrationLocalObservation = null,
+            calibrationPeerObservation = null,
+            calibrationCollectionComplete = false,
             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
             lastError = null,
             lastMessage = "Opening fullscreen calibration on both phones",
@@ -293,6 +321,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         .put("rig_mount_revision", settings.rigMountRevision)
                         .put("operator_lens_baseline_mm", baselineMm)
                         .put("instruction", instruction)
+                        .put("target_pose_index", target.index)
+                        .put("target_pose_id", target.id)
                         .put("target_pose_count", CALIBRATION_TARGET_POSE_COUNT),
                 )
             } catch (error: Throwable) {
@@ -331,6 +361,239 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 },
                 error = deliveryError?.message,
             )
+        }
+    }
+
+    fun reportCalibrationObservation(
+        observation: DualPhoneCalibrationObservation,
+    ) {
+        scope.launch {
+            val role = settingsStore.load().role
+            val statePayload = synchronized(calibrationObservationLock) {
+                val current = mutableState.value
+                if (
+                    !current.calibrationActive ||
+                    observation.calibrationRunId != current.calibrationRunId ||
+                    observation.poseId != current.calibrationTargetPoseId ||
+                    current.calibrationCollectionComplete
+                ) {
+                    return@synchronized null
+                }
+                localCalibrationObservation = observation
+                localCalibrationReceivedAtMs = SystemClock.elapsedRealtime()
+                mutableState.value = current.copy(
+                    calibrationLocalObservation = observation,
+                )
+                if (role == DualPhoneRole.MASTER) {
+                    evaluateCalibrationGateLocked()
+                } else {
+                    null
+                }
+            }
+
+            if (role == DualPhoneRole.SLAVE) {
+                runCatching {
+                    send(
+                        DualPhoneControlType.CALIBRATION_OBSERVATION,
+                        observation.toJson(),
+                    )
+                }
+            } else if (role == DualPhoneRole.MASTER && statePayload != null) {
+                runCatching {
+                    send(
+                        DualPhoneControlType.CALIBRATION_STATE,
+                        statePayload,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun handleCalibrationObservation(payload: JSONObject) {
+        if (settingsStore.load().role != DualPhoneRole.MASTER) return
+        val observation = DualPhoneCalibrationObservation.fromJson(payload) ?: return
+        val statePayload = synchronized(calibrationObservationLock) {
+            val current = mutableState.value
+            if (
+                !current.calibrationActive ||
+                observation.calibrationRunId != current.calibrationRunId ||
+                observation.poseId != current.calibrationTargetPoseId ||
+                current.calibrationCollectionComplete
+            ) {
+                return@synchronized null
+            }
+            peerCalibrationObservation = observation
+            peerCalibrationReceivedAtMs = SystemClock.elapsedRealtime()
+            mutableState.value = current.copy(
+                calibrationPeerObservation = observation,
+            )
+            evaluateCalibrationGateLocked()
+        }
+        if (statePayload != null) {
+            send(
+                DualPhoneControlType.CALIBRATION_STATE,
+                statePayload,
+            )
+        }
+    }
+
+    private fun applyCalibrationState(payload: JSONObject) {
+        val runId = payload.optString("calibration_run_id")
+        synchronized(calibrationObservationLock) {
+            val current = mutableState.value
+            if (!current.calibrationActive || runId != current.calibrationRunId) return
+            val acceptedCount = payload.optInt(
+                "accepted_pose_count",
+                current.calibrationAcceptedPoseCount,
+            ).coerceIn(0, current.calibrationTargetPoseCount)
+            val targetIndex = payload.optInt(
+                "target_pose_index",
+                current.calibrationTargetPoseIndex,
+            ).coerceIn(0, DualPhoneCalibrationPosePlan.targets.lastIndex)
+            val target = DualPhoneCalibrationPosePlan.at(targetIndex)
+            val localRole = settingsStore.load().role
+            val masterSequence = payload.optNullableLong("master_frame_sequence")
+            val slaveSequence = payload.optNullableLong("slave_frame_sequence")
+            localCalibrationObservation = null
+            peerCalibrationObservation = null
+            localCalibrationReceivedAtMs = 0L
+            peerCalibrationReceivedAtMs = 0L
+            mutableState.value = current.copy(
+                calibrationInstruction = payload.optString(
+                    "instruction",
+                    target.instruction,
+                ),
+                calibrationAcceptedPoseCount = acceptedCount,
+                calibrationTargetPoseIndex = targetIndex,
+                calibrationTargetPoseId = payload.optString(
+                    "target_pose_id",
+                    target.id,
+                ),
+                calibrationAcceptanceSerial = payload.optLong(
+                    "acceptance_serial",
+                    current.calibrationAcceptanceSerial,
+                ),
+                calibrationLastAcceptedPoseIndex =
+                    payload.optNullableInt("accepted_pose_index"),
+                calibrationLastAcceptedPoseId =
+                    payload.optNullableString("accepted_pose_id"),
+                calibrationLastAcceptedLocalFrameSequence =
+                    if (localRole == DualPhoneRole.SLAVE) {
+                        slaveSequence
+                    } else {
+                        masterSequence
+                    },
+                calibrationLastAcceptedPeerFrameSequence =
+                    if (localRole == DualPhoneRole.SLAVE) {
+                        masterSequence
+                    } else {
+                        slaveSequence
+                    },
+                calibrationLocalObservation = null,
+                calibrationPeerObservation = null,
+                calibrationCollectionComplete = payload.optBoolean(
+                    "collection_complete",
+                    false,
+                ),
+                lastMessage = if (payload.optBoolean("collection_complete", false)) {
+                    "CAL01B pose collection completed on both phones"
+                } else {
+                    "Accepted pose $acceptedCount/${current.calibrationTargetPoseCount}"
+                },
+            )
+        }
+    }
+
+    private fun evaluateCalibrationGateLocked(): JSONObject? {
+        val current = mutableState.value
+        val local = localCalibrationObservation ?: return null
+        val peer = peerCalibrationObservation ?: return null
+        if (
+            !local.qualityReady ||
+            !peer.qualityReady ||
+            local.poseId != current.calibrationTargetPoseId ||
+            peer.poseId != current.calibrationTargetPoseId ||
+            local.calibrationRunId != current.calibrationRunId ||
+            peer.calibrationRunId != current.calibrationRunId
+        ) {
+            return null
+        }
+
+        val nowMs = SystemClock.elapsedRealtime()
+        if (
+            nowMs - localCalibrationReceivedAtMs > CALIBRATION_OBSERVATION_MAX_AGE_MS ||
+            nowMs - peerCalibrationReceivedAtMs > CALIBRATION_OBSERVATION_MAX_AGE_MS ||
+            kotlin.math.abs(
+                localCalibrationReceivedAtMs - peerCalibrationReceivedAtMs,
+            ) > CALIBRATION_OBSERVATION_PAIR_WINDOW_MS
+        ) {
+            return null
+        }
+
+        val acceptedPoseIndex = current.calibrationTargetPoseIndex
+        val acceptedPoseId = current.calibrationTargetPoseId
+        val acceptedCount = (current.calibrationAcceptedPoseCount + 1)
+            .coerceAtMost(current.calibrationTargetPoseCount)
+        val complete = acceptedCount >= current.calibrationTargetPoseCount
+        val nextTargetIndex = if (complete) {
+            acceptedPoseIndex
+        } else {
+            (acceptedPoseIndex + 1).coerceAtMost(
+                DualPhoneCalibrationPosePlan.targets.lastIndex,
+            )
+        }
+        val nextTarget = DualPhoneCalibrationPosePlan.at(nextTargetIndex)
+        val nextInstruction = if (complete) {
+            "CAL01B complete: accepted raw intrinsics samples on both phones"
+        } else {
+            nextTarget.instruction
+        }
+        val acceptanceSerial = current.calibrationAcceptanceSerial + 1L
+        val payload = JSONObject()
+            .put("calibration_run_id", current.calibrationRunId)
+            .put("accepted_pose_count", acceptedCount)
+            .put("accepted_pose_index", acceptedPoseIndex)
+            .put("accepted_pose_id", acceptedPoseId)
+            .put("target_pose_index", nextTargetIndex)
+            .put("target_pose_id", nextTarget.id)
+            .put("instruction", nextInstruction)
+            .put("acceptance_serial", acceptanceSerial)
+            .put("master_frame_sequence", local.frameSequence)
+            .put("slave_frame_sequence", peer.frameSequence)
+            .put("collection_complete", complete)
+
+        localCalibrationObservation = null
+        peerCalibrationObservation = null
+        localCalibrationReceivedAtMs = 0L
+        peerCalibrationReceivedAtMs = 0L
+        mutableState.value = current.copy(
+            calibrationInstruction = nextInstruction,
+            calibrationAcceptedPoseCount = acceptedCount,
+            calibrationTargetPoseIndex = nextTargetIndex,
+            calibrationTargetPoseId = nextTarget.id,
+            calibrationAcceptanceSerial = acceptanceSerial,
+            calibrationLastAcceptedPoseIndex = acceptedPoseIndex,
+            calibrationLastAcceptedPoseId = acceptedPoseId,
+            calibrationLastAcceptedLocalFrameSequence = local.frameSequence,
+            calibrationLastAcceptedPeerFrameSequence = peer.frameSequence,
+            calibrationLocalObservation = null,
+            calibrationPeerObservation = null,
+            calibrationCollectionComplete = complete,
+            lastMessage = if (complete) {
+                "CAL01B pose collection completed on both phones"
+            } else {
+                "Accepted pose $acceptedCount/${current.calibrationTargetPoseCount}"
+            },
+        )
+        return payload
+    }
+
+    private fun resetCalibrationGateLocked() {
+        synchronized(calibrationObservationLock) {
+            localCalibrationObservation = null
+            peerCalibrationObservation = null
+            localCalibrationReceivedAtMs = 0L
+            peerCalibrationReceivedAtMs = 0L
         }
     }
 
@@ -755,18 +1018,37 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     val reason = if (accepted) null else
                         "Slave is not ready for calibration"
                     if (accepted) {
+                        val targetIndex = payload.optInt(
+                            "target_pose_index",
+                            0,
+                        ).coerceIn(0, DualPhoneCalibrationPosePlan.targets.lastIndex)
+                        val target = DualPhoneCalibrationPosePlan.at(targetIndex)
+                        resetCalibrationGateLocked()
                         mutableState.value = mutableState.value.copy(
                             calibrationActive = true,
                             calibrationRunId = runId,
                             calibrationInstruction = payload.optString(
                                 "instruction",
-                                "Place the ChArUco board in the centre",
+                                target.instruction,
                             ),
                             calibrationAcceptedPoseCount = 0,
                             calibrationTargetPoseCount = payload.optInt(
                                 "target_pose_count",
                                 CALIBRATION_TARGET_POSE_COUNT,
                             ).coerceAtLeast(1),
+                            calibrationTargetPoseIndex = targetIndex,
+                            calibrationTargetPoseId = payload.optString(
+                                "target_pose_id",
+                                target.id,
+                            ),
+                            calibrationAcceptanceSerial = 0L,
+                            calibrationLastAcceptedPoseIndex = null,
+                            calibrationLastAcceptedPoseId = null,
+                            calibrationLastAcceptedLocalFrameSequence = null,
+                            calibrationLastAcceptedPeerFrameSequence = null,
+                            calibrationLocalObservation = null,
+                            calibrationPeerObservation = null,
+                            calibrationCollectionComplete = false,
                             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
                             lastError = null,
                             lastMessage = "Fullscreen calibration opened by Master",
@@ -801,6 +1083,16 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             ),
                         )
                     }
+                }
+                DualPhoneControlType.CALIBRATION_OBSERVATION -> if (
+                    localRole == DualPhoneRole.MASTER
+                ) {
+                    handleCalibrationObservation(payload)
+                }
+                DualPhoneControlType.CALIBRATION_STATE -> if (
+                    localRole == DualPhoneRole.SLAVE
+                ) {
+                    applyCalibrationState(payload)
                 }
                 DualPhoneControlType.EXIT_CALIBRATION_REQUEST -> if (
                     localRole == DualPhoneRole.MASTER
@@ -1586,12 +1878,23 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         message: String,
         error: String?,
     ) {
+        resetCalibrationGateLocked()
         mutableState.value = mutableState.value.copy(
             calibrationActive = false,
             calibrationRunId = null,
-            calibrationInstruction = "Place the ChArUco board in the centre",
+            calibrationInstruction = DualPhoneCalibrationPosePlan.first.instruction,
             calibrationAcceptedPoseCount = 0,
             calibrationTargetPoseCount = CALIBRATION_TARGET_POSE_COUNT,
+            calibrationTargetPoseIndex = 0,
+            calibrationTargetPoseId = DualPhoneCalibrationPosePlan.first.id,
+            calibrationAcceptanceSerial = 0L,
+            calibrationLastAcceptedPoseIndex = null,
+            calibrationLastAcceptedPoseId = null,
+            calibrationLastAcceptedLocalFrameSequence = null,
+            calibrationLastAcceptedPeerFrameSequence = null,
+            calibrationLocalObservation = null,
+            calibrationPeerObservation = null,
+            calibrationCollectionComplete = false,
             lastCommand = DualPhoneControlType.EXIT_CALIBRATION,
             lastError = error,
             lastMessage = message,
@@ -1837,6 +2140,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         private const val MAX_START_LATE_NS = 100_000_000L
         private const val ARM_PREPARE_TIMEOUT_MS = 60_000L
         private const val CALIBRATION_TARGET_POSE_COUNT = 24
+        private const val CALIBRATION_OBSERVATION_MAX_AGE_MS = 1_500L
+        private const val CALIBRATION_OBSERVATION_PAIR_WINDOW_MS = 1_200L
 
         @Volatile
         private var instance: DualPhoneControlManager? = null

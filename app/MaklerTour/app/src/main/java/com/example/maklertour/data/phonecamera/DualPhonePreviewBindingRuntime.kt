@@ -20,6 +20,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 object DualPhonePreviewBindingRuntime {
     private val bindMutex = Mutex()
+    @Volatile
     private var recorder: PhoneCameraVideoRecorder? = null
     private var recorderOwner: LifecycleOwner? = null
 
@@ -106,6 +107,13 @@ object DualPhonePreviewBindingRuntime {
             bindMutex.unlock()
         }
     }
+
+    fun latestCalibrationFrame(): CalibrationFrame? =
+        recorder?.getLatestCalibrationFrame()
+
+    fun calibrationFrame(sequence: Long): CalibrationFrame? =
+        recorder?.getRecentCalibrationFrames()
+            ?.firstOrNull { it.sequence == sequence }
 
     private const val PREVIEW_ATTACH_TIMEOUT_MS = 5_000L
 }

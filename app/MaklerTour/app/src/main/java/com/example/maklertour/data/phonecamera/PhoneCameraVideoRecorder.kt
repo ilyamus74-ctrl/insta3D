@@ -527,7 +527,20 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             }
             synchronized(latestFrameLock) {
                 latestCalibrationSequence += 1L
-                val frame = CalibrationFrame(bitmap, timestampNs, latestCalibrationSequence, rotationDegreesApplied = rotationDegrees, rawWidth = imageProxy.width, rawHeight = imageProxy.height, savedWidth = bitmap.width, savedHeight = bitmap.height, displayRotationAtCapture = currentTargetRotation, appOrientationAtCapture = if (bitmap.width >= bitmap.height) "landscape" else "portrait")
+                val frame = CalibrationFrame(
+                    bitmap = bitmap,
+                    timestampNs = timestampNs,
+                    sequence = latestCalibrationSequence,
+                    rotationDegreesApplied = rotationDegrees,
+                    imageProxyRotationDegrees = imageProxyRotationDegrees,
+                    rawWidth = imageProxy.width,
+                    rawHeight = imageProxy.height,
+                    savedWidth = bitmap.width,
+                    savedHeight = bitmap.height,
+                    displayRotationAtCapture = currentTargetRotation,
+                    appOrientationAtCapture =
+                        if (bitmap.width >= bitmap.height) "landscape" else "portrait",
+                )
                 latestCalibrationFrame = frame
                 recentCalibrationFrames.add(frame)
                 if (loggedCalibrationAnalysisFrames <= 10L || loggedCalibrationAnalysisFrames % 30L == 0L) Log.d(TAG, "calibration frame ring-buffer saved size cam0=${frame.savedWidth}x${frame.savedHeight} rotationApplied=${frame.rotationDegreesApplied}")
