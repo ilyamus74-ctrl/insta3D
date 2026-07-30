@@ -1449,7 +1449,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         private const val HEARTBEAT_INTERVAL_MS = 2_000L
         private const val HEARTBEAT_TIMEOUT_MS = 8_000L
         private const val MAX_START_LATE_NS = 100_000_000L
-        private const val ARM_PREPARE_TIMEOUT_MS = 30_000L
+        private const val ARM_PREPARE_TIMEOUT_MS = 60_000L
 
         @Volatile
         private var instance: DualPhoneControlManager? = null

@@ -192,8 +192,46 @@ class PhoneCameraScanProvider(
         }
 
         var readiness = videoRecorder.ensureRecordingReady(
-            request.preferredVideoModeId,
+            preferredVideoModeId = request.preferredVideoModeId,
+            forceRebind = true,
+            requirePreviewSurface = true,
         )
+        var preparationFallbackReason: String? = null
+        if (!readiness.ready) {
+            val requestedPreparationError = readiness.reason
+                ?: "Requested preview-backed CameraX preparation failed"
+            val failedModeId = listOf(
+                readiness.width,
+                readiness.height,
+                readiness.fps,
+            ).takeIf { values -> values.all { it != null } }
+                ?.let { values ->
+                    "${values[0]}x${values[1]}@${values[2]}"
+                }
+            val fallbackModeId = videoRecorder.regular30FpsFallbackModeId(
+                request.preferredVideoModeId,
+            )
+            if (fallbackModeId != null && fallbackModeId != failedModeId) {
+                val fallbackReadiness = videoRecorder.ensureRecordingReady(
+                    preferredVideoModeId = fallbackModeId,
+                    forceRebind = true,
+                    requirePreviewSurface = true,
+                )
+                readiness = if (fallbackReadiness.ready) {
+                    preparationFallbackReason =
+                        "REQUESTED_MODE_PREVIEW_BIND_FAILED: " +
+                            requestedPreparationError
+                    fallbackReadiness
+                } else {
+                    fallbackReadiness.copy(
+                        reason = "Requested mode preparation failed: " +
+                            requestedPreparationError +
+                            "; 30 FPS fallback failed: " +
+                            (fallbackReadiness.reason ?: "unknown error"),
+                    )
+                }
+            }
+        }
         val root = File(
             appContext.filesDir,
             "dual_phone_captures",
@@ -306,65 +344,143 @@ class PhoneCameraScanProvider(
             baseDir = baseDir,
             videoStartTNs = armedAtNs,
         )
-        var fallbackReason: String? = null
-        val physicalStarted = try {
-            videoRecorder.startRecordingToFileWithTelemetry(
-                outputFile = videoFile,
-                telemetryContext = PhoneVideoTelemetryContext(
-                    dualCaptureId = request.dualCaptureId,
-                    role = request.role.name,
-                    scheduledElapsedRealtimeNs = armedAtNs,
-                    clockOffsetNs = null,
-                    clockUncertaintyNs = null,
-                    clockDriftPpm = null,
-                ),
-            )
-        } catch (noData: PhoneVideoNoValidDataException) {
-            val fallbackModeId = videoRecorder.regular30FpsFallbackModeId(
-                request.preferredVideoModeId,
-            )
-            if (fallbackModeId == null || fallbackModeId == modeId) {
-                throw noData
-            }
-            fallbackReason =
-                "REQUESTED_MODE_PRODUCED_NO_VALID_DATA: " +
-                    (noData.message ?: "CameraX recorder health timeout")
+        var fallbackReason: String? = preparationFallbackReason
+        if (preparationFallbackReason != null) {
             timeline.event(
                 name = "MODE_FALLBACK_SELECTED",
                 localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
                 commandId = request.commandId,
                 details = JSONObject()
-                    .putNullable("requested_video_mode_id", modeId)
-                    .put("fallback_video_mode_id", fallbackModeId)
-                    .put("reason", fallbackReason),
+                    .putNullable(
+                        "requested_video_mode_id",
+                        request.preferredVideoModeId,
+                    )
+                    .putNullable("fallback_video_mode_id", modeId)
+                    .put("reason", preparationFallbackReason),
             )
+        }
+
+        suspend fun startRecorderAttempt(attemptNumber: Int): PhoneVideoRecordingStart {
             videoFile.delete()
-            readiness = videoRecorder.ensureRecordingReady(
-                preferredVideoModeId = fallbackModeId,
-                forceRebind = true,
+            timeline.event(
+                name = "RECORDER_ATTEMPT_STARTED",
+                localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
+                commandId = request.commandId,
+                details = JSONObject()
+                    .put("attempt_number", attemptNumber)
+                    .putNullable("video_mode_id", modeId)
+                    .put("binding_required", "DUAL_PHONE_PREVIEW_BACKED"),
             )
-            check(readiness.ready) {
-                readiness.reason ?: "30 FPS CameraX fallback preparation failed"
-            }
-            modeId = listOf(
-                readiness.width,
-                readiness.height,
-                readiness.fps,
-            ).takeIf { values -> values.all { it != null } }
-                ?.let { values ->
-                    "${values[0]}x${values[1]}@${values[2]}"
+            return try {
+                videoRecorder.startRecordingToFileWithTelemetry(
+                    outputFile = videoFile,
+                    telemetryContext = PhoneVideoTelemetryContext(
+                        dualCaptureId = request.dualCaptureId,
+                        role = request.role.name,
+                        scheduledElapsedRealtimeNs = armedAtNs,
+                        clockOffsetNs = null,
+                        clockUncertaintyNs = null,
+                        clockDriftPpm = null,
+                    ),
+                ).also { started ->
+                    timeline.event(
+                        name = "RECORDER_ATTEMPT_READY",
+                        localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
+                        commandId = request.commandId,
+                        details = JSONObject()
+                            .put("attempt_number", attemptNumber)
+                            .putNullable("video_mode_id", modeId)
+                            .putNullable(
+                                "recorder_binding_mode",
+                                started.recorderBindingMode,
+                            )
+                            .put(
+                                "status_event_count",
+                                started.statusEventCountAtReady,
+                            )
+                            .put(
+                                "encoded_bytes_at_ready",
+                                started.recordedBytesAtReady,
+                            )
+                            .put(
+                                "encoded_duration_ns_at_ready",
+                                started.recordedDurationNsAtReady,
+                            ),
+                    )
                 }
-            videoRecorder.startRecordingToFileWithTelemetry(
-                outputFile = videoFile,
-                telemetryContext = PhoneVideoTelemetryContext(
-                    dualCaptureId = request.dualCaptureId,
-                    role = request.role.name,
-                    scheduledElapsedRealtimeNs = armedAtNs,
-                    clockOffsetNs = null,
-                    clockUncertaintyNs = null,
-                    clockDriftPpm = null,
-                ),
-            )
+            } catch (error: Throwable) {
+                val preservedPath = preserveFailedVideoAttempt(
+                    videoFile = videoFile,
+                    baseDir = baseDir,
+                    attemptNumber = attemptNumber,
+                )
+                val details = JSONObject()
+                    .put("attempt_number", attemptNumber)
+                    .putNullable("video_mode_id", modeId)
+                    .put(
+                        "error",
+                        error.message ?: error.javaClass.simpleName,
+                    )
+                    .putNullable("preserved_partial_video_path", preservedPath)
+                (error as? PhoneVideoNoValidDataException)
+                    ?.diagnostics
+                    ?.let { diagnostics ->
+                        details.put(
+                            "recorder_diagnostics",
+                            diagnostics.toJson(),
+                        )
+                    }
+                timeline.event(
+                    name = "RECORDER_ATTEMPT_FAILED",
+                    localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
+                    commandId = request.commandId,
+                    details = details,
+                )
+                throw error
+            }
+        }
+
+        val physicalStarted = try {
+            try {
+                startRecorderAttempt(attemptNumber = 1)
+            } catch (noData: PhoneVideoNoValidDataException) {
+                val fallbackModeId = videoRecorder.regular30FpsFallbackModeId(
+                    request.preferredVideoModeId,
+                )
+                if (fallbackModeId == null || fallbackModeId == modeId) {
+                    throw noData
+                }
+                fallbackReason =
+                    "REQUESTED_MODE_PRODUCED_NO_VALID_DATA: " +
+                        (noData.message ?: "CameraX recorder health timeout")
+                timeline.event(
+                    name = "MODE_FALLBACK_SELECTED",
+                    localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
+                    commandId = request.commandId,
+                    details = JSONObject()
+                        .putNullable("requested_video_mode_id", modeId)
+                        .put("fallback_video_mode_id", fallbackModeId)
+                        .put("reason", fallbackReason),
+                )
+                readiness = videoRecorder.ensureRecordingReady(
+                    preferredVideoModeId = fallbackModeId,
+                    forceRebind = true,
+                    requirePreviewSurface = true,
+                )
+                check(readiness.ready) {
+                    readiness.reason
+                        ?: "30 FPS preview-backed CameraX fallback preparation failed"
+                }
+                modeId = listOf(
+                    readiness.width,
+                    readiness.height,
+                    readiness.fps,
+                ).takeIf { values -> values.all { it != null } }
+                    ?.let { values ->
+                        "${values[0]}x${values[1]}@${values[2]}"
+                    }
+                startRecorderAttempt(attemptNumber = 2)
+            }
         } catch (error: Throwable) {
             imuRecorder.stop()
             timeline.event(
@@ -859,6 +975,47 @@ class PhoneCameraScanProvider(
         }
         dualCapture = null
     }
+
+    private fun preserveFailedVideoAttempt(
+        videoFile: File,
+        baseDir: File,
+        attemptNumber: Int,
+    ): String? {
+        if (!videoFile.exists() || videoFile.length() <= 0L) {
+            videoFile.delete()
+            return null
+        }
+        val target = File(
+            baseDir,
+            "video_attempt_${attemptNumber}_failed.mp4",
+        )
+        target.delete()
+        val preserved = runCatching {
+            if (!videoFile.renameTo(target)) {
+                videoFile.copyTo(target, overwrite = true)
+                videoFile.delete()
+            }
+            target.takeIf { it.isFile && it.length() > 0L }
+                ?.absolutePath
+        }.getOrNull()
+        if (preserved == null) {
+            videoFile.delete()
+        }
+        return preserved
+    }
+
+    private fun PhoneVideoAttemptDiagnostics.toJson(): JSONObject =
+        JSONObject()
+            .putNullable("requested_mode_id", requestedModeId)
+            .put("recorder_binding_mode", recorderBindingMode)
+            .put("camerax_start_observed", cameraXStartObserved)
+            .put("status_event_count", statusEventCount)
+            .put("last_recorded_bytes", lastRecordedBytes)
+            .put("last_recorded_duration_ns", lastRecordedDurationNs)
+            .put("file_size_bytes", fileSizeBytes)
+            .put("preview_attached", previewAttached)
+            .put("preview_width", previewWidth)
+            .put("preview_height", previewHeight)
 
     private fun safeDualCaptureId(value: String): String {
         require(

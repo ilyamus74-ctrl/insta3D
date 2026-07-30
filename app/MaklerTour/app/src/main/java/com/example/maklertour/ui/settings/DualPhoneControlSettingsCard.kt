@@ -1,5 +1,7 @@
 package com.maklertour.ui.settings
 
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,15 +13,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.maklertour.data.dualphone.DualPhoneClockSyncQuality
 import com.maklertour.data.dualphone.captureSchedulingAllowed
 import com.maklertour.data.dualphone.DualPhoneControlPhase
 import com.maklertour.data.dualphone.DualPhoneControlSnapshot
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
+import com.maklertour.data.phonecamera.DualPhoneRecorderPreviewRegistry
 import java.util.Locale
 
 @Composable
@@ -183,6 +190,16 @@ fun DualPhoneControlSettingsCard(
                     "Clock samples: ${sync.acceptedSamples}/${sync.totalSamples}",
                     style = MaterialTheme.typography.bodySmall,
                 )
+
+                Text(
+                    "Recorder preview surface",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                DualPhoneRecorderPreview(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f),
+                )
             }
 
             if (settings.role == DualPhoneRole.MASTER && snapshot.connected) {
@@ -278,6 +295,35 @@ fun DualPhoneControlSettingsCard(
             }
         }
     }
+}
+
+@Composable
+private fun DualPhoneRecorderPreview(
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val previewView = remember(context) {
+        PreviewView(context).apply {
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            scaleType = PreviewView.ScaleType.FIT_CENTER
+        }
+    }
+
+    DisposableEffect(previewView) {
+        DualPhoneRecorderPreviewRegistry.register(previewView)
+        onDispose {
+            DualPhoneRecorderPreviewRegistry.unregister(previewView)
+        }
+    }
+
+    AndroidView(
+        factory = {
+            DualPhoneRecorderPreviewRegistry.register(previewView)
+            previewView
+        },
+        update = { DualPhoneRecorderPreviewRegistry.register(it) },
+        modifier = modifier,
+    )
 }
 
 private fun DualPhoneClockSyncQuality.displayColor(): Color = when (this) {
