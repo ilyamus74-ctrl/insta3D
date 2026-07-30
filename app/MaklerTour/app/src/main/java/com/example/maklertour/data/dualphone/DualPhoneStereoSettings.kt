@@ -25,9 +25,13 @@ data class DualPhoneStereoSettings(
     val clockSyncPort: Int = 48622,
     val bundleTransferPort: Int = 48623,
     val preferredVideoModeId: String? = null,
+    val rigId: String = "dual-phone-rig-001",
+    val rigMountRevision: String = "rev-a",
+    val operatorLensBaselineMm: Double? = null,
+    val activeCalibrationProfileId: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
-        .put("schema_version", 3)
+        .put("schema_version", 4)
         .put("device_id", deviceId)
         .put("role", role.name)
         .put("transport", transport.name)
@@ -38,6 +42,13 @@ data class DualPhoneStereoSettings(
         .put("clock_sync_port", clockSyncPort)
         .put("bundle_transfer_port", bundleTransferPort)
         .put("preferred_video_mode_id", preferredVideoModeId ?: JSONObject.NULL)
+        .put("rig_id", rigId)
+        .put("rig_mount_revision", rigMountRevision)
+        .put(
+            "operator_lens_baseline_mm",
+            operatorLensBaselineMm ?: JSONObject.NULL,
+        )
+        .put("active_calibration_profile_id", activeCalibrationProfileId ?: JSONObject.NULL)
 }
 
 class DualPhoneStereoSettingsStore(context: Context) {
@@ -78,6 +89,19 @@ class DualPhoneStereoSettingsStore(context: Context) {
                 KEY_PREFERRED_VIDEO_MODE_ID,
                 null,
             )?.takeIf { it.isNotBlank() },
+            rigId = prefs.getString(KEY_RIG_ID, null)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: "dual-phone-rig-001",
+            rigMountRevision = prefs.getString(KEY_RIG_MOUNT_REVISION, null)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: "rev-a",
+            operatorLensBaselineMm = prefs.getString(KEY_OPERATOR_LENS_BASELINE_MM, null)
+                ?.toDoubleOrNull()
+                ?.takeIf { it in 1.0..1_000.0 },
+            activeCalibrationProfileId = prefs.getString(KEY_ACTIVE_CALIBRATION_PROFILE_ID, null)
+                ?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -96,6 +120,13 @@ class DualPhoneStereoSettingsStore(context: Context) {
                 KEY_PREFERRED_VIDEO_MODE_ID,
                 settings.preferredVideoModeId,
             )
+            .putString(KEY_RIG_ID, settings.rigId.trim())
+            .putString(KEY_RIG_MOUNT_REVISION, settings.rigMountRevision.trim())
+            .putString(
+                KEY_OPERATOR_LENS_BASELINE_MM,
+                settings.operatorLensBaselineMm?.toString(),
+            )
+            .putString(KEY_ACTIVE_CALIBRATION_PROFILE_ID, settings.activeCalibrationProfileId)
             .apply()
     }
 
@@ -120,5 +151,11 @@ class DualPhoneStereoSettingsStore(context: Context) {
         private const val KEY_BUNDLE_TRANSFER_PORT = "bundle_transfer_port"
         private const val KEY_PREFERRED_VIDEO_MODE_ID =
             "preferred_video_mode_id"
+        private const val KEY_RIG_ID = "rig_id"
+        private const val KEY_RIG_MOUNT_REVISION = "rig_mount_revision"
+        private const val KEY_OPERATOR_LENS_BASELINE_MM =
+            "operator_lens_baseline_mm"
+        private const val KEY_ACTIVE_CALIBRATION_PROFILE_ID =
+            "active_calibration_profile_id"
     }
 }

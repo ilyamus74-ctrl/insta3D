@@ -7,14 +7,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -26,6 +31,7 @@ import com.maklertour.data.dualphone.DualPhoneControlPhase
 import com.maklertour.data.dualphone.DualPhoneControlSnapshot
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
+import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 import com.maklertour.data.phonecamera.DualPhoneRecorderPreviewRegistry
 import java.util.Locale
 
@@ -44,6 +50,18 @@ fun DualPhoneControlSettingsCard(
     onStartTest: () -> Unit,
     onStopCapture: () -> Unit,
 ) {
+    val context = LocalContext.current
+    var rigIdInput by remember(settings.rigId) {
+        mutableStateOf(settings.rigId)
+    }
+    var mountRevisionInput by remember(settings.rigMountRevision) {
+        mutableStateOf(settings.rigMountRevision)
+    }
+    var baselineMmInput by remember(settings.operatorLensBaselineMm) {
+        mutableStateOf(settings.operatorLensBaselineMm?.toString().orEmpty())
+    }
+    var rigSaveMessage by remember { mutableStateOf<String?>(null) }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -71,6 +89,81 @@ fun DualPhoneControlSettingsCard(
             }
 
             if (settings.role == DualPhoneRole.MASTER) {
+                Text(
+                    "Rigid dual-phone geometry",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                OutlinedTextField(
+                    value = rigIdInput,
+                    onValueChange = { rigIdInput = it.take(80) },
+                    label = { Text("Rig ID") },
+                    supportingText = {
+                        Text("Stable identifier of this physical phone mount")
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = mountRevisionInput,
+                    onValueChange = { mountRevisionInput = it.take(80) },
+                    label = { Text("Mount revision") },
+                    supportingText = {
+                        Text("Change it after any mechanical change")
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = baselineMmInput,
+                    onValueChange = { value ->
+                        baselineMmInput = value
+                            .replace(',', '.')
+                            .filterIndexed { index, char ->
+                                char.isDigit() || (char == '.' && index > 0)
+                            }
+                            .take(10)
+                    },
+                    label = { Text("Lens-center distance, mm") },
+                    supportingText = {
+                        Text(
+                            "Measure optical-center to optical-center. This is an operator " +
+                                "prior; accepted stereo calibration remains authoritative.",
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        val baselineMm = baselineMmInput.toDoubleOrNull()
+                        val error = when {
+                            rigIdInput.isBlank() -> "Rig ID is required"
+                            mountRevisionInput.isBlank() -> "Mount revision is required"
+                            baselineMm == null -> "Enter lens distance in millimetres"
+                            baselineMm !in 1.0..1_000.0 -> "Lens distance must be 1–1000 mm"
+                            else -> null
+                        }
+                        if (error != null) {
+                            rigSaveMessage = error
+                        } else {
+                            DualPhoneStereoSettingsStore(context).save(
+                                settings.copy(
+                                    rigId = rigIdInput.trim(),
+                                    rigMountRevision = mountRevisionInput.trim(),
+                                    operatorLensBaselineMm = baselineMm,
+                                ),
+                            )
+                            rigSaveMessage = "Rig geometry saved"
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Save rig geometry")
+                }
+                rigSaveMessage?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+
                 if (snapshot.phase == DualPhoneControlPhase.STOPPED ||
                     snapshot.phase == DualPhoneControlPhase.ERROR
                 ) {
@@ -289,10 +382,35 @@ fun DualPhoneControlSettingsCard(
                         "asynchronous markers otherwise. STOP always finalizes both recordings.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Text(
-                    "Bundle state: ${snapshot.aggregateUploadState}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                val transferBusy = snapshot.aggregateUploadState in setOf(
+                    "LOCAL_POST_ROLL_AND_FINALIZE",
+                    "WAITING_FOR_MASTER_PACKAGE",
+                    "WAITING_FOR_SLAVE_PACKAGE",
+                    "TRANSFER_BARRIER_READY",
+                    "DOWNLOADING_SLAVE_PACKAGE",
+                    "BUILDING_AGGREGATE_BUNDLE",
+                    "ENQUEUEING_SERVER_UPLOAD",
++                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (transferBusy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                    Column {
+                        Text(
+                            transferStageLabel(snapshot.aggregateUploadState),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Text(
+                            "Bundle state: ${snapshot.aggregateUploadState}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
                 snapshot.localRolePackagePath?.let {
                     Text("Master package: $it", style = MaterialTheme.typography.bodySmall)
                 }
@@ -368,4 +486,20 @@ private fun formatMs(valueNs: Long?): String = valueNs?.let {
 private fun formatOffset(valueNs: Long): String {
     val seconds = valueNs.toDouble() / 1_000_000_000.0
     return String.format(Locale.US, "%+.6f s", seconds)
+}
+
+private fun transferStageLabel(state: String): String = when (state) {
+    "LOCAL_POST_ROLL_AND_FINALIZE" -> "Finalizing local video"
+    "WAITING_FOR_MASTER_PACKAGE" -> "Slave package ready; waiting for Master"
+    "WAITING_FOR_SLAVE_PACKAGE" -> "Waiting for Slave package"
+    "TRANSFER_BARRIER_READY" -> "Both role packages are ready"
+    "DOWNLOADING_SLAVE_PACKAGE" -> "Receiving video and telemetry from Slave"
+    "BUILDING_AGGREGATE_BUNDLE" -> "Building aggregate bundle"
+    "ENQUEUEING_SERVER_UPLOAD" -> "Preparing server upload"
+    "QUEUED_FOR_SERVER" -> "Aggregate queued for server"
+    "READY_NOT_QUEUED" -> "Aggregate ready; server upload unavailable"
+    "TRANSFERRED_TO_MASTER" -> "Slave package verified on Master"
+    "TRANSFER_OR_PACKAGING_FAILED" -> "Transfer or packaging failed"
+    "SLAVE_FINALIZE_FAILED" -> "Slave finalize failed"
+    else -> "Dual-phone bundle"
 }
