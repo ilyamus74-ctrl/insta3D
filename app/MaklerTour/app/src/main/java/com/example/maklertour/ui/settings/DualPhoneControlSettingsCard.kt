@@ -200,11 +200,24 @@ fun DualPhoneControlSettingsCard(
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f),
                 )
+
+                val physicalRecordingActive = snapshot.phase in setOf(
+                    DualPhoneControlPhase.ARMING,
+                    DualPhoneControlPhase.ARMED,
+                    DualPhoneControlPhase.START_SCHEDULED,
+                    DualPhoneControlPhase.RECORDING,
+                )
+                if (physicalRecordingActive) {
+                    Text(
+                        "● REC",
+                        color = Color.Red,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
             }
 
             if (settings.role == DualPhoneRole.MASTER && snapshot.connected) {
-                val canArm = snapshot.phase == DualPhoneControlPhase.CONNECTED &&
-                    snapshot.clockSync.captureSchedulingAllowed
+                val canArm = snapshot.phase == DualPhoneControlPhase.CONNECTED
                 val canStart = snapshot.phase == DualPhoneControlPhase.ARMED
                 val canStop = snapshot.phase in setOf(
                     DualPhoneControlPhase.ARMED,
@@ -227,7 +240,13 @@ fun DualPhoneControlSettingsCard(
                         modifier = Modifier.weight(1f),
                         enabled = canStart,
                     ) {
-                        Text("MARK START +3s")
+                        Text(
+                            if (snapshot.clockSync.captureSchedulingAllowed) {
+                                "MARK START +3s"
+                            } else {
+                                "MARK START NOW (ASYNC)"
+                            },
+                        )
                     }
                 }
                 Button(
@@ -238,11 +257,17 @@ fun DualPhoneControlSettingsCard(
                     Text("STOP")
                 }
                 if (!snapshot.clockSync.captureSchedulingAllowed &&
-                    snapshot.phase == DualPhoneControlPhase.CONNECTED
+                    snapshot.phase in setOf(
+                        DualPhoneControlPhase.CONNECTED,
+                        DualPhoneControlPhase.ARMED,
+                        DualPhoneControlPhase.START_SCHEDULED,
+                        DualPhoneControlPhase.RECORDING,
+                    )
                 ) {
                     Text(
-                        "ARM waits for GOOD/EXCELLENT or stable FAIR " +
-                            "(6+ samples, RTT ≤20 ms, uncertainty ≤8 ms).",
+                        "ARM is available with ${snapshot.clockSync.quality.name} clock. " +
+                            "START will use degraded asynchronous markers and the server " +
+                            "must refine the final timeline.",
                         color = Color(0xFFFFA000),
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -259,9 +284,9 @@ fun DualPhoneControlSettingsCard(
                     )
                 }
                 Text(
-                    "DP04.4 starts physical pre-roll during ARM. START/STOP are " +
-                        "logical timeline markers; server pairing uses frame, IMU " +
-                        "and clock-history timestamps.",
+                    "DP04.4A3 starts physical pre-roll during ARM regardless of clock " +
+                        "quality. START uses the clock model when available or degraded " +
+                        "asynchronous markers otherwise. STOP always finalizes both recordings.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(

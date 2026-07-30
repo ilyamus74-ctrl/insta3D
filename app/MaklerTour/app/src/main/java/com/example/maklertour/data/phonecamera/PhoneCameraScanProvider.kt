@@ -336,6 +336,21 @@ class PhoneCameraScanProvider(
                 .put("role", request.role.name)
                 .put("armed_at_elapsed_ns", armedAtNs)
                 .put("clock_domain", "CLOCK_BOOTTIME")
+                .putNullable("clock_quality_at_arm", request.clockQualityAtArm)
+                .putNullable("clock_offset_ns_at_arm", request.clockOffsetNsAtArm)
+                .putNullable(
+                    "clock_uncertainty_ns_at_arm",
+                    request.clockUncertaintyNsAtArm,
+                )
+                .putNullable("clock_drift_ppm_at_arm", request.clockDriftPpmAtArm)
+                .put(
+                    "clock_accepted_samples_at_arm",
+                    request.clockAcceptedSamplesAtArm,
+                )
+                .put(
+                    "clock_total_samples_at_arm",
+                    request.clockTotalSamplesAtArm,
+                )
                 .put("capture_window_start_written", false)
                 .toString(2) + "\n",
             Charsets.UTF_8,
@@ -344,6 +359,19 @@ class PhoneCameraScanProvider(
             name = "ARM_RECEIVED",
             localElapsedNs = armedAtNs,
             commandId = request.commandId,
+            details = JSONObject()
+                .putNullable("clock_quality_at_arm", request.clockQualityAtArm)
+                .putNullable("clock_offset_ns_at_arm", request.clockOffsetNsAtArm)
+                .putNullable(
+                    "clock_uncertainty_ns_at_arm",
+                    request.clockUncertaintyNsAtArm,
+                )
+                .putNullable("clock_drift_ppm_at_arm", request.clockDriftPpmAtArm)
+                .put(
+                    "clock_accepted_samples_at_arm",
+                    request.clockAcceptedSamplesAtArm,
+                )
+                .put("clock_total_samples_at_arm", request.clockTotalSamplesAtArm),
         )
         imuRecorder.start(
             sessionId = request.dualCaptureId,
@@ -385,9 +413,9 @@ class PhoneCameraScanProvider(
                         dualCaptureId = request.dualCaptureId,
                         role = request.role.name,
                         scheduledElapsedRealtimeNs = armedAtNs,
-                        clockOffsetNs = null,
-                        clockUncertaintyNs = null,
-                        clockDriftPpm = null,
+                        clockOffsetNs = request.clockOffsetNsAtArm,
+                        clockUncertaintyNs = request.clockUncertaintyNsAtArm,
+                        clockDriftPpm = request.clockDriftPpmAtArm,
                     ),
                 ).also { started ->
                     timeline.event(
@@ -624,6 +652,7 @@ class PhoneCameraScanProvider(
                     request.clockUncertaintyNs,
                 )
                 .putNullable("clock_drift_ppm", request.clockDriftPpm)
+                .put("start_alignment_mode", request.alignmentMode.name)
                 .put("clock_domain", "CLOCK_BOOTTIME")
                 .toString(2) + "\n",
             Charsets.UTF_8,
@@ -640,6 +669,7 @@ class PhoneCameraScanProvider(
                     "command_received_local_ns",
                     request.commandReceivedLocalElapsedRealtimeNs,
                 )
+                .put("alignment_mode", request.alignmentMode.name)
                 .put("marker_delta_ns", markerAppliedNs - request.scheduledElapsedRealtimeNs),
         )
         val result = DualPhoneCaptureStartResult(
@@ -804,6 +834,10 @@ class PhoneCameraScanProvider(
             .putNullable(
                 "capture_window_start_applied_elapsed_ns",
                 current.started?.markerAppliedElapsedRealtimeNs,
+            )
+            .putNullable(
+                "capture_window_start_alignment_mode",
+                current.startRequest?.alignmentMode?.name,
             )
             // DP04.2 compatibility aliases for the existing local validator.
             .putNullable(

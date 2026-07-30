@@ -2,6 +2,11 @@ package com.maklertour.data.dualphone
 
 const val DUAL_PHONE_DEFAULT_POST_ROLL_MS = 1_500L
 
+enum class DualPhoneStartAlignmentMode {
+    SCHEDULED_CLOCK_MODEL,
+    DEGRADED_ASYNC_MARKER,
+}
+
 data class DualPhoneCaptureArmRequest(
     val dualCaptureId: String,
     val role: DualPhoneRole,
@@ -9,6 +14,12 @@ data class DualPhoneCaptureArmRequest(
     val peerDeviceId: String?,
     val preferredVideoModeId: String?,
     val commandId: String = "legacy-arm",
+    val clockQualityAtArm: String? = null,
+    val clockOffsetNsAtArm: Long? = null,
+    val clockUncertaintyNsAtArm: Long? = null,
+    val clockDriftPpmAtArm: Double? = null,
+    val clockAcceptedSamplesAtArm: Int = 0,
+    val clockTotalSamplesAtArm: Int = 0,
 )
 
 data class DualPhoneCaptureArmResult(
@@ -38,6 +49,8 @@ data class DualPhoneCaptureStartRequest(
     val clockOffsetNs: Long?,
     val clockUncertaintyNs: Long?,
     val clockDriftPpm: Double?,
+    val alignmentMode: DualPhoneStartAlignmentMode =
+        DualPhoneStartAlignmentMode.SCHEDULED_CLOCK_MODEL,
     val commandId: String = "legacy-start",
     val commandCreatedMasterElapsedRealtimeNs: Long? = null,
     val commandReceivedLocalElapsedRealtimeNs: Long? = null,

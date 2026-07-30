@@ -239,15 +239,6 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             allowedPhases = setOf(DualPhoneControlPhase.CONNECTED),
         ) {
             val sync = clockSyncController.currentSnapshot()
-            if (!sync.captureSchedulingAllowed) {
-                throw IllegalStateException(
-                    "Clock sync cannot schedule capture " +
-                        "(${sync.quality.name}, samples=" +
-                        "${sync.acceptedSamples}/${sync.totalSamples}, " +
-                        "median_rtt_ns=${sync.medianRttNs}, " +
-                        "uncertainty_ns=${sync.uncertaintyNs})",
-                )
-            }
             val settings = settingsStore.load()
             val captureId = currentCaptureId()
             val commandId = DualPhoneControlProtocol.commandId("arm")
@@ -275,6 +266,12 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         preferredVideoModeId =
                             settings.preferredVideoModeId,
                         commandId = commandId,
+                        clockQualityAtArm = sync.quality.name,
+                        clockOffsetNsAtArm = sync.offsetNs,
+                        clockUncertaintyNsAtArm = sync.uncertaintyNs,
+                        clockDriftPpmAtArm = sync.driftPpm,
+                        clockAcceptedSamplesAtArm = sync.acceptedSamples,
+                        clockTotalSamplesAtArm = sync.totalSamples,
                     ),
                 )
             } ?: throw IllegalStateException(
@@ -301,7 +298,25 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         .put(
                             "requested_at_master_ns",
                             SystemClock.elapsedRealtimeNanos(),
-                        ),
+                        )
+                        .put("clock_quality_at_arm", sync.quality.name)
+                        .put(
+                            "clock_offset_ns_at_arm",
+                            sync.offsetNs ?: JSONObject.NULL,
+                        )
+                        .put(
+                            "clock_uncertainty_ns_at_arm",
+                            sync.uncertaintyNs ?: JSONObject.NULL,
+                        )
+                        .put(
+                            "clock_drift_ppm_at_arm",
+                            sync.driftPpm ?: JSONObject.NULL,
+                        )
+                        .put(
+                            "clock_accepted_samples_at_arm",
+                            sync.acceptedSamples,
+                        )
+                        .put("clock_total_samples_at_arm", sync.totalSamples),
                 )
             } catch (error: Throwable) {
                 endpoint.abort("Failed to send ARM to Slave")
@@ -312,8 +327,12 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 lastCommand = DualPhoneControlType.ARM,
                 lastError = null,
                 localVideoPath = local.outputPath,
-                lastMessage =
-                    "Local pre-roll recording active; waiting for Slave ARM_ACK",
+                lastMessage = if (sync.captureSchedulingAllowed) {
+                    "Local pre-roll recording active; waiting for Slave ARM_ACK"
+                } else {
+                    "Local pre-roll recording active with ${sync.quality.name} clock; " +
+                        "timeline refinement will be required"
+                },
             )
         }
     }
@@ -325,21 +344,42 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         ) {
             val safeDelay = delayMs.coerceIn(1_000L, 30_000L)
             val commandCreatedMasterNs = SystemClock.elapsedRealtimeNanos()
-            val startAt = commandCreatedMasterNs + safeDelay * 1_000_000L
             val commandId = DualPhoneControlProtocol.commandId("start")
-            val slaveStartAt =
-                clockSyncController.masterToSlaveNs(startAt)
-                    ?: throw IllegalStateException(
-                        "Clock sync model is unavailable or stale",
-                    )
             val sync = clockSyncController.currentSnapshot()
+            val requestedStartAt =
+                commandCreatedMasterNs + safeDelay * 1_000_000L
+            val mappedSlaveStartAt = if (sync.captureSchedulingAllowed) {
+                clockSyncController.masterToSlaveNs(requestedStartAt)
+            } else {
+                null
+            }
+            val alignmentMode = if (mappedSlaveStartAt != null) {
+                DualPhoneStartAlignmentMode.SCHEDULED_CLOCK_MODEL
+            } else {
+                DualPhoneStartAlignmentMode.DEGRADED_ASYNC_MARKER
+            }
+            val localStartAt = if (
+                alignmentMode == DualPhoneStartAlignmentMode.SCHEDULED_CLOCK_MODEL
+            ) {
+                requestedStartAt
+            } else {
+                commandCreatedMasterNs
+            }
+            val peerDelayMs = if (
+                alignmentMode == DualPhoneStartAlignmentMode.SCHEDULED_CLOCK_MODEL
+            ) {
+                safeDelay
+            } else {
+                0L
+            }
             val localStartRequest = DualPhoneCaptureStartRequest(
                 dualCaptureId = currentCaptureId(),
                 role = DualPhoneRole.MASTER,
-                scheduledElapsedRealtimeNs = startAt,
+                scheduledElapsedRealtimeNs = localStartAt,
                 clockOffsetNs = sync.offsetNs,
                 clockUncertaintyNs = sync.uncertaintyNs,
                 clockDriftPpm = sync.driftPpm,
+                alignmentMode = alignmentMode,
                 commandId = commandId,
                 commandCreatedMasterElapsedRealtimeNs =
                     commandCreatedMasterNs,
@@ -350,8 +390,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 phase = DualPhoneControlPhase.START_SCHEDULED,
                 lastCommand = DualPhoneControlType.START_AT,
                 lastError = null,
-                lastMessage =
-                    "Logical START marker scheduled using ${sync.quality.name} clock model",
+                lastMessage = if (
+                    alignmentMode == DualPhoneStartAlignmentMode.SCHEDULED_CLOCK_MODEL
+                ) {
+                    "Logical START marker scheduled using ${sync.quality.name} clock model"
+                } else {
+                    "Logical START marker applied asynchronously; server refinement required"
+                },
             )
             scheduleLocalCaptureStart(
                 request = localStartRequest,
@@ -364,9 +409,20 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         .put("dual_capture_id", currentCaptureId())
                         .put("command_id", commandId)
                         .put("command_created_master_ns", commandCreatedMasterNs)
-                        .put("master_elapsed_realtime_ns", startAt)
-                        .put("slave_elapsed_realtime_ns", slaveStartAt)
-                        .put("marker_semantics", "LOGICAL_CAPTURE_WINDOW_START")
+                        .put("master_elapsed_realtime_ns", localStartAt)
+                        .put(
+                            "slave_elapsed_realtime_ns",
+                            mappedSlaveStartAt ?: JSONObject.NULL,
+                        )
+                        .put("alignment_mode", alignmentMode.name)
+                        .put("clock_quality", sync.quality.name)
+                        .put(
+                            "marker_semantics",
+                            if (
+                                alignmentMode == DualPhoneStartAlignmentMode.SCHEDULED_CLOCK_MODEL
+                            ) "LOGICAL_CAPTURE_WINDOW_START" else
+                                "LOGICAL_CAPTURE_WINDOW_START_DEGRADED",
+                        )
                         .put(
                             "clock_offset_ns",
                             sync.offsetNs ?: JSONObject.NULL,
@@ -379,7 +435,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             "clock_drift_ppm",
                             sync.driftPpm ?: JSONObject.NULL,
                         )
-                        .put("delay_ms", safeDelay),
+                        .put("delay_ms", peerDelayMs),
                 )
             }.exceptionOrNull()
             if (deliveryError != null) {
@@ -591,6 +647,12 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                                     "command_id",
                                     "legacy-arm",
                                 ),
+                                clockQualityAtArm = payload.optNullableString("clock_quality_at_arm"),
+                                clockOffsetNsAtArm = payload.optNullableLong("clock_offset_ns_at_arm"),
+                                clockUncertaintyNsAtArm = payload.optNullableLong("clock_uncertainty_ns_at_arm"),
+                                clockDriftPpmAtArm = payload.optNullableDouble("clock_drift_ppm_at_arm"),
+                                clockAcceptedSamplesAtArm = payload.optInt("clock_accepted_samples_at_arm", 0),
+                                clockTotalSamplesAtArm = payload.optInt("clock_total_samples_at_arm", 0),
                             ),
                         )
                     } catch (error: Throwable) {
@@ -968,6 +1030,14 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
 
     private fun handleSlaveStart(payload: JSONObject) {
         val receivedAtNs = SystemClock.elapsedRealtimeNanos()
+        val alignmentMode = runCatching {
+            DualPhoneStartAlignmentMode.valueOf(
+                payload.optString(
+                    "alignment_mode",
+                    DualPhoneStartAlignmentMode.SCHEDULED_CLOCK_MODEL.name,
+                ),
+            )
+        }.getOrDefault(DualPhoneStartAlignmentMode.DEGRADED_ASYNC_MARKER)
         val targetSlaveNs = payload.optLong(
             "slave_elapsed_realtime_ns",
             0L,
@@ -976,7 +1046,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             "delay_ms",
             3_000L,
         ).coerceIn(0L, 30_000L)
-        val effectiveTargetNs = if (targetSlaveNs > 0L) {
+        val effectiveTargetNs = if (
+            alignmentMode == DualPhoneStartAlignmentMode.DEGRADED_ASYNC_MARKER
+        ) {
+            receivedAtNs
+        } else if (targetSlaveNs > 0L) {
             targetSlaveNs
         } else {
             receivedAtNs + fallbackDelayMs * 1_000_000L
@@ -1016,8 +1090,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         mutableState.value = mutableState.value.copy(
             phase = DualPhoneControlPhase.START_SCHEDULED,
             lastError = null,
-            lastMessage =
-                "START_AT received; local delay ${scheduleDelayMs} ms",
+            lastMessage = if (
+                alignmentMode == DualPhoneStartAlignmentMode.SCHEDULED_CLOCK_MODEL
+            ) {
+                "START_AT received; local delay ${scheduleDelayMs} ms"
+            } else {
+                "Degraded asynchronous START marker received"
+            },
         )
         send(
             DualPhoneControlType.START_ACK,
@@ -1025,7 +1104,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 .put("accepted", true)
                 .put("local_received_ns", receivedAtNs)
                 .put("scheduled_slave_ns", effectiveTargetNs)
-                .put("scheduled_delay_ms", scheduleDelayMs),
+                .put("scheduled_delay_ms", scheduleDelayMs)
+                .put("alignment_mode", alignmentMode.name),
         )
         scheduleLocalCaptureStart(
             request = DualPhoneCaptureStartRequest(
@@ -1042,6 +1122,14 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     ),
                 clockDriftPpm =
                     payload.optNullableDouble("clock_drift_ppm"),
+                alignmentMode = alignmentMode,
+                commandId = payload.optString(
+                    "command_id",
+                    "legacy-start",
+                ),
+                commandCreatedMasterElapsedRealtimeNs =
+                    payload.optNullableLong("command_created_master_ns"),
+                commandReceivedLocalElapsedRealtimeNs = receivedAtNs,
             ),
             notifyPeer = true,
         )
