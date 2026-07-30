@@ -1453,6 +1453,12 @@ private fun SettingsScreen(
             onStopCapture = {
                 dualPhoneControl.stopCapture()
             },
+            onStartCalibration = {
+                dualPhoneControl.startCalibrationSession()
+            },
+            onExitCalibration = {
+                dualPhoneControl.exitCalibrationSession()
+            },
         )
         Text("System", style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.app_language))

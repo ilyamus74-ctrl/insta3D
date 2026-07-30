@@ -49,6 +49,8 @@ fun DualPhoneControlSettingsCard(
     onArm: () -> Unit,
     onStartTest: () -> Unit,
     onStopCapture: () -> Unit,
+    onStartCalibration: () -> Unit,
+    onExitCalibration: () -> Unit,
 ) {
     val context = LocalContext.current
     var rigIdInput by remember(settings.rigId) {
@@ -288,7 +290,7 @@ fun DualPhoneControlSettingsCard(
                     "Recorder preview surface",
                     style = MaterialTheme.typography.titleSmall,
                 )
-                DualPhoneRecorderPreview(
+                if (!snapshot.calibrationActive) DualPhoneRecorderPreview(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f),
@@ -310,7 +312,8 @@ fun DualPhoneControlSettingsCard(
             }
 
             if (settings.role == DualPhoneRole.MASTER && snapshot.connected) {
-                val canArm = snapshot.phase == DualPhoneControlPhase.CONNECTED
+                val canArm = snapshot.phase == DualPhoneControlPhase.CONNECTED &&
+                    !snapshot.calibrationActive
                 val canStart = snapshot.phase == DualPhoneControlPhase.ARMED
                 val canStop = snapshot.phase in setOf(
                     DualPhoneControlPhase.ARMED,
@@ -342,6 +345,19 @@ fun DualPhoneControlSettingsCard(
                         )
                     }
                 }
+                Button(
+                    onClick = onStartCalibration,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = snapshot.phase == DualPhoneControlPhase.CONNECTED &&
+                        !snapshot.calibrationActive,
+                ) {
+                    Text("Калибровка двух телефонов")
+                }
+                Text(
+                    "Calibration creates a reusable rig profile and is not attached " +
+                        "to a room session.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 Button(
                     onClick = onStopCapture,
                     modifier = Modifier.fillMaxWidth(),
@@ -437,6 +453,14 @@ fun DualPhoneControlSettingsCard(
                 }
             }
         }
+    }
+
+    if (snapshot.calibrationActive) {
+        DualPhoneCalibrationFullscreen(
+            snapshot = snapshot,
+            role = settings.role,
+            onExit = onExitCalibration,
+        )
     }
 }
 

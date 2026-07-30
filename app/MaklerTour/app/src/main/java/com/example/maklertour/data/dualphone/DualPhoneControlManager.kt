@@ -65,6 +65,11 @@ data class DualPhoneControlSnapshot(
     val peerRolePackagePath: String? = null,
     val aggregatePackagePath: String? = null,
     val aggregateUploadState: String = "IDLE",
+    val calibrationActive: Boolean = false,
+    val calibrationRunId: String? = null,
+    val calibrationInstruction: String = "Place the ChArUco board in the centre",
+    val calibrationAcceptedPoseCount: Int = 0,
+    val calibrationTargetPoseCount: Int = 24,
     val clockSync: DualPhoneClockSyncSnapshot = DualPhoneClockSyncSnapshot(),
 )
 
@@ -234,6 +239,98 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             } finally {
                 closeConnection()
             }
+        }
+    }
+
+    fun startCalibrationSession() {
+        val settings = settingsStore.load()
+        val current = mutableState.value
+        val baselineMm = settings.operatorLensBaselineMm
+        val error = when {
+            settings.role != DualPhoneRole.MASTER ->
+                "Calibration must be started on Master"
+            !current.connected || current.peerDeviceId.isNullOrBlank() ->
+                "Connect Slave before calibration"
+            current.phase != DualPhoneControlPhase.CONNECTED ->
+                "Stop capture before calibration"
+            current.calibrationActive ->
+                "Calibration session is already active"
+            settings.rigId.isBlank() ->
+                "Save Rig ID before calibration"
+            settings.rigMountRevision.isBlank() ->
+                "Save mount revision before calibration"
+            baselineMm == null ->
+                "Save lens-center distance before calibration"
+            else -> null
+        }
+        if (error != null) {
+            mutableState.value = current.copy(
+                lastError = error,
+                lastMessage = error,
+            )
+            return
+        }
+
+        val runId = DualPhoneControlProtocol.calibrationRunId()
+        val instruction = "Place the ChArUco board in the centre"
+        mutableState.value = current.copy(
+            calibrationActive = true,
+            calibrationRunId = runId,
+            calibrationInstruction = instruction,
+            calibrationAcceptedPoseCount = 0,
+            calibrationTargetPoseCount = CALIBRATION_TARGET_POSE_COUNT,
+            lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
+            lastError = null,
+            lastMessage = "Opening fullscreen calibration on both phones",
+        )
+        scope.launch {
+            try {
+                send(
+                    DualPhoneControlType.ENTER_CALIBRATION,
+                    JSONObject()
+                        .put("calibration_run_id", runId)
+                        .put("rig_id", settings.rigId)
+                        .put("rig_mount_revision", settings.rigMountRevision)
+                        .put("operator_lens_baseline_mm", baselineMm)
+                        .put("instruction", instruction)
+                        .put("target_pose_count", CALIBRATION_TARGET_POSE_COUNT),
+                )
+            } catch (error: Throwable) {
+                leaveCalibrationLocally(
+                    "Calibration start failed: ${error.message ?: error.javaClass.simpleName}",
+                    error.message ?: error.javaClass.simpleName,
+                )
+            }
+        }
+    }
+
+    fun exitCalibrationSession() {
+        val current = mutableState.value
+        if (!current.calibrationActive) return
+        val runId = current.calibrationRunId
+        val role = current.role
+        scope.launch {
+            val payload = JSONObject()
+                .put("calibration_run_id", runId ?: JSONObject.NULL)
+                .put("reason", "operator_exit")
+            val deliveryError = runCatching {
+                send(
+                    if (role == DualPhoneRole.MASTER) {
+                        DualPhoneControlType.EXIT_CALIBRATION
+                    } else {
+                        DualPhoneControlType.EXIT_CALIBRATION_REQUEST
+                    },
+                    payload,
+                )
+            }.exceptionOrNull()
+            leaveCalibrationLocally(
+                message = if (deliveryError == null) {
+                    "Calibration session closed"
+                } else {
+                    "Calibration closed locally; peer notification failed"
+                },
+                error = deliveryError?.message,
+            )
         }
     }
 
@@ -646,6 +743,92 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 DualPhoneControlType.CLOCK_SYNC_STATUS -> {
                     if (localRole == DualPhoneRole.SLAVE) {
                         clockSyncController.applyRemoteStatus(payload)
+                    }
+                }
+                DualPhoneControlType.ENTER_CALIBRATION -> if (
+                    localRole == DualPhoneRole.SLAVE
+                ) {
+                    val runId = payload.optString("calibration_run_id")
+                    val accepted = mutableState.value.connected &&
+                        mutableState.value.phase == DualPhoneControlPhase.CONNECTED &&
+                        runId.isNotBlank()
+                    val reason = if (accepted) null else
+                        "Slave is not ready for calibration"
+                    if (accepted) {
+                        mutableState.value = mutableState.value.copy(
+                            calibrationActive = true,
+                            calibrationRunId = runId,
+                            calibrationInstruction = payload.optString(
+                                "instruction",
+                                "Place the ChArUco board in the centre",
+                            ),
+                            calibrationAcceptedPoseCount = 0,
+                            calibrationTargetPoseCount = payload.optInt(
+                                "target_pose_count",
+                                CALIBRATION_TARGET_POSE_COUNT,
+                            ).coerceAtLeast(1),
+                            lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
+                            lastError = null,
+                            lastMessage = "Fullscreen calibration opened by Master",
+                        )
+                    }
+                    send(
+                        DualPhoneControlType.ENTER_CALIBRATION_ACK,
+                        JSONObject()
+                            .put("calibration_run_id", runId)
+                            .put("accepted", accepted)
+                            .put("reason", reason ?: JSONObject.NULL),
+                    )
+                }
+                DualPhoneControlType.ENTER_CALIBRATION_ACK -> if (
+                    localRole == DualPhoneRole.MASTER
+                ) {
+                    val runId = payload.optString("calibration_run_id")
+                    val accepted = payload.optBoolean("accepted", false) &&
+                        runId == mutableState.value.calibrationRunId
+                    if (accepted) {
+                        mutableState.value = mutableState.value.copy(
+                            lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
+                            lastError = null,
+                            lastMessage = "Fullscreen calibration active on both phones",
+                        )
+                    } else {
+                        leaveCalibrationLocally(
+                            message = "Slave rejected calibration mode",
+                            error = payload.optString(
+                                "reason",
+                                "Slave rejected calibration mode",
+                            ),
+                        )
+                    }
+                }
+                DualPhoneControlType.EXIT_CALIBRATION_REQUEST -> if (
+                    localRole == DualPhoneRole.MASTER
+                ) {
+                    val runId = mutableState.value.calibrationRunId
+                    runCatching {
+                        send(
+                            DualPhoneControlType.EXIT_CALIBRATION,
+                            JSONObject()
+                                .put("calibration_run_id", runId ?: JSONObject.NULL)
+                                .put("reason", "slave_requested_exit"),
+                        )
+                    }
+                    leaveCalibrationLocally(
+                        "Slave requested calibration exit",
+                        null,
+                    )
+                }
+                DualPhoneControlType.EXIT_CALIBRATION -> {
+                    val remoteRunId = payload.optNullableString("calibration_run_id")
+                    if (
+                        remoteRunId == null ||
+                        remoteRunId == mutableState.value.calibrationRunId
+                    ) {
+                        leaveCalibrationLocally(
+                            "Calibration session closed by peer",
+                            null,
+                        )
                     }
                 }
                 DualPhoneControlType.ARM -> if (localRole == DualPhoneRole.SLAVE) {
@@ -1399,6 +1582,22 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         optDouble(key)
     }
 
+    private fun leaveCalibrationLocally(
+        message: String,
+        error: String?,
+    ) {
+        mutableState.value = mutableState.value.copy(
+            calibrationActive = false,
+            calibrationRunId = null,
+            calibrationInstruction = "Place the ChArUco board in the centre",
+            calibrationAcceptedPoseCount = 0,
+            calibrationTargetPoseCount = CALIBRATION_TARGET_POSE_COUNT,
+            lastCommand = DualPhoneControlType.EXIT_CALIBRATION,
+            lastError = error,
+            lastMessage = message,
+        )
+    }
+
     private fun sendCapabilities() {
 
         val settings = settingsStore.load()
@@ -1637,6 +1836,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         private const val HEARTBEAT_TIMEOUT_MS = 8_000L
         private const val MAX_START_LATE_NS = 100_000_000L
         private const val ARM_PREPARE_TIMEOUT_MS = 60_000L
+        private const val CALIBRATION_TARGET_POSE_COUNT = 24
 
         @Volatile
         private var instance: DualPhoneControlManager? = null

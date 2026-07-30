@@ -15,6 +15,8 @@ internal object DualPhoneControlProtocol {
 
     fun dualCaptureId(): String = UUID.randomUUID().toString()
 
+    fun calibrationRunId(): String = "cal-${UUID.randomUUID()}"
+
     fun commandId(prefix: String): String =
         "${prefix.trim().ifBlank { "command" }}-${UUID.randomUUID()}"
 
@@ -51,6 +53,10 @@ internal object DualPhoneControlType {
     const val CLOCK_SYNC_STATUS = "CLOCK_SYNC_STATUS"
     const val PING = "PING"
     const val PONG = "PONG"
+    const val ENTER_CALIBRATION = "ENTER_CALIBRATION"
+    const val ENTER_CALIBRATION_ACK = "ENTER_CALIBRATION_ACK"
+    const val EXIT_CALIBRATION_REQUEST = "EXIT_CALIBRATION_REQUEST"
+    const val EXIT_CALIBRATION = "EXIT_CALIBRATION"
     const val ARM = "ARM"
     const val ARM_ACK = "ARM_ACK"
     const val START_AT = "START_AT"
