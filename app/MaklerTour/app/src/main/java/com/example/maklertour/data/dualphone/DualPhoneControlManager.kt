@@ -102,8 +102,12 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     private var masterDualCaptureId: String? = null
     private var localArmResult: DualPhoneCaptureArmResult? = null
     private val bundleCoordinator = DualPhoneBundleCoordinator(appContext, scope)
+    private val aggregateTransferLock = Any()
     private var localRolePackage: DualPhoneRolePackage? = null
     private var slaveTransferOffer: DualPhoneTransferOffer? = null
+    private var pendingSlaveTransferOffer: DualPhoneTransferOffer? = null
+    private var aggregateTransferJob: Job? = null
+    private var aggregateTransferCaptureId: String? = null
 
     fun startMaster() {
         val settings = settingsStore.load()
@@ -244,7 +248,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             val commandId = DualPhoneControlProtocol.commandId("arm")
             slaveTransferOffer?.serverJob?.cancel()
             slaveTransferOffer = null
-            localRolePackage = null
+            synchronized(aggregateTransferLock) {
+                aggregateTransferJob?.cancel()
+                aggregateTransferJob = null
+                aggregateTransferCaptureId = null
+                pendingSlaveTransferOffer = null
+                localRolePackage = null
+            }
             mutableState.value = mutableState.value.copy(
                 phase = DualPhoneControlPhase.ARMING,
                 lastCommand = DualPhoneControlType.ARM,
@@ -497,8 +507,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 dualCaptureId = captureId,
                 role = DualPhoneRole.MASTER,
             )
-            localRolePackage = rolePackage
             localArmResult = null
+            val slaveOfferReady = synchronized(aggregateTransferLock) {
+                localRolePackage = rolePackage
+                pendingSlaveTransferOffer != null
+            }
             mutableState.value = mutableState.value.copy(
                 phase = DualPhoneControlPhase.CONNECTED,
                 lastCommand = DualPhoneControlType.STOP,
@@ -509,10 +522,18 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 localVideoPath = localResult.videoPath,
                 localManifestPath = localResult.manifestPath,
                 localRolePackagePath = rolePackage.file.absolutePath,
-                aggregateUploadState = "WAITING_FOR_SLAVE_PACKAGE",
-                lastMessage =
-                    "Master finalized independently; waiting for Slave package",
+                aggregateUploadState = if (slaveOfferReady) {
+                    "TRANSFER_BARRIER_READY"
+                } else {
+                    "WAITING_FOR_SLAVE_PACKAGE"
+                },
+                lastMessage = if (slaveOfferReady) {
+                    "Master and Slave packages are ready; starting transfer"
+                } else {
+                    "Master finalized independently; waiting for Slave package"
+                },
             )
+            tryStartAggregateTransfer()
         }
     }
 
@@ -905,7 +926,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             "SLAVE_FINALIZE_FAILED"
                         },
                         lastMessage = if (captured) {
-                            "Both recordings finalized; fetching Slave package"
+                            "Slave package offer received"
                         } else {
                             "Master finalized; Slave finalize failed independently"
                         },
@@ -961,69 +982,141 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             )
             return
         }
-        val peerHost = mutableState.value.peerHost
-        if (peerHost.isNullOrBlank()) {
+        val expectedCaptureId = runCatching { currentCaptureId() }.getOrNull()
+        if (expectedCaptureId != null && offer.dualCaptureId != expectedCaptureId) {
             mutableState.value = mutableState.value.copy(
-                aggregateUploadState = "PEER_HOST_MISSING",
-                lastError = "Slave host is unavailable for package transfer",
+                aggregateUploadState = "SLAVE_PACKAGE_CAPTURE_MISMATCH",
+                lastError = "Slave package capture ID does not match active capture",
+                lastMessage = "Rejected stale Slave package offer",
             )
             return
         }
-        scope.launch {
-            try {
-                val masterPackage = localRolePackage
-                    ?: throw IllegalStateException("Master role package is unavailable")
+        val masterReady = synchronized(aggregateTransferLock) {
+            pendingSlaveTransferOffer = offer
+            localRolePackage != null
+        }
+        mutableState.value = mutableState.value.copy(
+            aggregateUploadState = if (masterReady) {
+                "TRANSFER_BARRIER_READY"
+            } else {
+                "WAITING_FOR_MASTER_PACKAGE"
+            },
+            lastError = null,
+            lastMessage = if (masterReady) {
+                "Master and Slave packages are ready; starting transfer"
+            } else {
+                "Slave package ready; waiting for Master package"
+            },
+        )
+        tryStartAggregateTransfer()
+    }
+
+    private fun tryStartAggregateTransfer() {
+        synchronized(aggregateTransferLock) {
+            val offer = pendingSlaveTransferOffer ?: return
+            val masterPackage = localRolePackage ?: return
+            if (masterPackage.dualCaptureId != offer.dualCaptureId) {
+                pendingSlaveTransferOffer = null
                 mutableState.value = mutableState.value.copy(
-                    aggregateUploadState = "DOWNLOADING_SLAVE_PACKAGE",
-                    lastMessage = "Downloading Slave role package",
+                    aggregateUploadState = "ROLE_PACKAGE_CAPTURE_MISMATCH",
+                    lastError = "Master and Slave role packages have different capture IDs",
+                    lastMessage = "Aggregate transfer barrier rejected mismatched packages",
                 )
-                val slavePackage = bundleCoordinator.download(
-                    peerHost = peerHost,
-                    offer = offer,
-                )
-                runCatching {
-                    send(
-                        DualPhoneControlType.PACKAGE_RECEIVED,
-                        JSONObject()
-                            .put("dual_capture_id", offer.dualCaptureId)
-                            .put("role", offer.role.name)
-                            .put("sha256", slavePackage.sha256)
-                            .put("size_bytes", slavePackage.sizeBytes),
-                    )
-                }
+                return
+            }
+            val activeJob = aggregateTransferJob
+            if (activeJob?.isActive == true) {
+                if (aggregateTransferCaptureId == offer.dualCaptureId) return
+                activeJob.cancel()
+            }
+            val peerHost = mutableState.value.peerHost
+            if (peerHost.isNullOrBlank()) {
                 mutableState.value = mutableState.value.copy(
-                    peerRolePackagePath = slavePackage.file.absolutePath,
-                    aggregateUploadState = "BUILDING_AGGREGATE_BUNDLE",
-                    lastMessage = "Slave package verified; building aggregate bundle",
+                    aggregateUploadState = "PEER_HOST_MISSING",
+                    lastError = "Slave host is unavailable for package transfer",
+                    lastMessage = "Cannot start Slave package download",
                 )
-                val aggregate = bundleCoordinator.packageAggregate(
+                return
+            }
+            aggregateTransferCaptureId = offer.dualCaptureId
+            mutableState.value = mutableState.value.copy(
+                aggregateUploadState = "DOWNLOADING_SLAVE_PACKAGE",
+                lastError = null,
+                lastMessage = "Downloading Slave role package",
+            )
+            aggregateTransferJob = scope.launch {
+                runAggregateTransfer(
                     masterPackage = masterPackage,
-                    slavePackage = slavePackage,
+                    offer = offer,
+                    peerHost = peerHost,
                 )
-                mutableState.value = mutableState.value.copy(
-                    aggregatePackagePath = aggregate.absolutePath,
-                    aggregateUploadState = "ENQUEUEING_SERVER_UPLOAD",
-                    lastMessage = "Aggregate bundle ready; enqueueing server upload",
+            }
+        }
+    }
+
+    private suspend fun runAggregateTransfer(
+        masterPackage: DualPhoneRolePackage,
+        offer: DualPhoneTransferOffer,
+        peerHost: String,
+    ) {
+        var completed = false
+        try {
+            val slavePackage = bundleCoordinator.download(
+                peerHost = peerHost,
+                offer = offer,
+            )
+            runCatching {
+                send(
+                    DualPhoneControlType.PACKAGE_RECEIVED,
+                    JSONObject()
+                        .put("dual_capture_id", offer.dualCaptureId)
+                        .put("role", offer.role.name)
+                        .put("sha256", slavePackage.sha256)
+                        .put("size_bytes", slavePackage.sizeBytes),
                 )
-                val upload = DualPhoneAggregateUploadRuntime.enqueue(
-                    bundleFile = aggregate,
-                    dualCaptureId = offer.dualCaptureId,
-                )
-                mutableState.value = mutableState.value.copy(
-                    aggregateUploadState = if (upload.queued) {
-                        "QUEUED_FOR_SERVER"
-                    } else {
-                        "READY_NOT_QUEUED"
-                    },
-                    lastError = if (upload.queued) null else upload.message,
-                    lastMessage = upload.message,
-                )
-            } catch (error: Throwable) {
-                mutableState.value = mutableState.value.copy(
-                    aggregateUploadState = "TRANSFER_OR_PACKAGING_FAILED",
-                    lastError = error.message ?: error.javaClass.simpleName,
-                    lastMessage = "Automatic dual-phone bundle transfer failed",
-                )
+            }
+            mutableState.value = mutableState.value.copy(
+                peerRolePackagePath = slavePackage.file.absolutePath,
+                aggregateUploadState = "BUILDING_AGGREGATE_BUNDLE",
+                lastMessage = "Slave package verified; building aggregate bundle",
+            )
+            val aggregate = bundleCoordinator.packageAggregate(
+                masterPackage = masterPackage,
+                slavePackage = slavePackage,
+            )
+            mutableState.value = mutableState.value.copy(
+                aggregatePackagePath = aggregate.absolutePath,
+                aggregateUploadState = "ENQUEUEING_SERVER_UPLOAD",
+                lastMessage = "Aggregate bundle ready; enqueueing server upload",
+            )
+            val upload = DualPhoneAggregateUploadRuntime.enqueue(
+                bundleFile = aggregate,
+                dualCaptureId = offer.dualCaptureId,
+            )
+            mutableState.value = mutableState.value.copy(
+                aggregateUploadState = if (upload.queued) {
+                    "QUEUED_FOR_SERVER"
+                } else {
+                    "READY_NOT_QUEUED"
+                },
+                lastError = if (upload.queued) null else upload.message,
+                lastMessage = upload.message,
+            )
+            completed = true
+        } catch (error: Throwable) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            mutableState.value = mutableState.value.copy(
+                aggregateUploadState = "TRANSFER_OR_PACKAGING_FAILED",
+                lastError = error.message ?: error.javaClass.simpleName,
+                lastMessage = "Automatic dual-phone bundle transfer failed",
+            )
+        } finally {
+            synchronized(aggregateTransferLock) {
+                if (aggregateTransferCaptureId == offer.dualCaptureId) {
+                    aggregateTransferJob = null
+                    aggregateTransferCaptureId = null
+                    if (completed) pendingSlaveTransferOffer = null
+                }
             }
         }
     }
@@ -1504,7 +1597,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         localArmResult = null
         slaveTransferOffer?.serverJob?.cancel()
         slaveTransferOffer = null
-        localRolePackage = null
+        synchronized(aggregateTransferLock) {
+            aggregateTransferJob?.cancel()
+            aggregateTransferJob = null
+            aggregateTransferCaptureId = null
+            pendingSlaveTransferOffer = null
+            localRolePackage = null
+        }
         mutableState.value = mutableState.value.copy(
             phase = DualPhoneControlPhase.STOPPED,
             connected = false,

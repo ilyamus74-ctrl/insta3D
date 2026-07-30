@@ -42,11 +42,24 @@ log() {
     echo "[INFO] $*"
 }
 
+stop_background_process() {
+    local pid="$1" attempt
+    [[ -n "$pid" ]] || return
+    kill -TERM "$pid" 2>/dev/null || true
+    for attempt in {1..30}; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+}
+
 cleanup() {
     local pid
     for pid in "${LOG_PIDS[@]:-}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
+        stop_background_process "$pid"
     done
 }
 trap cleanup EXIT INT TERM
@@ -103,6 +116,7 @@ done
 command -v adb >/dev/null 2>&1 || die "adb is not installed or not in PATH"
 command -v tar >/dev/null 2>&1 || die "tar is not installed"
 command -v sha256sum >/dev/null 2>&1 || die "sha256sum is not installed"
+command -v timeout >/dev/null 2>&1 || die "timeout is not installed"
 adb start-server >/dev/null
 
 mapfile -t DEVICES < <(
@@ -208,23 +222,29 @@ prepare_device() {
     fi
 }
 
+wait_for_app_pid() {
+    local serial="$1" pid attempt
+    for attempt in {1..20}; do
+        pid="$(timeout 3s adb -s "$serial" shell pidof -s "$PKG" 2>/dev/null | tr -d '\r' || true)"
+        if [[ -n "$pid" ]]; then
+            printf '%s' "$pid"
+            return
+        fi
+        sleep 0.5
+    done
+}
+
 start_logs() {
-    local serial="$1" dir="$2"
-    adb -s "$serial" logcat -c || true
-    local pid
-    pid="$(adb -s "$serial" shell pidof -s "$PKG" | tr -d '\r' || true)"
+    local serial="$1" dir="$2" pid
+    timeout 5s adb -s "$serial" logcat -c >/dev/null 2>&1 || true
+    adb -s "$serial" logcat -b all -v threadtime >"$dir/logcat_stream.log" 2>&1 &
+    LOG_PIDS+=("$!")
+    pid="$(wait_for_app_pid "$serial")"
     if [[ -n "$pid" ]]; then
         adb -s "$serial" logcat --pid="$pid" -v threadtime >"$dir/logcat_app.log" 2>&1 &
         LOG_PIDS+=("$!")
     else
-        echo "Application PID was unavailable at collector start" >"$dir/logcat_app.log"
-    fi
-    adb -s "$serial" logcat -b all -v threadtime 2>&1 |
-        grep --line-buffered -Ei "$FILTER_REGEX" >"$dir/logcat_filtered.log" &
-    LOG_PIDS+=("$!")
-    if ((FULL == 1)); then
-        adb -s "$serial" logcat -b all -v threadtime >"$dir/logcat_full.log" 2>&1 &
-        LOG_PIDS+=("$!")
+        echo "Application PID was unavailable; use logcat_filtered.log" >"$dir/logcat_app.log"
     fi
 }
 
@@ -259,28 +279,45 @@ Run one complete test now:
 ============================================================
 INSTRUCTIONS
 read -r -p "Press Enter after the complete test... " _
+log "Stopping logcat processes..."
 cleanup
 LOG_PIDS=()
+log "Building filtered logs..."
+for entry in "${ROLES[@]}"; do
+    role="${entry%%:*}"
+    serial="${entry#*:}"
+    safe_serial="${serial//[^A-Za-z0-9._-]/_}"
+    dir="$RUN_DIR/${role}_${safe_serial}"
+    grep -Eai "$FILTER_REGEX" "$dir/logcat_stream.log" \
+        >"$dir/logcat_filtered.log" || true
+    if ((FULL == 1)); then
+        mv "$dir/logcat_stream.log" "$dir/logcat_full.log"
+    else
+        rm -f "$dir/logcat_stream.log"
+    fi
+done
 
 copy_private_file() {
     local serial="$1" remote="$2" local_path="$3"
-    adb -s "$serial" exec-out run-as "$PKG" sh -c "cat '$remote'" \
+    timeout --signal=TERM --kill-after=2s 20s \
+        adb -s "$serial" exec-out run-as "$PKG" sh -c "cat '$remote'" \
         >"$local_path" 2>/dev/null || rm -f "$local_path"
     [[ -s "$local_path" ]] || rm -f "$local_path"
 }
 
 collect_private_telemetry() {
     local serial="$1" dir="$2"
-    if ! adb -s "$serial" shell run-as "$PKG" id >/dev/null 2>&1; then
+    if ! timeout 10s adb -s "$serial" shell run-as "$PKG" id >/dev/null 2>&1; then
         echo "run-as unavailable" >"$dir/run_as_error.txt"
         return
     fi
     local latest
-    latest="$(adb -s "$serial" shell run-as "$PKG" sh -c \
+    latest="$(timeout 15s adb -s "$serial" shell run-as "$PKG" sh -c \
         'cd files 2>/dev/null && ls -td dual_phone_captures/*/* 2>/dev/null | head -1' |
         tr -d '\r')"
     echo "latest_role_dir=${latest:-not_found}" >"$dir/latest_capture.txt"
-    adb -s "$serial" exec-out run-as "$PKG" sh -c \
+    timeout --signal=TERM --kill-after=2s 20s \
+        adb -s "$serial" exec-out run-as "$PKG" sh -c \
         'cd files 2>/dev/null && find dual_phone_captures dual_phone_transfer upload_packages -maxdepth 6 -type f -exec ls -ln {} \; 2>/dev/null' \
         >"$dir/app_file_list.txt" 2>&1 || true
     [[ -n "$latest" ]] || return
@@ -300,7 +337,8 @@ collect_private_telemetry() {
         copy_private_file "$serial" "files/$latest/$name" "$dir/latest_capture/$name"
     done
     if ((FULL == 1)); then
-        adb -s "$serial" exec-out run-as "$PKG" sh -c \
+        timeout --signal=TERM --kill-after=3s 180s \
+            adb -s "$serial" exec-out run-as "$PKG" sh -c \
             'cd files 2>/dev/null && tar cf - dual_phone_captures dual_phone_transfer upload_packages 2>/dev/null' \
             >"$dir/app_private_full.tar" 2>"$dir/app_private_full_error.txt" || true
         [[ -s "$dir/app_private_full.tar" ]] || rm -f "$dir/app_private_full.tar"
@@ -309,9 +347,12 @@ collect_private_telemetry() {
 
 collect_device() {
     local role="$1" serial="$2" dir="$3"
-    adb -s "$serial" shell dumpsys media.camera >"$dir/dumpsys_media_camera.txt" 2>&1 || true
-    adb -s "$serial" shell dumpsys activity processes >"$dir/dumpsys_activity_processes.txt" 2>&1 || true
-    adb -s "$serial" exec-out screencap -p >"$dir/screenshot.png" 2>/dev/null || true
+    timeout --signal=TERM --kill-after=2s 20s \
+        adb -s "$serial" shell dumpsys media.camera >"$dir/dumpsys_media_camera.txt" 2>&1 || true
+    timeout --signal=TERM --kill-after=2s 20s \
+        adb -s "$serial" shell dumpsys activity processes >"$dir/dumpsys_activity_processes.txt" 2>&1 || true
+    timeout --signal=TERM --kill-after=2s 15s \
+        adb -s "$serial" exec-out screencap -p >"$dir/screenshot.png" 2>/dev/null || true
     collect_private_telemetry "$serial" "$dir"
     {
         echo "===== role ====="
@@ -327,11 +368,17 @@ collect_device() {
     } >"$dir/summary.txt"
 }
 
+log "Collecting telemetry from selected devices..."
+COLLECT_PIDS=()
 for entry in "${ROLES[@]}"; do
     role="${entry%%:*}"
     serial="${entry#*:}"
     safe_serial="${serial//[^A-Za-z0-9._-]/_}"
-    collect_device "$role" "$serial" "$RUN_DIR/${role}_${safe_serial}"
+    collect_device "$role" "$serial" "$RUN_DIR/${role}_${safe_serial}" &
+    COLLECT_PIDS+=("$!")
+done
+for pid in "${COLLECT_PIDS[@]}"; do
+    wait "$pid" || true
 done
 
 {

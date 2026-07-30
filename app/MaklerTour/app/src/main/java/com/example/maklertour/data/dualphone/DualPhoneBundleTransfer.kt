@@ -256,9 +256,17 @@ internal class DualPhoneBundleCoordinator(
                 if (!sent) throw lastClientError
                     ?: IllegalStateException("Role package was not transferred")
             } catch (error: Throwable) {
-                if (!ready.isCompleted) ready.completeExceptionally(error)
-                Log.e(TAG, "role package server failed", error)
-                throw error
+                if (!ready.isCompleted) {
+                    ready.completeExceptionally(error)
+                    Log.e(TAG, "role package server failed before readiness", error)
+                } else {
+                    Log.w(
+                        TAG,
+                        "role package server ended before successful transfer; " +
+                            "package remains available for diagnostics",
+                        error,
+                    )
+                }
             } finally {
                 runCatching { server.close() }
             }
