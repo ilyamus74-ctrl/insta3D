@@ -390,7 +390,7 @@ fun DualPhoneControlSettingsCard(
                     "DOWNLOADING_SLAVE_PACKAGE",
                     "BUILDING_AGGREGATE_BUNDLE",
                     "ENQUEUEING_SERVER_UPLOAD",
-+                )
+                )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
