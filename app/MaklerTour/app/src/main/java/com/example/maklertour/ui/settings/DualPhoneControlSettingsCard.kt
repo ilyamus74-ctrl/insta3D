@@ -1,5 +1,6 @@
 package com.maklertour.ui.settings
 
+import android.view.ViewGroup
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
@@ -470,7 +471,7 @@ private fun DualPhoneRecorderPreview(
 ) {
     val context = LocalContext.current
     val previewView = remember(context) {
-        PreviewView(context).apply {
+        (DualPhoneRecorderPreviewRegistry.current() ?: PreviewView(context)).apply {
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
             scaleType = PreviewView.ScaleType.FIT_CENTER
         }
@@ -485,6 +486,7 @@ private fun DualPhoneRecorderPreview(
 
     AndroidView(
         factory = {
+            (previewView.parent as? ViewGroup)?.removeView(previewView)
             DualPhoneRecorderPreviewRegistry.register(previewView)
             previewView
         },

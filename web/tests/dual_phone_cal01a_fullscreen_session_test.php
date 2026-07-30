@@ -8,6 +8,7 @@ $files = [
     'manager' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneControlManager.kt',
     'card' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/settings/DualPhoneControlSettingsCard.kt',
     'fullscreen' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/settings/DualPhoneCalibrationFullscreen.kt',
+    'registry' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/DualPhoneRecorderPreviewRegistry.kt',
     'main' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/MainActivity.kt',
 ];
 
@@ -22,6 +23,7 @@ $protocol = file_get_contents($files['protocol']);
 $manager = file_get_contents($files['manager']);
 $card = file_get_contents($files['card']);
 $fullscreen = file_get_contents($files['fullscreen']);
+$registry = file_get_contents($files['registry']);
 $main = file_get_contents($files['main']);
 
 $requirements = [
@@ -47,12 +49,18 @@ $requirements = [
         '!snapshot.calibrationActive',
     ]],
     'fullscreen' => [$fullscreen, [
-        'SCREEN_ORIENTATION_SENSOR_LANDSCAPE',
+        'SCREEN_ORIENTATION_LOCKED',
         'usePlatformDefaultWidth = false',
         'PreviewView.ScaleType.FILL_CENTER',
         'Accepted poses:',
         'Завершить калибровку',
         'DualPhoneRecorderPreviewRegistry.register',
+        'DualPhoneRecorderPreviewRegistry.current()',
+        'removeView(previewView)',
+    ]],
+    'registry' => [$registry, [
+        'Keep the weak reference for the next Compose host',
+        'generation += 1L',
     ]],
     'main' => [$main, [
         'dualPhoneControl.startCalibrationSession()',
@@ -67,6 +75,11 @@ foreach ($requirements as $name => [$content, $needles]) {
             exit(1);
         }
     }
+}
+
+if (str_contains($fullscreen, 'SCREEN_ORIENTATION_SENSOR_LANDSCAPE')) {
+    fwrite(STDERR, "Calibration must preserve the operator/device orientation\n");
+    exit(1);
 }
 
 if (str_contains($fullscreen, 'room_id') || str_contains($manager, 'room_id')) {

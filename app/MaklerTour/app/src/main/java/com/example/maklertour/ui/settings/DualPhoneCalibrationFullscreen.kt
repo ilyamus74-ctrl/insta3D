@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.view.View
+import android.view.ViewGroup
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -50,7 +51,7 @@ internal fun DualPhoneCalibrationFullscreen(
         val previousOrientation = activity?.requestedOrientation
         val decorView = activity?.window?.decorView
         val previousSystemUi = decorView?.systemUiVisibility
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
         decorView?.systemUiVisibility =
             View.SYSTEM_UI_FLAG_FULLSCREEN or
                 View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
@@ -170,7 +171,7 @@ internal fun DualPhoneCalibrationFullscreen(
 private fun CalibrationPreview(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val previewView = remember(context) {
-        PreviewView(context).apply {
+        (DualPhoneRecorderPreviewRegistry.current() ?: PreviewView(context)).apply {
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
             scaleType = PreviewView.ScaleType.FILL_CENTER
         }
@@ -183,6 +184,7 @@ private fun CalibrationPreview(modifier: Modifier = Modifier) {
     }
     AndroidView(
         factory = {
+            (previewView.parent as? ViewGroup)?.removeView(previewView)
             DualPhoneRecorderPreviewRegistry.register(previewView)
             previewView
         },

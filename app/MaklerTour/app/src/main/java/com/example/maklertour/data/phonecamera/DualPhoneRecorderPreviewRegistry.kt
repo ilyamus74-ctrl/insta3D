@@ -5,8 +5,8 @@ import java.lang.ref.WeakReference
 
 /**
  * Bridges the Compose settings screen and the long-lived phone-camera provider.
- * The registry never owns the View: the composable registers it while visible
- * and unregisters it on disposal.
+ * The registry keeps only a weak reference to the last PreviewView so the same
+ * CameraX-bound surface can move between the settings card and fullscreen dialog.
  */
 object DualPhoneRecorderPreviewRegistry {
     private val lock = Any()
@@ -24,7 +24,8 @@ object DualPhoneRecorderPreviewRegistry {
 
     fun unregister(previewView: PreviewView) = synchronized(lock) {
         if (previewRef?.get() === previewView) {
-            previewRef = null
+            // Keep the weak reference for the next Compose host. Clearing it here
+            // creates a new PreviewView and leaves CameraX bound to a detached one.
             generation += 1L
         }
     }
