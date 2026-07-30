@@ -89,13 +89,22 @@ data class PhoneVideoAttemptDiagnostics(
     val previewAttached: Boolean,
     val previewWidth: Int,
     val previewHeight: Int,
+    val previewStreamState: String,
+    val finalizeReceived: Boolean,
+    val finalizeErrorCode: Int?,
+    val finalizeErrorLabel: String?,
+    val finalizeCause: String?,
 ) {
     fun summary(): String =
         "mode=${requestedModeId ?: "unknown"}, binding=$recorderBindingMode, " +
             "camerax_start=$cameraXStartObserved, status_events=$statusEventCount, " +
             "last_bytes=$lastRecordedBytes, last_duration_ns=$lastRecordedDurationNs, " +
             "file_size=$fileSizeBytes, preview_attached=$previewAttached, " +
-            "preview_size=${previewWidth}x${previewHeight}"
+            "preview_size=${previewWidth}x${previewHeight}, " +
+            "preview_stream_state=$previewStreamState, " +
+            "finalize_received=$finalizeReceived, " +
+            "finalize_error=${finalizeErrorLabel ?: finalizeErrorCode ?: "none"}, " +
+            "finalize_cause=${finalizeCause ?: "none"}"
 }
 
 class PhoneVideoNoValidDataException(
@@ -128,6 +137,10 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     @Volatile private var lastStatusEventCount: Int = 0
     @Volatile private var lastStatusRecordedBytes: Long = 0L
     @Volatile private var lastStatusRecordedDurationNs: Long = 0L
+    @Volatile private var lastPreviewStreamState: String = "UNKNOWN"
+    @Volatile private var lastFinalizeErrorCode: Int? = null
+    @Volatile private var lastFinalizeErrorLabel: String? = null
+    @Volatile private var lastFinalizeCause: String? = null
     private val lensRepository = PhoneCameraLensRepository(context)
     private var selectedVideoInfo: SelectedPhoneVideoInfo? = null
     private var selectedLensOption: PhoneCameraLensOption? = null
@@ -359,6 +372,20 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             }
             ready
         }
+
+    private suspend fun awaitPreviewStreaming(previewView: PreviewView): Boolean =
+        withTimeoutOrNull(PREVIEW_STREAMING_TIMEOUT_MS) {
+            while (
+                previewView.previewStreamState.value !=
+                    PreviewView.StreamState.STREAMING
+            ) {
+                lastPreviewStreamState =
+                    previewView.previewStreamState.value?.name ?: "UNKNOWN"
+                delay(50L)
+            }
+            lastPreviewStreamState = PreviewView.StreamState.STREAMING.name
+            true
+        } == true
 
     private fun buildHeadlessKeepAliveAnalysis(): ImageAnalysis =
         ImageAnalysis.Builder()
@@ -737,12 +764,27 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 boundPreviewAttached = requiredPreview?.isAttachedToWindow == true
                 boundPreviewWidth = requiredPreview?.width ?: 0
                 boundPreviewHeight = requiredPreview?.height ?: 0
+                lastPreviewStreamState =
+                    requiredPreview?.previewStreamState?.value?.name
+                        ?: "NOT_REQUIRED"
                 applySelectedZoom(camera)
+                if (
+                    requiredPreview != null &&
+                    !awaitPreviewStreaming(requiredPreview)
+                ) {
+                    throw IllegalStateException(
+                        "Dual-phone PreviewView did not reach STREAMING after " +
+                            "$PREVIEW_STREAMING_TIMEOUT_MS ms; " +
+                            "state=$lastPreviewStreamState",
+                    )
+                }
                 Log.i(
                     TAG,
                     "ensureRecordingReady(): binding=$recorderBindingMode camera_id=" +
                         "${lens.cameraId} mode=${mode.id} preview=" +
-                        "${boundPreviewWidth}x${boundPreviewHeight} attached=$boundPreviewAttached",
+                        "${boundPreviewWidth}x${boundPreviewHeight} " +
+                        "attached=$boundPreviewAttached " +
+                        "stream_state=$lastPreviewStreamState",
                 )
                 getRecordingReadiness()
             } catch (error: Throwable) {
@@ -846,6 +888,14 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         lastStatusEventCount = 0
         lastStatusRecordedBytes = 0L
         lastStatusRecordedDurationNs = 0L
+        lastFinalizeErrorCode = null
+        lastFinalizeErrorLabel = null
+        lastFinalizeCause = null
+        lastPreviewStreamState =
+            boundPreviewView
+                ?.previewStreamState
+                ?.value
+                ?.name ?: lastPreviewStreamState
         if (telemetryContext != null) {
             val info = selectedVideoInfo
             frameTelemetryRecorder.start(
@@ -925,7 +975,19 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                                 ?: durationMs * 1_000_000L
                         val size = file.length()
                         val errorLabel = finalizeErrorLabel(event.error)
-                        Log.d(TAG, "startRecording(): finalize path=${file.absolutePath}, size=$size, error=$errorLabel")
+                        lastFinalizeErrorCode = event.error
+                        lastFinalizeErrorLabel = errorLabel
+                        lastFinalizeCause = event.cause?.let {
+                            "${it.javaClass.simpleName}: " +
+                                (it.message ?: "no message")
+                        }
+                        recording = null
+                        Log.d(
+                            TAG,
+                            "startRecording(): finalize path=${file.absolutePath}, " +
+                                "size=$size, error=$errorLabel " +
+                                "cause=${lastFinalizeCause ?: "none"}",
+                        )
                         if (event.hasError()) {
                             val diagnostics = buildAttemptDiagnostics(file)
                             val failure = PhoneVideoNoValidDataException(
@@ -981,11 +1043,13 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             )
         }
         val health = if (healthDeferred != null) {
-            runCatching {
+            try {
                 withTimeoutOrNull(VALID_ENCODED_DATA_TIMEOUT_MS) {
                     healthDeferred.await()
                 }
-            }.getOrNull()
+            } catch (error: Throwable) {
+                throw error
+            }
         } else {
             null
         }
@@ -1050,6 +1114,38 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         return result.copy(frameTelemetrySummary = frameSummary)
     }
 
+    suspend fun resetRecorderState(
+        reason: String,
+    ): PhoneVideoAttemptDiagnostics? {
+        val file = outputFile
+        val currentRecording = recording
+        val currentFinalize = finalizeDeferred
+        Log.w(
+            TAG,
+            "resetRecorderState(): reason=$reason " +
+                "recording_active=${currentRecording != null} " +
+                "binding=$recorderBindingMode " +
+                "output=${file?.absolutePath ?: "none"}",
+        )
+        if (currentRecording != null) {
+            runCatching { currentRecording.stop() }
+            if (currentFinalize != null) {
+                runCatching {
+                    withTimeoutOrNull(FAILED_START_FINALIZE_TIMEOUT_MS) {
+                        currentFinalize.await()
+                    }
+                }
+            }
+        }
+        recording = null
+        frameTelemetryRecorder.stop()
+        val diagnostics = file?.let(::buildAttemptDiagnostics)
+        validDataDeferred = null
+        finalizeDeferred = null
+        outputFile = null
+        return diagnostics
+    }
+
     private fun buildAttemptDiagnostics(file: File): PhoneVideoAttemptDiagnostics {
         val info = selectedVideoInfo
         return PhoneVideoAttemptDiagnostics(
@@ -1063,6 +1159,15 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             previewAttached = boundPreviewAttached,
             previewWidth = boundPreviewWidth,
             previewHeight = boundPreviewHeight,
+            previewStreamState =
+                boundPreviewView
+                    ?.previewStreamState
+                    ?.value
+                    ?.name ?: lastPreviewStreamState,
+            finalizeReceived = lastFinalizeElapsedNs != null,
+            finalizeErrorCode = lastFinalizeErrorCode,
+            finalizeErrorLabel = lastFinalizeErrorLabel,
+            finalizeCause = lastFinalizeCause,
         )
     }
 
@@ -1182,6 +1287,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         private const val MIN_VALID_ENCODED_BYTES = 4_096L
         private const val MIN_VALID_ENCODED_DURATION_NS = 500_000_000L
         private const val PREVIEW_SURFACE_TIMEOUT_MS = 5_000L
+        private const val PREVIEW_STREAMING_TIMEOUT_MS = 8_000L
         private const val VALID_ENCODED_DATA_TIMEOUT_MS = 10_000L
         private const val FAILED_START_FINALIZE_TIMEOUT_MS = 5_000L
     }

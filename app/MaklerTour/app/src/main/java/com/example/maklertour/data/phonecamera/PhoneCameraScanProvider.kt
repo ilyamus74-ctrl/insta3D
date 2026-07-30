@@ -186,9 +186,16 @@ class PhoneCameraScanProvider(
             ) {
                 return existing.armResult
             }
-            throw IllegalStateException(
-                "Another dual-phone capture is already armed",
+            abort(
+                "STALE_ARM_REPLACED_BY_NEW_COMMAND: old_capture=" +
+                    existing.request.dualCaptureId +
+                    " new_capture=${request.dualCaptureId}",
             )
+        } else if (videoRecorder.isRecording()) {
+            videoRecorder.resetRecorderState(
+                "ORPHAN_RECORDER_RECOVERED_BEFORE_ARM",
+            )
+            imuRecorder.stop()
         }
 
         var readiness = videoRecorder.ensureRecordingReady(
@@ -482,17 +489,25 @@ class PhoneCameraScanProvider(
                 startRecorderAttempt(attemptNumber = 2)
             }
         } catch (error: Throwable) {
+            val resetDiagnostics = videoRecorder.resetRecorderState(
+                "ARM_RECORDING_START_FAILED",
+            )
             imuRecorder.stop()
+            val details = JSONObject().put(
+                "error",
+                error.message ?: error.javaClass.simpleName,
+            )
+            resetDiagnostics?.let {
+                details.put("recorder_reset_diagnostics", it.toJson())
+            }
             timeline.event(
                 name = "ARM_RECORDING_START_FAILED",
                 localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
                 commandId = request.commandId,
-                details = JSONObject().put(
-                    "error",
-                    error.message ?: error.javaClass.simpleName,
-                ),
+                details = details,
             )
             timeline.close()
+            dualCapture = null
             throw error
         }
         cameraInfoCollector.writeCameraInfo(
@@ -936,42 +951,52 @@ class PhoneCameraScanProvider(
     }
 
     override suspend fun abort(reason: String) {
-        val current = dualCapture ?: return
-        current.timeline.event(
+        val current = dualCapture
+        current?.timeline?.event(
             name = "CAPTURE_ABORTED",
             localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
             details = JSONObject().put("reason", reason),
         )
-        if (videoRecorder.isRecording()) {
-            try {
-                videoRecorder.stopRecording()
-            } catch (_: Throwable) {
-                // Preserve abort metadata even if CameraX finalize fails.
-            }
+        val resetDiagnostics = videoRecorder.resetRecorderState(reason)
+        resetDiagnostics?.let { diagnostics ->
+            current?.timeline?.event(
+                name = "RECORDER_STATE_RESET",
+                localElapsedNs = android.os.SystemClock.elapsedRealtimeNanos(),
+                details = diagnostics.toJson().put("reason", reason),
+            )
         }
         imuRecorder.stop()
-        current.timeline.close()
-        runCatching {
-            current.manifestFile.writeText(
-                JSONObject()
-                    .put("schema_version", 3)
-                    .put("timeline_mode", "ASYNC_PRE_ROLL_POST_ROLL")
-                    .put(
-                        "dual_capture_id",
-                        current.request.dualCaptureId,
-                    )
-                    .put("role", current.request.role.name)
-                    .put("captured", false)
-                    .put("aborted", true)
-                    .put("reason", reason)
-                    .put("capture_events_path", current.eventsFile.absolutePath)
-                    .put(
-                        "clock_sync_history_path",
-                        current.clockSyncHistoryFile.absolutePath,
-                    )
-                    .toString(2) + "\n",
-                Charsets.UTF_8,
-            )
+        current?.timeline?.close()
+        if (current != null) {
+            runCatching {
+                current.manifestFile.writeText(
+                    JSONObject()
+                        .put("schema_version", 3)
+                        .put("timeline_mode", "ASYNC_PRE_ROLL_POST_ROLL")
+                        .put(
+                            "dual_capture_id",
+                            current.request.dualCaptureId,
+                        )
+                        .put("role", current.request.role.name)
+                        .put("captured", false)
+                        .put("aborted", true)
+                        .put("reason", reason)
+                        .put(
+                            "capture_events_path",
+                            current.eventsFile.absolutePath,
+                        )
+                        .put(
+                            "clock_sync_history_path",
+                            current.clockSyncHistoryFile.absolutePath,
+                        )
+                        .putNullable(
+                            "recorder_reset_diagnostics",
+                            resetDiagnostics?.toJson(),
+                        )
+                        .toString(2) + "\n",
+                    Charsets.UTF_8,
+                )
+            }
         }
         dualCapture = null
     }
@@ -1016,6 +1041,11 @@ class PhoneCameraScanProvider(
             .put("preview_attached", previewAttached)
             .put("preview_width", previewWidth)
             .put("preview_height", previewHeight)
+            .put("preview_stream_state", previewStreamState)
+            .put("finalize_received", finalizeReceived)
+            .putNullable("finalize_error_code", finalizeErrorCode)
+            .putNullable("finalize_error_label", finalizeErrorLabel)
+            .putNullable("finalize_cause", finalizeCause)
 
     private fun safeDualCaptureId(value: String): String {
         require(
