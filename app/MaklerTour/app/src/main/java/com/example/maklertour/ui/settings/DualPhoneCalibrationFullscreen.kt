@@ -25,7 +25,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,8 +39,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.maklertour.data.dualphone.DualPhoneControlSnapshot
 import com.maklertour.data.dualphone.DualPhoneRole
+import com.maklertour.data.phonecamera.DualPhonePreviewBindingRuntime
 import com.maklertour.data.phonecamera.DualPhoneRecorderPreviewRegistry
 
 @Composable
@@ -46,6 +53,9 @@ internal fun DualPhoneCalibrationFullscreen(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
+    var previewStatus by remember(snapshot.calibrationRunId) {
+        mutableStateOf("Opening selected camera…")
+    }
 
     DisposableEffect(activity) {
         val previousOrientation = activity?.requestedOrientation
@@ -82,7 +92,10 @@ internal fun DualPhoneCalibrationFullscreen(
                 .fillMaxSize()
                 .background(Color.Black),
         ) {
-            CalibrationPreview(modifier = Modifier.fillMaxSize())
+            CalibrationPreview(
+                modifier = Modifier.fillMaxSize(),
+                onStatus = { previewStatus = it },
+            )
 
             Box(
                 modifier = Modifier
@@ -132,6 +145,10 @@ internal fun DualPhoneCalibrationFullscreen(
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Text(
+                        "Preview: $previewStatus",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
                         "Realtime ChArUco detection and automatic pose acceptance " +
                             "will be enabled in CAL01B.",
                         color = Color(0xFFFFCC80),
@@ -168,8 +185,13 @@ internal fun DualPhoneCalibrationFullscreen(
 }
 
 @Composable
-private fun CalibrationPreview(modifier: Modifier = Modifier) {
+private fun CalibrationPreview(
+    modifier: Modifier = Modifier,
+    onStatus: (String) -> Unit,
+) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentOnStatus by rememberUpdatedState(onStatus)
     val previewView = remember(context) {
         (DualPhoneRecorderPreviewRegistry.current() ?: PreviewView(context)).apply {
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -181,6 +203,26 @@ private fun CalibrationPreview(modifier: Modifier = Modifier) {
         onDispose {
             DualPhoneRecorderPreviewRegistry.unregister(previewView)
         }
+    }
+    LaunchedEffect(previewView, lifecycleOwner) {
+        currentOnStatus("Binding selected camera…")
+        val result = DualPhonePreviewBindingRuntime.bind(
+            context = context,
+            lifecycleOwner = lifecycleOwner,
+            previewView = previewView,
+            calibrationMode = true,
+        )
+        currentOnStatus(
+            if (result.success) {
+                buildString {
+                    append("LIVE")
+                    result.cameraId?.let { append(" · camera ").append(it) }
+                    result.effectiveZoomRatio?.let { append(" · zoom ").append(it) }
+                }
+            } else {
+                "ERROR · ${result.error ?: result.bindStatus}"
+            },
+        )
     }
     AndroidView(
         factory = {
