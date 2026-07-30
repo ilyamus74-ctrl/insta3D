@@ -291,6 +291,8 @@ class PhoneCameraScanProvider(
         )
         val framesFile = File(baseDir, "frames.jsonl")
         val encoderPtsFile = File(baseDir, "encoder_pts.jsonl")
+        val frameEncoderMapFile = File(baseDir, "frame_encoder_map.jsonl")
+        val localTimelineReportFile = File(baseDir, "local_timeline_report.json")
         val imuFile = File(baseDir, "imu.jsonl")
         val cameraInfoFile = File(baseDir, "camera_info.json")
         val clockSyncFile = File(baseDir, "clock_sync.json")
@@ -301,6 +303,8 @@ class PhoneCameraScanProvider(
             manifestFile,
             framesFile,
             encoderPtsFile,
+            frameEncoderMapFile,
+            localTimelineReportFile,
             imuFile,
             cameraInfoFile,
             clockSyncFile,
@@ -593,6 +597,8 @@ class PhoneCameraScanProvider(
             manifestFile = manifestFile,
             framesFile = framesFile,
             encoderPtsFile = encoderPtsFile,
+            frameEncoderMapFile = frameEncoderMapFile,
+            localTimelineReportFile = localTimelineReportFile,
             imuFile = imuFile,
             cameraInfoFile = cameraInfoFile,
             clockSyncFile = clockSyncFile,
@@ -768,6 +774,22 @@ class PhoneCameraScanProvider(
             null
         }
         val frameSummary = recordingResult?.frameTelemetrySummary
+        val localTimelineSummary = if (recordingResult != null) {
+            withContext(Dispatchers.IO) {
+                DualPhoneLocalTimelineAnalyzer.analyze(
+                    framesFile = current.framesFile,
+                    encoderPtsFile = current.encoderPtsFile,
+                    frameEncoderMapFile = current.frameEncoderMapFile,
+                    localTimelineReportFile = current.localTimelineReportFile,
+                    cameraXStartElapsedNs = recordingResult.cameraXStartElapsedNs
+                        ?: current.physicalStarted.cameraXStartElapsedNs,
+                    fallbackWidth = current.armResult.width,
+                    fallbackHeight = current.armResult.height,
+                )
+            }
+        } else {
+            null
+        }
         val finishedAtElapsedNs =
             android.os.SystemClock.elapsedRealtimeNanos()
         current.timeline.event(
@@ -905,6 +927,14 @@ class PhoneCameraScanProvider(
                 "encoder_pts_status",
                 encoderPtsSummary?.status,
             )
+            .putNullable(
+                "frame_encoder_map_path",
+                localTimelineSummary?.frameEncoderMapPath,
+            )
+            .putNullable(
+                "local_timeline_report_path",
+                localTimelineSummary?.localTimelineReportPath,
+            )
             .put("capture_result_count", frameSummary?.frameCount ?: 0L)
             .put(
                 "encoded_video_sample_count",
@@ -912,16 +942,76 @@ class PhoneCameraScanProvider(
             )
             .putNullable(
                 "capture_result_observed_fps",
-                frameSummary?.observedCaptureResultFps,
+                localTimelineSummary?.captureResultFpsActual
+                    ?: frameSummary?.observedCaptureResultFps,
             )
             .putNullable(
                 "encoded_video_observed_fps",
-                encoderPtsSummary?.observedFps,
+                localTimelineSummary?.encoderFpsActual
+                    ?: encoderPtsSummary?.observedFps,
+            )
+            .putNullable(
+                "capture_result_fps_actual",
+                localTimelineSummary?.captureResultFpsActual,
+            )
+            .putNullable(
+                "encoder_fps_actual",
+                localTimelineSummary?.encoderFpsActual,
+            )
+            .putNullable(
+                "effective_video_mode_actual",
+                localTimelineSummary?.effectiveVideoModeActual,
+            )
+            .putNullable(
+                "actual_video_width",
+                localTimelineSummary?.actualWidth,
+            )
+            .putNullable(
+                "actual_video_height",
+                localTimelineSummary?.actualHeight,
+            )
+            .put(
+                "capture_result_gap_count",
+                localTimelineSummary?.captureResultGapCount ?: 0L,
             )
             .put(
                 "estimated_missing_capture_results",
-                frameSummary?.estimatedMissingCaptureResults ?: 0L,
+                localTimelineSummary?.captureResultGapCount ?: 0L,
             )
+            .put(
+                "encoder_gap_count",
+                localTimelineSummary?.encoderGapCount ?: 0L,
+            )
+            .put(
+                "mapped_encoder_samples",
+                localTimelineSummary?.mappedSamples ?: 0L,
+            )
+            .put(
+                "unmatched_encoded_samples",
+                localTimelineSummary?.unmatchedEncodedSamples ?: 0L,
+            )
+            .put(
+                "unmatched_capture_results",
+                localTimelineSummary?.unmatchedCaptureResults ?: 0L,
+            )
+            .putNullable(
+                "mapping_residual_p50_ns",
+                localTimelineSummary?.mappingResidualP50Ns,
+            )
+            .putNullable(
+                "mapping_residual_p95_ns",
+                localTimelineSummary?.mappingResidualP95Ns,
+            )
+            .putNullable(
+                "mapping_residual_max_ns",
+                localTimelineSummary?.mappingResidualMaxNs,
+            )
+            .putNullable(
+                "local_timeline_mapping_quality",
+                localTimelineSummary?.mappingQuality,
+            )
+            .put("video_parseable", localTimelineSummary?.videoParseable == true)
+            .put("keyframe_present", localTimelineSummary?.keyframePresent == true)
             .put(
                 "frame_timestamp_source",
                 "CAMERA2_CAPTURE_RESULT_SENSOR_TIMESTAMP",
@@ -932,7 +1022,7 @@ class PhoneCameraScanProvider(
             )
             .put(
                 "frame_to_encoder_mapping_status",
-                "UNVERIFIED_SEPARATE_TIMELINES",
+                localTimelineSummary?.mappingStatus ?: "UNAVAILABLE",
             )
             .put("captured", recordingResult != null)
             .putNullable(
@@ -1107,6 +1197,8 @@ class PhoneCameraScanProvider(
         val manifestFile: File,
         val framesFile: File,
         val encoderPtsFile: File,
+        val frameEncoderMapFile: File,
+        val localTimelineReportFile: File,
         val imuFile: File,
         val cameraInfoFile: File,
         val clockSyncFile: File,

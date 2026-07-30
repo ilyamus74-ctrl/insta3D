@@ -518,6 +518,8 @@ internal class DualPhoneBundleCoordinator(
             "dual_capture_manifest.json",
             "frames.jsonl",
             "encoder_pts.jsonl",
+            "frame_encoder_map.jsonl",
+            "local_timeline_report.json",
             "imu.jsonl",
             "camera_info.json",
             "clock_sync.json",
