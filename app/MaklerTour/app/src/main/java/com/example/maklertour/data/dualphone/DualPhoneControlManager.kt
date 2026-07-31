@@ -373,27 +373,6 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     error.message ?: error.javaClass.simpleName,
                 )
             }
-            if (current.calibrationMode == DualPhoneCalibrationMode.MANUAL_STEREO) {
-                val requestNs = manualStereoCaptureRequestedAtMasterNs ?: return null
-                val requestMs = manualStereoCaptureRequestedAtMasterMs ?: return null
-                val framesAfterButton = if (
-                    clockOffsetNs != null &&
-                    masterObservation.frameTimestampNs > 0L &&
-                    slaveObservation.frameTimestampNs > 0L
-                ) {
-                    masterObservation.frameTimestampNs >= requestNs &&
-                        slaveObservation.frameTimestampNs - clockOffsetNs >= requestNs
-                } else {
-                    localCalibrationReceivedAtMs >= requestMs &&
-                        peerCalibrationReceivedAtMs >= requestMs
-                }
-                if (!framesAfterButton) {
-                    mutableState.value = current.copy(
-                        lastMessage = "Ручной снимок: ожидаются новые кадры после нажатия",
-                    )
-                    return null
-                }
-            }
         }
     }
 
@@ -961,6 +940,27 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 return null
             }
             val clockOffsetNs = clockSyncController.currentSnapshot().offsetNs
+            if (current.calibrationMode == DualPhoneCalibrationMode.MANUAL_STEREO) {
+                val requestNs = manualStereoCaptureRequestedAtMasterNs ?: return null
+                val requestMs = manualStereoCaptureRequestedAtMasterMs ?: return null
+                val framesAfterButton = if (
+                    clockOffsetNs != null &&
+                    masterObservation.frameTimestampNs > 0L &&
+                    slaveObservation.frameTimestampNs > 0L
+                ) {
+                    masterObservation.frameTimestampNs >= requestNs &&
+                        slaveObservation.frameTimestampNs - clockOffsetNs >= requestNs
+                } else {
+                    localCalibrationReceivedAtMs >= requestMs &&
+                        peerCalibrationReceivedAtMs >= requestMs
+                }
+                if (!framesAfterButton) {
+                    mutableState.value = current.copy(
+                        lastMessage = "Ручной снимок: ожидаются новые кадры после нажатия",
+                    )
+                    return null
+                }
+            }
             val frameDeltaMs = if (
                 clockOffsetNs != null &&
                 masterObservation.frameTimestampNs > 0L &&

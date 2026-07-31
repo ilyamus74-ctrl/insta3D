@@ -27,4 +27,21 @@ foreach ($checks as [$source, $needle]) {
     }
 }
 
+$startSession = strpos($manager, 'fun startCalibrationSession(');
+$restartStereo = strpos($manager, 'fun restartStereoCalibration(');
+$gate = strpos($manager, 'private fun evaluateCalibrationGateLocked()');
+$manualFrameGate = strpos($manager, 'val framesAfterButton = if (');
+
+if (
+    $startSession === false ||
+    $restartStereo === false ||
+    $gate === false ||
+    $manualFrameGate === false ||
+    ($manualFrameGate > $startSession && $manualFrameGate < $restartStereo) ||
+    $manualFrameGate < $gate
+) {
+    fwrite(STDERR, "Manual frame gate must be inside evaluateCalibrationGateLocked()\n");
+    exit(1);
+}
+
 echo "OK\n";
