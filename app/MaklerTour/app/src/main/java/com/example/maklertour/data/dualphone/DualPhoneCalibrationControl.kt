@@ -52,6 +52,11 @@ data class DualPhoneCalibrationObservation(
     val pitchSkew: Double = 0.0,
     val calibrationStage: DualPhoneCalibrationStage =
         DualPhoneCalibrationStage.MASTER_INTRINSICS,
+    val captureElapsedRealtimeNs: Long = frameTimestampNs,
+    val timestampSource: String = "UNKNOWN",
+    val captureRequestId: String? = null,
+    val captureTargetElapsedRealtimeNs: Long? = null,
+    val cameraControlStatus: String = "UNKNOWN",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("calibration_run_id", calibrationRunId)
@@ -60,6 +65,14 @@ data class DualPhoneCalibrationObservation(
         .put("frame_sequence", frameSequence)
         .put("observed_at_elapsed_ms", observedAtElapsedMs)
         .put("frame_timestamp_ns", frameTimestampNs)
+        .put("capture_elapsed_realtime_ns", captureElapsedRealtimeNs)
+        .put("timestamp_source", timestampSource)
+        .put("capture_request_id", captureRequestId ?: JSONObject.NULL)
+        .put(
+            "capture_target_elapsed_realtime_ns",
+            captureTargetElapsedRealtimeNs ?: JSONObject.NULL,
+        )
+        .put("camera_control_status", cameraControlStatus)
         .put("board_found", boardFound)
         .put("corners_found", cornersFound)
         .put("expected_corners", expectedCorners)
@@ -101,6 +114,16 @@ data class DualPhoneCalibrationObservation(
                 frameSequence = sequence,
                 observedAtElapsedMs = json.optLong("observed_at_elapsed_ms", 0L),
                 frameTimestampNs = json.optLong("frame_timestamp_ns", 0L),
+                captureElapsedRealtimeNs = json.optLong(
+                    "capture_elapsed_realtime_ns",
+                    json.optLong("frame_timestamp_ns", 0L),
+                ),
+                timestampSource = json.optString("timestamp_source", "UNKNOWN"),
+                captureRequestId = json.optNullableString("capture_request_id"),
+                captureTargetElapsedRealtimeNs =
+                    json.optNullableLong("capture_target_elapsed_realtime_ns"),
+                cameraControlStatus =
+                    json.optString("camera_control_status", "UNKNOWN"),
                 boardFound = json.optBoolean("board_found", false),
                 cornersFound = json.optInt("corners_found", 0),
                 expectedCorners = json.optInt("expected_corners", 0),
@@ -139,3 +162,9 @@ data class DualPhoneCalibrationObservation(
         }
     }
 }
+
+private fun JSONObject.optNullableString(key: String): String? =
+    if (!has(key) || isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
+
+private fun JSONObject.optNullableLong(key: String): Long? =
+    if (!has(key) || isNull(key)) null else optLong(key)

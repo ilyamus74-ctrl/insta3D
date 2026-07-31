@@ -5,19 +5,24 @@ declare(strict_types=1);
 $root = dirname(__DIR__, 2);
 $mode = file_get_contents($root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneCalibrationMode.kt');
 $manager = file_get_contents($root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneControlManager.kt');
+$protocol = file_get_contents($root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneControlProtocol.kt');
 $settings = file_get_contents($root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/settings/DualPhoneControlSettingsCard.kt');
 $fullscreen = file_get_contents($root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/settings/DualPhoneCalibrationFullscreen.kt');
 
 $checks = [
     [$mode, 'MANUAL_STEREO'],
     [$manager, 'fun requestManualStereoPair()'],
-    [$manager, 'manualStereoCaptureRequestedAtMasterNs'],
-    [$manager, 'framesAfterButton'],
+    [$manager, 'DualPhoneManualStereoCaptureRequest'],
+    [$manager, 'stereoObservationBuffer.bestPair'],
+    [$manager, 'handleManualStereoCaptureAt'],
     [$manager, 'MANUAL_STEREO_CAPTURE_TIMEOUT_MS'],
+    [$protocol, 'CALIBRATION_CAPTURE_AT'],
+    [$protocol, 'CALIBRATION_CAPTURE_ACK'],
     [$settings, 'АВТОКАЛИБРОВКА'],
     [$settings, 'РУЧНАЯ КАЛИБРОВКА'],
     [$fullscreen, 'СНЯТЬ СИНХРОННУЮ ПАРУ'],
     [$fullscreen, 'ПОВТОРИТЬ ВРУЧНУЮ'],
+    [$fullscreen, 'captureTargetElapsedRealtimeNs'],
 ];
 
 foreach ($checks as [$source, $needle]) {
@@ -27,20 +32,18 @@ foreach ($checks as [$source, $needle]) {
     }
 }
 
-$startSession = strpos($manager, 'fun startCalibrationSession(');
-$restartStereo = strpos($manager, 'fun restartStereoCalibration(');
 $gate = strpos($manager, 'private fun evaluateCalibrationGateLocked()');
-$manualFrameGate = strpos($manager, 'val framesAfterButton = if (');
+$pairSelection = strpos($manager, 'stereoObservationBuffer.bestPair(');
+if ($gate === false || $pairSelection === false || $pairSelection < $gate) {
+    fwrite(STDERR, "Buffered pair selection must be inside evaluateCalibrationGateLocked()\n");
+    exit(1);
+}
 
 if (
-    $startSession === false ||
-    $restartStereo === false ||
-    $gate === false ||
-    $manualFrameGate === false ||
-    ($manualFrameGate > $startSession && $manualFrameGate < $restartStereo) ||
-    $manualFrameGate < $gate
+    str_contains($manager, 'manualStereoCaptureRequestedAtMasterNs') ||
+    str_contains($manager, 'val framesAfterButton = if (')
 ) {
-    fwrite(STDERR, "Manual frame gate must be inside evaluateCalibrationGateLocked()\n");
+    fwrite(STDERR, "Legacy latest-observation manual gate is still present\n");
     exit(1);
 }
 

@@ -580,7 +580,16 @@ internal fun DualPhoneCalibrationFullscreen(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Text(
-                            "Автоснимки этапа: ${snapshot.calibrationAcceptedPoseCount}/" +
+                            (if (
+                                snapshot.calibrationMode ==
+                                DualPhoneCalibrationMode.MANUAL_STEREO &&
+                                snapshot.calibrationStage ==
+                                DualPhoneCalibrationStage.STEREO_EXTRINSICS
+                            ) {
+                                "Ручные синхронные пары: "
+                            } else {
+                                "Автоснимки этапа: "
+                            }) + snapshot.calibrationAcceptedPoseCount + "/" +
                                 snapshot.calibrationTargetPoseCount,
                         )
                         Text(
@@ -594,11 +603,12 @@ internal fun DualPhoneCalibrationFullscreen(
                                 Button(
                                     onClick = controlManager::requestManualStereoPair,
                                     modifier = Modifier.fillMaxWidth(),
-                                    enabled = snapshot.connected,
+                                    enabled = snapshot.connected &&
+                                        !snapshot.calibrationManualCapturePending,
                                 ) {
                                     Text(
                                         if (snapshot.calibrationManualCapturePending) {
-                                            "ПОВТОРИТЬ СИНХРОННЫЙ СНИМОК"
+                                            "ОЖИДАНИЕ СИНХРОННОЙ ПАРЫ…"
                                         } else {
                                             "СНЯТЬ СИНХРОННУЮ ПАРУ"
                                         },
@@ -660,19 +670,43 @@ internal fun DualPhoneCalibrationFullscreen(
                         DualPhoneCalibrationStage.STEREO_EXTRINSICS
                     ) {
                         val commonCorners = stereoCommonCorners(snapshot)
+                        val deltaMasterObservation =
+                            snapshot.calibrationLocalObservation
+                                ?: snapshot.calibrationLastAcceptedMasterObservation
+                        val deltaSlaveObservation =
+                            snapshot.calibrationPeerObservation
+                                ?: snapshot.calibrationLastAcceptedSlaveObservation
                         val currentDelta = stereoFrameDeltaMs(
-                            snapshot.calibrationLocalObservation,
-                            snapshot.calibrationPeerObservation,
+                            deltaMasterObservation,
+                            deltaSlaveObservation,
                             snapshot.clockSync.offsetNs,
                         )
+                        val timestampSources = listOfNotNull(
+                            deltaMasterObservation?.timestampSource,
+                            deltaSlaveObservation?.timestampSource,
+                        ).joinToString("/").ifBlank { "—" }
+                        val captureRequestLabel =
+                            deltaMasterObservation?.captureRequestId
+                                ?.takeLast(8)
+                                ?.let { " · req $it" }
+                                .orEmpty()
                         Text(
                             "STEREO COACH · общих углов $commonCorners · Δt " +
-                                (currentDelta?.let { formatOne(it) + " мс" } ?: "—"),
+                                (currentDelta?.let { formatOne(it) + " мс" } ?: "—") +
+                                " · ts $timestampSources" + captureRequestLabel,
                             color = if (
                                 commonCorners >= DualPhoneStereoCoachEstimator.MIN_COMMON_BOARD_IDS &&
                                 currentDelta != null && currentDelta <= 80.0
                             ) Color(0xFF7CFC98) else Color(0xFFFFCC80),
                             style = MaterialTheme.typography.titleSmall,
+                        )
+                        val cameraControlStatuses = listOfNotNull(
+                            deltaMasterObservation?.cameraControlStatus,
+                            deltaSlaveObservation?.cameraControlStatus,
+                        ).joinToString(" | ").ifBlank { "—" }
+                        Text(
+                            "Camera controls: $cameraControlStatuses",
+                            style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
                             stereoCoach.summaryRu(),
@@ -1186,14 +1220,27 @@ private fun stereoFrameDeltaMs(
     slaveMinusMasterOffsetNs: Long?,
 ): Double? {
     if (master == null || slave == null) return null
+    val masterTarget = master.captureTargetElapsedRealtimeNs
+    val slaveTarget = slave.captureTargetElapsedRealtimeNs
     if (
-        slaveMinusMasterOffsetNs != null &&
-        master.frameTimestampNs > 0L &&
-        slave.frameTimestampNs > 0L
+        master.captureRequestId != null &&
+        master.captureRequestId == slave.captureRequestId &&
+        masterTarget != null &&
+        slaveTarget != null
     ) {
         return kotlin.math.abs(
-            master.frameTimestampNs -
-                (slave.frameTimestampNs - slaveMinusMasterOffsetNs),
+            (master.captureElapsedRealtimeNs - masterTarget) -
+                (slave.captureElapsedRealtimeNs - slaveTarget),
+        ) / 1_000_000.0
+    }
+    if (
+        slaveMinusMasterOffsetNs != null &&
+        master.captureElapsedRealtimeNs > 0L &&
+        slave.captureElapsedRealtimeNs > 0L
+    ) {
+        return kotlin.math.abs(
+            master.captureElapsedRealtimeNs -
+                (slave.captureElapsedRealtimeNs - slaveMinusMasterOffsetNs),
         ) / 1_000_000.0
     }
     return null

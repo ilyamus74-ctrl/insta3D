@@ -150,7 +150,10 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private var boundCamera: Camera? = null
     private val latestFrameLock = Any()
     private var latestCalibrationFrame: CalibrationFrame? = null
-    private val recentCalibrationFrames = CalibrationFrameRingBuffer(20)
+    private val recentCalibrationFrames = CalibrationFrameRingBuffer(96)
+    private val calibrationTimestampMapper = DualPhoneCalibrationTimestampMapper()
+    @Volatile
+    private var calibrationCameraControlStatus: String = "NOT_PREPARED"
     private var latestCalibrationSequence = 0L
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "Cam0CalibrationAnalysis").apply { isDaemon = true }
@@ -309,6 +312,39 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 }
             }
             throw IllegalStateException("preview bind failed: ${e.message}", e)
+        }
+        if (enableCalibrationAnalysis) {
+            val calibrationCamera = boundCamera
+            if (calibrationCamera != null) {
+                val timestampSource =
+                    DualPhoneCalibrationCameraControls.timestampSource(calibrationCamera)
+                calibrationTimestampMapper.reset(timestampSource)
+                calibrationCameraControlStatus = runCatching {
+                    DualPhoneCalibrationCameraControls.prepare(
+                        camera = calibrationCamera,
+                        previewView = previewView,
+                    )
+                }.getOrElse { error ->
+                    "PREPARE_FAILED:${error.message ?: error.javaClass.simpleName}"
+                }
+                Log.i(
+                    TAG,
+                    "calibration camera prepared timestamp_source=$timestampSource " +
+                        "controls=$calibrationCameraControlStatus",
+                )
+            }
+        } else {
+            val regularCamera = boundCamera
+            if (
+                regularCamera != null &&
+                calibrationCameraControlStatus != "NOT_PREPARED"
+            ) {
+                calibrationCameraControlStatus = runCatching {
+                    DualPhoneCalibrationCameraControls.release(regularCamera)
+                }.getOrElse { error ->
+                    "RELEASE_FAILED:${error.message ?: error.javaClass.simpleName}"
+                }
+            }
         }
         Log.d(TAG, "bindPreview(): success video_mode=${resolvedVideoMode.id}")
         return getBindResult(success = true)
@@ -496,9 +532,13 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     private fun updateLatestCalibrationFrame(imageProxy: ImageProxy) {
         try {
-            val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
-            if (lastAcceptedCalibrationAnalysisNs != 0L && nowNs - lastAcceptedCalibrationAnalysisNs < CALIBRATION_ANALYSIS_MIN_INTERVAL_NS) return
-            lastAcceptedCalibrationAnalysisNs = nowNs
+            val callbackElapsedRealtimeNs = android.os.SystemClock.elapsedRealtimeNanos()
+            if (
+                lastAcceptedCalibrationAnalysisNs != 0L &&
+                callbackElapsedRealtimeNs - lastAcceptedCalibrationAnalysisNs <
+                CALIBRATION_ANALYSIS_MIN_INTERVAL_NS
+            ) return
+            lastAcceptedCalibrationAnalysisNs = callbackElapsedRealtimeNs
             actualCalibrationWidth = imageProxy.width
             actualCalibrationHeight = imageProxy.height
             if (imageProxy.width * imageProxy.height > CALIBRATION_ANALYSIS_MAX_PIXELS_FOR_CONVERSION) {
@@ -520,7 +560,13 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             val bitmap = rawBitmap
             val conversionMs = ((android.os.SystemClock.elapsedRealtimeNanos() - conversionStartNs) / 1_000_000.0).roundToLong()
             val timestampNs = imageProxy.imageInfo.timestamp
-            val ageMs = (android.os.SystemClock.elapsedRealtimeNanos() - timestampNs) / 1_000_000L
+            val captureElapsedRealtimeNs = calibrationTimestampMapper.toElapsedRealtimeNs(
+                cameraTimestampNs = timestampNs,
+                observedElapsedRealtimeNs = callbackElapsedRealtimeNs,
+            )
+            val ageMs = (
+                android.os.SystemClock.elapsedRealtimeNanos() - captureElapsedRealtimeNs
+            ) / 1_000_000L
             loggedCalibrationAnalysisFrames += 1L
             if (loggedCalibrationAnalysisFrames <= 10L || loggedCalibrationAnalysisFrames % 30L == 0L) {
                 Log.d(TAG, "cam0 analysis actual=${imageProxy.width}x${imageProxy.height} imageProxyRotationDegrees=$imageProxyRotationDegrees targetRotation=$currentTargetRotation before=${rawBitmap.width}x${rawBitmap.height} after=${bitmap.width}x${bitmap.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight} age=${ageMs}ms conversion_ms=$conversionMs saved frame cam0=${bitmap.width}x${bitmap.height} rotationApplied=$rotationDegrees")
@@ -531,6 +577,9 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     bitmap = bitmap,
                     timestampNs = timestampNs,
                     sequence = latestCalibrationSequence,
+                    captureElapsedRealtimeNs = captureElapsedRealtimeNs,
+                    timestampSource = calibrationTimestampMapper.sourceName,
+                    cameraControlStatus = calibrationCameraControlStatus,
                     rotationDegreesApplied = rotationDegrees,
                     imageProxyRotationDegrees = imageProxyRotationDegrees,
                     rawWidth = imageProxy.width,

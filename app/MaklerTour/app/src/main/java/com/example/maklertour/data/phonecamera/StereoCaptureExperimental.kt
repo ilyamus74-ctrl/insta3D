@@ -101,8 +101,12 @@ data class CalibrationFrame(
     val savedHeight: Int = bitmap.height,
     val displayRotationAtCapture: Int? = null,
     val appOrientationAtCapture: String? = null,
+    val captureElapsedRealtimeNs: Long = timestampNs,
+    val timestampSource: String = "UNKNOWN",
+    val cameraControlStatus: String = "UNKNOWN",
 ) {
-    fun ageMs(nowNs: Long = SystemClock.elapsedRealtimeNanos()): Long = (nowNs - timestampNs) / 1_000_000L
+    fun ageMs(nowNs: Long = SystemClock.elapsedRealtimeNanos()): Long =
+        (nowNs - captureElapsedRealtimeNs) / 1_000_000L
 }
 
 data class StereoCalibrationFramePair(
