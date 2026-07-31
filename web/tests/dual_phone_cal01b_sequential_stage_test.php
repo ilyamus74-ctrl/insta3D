@@ -22,7 +22,7 @@ $checks = [
         'SLAVE_INTRINSICS',
         'STEREO_EXTRINSICS',
         'COMPLETE',
-        'targetPoseCount = 24',
+        'targetPoseCount = 15',
         'targetPoseCount = 12',
         'isLocalAnalyzerActive',
         'requiresMasterObservation',

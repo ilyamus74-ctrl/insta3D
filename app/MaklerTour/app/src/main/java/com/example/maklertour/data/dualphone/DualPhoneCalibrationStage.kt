@@ -9,13 +9,13 @@ enum class DualPhoneCalibrationStage(
     MASTER_INTRINSICS(
         wireValue = "MASTER_INTRINSICS",
         displayNameRu = "MASTER",
-        targetPoseCount = 24,
+        targetPoseCount = 15,
         captureDirectory = "master_intrinsics",
     ),
     SLAVE_INTRINSICS(
         wireValue = "SLAVE_INTRINSICS",
         displayNameRu = "SLAVE",
-        targetPoseCount = 24,
+        targetPoseCount = 15,
         captureDirectory = "slave_intrinsics",
     ),
     STEREO_EXTRINSICS(

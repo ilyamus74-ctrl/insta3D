@@ -46,6 +46,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.maklertour.data.calibration.DualPhoneCalibrationCaptureStore
 import com.maklertour.data.calibration.DualPhoneCalibrationRealtimeAnalyzer
 import com.maklertour.data.calibration.DualPhoneCalibrationRealtimeResult
+import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimate
+import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimator
 import com.maklertour.data.dualphone.DualPhoneCalibrationObservation
 import com.maklertour.data.dualphone.DualPhoneCalibrationPosePlan
 import com.maklertour.data.dualphone.DualPhoneCalibrationStage
@@ -89,10 +91,24 @@ internal fun DualPhoneCalibrationFullscreen(
             requiredPairs = DualPhoneCalibrationPosePlan.size,
         )
     }
-    val analyzer = remember(snapshot.calibrationRunId) {
+    val analyzer = remember(snapshot.calibrationRunId, snapshot.calibrationStage) {
         DualPhoneCalibrationRealtimeAnalyzer()
     }
+    val masterIntrinsicsEstimator = remember(snapshot.calibrationRunId) {
+        DualPhoneLiveIntrinsicsEstimator()
+    }
+    val slaveIntrinsicsEstimator = remember(snapshot.calibrationRunId) {
+        DualPhoneLiveIntrinsicsEstimator()
+    }
+    DisposableEffect(masterIntrinsicsEstimator, slaveIntrinsicsEstimator) {
+        onDispose {
+            masterIntrinsicsEstimator.close()
+            slaveIntrinsicsEstimator.close()
+        }
+    }
     val target = DualPhoneCalibrationPosePlan.byId(snapshot.calibrationTargetPoseId)
+    val currentTarget by rememberUpdatedState(target)
+    val currentSnapshot by rememberUpdatedState(snapshot)
     val localAnalyzerActive =
         snapshot.calibrationStage.isLocalAnalyzerActive(role) &&
             !snapshot.calibrationCollectionComplete
@@ -110,6 +126,17 @@ internal fun DualPhoneCalibrationFullscreen(
     }
     var acceptanceFeedback by remember(snapshot.calibrationRunId) {
         mutableStateOf<String?>(null)
+    }
+    var masterLiveIntrinsics by remember(snapshot.calibrationRunId) {
+        mutableStateOf<DualPhoneLiveIntrinsicsEstimate?>(null)
+    }
+    var slaveLiveIntrinsics by remember(snapshot.calibrationRunId) {
+        mutableStateOf<DualPhoneLiveIntrinsicsEstimate?>(null)
+    }
+    val displayedLiveIntrinsics = when (snapshot.calibrationStage) {
+        DualPhoneCalibrationStage.MASTER_INTRINSICS -> masterLiveIntrinsics
+        DualPhoneCalibrationStage.SLAVE_INTRINSICS -> slaveLiveIntrinsics
+        else -> null
     }
 
     LaunchedEffect(snapshot.calibrationAcceptanceSerial) {
@@ -130,7 +157,7 @@ internal fun DualPhoneCalibrationFullscreen(
                 append(" ЗАВЕРШЁН ✓")
             }
         }
-        delay(1_600L)
+        delay(900L)
         if (snapshot.calibrationAcceptanceSerial == serial) {
             acceptanceFeedback = null
         }
@@ -161,7 +188,6 @@ internal fun DualPhoneCalibrationFullscreen(
     LaunchedEffect(
         snapshot.calibrationRunId,
         snapshot.calibrationStage,
-        snapshot.calibrationTargetPoseId,
         snapshot.calibrationActive,
         localAnalyzerActive,
     ) {
@@ -169,29 +195,31 @@ internal fun DualPhoneCalibrationFullscreen(
         localAnalysis = null
         if (!localAnalyzerActive) return@LaunchedEffect
         var lastSequence = -1L
-        while (isActive && snapshot.calibrationActive && localAnalyzerActive) {
+        while (isActive && currentSnapshot.calibrationActive && localAnalyzerActive) {
             val frame = DualPhonePreviewBindingRuntime.latestCalibrationFrame()
             if (frame != null && frame.sequence != lastSequence) {
                 lastSequence = frame.sequence
+                val activeTarget = currentTarget
+                val activeSnapshot = currentSnapshot
                 val result = withContext(Dispatchers.Default) {
                     analyzer.analyze(
                         frame = frame,
-                        target = target,
+                        target = activeTarget,
                         settings = boardSettings,
                     )
                 }
                 localAnalysis = result
-                snapshot.calibrationRunId?.let { runId ->
+                activeSnapshot.calibrationRunId?.let { runId ->
                     controlManager.reportCalibrationObservation(
                         result.toObservation(
                             calibrationRunId = runId,
-                            poseId = target.id,
-                            stage = snapshot.calibrationStage,
+                            poseId = activeTarget.id,
+                            stage = activeSnapshot.calibrationStage,
                         ),
                     )
                 }
             }
-            delay(80L)
+            delay(55L)
         }
     }
 
@@ -231,9 +259,9 @@ internal fun DualPhoneCalibrationFullscreen(
 
         val qualityObservation: DualPhoneCalibrationObservation? = localAnalysis
             ?.takeIf { it.frameSequence == sequence }
-            ?.toObservation(runId, poseId)
+            ?.toObservation(runId, poseId, stage = acceptedStage)
         runCatching {
-            withContext(Dispatchers.IO) {
+            val file = withContext(Dispatchers.IO) {
                 captureStore.saveAcceptedFrame(
                     calibrationRunId = runId,
                     deviceId = localDeviceId,
@@ -245,8 +273,27 @@ internal fun DualPhoneCalibrationFullscreen(
                     observation = qualityObservation,
                 )
             }
-        }.onSuccess { file ->
+            val estimate = when (acceptedStage) {
+                DualPhoneCalibrationStage.MASTER_INTRINSICS ->
+                    withContext(Dispatchers.Default) {
+                        masterIntrinsicsEstimator.addAcceptedFrame(frame.bitmap, boardSettings)
+                    }
+                DualPhoneCalibrationStage.SLAVE_INTRINSICS ->
+                    withContext(Dispatchers.Default) {
+                        slaveIntrinsicsEstimator.addAcceptedFrame(frame.bitmap, boardSettings)
+                    }
+                else -> null
+            }
+            file to estimate
+        }.onSuccess { (file, estimate) ->
             lastPersistedAcceptanceSerial = serial
+            when (acceptedStage) {
+                DualPhoneCalibrationStage.MASTER_INTRINSICS ->
+                    masterLiveIntrinsics = estimate
+                DualPhoneCalibrationStage.SLAVE_INTRINSICS ->
+                    slaveLiveIntrinsics = estimate
+                else -> Unit
+            }
             persistenceStatus =
                 "Сохранён кадр ${acceptedStage.displayNameRu}: ${file.name}"
         }.onFailure { error ->
@@ -319,16 +366,19 @@ internal fun DualPhoneCalibrationFullscreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
-                            snapshot.calibrationInstruction,
+                            if (snapshot.calibrationStage ==
+                                DualPhoneCalibrationStage.STEREO_EXTRINSICS
+                            ) {
+                                "Плавно перемещайте доску так, чтобы её видели обе камеры. " +
+                                    "Хорошие новые пары снимаются автоматически."
+                            } else {
+                                "Плавно двигайте, приближайте и наклоняйте доску. " +
+                                    "Хорошие новые ракурсы снимаются автоматически."
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Text(
-                            "Поза ${target.index + 1}/${snapshot.calibrationTargetPoseCount}: " +
-                                target.id,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Text(
-                            "Кадры этапа: ${snapshot.calibrationAcceptedPoseCount}/" +
+                            "Автоснимки этапа: ${snapshot.calibrationAcceptedPoseCount}/" +
                                 snapshot.calibrationTargetPoseCount,
                         )
                     }
@@ -346,18 +396,37 @@ internal fun DualPhoneCalibrationFullscreen(
                     )
                     localAnalysis?.let { analysis ->
                         Text(
-                            "corners ${analysis.detection.cornersFound}/" +
-                                "${analysis.detection.expectedCorners} · " +
-                                "sharpness ${formatOne(analysis.sharpnessScore)} · " +
-                                "luma ${formatOne(analysis.meanLuma)} · " +
-                                "stable ${analysis.stableMs} ms",
+                            "Покрытие ${analysis.coveragePercent}% · " +
+                                "новизна ${formatThree(analysis.noveltyScore)} · " +
+                                "стабильность ${analysis.stableMs} мс",
+                            color = if (analysis.qualityReady) {
+                                Color(0xFF7CFC98)
+                            } else {
+                                Color.White
+                            },
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
-                            "area ${formatThree(analysis.boardAreaFraction)} · " +
-                                "roll ${formatOne(analysis.rollDegrees)}° · " +
-                                "yaw ${formatThree(analysis.yawSkew)} · " +
-                                "pitch ${formatThree(analysis.pitchSkew)}",
+                            analysis.guidance,
+                            color = Color(0xFFFFCC80),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "углы ${analysis.detection.cornersFound}/" +
+                                "${analysis.detection.expectedCorners} · " +
+                                "резкость ${formatOne(analysis.sharpnessScore)} · " +
+                                "яркость ${formatOne(analysis.meanLuma)}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    displayedLiveIntrinsics?.let { estimate ->
+                        Text(
+                            estimate.summary(),
+                            color = if (estimate.solved) {
+                                Color(0xFF7CFC98)
+                            } else {
+                                Color(0xFFFFCC80)
+                            },
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -676,17 +745,17 @@ private fun stageRoleInstruction(
     role: DualPhoneRole,
 ): String = when (stage) {
     DualPhoneCalibrationStage.MASTER_INTRINSICS -> if (role == DualPhoneRole.MASTER) {
-        "Сейчас калибруется MASTER. Показывайте доску камере MASTER."
+        "MASTER снимает автоматически. Двигайте только доску, а не телефон."
     } else {
-        "ОЖИДАНИЕ: MASTER собирает свои кадры; SLAVE сейчас не блокирует процесс."
+        "ОЖИДАНИЕ: MASTER автоматически собирает разнообразные кадры."
     }
     DualPhoneCalibrationStage.SLAVE_INTRINSICS -> if (role == DualPhoneRole.SLAVE) {
-        "Сейчас калибруется SLAVE. Показывайте доску камере SLAVE."
+        "SLAVE снимает автоматически. Двигайте только доску, а не телефон."
     } else {
-        "ОЖИДАНИЕ: SLAVE собирает свои кадры; MASTER только координирует."
+        "ОЖИДАНИЕ: SLAVE автоматически собирает разнообразные кадры."
     }
     DualPhoneCalibrationStage.STEREO_EXTRINSICS ->
-        "Показывайте неподвижную доску одновременно обеим камерам."
+        "Обе камеры снимают пары автоматически. Доска должна быть видна обеим."
     DualPhoneCalibrationStage.COMPLETE -> "Все три этапа завершены."
 }
 
