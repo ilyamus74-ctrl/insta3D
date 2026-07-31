@@ -364,6 +364,123 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
     }
 
+    fun restartStereoCalibration() {
+        val settings = settingsStore.load()
+        val current = mutableState.value
+        val masterIntrinsics = current.calibrationMasterIntrinsics
+        val slaveIntrinsics = current.calibrationSlaveIntrinsics
+        val previousRunId = current.calibrationRunId
+        val error = when {
+            settings.role != DualPhoneRole.MASTER ->
+                "Повторную stereo-калибровку можно запустить только на MASTER"
+            !current.connected || current.peerDeviceId.isNullOrBlank() ->
+                "Подключите SLAVE перед повторной stereo-калибровкой"
+            current.phase != DualPhoneControlPhase.CONNECTED ->
+                "Остановите запись перед повторной stereo-калибровкой"
+            !current.calibrationActive || previousRunId.isNullOrBlank() ->
+                "Сначала откройте завершённый результат калибровки"
+            !current.calibrationCollectionComplete ||
+                current.calibrationFinalResult == null ->
+                "Дождитесь завершения текущего расчёта"
+            masterIntrinsics?.acceptable != true ->
+                "Сохранённые intrinsics MASTER недоступны или не прошли проверку"
+            slaveIntrinsics?.acceptable != true ->
+                "Сохранённые intrinsics SLAVE недоступны или не прошли проверку"
+            settings.operatorLensBaselineMm == null ->
+                "Сохраните расстояние между центрами объективов"
+            else -> null
+        }
+        if (error != null) {
+            mutableState.value = current.copy(
+                lastError = error,
+                lastMessage = error,
+            )
+            return
+        }
+
+        val preservedMaster = requireNotNull(masterIntrinsics)
+        val preservedSlave = requireNotNull(slaveIntrinsics)
+        val sourceRunId = requireNotNull(previousRunId)
+        val runId = DualPhoneControlProtocol.calibrationRunId()
+        val stage = DualPhoneCalibrationStage.STEREO_EXTRINSICS
+        val target = DualPhoneCalibrationPosePlan.first
+        val instruction = calibrationInstruction(stage, target)
+
+        resetCalibrationGateLocked()
+        mutableState.value = current.copy(
+            calibrationActive = true,
+            calibrationRunId = runId,
+            calibrationStage = stage,
+            calibrationLastAcceptedStage = null,
+            calibrationLastCompletedStage =
+                DualPhoneCalibrationStage.SLAVE_INTRINSICS,
+            calibrationInstruction = instruction,
+            calibrationAcceptedPoseCount = 0,
+            calibrationTargetPoseCount = stage.targetPoseCount,
+            calibrationTargetPoseIndex = target.index,
+            calibrationTargetPoseId = target.id,
+            calibrationAcceptanceSerial = 0L,
+            calibrationLastAcceptedPoseIndex = null,
+            calibrationLastAcceptedPoseId = null,
+            calibrationLastAcceptedLocalFrameSequence = null,
+            calibrationLastAcceptedPeerFrameSequence = null,
+            calibrationLocalObservation = null,
+            calibrationPeerObservation = null,
+            calibrationLastAcceptedMasterObservation = null,
+            calibrationLastAcceptedSlaveObservation = null,
+            calibrationMasterIntrinsics = preservedMaster,
+            calibrationSlaveIntrinsics = preservedSlave,
+            calibrationFinalResult = null,
+            calibrationStereoAcceptedPoseCount = 0,
+            calibrationCollectionComplete = false,
+            lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
+            lastError = null,
+            lastMessage =
+                "Повторная stereo-калибровка: K/D MASTER и SLAVE сохранены",
+        )
+
+        scope.launch {
+            try {
+                send(
+                    DualPhoneControlType.ENTER_CALIBRATION,
+                    JSONObject()
+                        .put("calibration_run_id", runId)
+                        .put("retry_mode", "STEREO_ONLY")
+                        .put("source_calibration_run_id", sourceRunId)
+                        .put("rig_id", settings.rigId)
+                        .put("rig_mount_revision", settings.rigMountRevision)
+                        .put(
+                            "operator_lens_baseline_mm",
+                            settings.operatorLensBaselineMm,
+                        )
+                        .put("stage", stage.wireValue)
+                        .put(
+                            "master_accepted_pose_count",
+                            current.calibrationMasterAcceptedPoseCount,
+                        )
+                        .put(
+                            "slave_accepted_pose_count",
+                            current.calibrationSlaveAcceptedPoseCount,
+                        )
+                        .put("stereo_accepted_pose_count", 0)
+                        .put("master_intrinsics", preservedMaster.toJson())
+                        .put("slave_intrinsics", preservedSlave.toJson())
+                        .put("instruction", instruction)
+                        .put("target_pose_index", target.index)
+                        .put("target_pose_id", target.id)
+                        .put("target_pose_count", stage.targetPoseCount),
+                )
+            } catch (sendError: Throwable) {
+                mutableState.value = current.copy(
+                    lastError = "Не удалось запустить повторную stereo-калибровку: " +
+                        (sendError.message ?: sendError.javaClass.simpleName),
+                    lastMessage =
+                        "Повторная stereo-калибровка не запущена; прежний профиль сохранён",
+                )
+            }
+        }
+    }
+
     fun exitCalibrationSession() {
         val current = mutableState.value
         if (!current.calibrationActive) return
@@ -1278,6 +1395,14 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         val stage = DualPhoneCalibrationStage.fromWire(
                             payload.optString("stage"),
                         )
+                        val preservedMasterIntrinsics =
+                            payload.optJSONObject("master_intrinsics")?.let {
+                                DualPhoneLiveIntrinsicsEstimate.fromJson(it)
+                            }
+                        val preservedSlaveIntrinsics =
+                            payload.optJSONObject("slave_intrinsics")?.let {
+                                DualPhoneLiveIntrinsicsEstimate.fromJson(it)
+                            }
                         val targetIndex = payload.optInt(
                             "target_pose_index",
                             0,
@@ -1301,7 +1426,17 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                                 0,
                             ),
                             calibrationLastAcceptedStage = null,
-                            calibrationLastCompletedStage = null,
+                            calibrationLastCompletedStage =
+                                if (
+                                    stage ==
+                                    DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
+                                    preservedMasterIntrinsics != null &&
+                                    preservedSlaveIntrinsics != null
+                                ) {
+                                    DualPhoneCalibrationStage.SLAVE_INTRINSICS
+                                } else {
+                                    null
+                                },
                             calibrationInstruction = payload.optString(
                                 "instruction",
                                 calibrationInstruction(stage, target),
@@ -1325,13 +1460,21 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             calibrationPeerObservation = null,
                             calibrationLastAcceptedMasterObservation = null,
                             calibrationLastAcceptedSlaveObservation = null,
-                            calibrationMasterIntrinsics = null,
-                            calibrationSlaveIntrinsics = null,
+                            calibrationMasterIntrinsics =
+                                preservedMasterIntrinsics,
+                            calibrationSlaveIntrinsics =
+                                preservedSlaveIntrinsics,
                             calibrationFinalResult = null,
                             calibrationCollectionComplete = false,
                             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
                             lastError = null,
-                            lastMessage = "Sequential calibration opened by Master",
+                            lastMessage = if (
+                                payload.optString("retry_mode") == "STEREO_ONLY"
+                            ) {
+                                "Повторная stereo-калибровка открыта; K/D сохранены"
+                            } else {
+                                "Sequential calibration opened by Master"
+                            },
                         )
                     }
                     send(

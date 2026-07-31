@@ -132,6 +132,12 @@ samples.
 CAL02 uses static dual-visible poses. The board must be held still long enough to
 remove residual cross-phone timing error from the extrinsics estimate.
 
+After a completed solve, Master may start a stereo-only retry. The retry creates a
+new calibration run, preserves the already validated MASTER and SLAVE intrinsics,
+clears only the stereo-pair counter and in-memory stereo estimator, then captures
+12 new dual-visible pairs. The previous accepted profile remains active until the
+replacement stereo solve is accepted.
+
 ## Profile identity and reuse
 
 Profiles are persisted on-device and later mirrored to the server. They are matched

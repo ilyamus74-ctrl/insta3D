@@ -686,6 +686,33 @@ internal fun DualPhoneCalibrationFullscreen(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
+                        if (
+                            role == DualPhoneRole.MASTER &&
+                            finalResult != null
+                        ) {
+                            Button(
+                                onClick = {
+                                    controlManager.restartStereoCalibration()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("ПОВТОРИТЬ СТЕРЕО-КАЛИБРОВКУ")
+                            }
+                            Text(
+                                "Intrinsics K/D обеих камер сохраняются. " +
+                                    "Будут заново сняты только 12 общих пар и " +
+                                    "пересчитаны R/T и stereo RMS.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        } else if (
+                            role == DualPhoneRole.SLAVE &&
+                            finalResult != null
+                        ) {
+                            Text(
+                                "Повторную stereo-калибровку запускайте на MASTER.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
             } else {
