@@ -52,9 +52,18 @@ REC/capture feedback
 connection and peer status
 ```
 
-Master is the workflow coordinator and displays the primary instruction. Slave
-mirrors the same target and its own image-quality state so the operator can see
-whether both cameras accept the pose.
+Master is the workflow coordinator. CAL01/CAL02 frame collection is presented as
+one explicit three-stage operator sequence:
+
+```text
+1. MASTER intrinsics — only the Master camera accepts 24 poses;
+2. SLAVE intrinsics — only the Slave camera accepts 24 poses;
+3. stereo extrinsics — both cameras accept 12 synchronized dual-visible poses.
+```
+
+The inactive phone keeps the fullscreen live view and connection status, but its
+quality state must not block a single-camera intrinsics stage. Both quality states
+become mandatory only during the stereo stage.
 
 Example realtime instructions:
 
@@ -72,9 +81,15 @@ Good pose — capturing 3…2…1
 Pose accepted on both phones
 ```
 
-The application automatically accepts a sample only when both roles satisfy the
-same-pose gate during a bounded time window. Manual capture remains available for
-diagnostics but is not the normal operator path.
+During the MASTER and SLAVE intrinsics stages the application accepts a sample when
+the active camera satisfies the requested pose and quality gates. During the stereo
+stage it accepts a pair only when both roles satisfy the same-pose gate during a
+bounded time window. Manual capture remains available for diagnostics but is not the
+normal operator path.
+
+Every accepted sample produces visible `FRAME ACCEPTED` feedback. Completion of each
+stage and final completion of MASTER, SLAVE and stereo collection must also be shown
+explicitly on both phones.
 
 ## Required pose coverage
 

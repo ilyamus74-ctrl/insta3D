@@ -38,8 +38,11 @@ data class DualPhoneCalibrationRealtimeResult(
     fun toObservation(
         calibrationRunId: String,
         poseId: String,
+        stage: com.maklertour.data.dualphone.DualPhoneCalibrationStage =
+            com.maklertour.data.dualphone.DualPhoneCalibrationStage.MASTER_INTRINSICS,
     ): DualPhoneCalibrationObservation = DualPhoneCalibrationObservation(
         calibrationRunId = calibrationRunId,
+        calibrationStage = stage,
         poseId = poseId,
         frameSequence = frameSequence,
         observedAtElapsedMs = SystemClock.elapsedRealtime(),

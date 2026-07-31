@@ -67,6 +67,13 @@ data class DualPhoneControlSnapshot(
     val aggregateUploadState: String = "IDLE",
     val calibrationActive: Boolean = false,
     val calibrationRunId: String? = null,
+    val calibrationStage: DualPhoneCalibrationStage =
+        DualPhoneCalibrationStage.MASTER_INTRINSICS,
+    val calibrationMasterAcceptedPoseCount: Int = 0,
+    val calibrationSlaveAcceptedPoseCount: Int = 0,
+    val calibrationStereoAcceptedPoseCount: Int = 0,
+    val calibrationLastAcceptedStage: DualPhoneCalibrationStage? = null,
+    val calibrationLastCompletedStage: DualPhoneCalibrationStage? = null,
     val calibrationInstruction: String =
         DualPhoneCalibrationPosePlan.first.instruction,
     val calibrationAcceptedPoseCount: Int = 0,
@@ -288,15 +295,22 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
 
         val runId = DualPhoneControlProtocol.calibrationRunId()
+        val stage = DualPhoneCalibrationStage.MASTER_INTRINSICS
         val target = DualPhoneCalibrationPosePlan.first
-        val instruction = target.instruction
+        val instruction = calibrationInstruction(stage, target)
         resetCalibrationGateLocked()
         mutableState.value = current.copy(
             calibrationActive = true,
             calibrationRunId = runId,
+            calibrationStage = stage,
+            calibrationMasterAcceptedPoseCount = 0,
+            calibrationSlaveAcceptedPoseCount = 0,
+            calibrationStereoAcceptedPoseCount = 0,
+            calibrationLastAcceptedStage = null,
+            calibrationLastCompletedStage = null,
             calibrationInstruction = instruction,
             calibrationAcceptedPoseCount = 0,
-            calibrationTargetPoseCount = CALIBRATION_TARGET_POSE_COUNT,
+            calibrationTargetPoseCount = stage.targetPoseCount,
             calibrationTargetPoseIndex = target.index,
             calibrationTargetPoseId = target.id,
             calibrationAcceptanceSerial = 0L,
@@ -309,7 +323,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationCollectionComplete = false,
             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
             lastError = null,
-            lastMessage = "Opening fullscreen calibration on both phones",
+            lastMessage = "Stage 1/3: collecting MASTER intrinsics frames",
         )
         scope.launch {
             try {
@@ -320,10 +334,14 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         .put("rig_id", settings.rigId)
                         .put("rig_mount_revision", settings.rigMountRevision)
                         .put("operator_lens_baseline_mm", baselineMm)
+                        .put("stage", stage.wireValue)
+                        .put("master_accepted_pose_count", 0)
+                        .put("slave_accepted_pose_count", 0)
+                        .put("stereo_accepted_pose_count", 0)
                         .put("instruction", instruction)
                         .put("target_pose_index", target.index)
                         .put("target_pose_id", target.id)
-                        .put("target_pose_count", CALIBRATION_TARGET_POSE_COUNT),
+                        .put("target_pose_count", stage.targetPoseCount),
                 )
             } catch (error: Throwable) {
                 leaveCalibrationLocally(
@@ -373,9 +391,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 val current = mutableState.value
                 if (
                     !current.calibrationActive ||
+                    current.calibrationCollectionComplete ||
                     observation.calibrationRunId != current.calibrationRunId ||
+                    observation.calibrationStage != current.calibrationStage ||
                     observation.poseId != current.calibrationTargetPoseId ||
-                    current.calibrationCollectionComplete
+                    !current.calibrationStage.isLocalAnalyzerActive(role)
                 ) {
                     return@synchronized null
                 }
@@ -416,9 +436,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             val current = mutableState.value
             if (
                 !current.calibrationActive ||
+                current.calibrationCollectionComplete ||
+                !current.calibrationStage.requiresSlaveObservation ||
                 observation.calibrationRunId != current.calibrationRunId ||
-                observation.poseId != current.calibrationTargetPoseId ||
-                current.calibrationCollectionComplete
+                observation.calibrationStage != current.calibrationStage ||
+                observation.poseId != current.calibrationTargetPoseId
             ) {
                 return@synchronized null
             }
@@ -442,10 +464,17 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         synchronized(calibrationObservationLock) {
             val current = mutableState.value
             if (!current.calibrationActive || runId != current.calibrationRunId) return
+            val stage = DualPhoneCalibrationStage.fromWire(
+                payload.optString("stage", current.calibrationStage.wireValue),
+            )
+            val targetCount = payload.optInt(
+                "target_pose_count",
+                stage.targetPoseCount,
+            ).coerceAtLeast(0)
             val acceptedCount = payload.optInt(
-                "accepted_pose_count",
-                current.calibrationAcceptedPoseCount,
-            ).coerceIn(0, current.calibrationTargetPoseCount)
+                "stage_accepted_pose_count",
+                0,
+            ).coerceIn(0, targetCount.coerceAtLeast(0))
             val targetIndex = payload.optInt(
                 "target_pose_index",
                 current.calibrationTargetPoseIndex,
@@ -454,16 +483,39 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             val localRole = settingsStore.load().role
             val masterSequence = payload.optNullableLong("master_frame_sequence")
             val slaveSequence = payload.optNullableLong("slave_frame_sequence")
+            val workflowComplete = payload.optBoolean("collection_complete", false)
+            val acceptedStage = payload.optNullableString("accepted_stage")?.let {
+                DualPhoneCalibrationStage.fromWire(it)
+            }
+            val completedStage = payload.optNullableString("completed_stage")?.let {
+                DualPhoneCalibrationStage.fromWire(it)
+            }
             localCalibrationObservation = null
             peerCalibrationObservation = null
             localCalibrationReceivedAtMs = 0L
             peerCalibrationReceivedAtMs = 0L
             mutableState.value = current.copy(
+                calibrationStage = stage,
+                calibrationMasterAcceptedPoseCount = payload.optInt(
+                    "master_accepted_pose_count",
+                    current.calibrationMasterAcceptedPoseCount,
+                ),
+                calibrationSlaveAcceptedPoseCount = payload.optInt(
+                    "slave_accepted_pose_count",
+                    current.calibrationSlaveAcceptedPoseCount,
+                ),
+                calibrationStereoAcceptedPoseCount = payload.optInt(
+                    "stereo_accepted_pose_count",
+                    current.calibrationStereoAcceptedPoseCount,
+                ),
+                calibrationLastAcceptedStage = acceptedStage,
+                calibrationLastCompletedStage = completedStage,
                 calibrationInstruction = payload.optString(
                     "instruction",
-                    target.instruction,
+                    calibrationInstruction(stage, target),
                 ),
                 calibrationAcceptedPoseCount = acceptedCount,
+                calibrationTargetPoseCount = targetCount,
                 calibrationTargetPoseIndex = targetIndex,
                 calibrationTargetPoseId = payload.optString(
                     "target_pose_id",
@@ -491,14 +543,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     },
                 calibrationLocalObservation = null,
                 calibrationPeerObservation = null,
-                calibrationCollectionComplete = payload.optBoolean(
-                    "collection_complete",
-                    false,
-                ),
-                lastMessage = if (payload.optBoolean("collection_complete", false)) {
-                    "CAL01B pose collection completed on both phones"
+                calibrationCollectionComplete = workflowComplete,
+                lastMessage = if (workflowComplete) {
+                    "Calibration frame collection completed: MASTER, SLAVE and stereo"
                 } else {
-                    "Accepted pose $acceptedCount/${current.calibrationTargetPoseCount}"
+                    "Calibration stage ${stage.displayNameRu}: $acceptedCount/$targetCount"
                 },
             )
         }
@@ -506,83 +555,131 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
 
     private fun evaluateCalibrationGateLocked(): JSONObject? {
         val current = mutableState.value
-        val local = localCalibrationObservation ?: return null
-        val peer = peerCalibrationObservation ?: return null
-        if (
-            !local.qualityReady ||
-            !peer.qualityReady ||
-            local.poseId != current.calibrationTargetPoseId ||
-            peer.poseId != current.calibrationTargetPoseId ||
-            local.calibrationRunId != current.calibrationRunId ||
-            peer.calibrationRunId != current.calibrationRunId
-        ) {
-            return null
-        }
+        val stage = current.calibrationStage
+        if (stage == DualPhoneCalibrationStage.COMPLETE) return null
+
+        val local = localCalibrationObservation
+        val peer = peerCalibrationObservation
+        fun observationReady(observation: DualPhoneCalibrationObservation?): Boolean =
+            observation != null &&
+                observation.qualityReady &&
+                observation.calibrationRunId == current.calibrationRunId &&
+                observation.calibrationStage == stage &&
+                observation.poseId == current.calibrationTargetPoseId
+
+        if (stage.requiresMasterObservation && !observationReady(local)) return null
+        if (stage.requiresSlaveObservation && !observationReady(peer)) return null
 
         val nowMs = SystemClock.elapsedRealtime()
         if (
-            nowMs - localCalibrationReceivedAtMs > CALIBRATION_OBSERVATION_MAX_AGE_MS ||
-            nowMs - peerCalibrationReceivedAtMs > CALIBRATION_OBSERVATION_MAX_AGE_MS ||
+            stage.requiresMasterObservation &&
+            nowMs - localCalibrationReceivedAtMs > CALIBRATION_OBSERVATION_MAX_AGE_MS
+        ) return null
+        if (
+            stage.requiresSlaveObservation &&
+            nowMs - peerCalibrationReceivedAtMs > CALIBRATION_OBSERVATION_MAX_AGE_MS
+        ) return null
+        if (
+            stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
             kotlin.math.abs(
                 localCalibrationReceivedAtMs - peerCalibrationReceivedAtMs,
             ) > CALIBRATION_OBSERVATION_PAIR_WINDOW_MS
-        ) {
-            return null
-        }
+        ) return null
 
+        val acceptedMaster = if (stage.requiresMasterObservation) local else null
+        val acceptedSlave = if (stage.requiresSlaveObservation) peer else null
         val acceptedPoseIndex = current.calibrationTargetPoseIndex
         val acceptedPoseId = current.calibrationTargetPoseId
         val acceptedCount = (current.calibrationAcceptedPoseCount + 1)
-            .coerceAtMost(current.calibrationTargetPoseCount)
-        val complete = acceptedCount >= current.calibrationTargetPoseCount
-        val nextTargetIndex = if (complete) {
-            acceptedPoseIndex
+            .coerceAtMost(stage.targetPoseCount)
+        val stageComplete = acceptedCount >= stage.targetPoseCount
+        val nextStage = if (stageComplete) stage.next() else stage
+        val workflowComplete = nextStage == DualPhoneCalibrationStage.COMPLETE
+
+        val masterCount = if (stage == DualPhoneCalibrationStage.MASTER_INTRINSICS) {
+            acceptedCount
+        } else {
+            current.calibrationMasterAcceptedPoseCount
+        }
+        val slaveCount = if (stage == DualPhoneCalibrationStage.SLAVE_INTRINSICS) {
+            acceptedCount
+        } else {
+            current.calibrationSlaveAcceptedPoseCount
+        }
+        val stereoCount = if (stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS) {
+            acceptedCount
+        } else {
+            current.calibrationStereoAcceptedPoseCount
+        }
+        val nextTargetIndex = if (stageComplete) {
+            0
         } else {
             (acceptedPoseIndex + 1).coerceAtMost(
                 DualPhoneCalibrationPosePlan.targets.lastIndex,
             )
         }
         val nextTarget = DualPhoneCalibrationPosePlan.at(nextTargetIndex)
-        val nextInstruction = if (complete) {
-            "CAL01B complete: accepted raw intrinsics samples on both phones"
+        val nextStageAcceptedCount = if (stageComplete) 0 else acceptedCount
+        val nextInstruction = if (workflowComplete) {
+            "Сбор калибровочных кадров завершён: MASTER, SLAVE и ОБЕ КАМЕРЫ"
         } else {
-            nextTarget.instruction
+            calibrationInstruction(nextStage, nextTarget)
         }
         val acceptanceSerial = current.calibrationAcceptanceSerial + 1L
+        val masterSequence = acceptedMaster?.frameSequence
+        val slaveSequence = acceptedSlave?.frameSequence
         val payload = JSONObject()
             .put("calibration_run_id", current.calibrationRunId)
-            .put("accepted_pose_count", acceptedCount)
+            .put("stage", nextStage.wireValue)
+            .put("accepted_stage", stage.wireValue)
+            .put("completed_stage", if (stageComplete) stage.wireValue else JSONObject.NULL)
+            .put("stage_accepted_pose_count", nextStageAcceptedCount)
+            .put("accepted_stage_pose_count", acceptedCount)
+            .put("master_accepted_pose_count", masterCount)
+            .put("slave_accepted_pose_count", slaveCount)
+            .put("stereo_accepted_pose_count", stereoCount)
             .put("accepted_pose_index", acceptedPoseIndex)
             .put("accepted_pose_id", acceptedPoseId)
             .put("target_pose_index", nextTargetIndex)
             .put("target_pose_id", nextTarget.id)
+            .put("target_pose_count", nextStage.targetPoseCount)
             .put("instruction", nextInstruction)
             .put("acceptance_serial", acceptanceSerial)
-            .put("master_frame_sequence", local.frameSequence)
-            .put("slave_frame_sequence", peer.frameSequence)
-            .put("collection_complete", complete)
+            .put("master_frame_sequence", masterSequence ?: JSONObject.NULL)
+            .put("slave_frame_sequence", slaveSequence ?: JSONObject.NULL)
+            .put("collection_complete", workflowComplete)
 
         localCalibrationObservation = null
         peerCalibrationObservation = null
         localCalibrationReceivedAtMs = 0L
         peerCalibrationReceivedAtMs = 0L
         mutableState.value = current.copy(
+            calibrationStage = nextStage,
+            calibrationMasterAcceptedPoseCount = masterCount,
+            calibrationSlaveAcceptedPoseCount = slaveCount,
+            calibrationStereoAcceptedPoseCount = stereoCount,
+            calibrationLastAcceptedStage = stage,
+            calibrationLastCompletedStage = if (stageComplete) stage else null,
             calibrationInstruction = nextInstruction,
-            calibrationAcceptedPoseCount = acceptedCount,
+            calibrationAcceptedPoseCount = nextStageAcceptedCount,
+            calibrationTargetPoseCount = nextStage.targetPoseCount,
             calibrationTargetPoseIndex = nextTargetIndex,
             calibrationTargetPoseId = nextTarget.id,
             calibrationAcceptanceSerial = acceptanceSerial,
             calibrationLastAcceptedPoseIndex = acceptedPoseIndex,
             calibrationLastAcceptedPoseId = acceptedPoseId,
-            calibrationLastAcceptedLocalFrameSequence = local.frameSequence,
-            calibrationLastAcceptedPeerFrameSequence = peer.frameSequence,
+            calibrationLastAcceptedLocalFrameSequence = masterSequence,
+            calibrationLastAcceptedPeerFrameSequence = slaveSequence,
             calibrationLocalObservation = null,
             calibrationPeerObservation = null,
-            calibrationCollectionComplete = complete,
-            lastMessage = if (complete) {
-                "CAL01B pose collection completed on both phones"
-            } else {
-                "Accepted pose $acceptedCount/${current.calibrationTargetPoseCount}"
+            calibrationCollectionComplete = workflowComplete,
+            lastMessage = when {
+                workflowComplete ->
+                    "Calibration frame collection completed: MASTER, SLAVE and stereo"
+                stageComplete ->
+                    "Stage ${stage.displayNameRu} completed; starting ${nextStage.displayNameRu}"
+                else ->
+                    "Accepted ${stage.displayNameRu} pose $acceptedCount/${stage.targetPoseCount}"
             },
         )
         return payload
@@ -595,6 +692,20 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             localCalibrationReceivedAtMs = 0L
             peerCalibrationReceivedAtMs = 0L
         }
+    }
+
+    private fun calibrationInstruction(
+        stage: DualPhoneCalibrationStage,
+        target: DualPhoneCalibrationPoseTarget,
+    ): String = when (stage) {
+        DualPhoneCalibrationStage.MASTER_INTRINSICS ->
+            "MASTER: ${target.instruction}"
+        DualPhoneCalibrationStage.SLAVE_INTRINSICS ->
+            "SLAVE: ${target.instruction}"
+        DualPhoneCalibrationStage.STEREO_EXTRINSICS ->
+            "ОБЕ КАМЕРЫ: ${target.instruction}"
+        DualPhoneCalibrationStage.COMPLETE ->
+            "Сбор калибровочных кадров завершён"
     }
 
     fun arm() {
@@ -1018,6 +1129,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     val reason = if (accepted) null else
                         "Slave is not ready for calibration"
                     if (accepted) {
+                        val stage = DualPhoneCalibrationStage.fromWire(
+                            payload.optString("stage"),
+                        )
                         val targetIndex = payload.optInt(
                             "target_pose_index",
                             0,
@@ -1027,15 +1141,30 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         mutableState.value = mutableState.value.copy(
                             calibrationActive = true,
                             calibrationRunId = runId,
+                            calibrationStage = stage,
+                            calibrationMasterAcceptedPoseCount = payload.optInt(
+                                "master_accepted_pose_count",
+                                0,
+                            ),
+                            calibrationSlaveAcceptedPoseCount = payload.optInt(
+                                "slave_accepted_pose_count",
+                                0,
+                            ),
+                            calibrationStereoAcceptedPoseCount = payload.optInt(
+                                "stereo_accepted_pose_count",
+                                0,
+                            ),
+                            calibrationLastAcceptedStage = null,
+                            calibrationLastCompletedStage = null,
                             calibrationInstruction = payload.optString(
                                 "instruction",
-                                target.instruction,
+                                calibrationInstruction(stage, target),
                             ),
                             calibrationAcceptedPoseCount = 0,
                             calibrationTargetPoseCount = payload.optInt(
                                 "target_pose_count",
-                                CALIBRATION_TARGET_POSE_COUNT,
-                            ).coerceAtLeast(1),
+                                stage.targetPoseCount,
+                            ).coerceAtLeast(0),
                             calibrationTargetPoseIndex = targetIndex,
                             calibrationTargetPoseId = payload.optString(
                                 "target_pose_id",
@@ -1051,7 +1180,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             calibrationCollectionComplete = false,
                             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
                             lastError = null,
-                            lastMessage = "Fullscreen calibration opened by Master",
+                            lastMessage = "Sequential calibration opened by Master",
                         )
                     }
                     send(
@@ -1882,9 +2011,16 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         mutableState.value = mutableState.value.copy(
             calibrationActive = false,
             calibrationRunId = null,
+            calibrationStage = DualPhoneCalibrationStage.MASTER_INTRINSICS,
+            calibrationMasterAcceptedPoseCount = 0,
+            calibrationSlaveAcceptedPoseCount = 0,
+            calibrationStereoAcceptedPoseCount = 0,
+            calibrationLastAcceptedStage = null,
+            calibrationLastCompletedStage = null,
             calibrationInstruction = DualPhoneCalibrationPosePlan.first.instruction,
             calibrationAcceptedPoseCount = 0,
-            calibrationTargetPoseCount = CALIBRATION_TARGET_POSE_COUNT,
+            calibrationTargetPoseCount =
+                DualPhoneCalibrationStage.MASTER_INTRINSICS.targetPoseCount,
             calibrationTargetPoseIndex = 0,
             calibrationTargetPoseId = DualPhoneCalibrationPosePlan.first.id,
             calibrationAcceptanceSerial = 0L,

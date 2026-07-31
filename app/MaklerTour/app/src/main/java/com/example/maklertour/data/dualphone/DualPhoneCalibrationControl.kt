@@ -19,9 +19,12 @@ data class DualPhoneCalibrationObservation(
     val poseMatches: Boolean,
     val qualityReady: Boolean,
     val status: String,
+    val calibrationStage: DualPhoneCalibrationStage =
+        DualPhoneCalibrationStage.MASTER_INTRINSICS,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("calibration_run_id", calibrationRunId)
+        .put("calibration_stage", calibrationStage.wireValue)
         .put("pose_id", poseId)
         .put("frame_sequence", frameSequence)
         .put("observed_at_elapsed_ms", observedAtElapsedMs)
@@ -46,6 +49,9 @@ data class DualPhoneCalibrationObservation(
             if (runId.isBlank() || poseId.isBlank() || sequence < 0L) return null
             return DualPhoneCalibrationObservation(
                 calibrationRunId = runId,
+                calibrationStage = DualPhoneCalibrationStage.fromWire(
+                    json.optString("calibration_stage"),
+                ),
                 poseId = poseId,
                 frameSequence = sequence,
                 observedAtElapsedMs = json.optLong("observed_at_elapsed_ms", 0L),

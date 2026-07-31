@@ -48,6 +48,7 @@ import com.maklertour.data.calibration.DualPhoneCalibrationRealtimeAnalyzer
 import com.maklertour.data.calibration.DualPhoneCalibrationRealtimeResult
 import com.maklertour.data.dualphone.DualPhoneCalibrationObservation
 import com.maklertour.data.dualphone.DualPhoneCalibrationPosePlan
+import com.maklertour.data.dualphone.DualPhoneCalibrationStage
 import com.maklertour.data.dualphone.DualPhoneControlManager
 import com.maklertour.data.dualphone.DualPhoneControlSnapshot
 import com.maklertour.data.dualphone.DualPhoneRole
@@ -92,6 +93,9 @@ internal fun DualPhoneCalibrationFullscreen(
         DualPhoneCalibrationRealtimeAnalyzer()
     }
     val target = DualPhoneCalibrationPosePlan.byId(snapshot.calibrationTargetPoseId)
+    val localAnalyzerActive =
+        snapshot.calibrationStage.isLocalAnalyzerActive(role) &&
+            !snapshot.calibrationCollectionComplete
     var previewStatus by remember(snapshot.calibrationRunId) {
         mutableStateOf("Opening selected camera…")
     }
@@ -103,6 +107,33 @@ internal fun DualPhoneCalibrationFullscreen(
     }
     var lastPersistedAcceptanceSerial by remember(snapshot.calibrationRunId) {
         mutableStateOf(0L)
+    }
+    var acceptanceFeedback by remember(snapshot.calibrationRunId) {
+        mutableStateOf<String?>(null)
+    }
+
+    LaunchedEffect(snapshot.calibrationAcceptanceSerial) {
+        val serial = snapshot.calibrationAcceptanceSerial
+        val acceptedStage = snapshot.calibrationLastAcceptedStage
+        if (serial <= 0L || acceptedStage == null) return@LaunchedEffect
+        val acceptedCount = acceptedStageCount(acceptedStage, snapshot)
+        acceptanceFeedback = buildString {
+            append("КАДР ЗАСЧИТАН ✓  ")
+            append(acceptedStage.displayNameRu)
+            append("  ")
+            append(acceptedCount)
+            append("/")
+            append(acceptedStage.targetPoseCount)
+            if (snapshot.calibrationLastCompletedStage == acceptedStage) {
+                append("\nЭТАП ")
+                append(acceptedStage.displayNameRu)
+                append(" ЗАВЕРШЁН ✓")
+            }
+        }
+        delay(1_600L)
+        if (snapshot.calibrationAcceptanceSerial == serial) {
+            acceptanceFeedback = null
+        }
     }
 
     DisposableEffect(activity) {
@@ -129,13 +160,16 @@ internal fun DualPhoneCalibrationFullscreen(
 
     LaunchedEffect(
         snapshot.calibrationRunId,
+        snapshot.calibrationStage,
         snapshot.calibrationTargetPoseId,
         snapshot.calibrationActive,
+        localAnalyzerActive,
     ) {
         analyzer.reset()
         localAnalysis = null
+        if (!localAnalyzerActive) return@LaunchedEffect
         var lastSequence = -1L
-        while (isActive && snapshot.calibrationActive) {
+        while (isActive && snapshot.calibrationActive && localAnalyzerActive) {
             val frame = DualPhonePreviewBindingRuntime.latestCalibrationFrame()
             if (frame != null && frame.sequence != lastSequence) {
                 lastSequence = frame.sequence
@@ -152,6 +186,7 @@ internal fun DualPhoneCalibrationFullscreen(
                         result.toObservation(
                             calibrationRunId = runId,
                             poseId = target.id,
+                            stage = snapshot.calibrationStage,
                         ),
                     )
                 }
@@ -167,12 +202,14 @@ internal fun DualPhoneCalibrationFullscreen(
         val serial = snapshot.calibrationAcceptanceSerial
         val sequence = snapshot.calibrationLastAcceptedLocalFrameSequence
         val runId = snapshot.calibrationRunId
+        val acceptedStage = snapshot.calibrationLastAcceptedStage
         val poseId = snapshot.calibrationLastAcceptedPoseId
         val poseIndex = snapshot.calibrationLastAcceptedPoseIndex
         if (
             serial <= lastPersistedAcceptanceSerial ||
             sequence == null ||
             runId.isNullOrBlank() ||
+            acceptedStage == null ||
             poseId.isNullOrBlank() ||
             poseIndex == null
         ) {
@@ -200,6 +237,8 @@ internal fun DualPhoneCalibrationFullscreen(
                 captureStore.saveAcceptedFrame(
                     calibrationRunId = runId,
                     deviceId = localDeviceId,
+                    stage = acceptedStage,
+                    acceptanceSerial = serial,
                     poseIndex = poseIndex,
                     poseId = poseId,
                     frame = frame,
@@ -208,7 +247,8 @@ internal fun DualPhoneCalibrationFullscreen(
             }
         }.onSuccess { file ->
             lastPersistedAcceptanceSerial = serial
-            persistenceStatus = "Saved raw intrinsics sample: ${file.name}"
+            persistenceStatus =
+                "Сохранён кадр ${acceptedStage.displayNameRu}: ${file.name}"
         }.onFailure { error ->
             persistenceStatus = "Failed to save accepted sample: " +
                 (error.message ?: error.javaClass.simpleName)
@@ -258,29 +298,47 @@ internal fun DualPhoneCalibrationFullscreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Text(
-                        "CAL01B · ${role.name}",
+                        "КАЛИБРОВКА · ${role.name}",
                         style = MaterialTheme.typography.titleMedium,
                     )
+                    CalibrationStageProgress(snapshot)
+                    if (snapshot.calibrationCollectionComplete) {
+                        Text(
+                            "СБОР КАЛИБРОВОЧНЫХ КАДРОВ ЗАВЕРШЁН",
+                            color = Color(0xFF7CFC98),
+                            style = MaterialTheme.typography.headlineSmall,
+                        )
+                    } else {
+                        Text(
+                            "Текущий этап: ${snapshot.calibrationStage.displayNameRu}",
+                            style = MaterialTheme.typography.headlineSmall,
+                        )
+                        Text(
+                            stageRoleInstruction(snapshot.calibrationStage, role),
+                            color = Color(0xFFFFCC80),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            snapshot.calibrationInstruction,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            "Поза ${target.index + 1}/${snapshot.calibrationTargetPoseCount}: " +
+                                target.id,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Кадры этапа: ${snapshot.calibrationAcceptedPoseCount}/" +
+                                snapshot.calibrationTargetPoseCount,
+                        )
+                    }
                     Text(
-                        snapshot.calibrationInstruction,
-                        style = MaterialTheme.typography.headlineSmall,
-                    )
-                    Text(
-                        "Target ${target.index + 1}/${snapshot.calibrationTargetPoseCount}: " +
-                            target.id,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        "Accepted poses: ${snapshot.calibrationAcceptedPoseCount}/" +
-                            snapshot.calibrationTargetPoseCount,
-                    )
-                    Text(
-                        localQualityLine(localAnalysis),
+                        localQualityLine(snapshot, role, localAnalysis),
                         color = qualityColor(localAnalysis?.qualityReady == true),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Text(
-                        peerQualityLine(role, snapshot.calibrationPeerObservation),
+                        peerQualityLine(snapshot, role),
                         color = qualityColor(
                             snapshot.calibrationPeerObservation?.qualityReady == true,
                         ),
@@ -314,10 +372,56 @@ internal fun DualPhoneCalibrationFullscreen(
                     )
                     if (snapshot.calibrationCollectionComplete) {
                         Text(
-                            "CAL01B complete on both phones. Raw accepted frames are ready " +
-                                "for separate per-camera intrinsics solving in CAL01C.",
+                            "MASTER ✓ · SLAVE ✓ · ОБЕ КАМЕРЫ ✓",
                             color = Color(0xFF7CFC98),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
+            }
+
+            if (snapshot.calibrationCollectionComplete) {
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .fillMaxWidth(0.72f),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xEE12351F),
+                        contentColor = Color.White,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            "КАЛИБРОВКА ЗАВЕРШЕНА",
+                            style = MaterialTheme.typography.headlineSmall,
+                        )
+                        Text("MASTER ✓   SLAVE ✓   ОБЕ КАМЕРЫ ✓")
+                        Text("ПОСЛЕДНИЙ КАДР ЗАСЧИТАН ✓")
+                        Text(
+                            "Кадры сохранены. Следующий шаг — расчёт K/D и R/T.",
                             style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            } else {
+                acceptanceFeedback?.let { feedback ->
+                    Card(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .fillMaxWidth(0.68f),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xEE0B5D2A),
+                            contentColor = Color.White,
+                        ),
+                    ) {
+                        Text(
+                            feedback,
+                            modifier = Modifier.padding(22.dp),
+                            style = MaterialTheme.typography.titleMedium,
                         )
                     }
                 }
@@ -343,7 +447,13 @@ internal fun DualPhoneCalibrationFullscreen(
                     color = Color.White,
                 )
                 Button(onClick = onExit) {
-                    Text("Завершить калибровку")
+                    Text(
+                        if (snapshot.calibrationCollectionComplete) {
+                            "ГОТОВО"
+                        } else {
+                            "ПРЕРВАТЬ"
+                        },
+                    )
                 }
             }
         }
@@ -500,23 +610,117 @@ private fun mapRawPointToFitPreview(
     )
 }
 
+@Composable
+private fun CalibrationStageProgress(snapshot: DualPhoneControlSnapshot) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CalibrationStageChip(
+            stage = DualPhoneCalibrationStage.MASTER_INTRINSICS,
+            snapshot = snapshot,
+            label = "1 MASTER",
+        )
+        CalibrationStageChip(
+            stage = DualPhoneCalibrationStage.SLAVE_INTRINSICS,
+            snapshot = snapshot,
+            label = "2 SLAVE",
+        )
+        CalibrationStageChip(
+            stage = DualPhoneCalibrationStage.STEREO_EXTRINSICS,
+            snapshot = snapshot,
+            label = "3 ОБЕ",
+        )
+    }
+}
+
+@Composable
+private fun CalibrationStageChip(
+    stage: DualPhoneCalibrationStage,
+    snapshot: DualPhoneControlSnapshot,
+    label: String,
+) {
+    val completed = acceptedStageCount(stage, snapshot) >= stage.targetPoseCount
+    val active = snapshot.calibrationStage == stage &&
+        !snapshot.calibrationCollectionComplete
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                completed -> Color(0xCC0B5D2A)
+                active -> Color(0xCC8A5A00)
+                else -> Color(0xAA333333)
+            },
+            contentColor = Color.White,
+        ),
+    ) {
+        Text(
+            if (completed) "$label ✓" else label,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+private fun acceptedStageCount(
+    stage: DualPhoneCalibrationStage,
+    snapshot: DualPhoneControlSnapshot,
+): Int = when (stage) {
+    DualPhoneCalibrationStage.MASTER_INTRINSICS ->
+        snapshot.calibrationMasterAcceptedPoseCount
+    DualPhoneCalibrationStage.SLAVE_INTRINSICS ->
+        snapshot.calibrationSlaveAcceptedPoseCount
+    DualPhoneCalibrationStage.STEREO_EXTRINSICS ->
+        snapshot.calibrationStereoAcceptedPoseCount
+    DualPhoneCalibrationStage.COMPLETE -> 0
+}
+
+private fun stageRoleInstruction(
+    stage: DualPhoneCalibrationStage,
+    role: DualPhoneRole,
+): String = when (stage) {
+    DualPhoneCalibrationStage.MASTER_INTRINSICS -> if (role == DualPhoneRole.MASTER) {
+        "Сейчас калибруется MASTER. Показывайте доску камере MASTER."
+    } else {
+        "ОЖИДАНИЕ: MASTER собирает свои кадры; SLAVE сейчас не блокирует процесс."
+    }
+    DualPhoneCalibrationStage.SLAVE_INTRINSICS -> if (role == DualPhoneRole.SLAVE) {
+        "Сейчас калибруется SLAVE. Показывайте доску камере SLAVE."
+    } else {
+        "ОЖИДАНИЕ: SLAVE собирает свои кадры; MASTER только координирует."
+    }
+    DualPhoneCalibrationStage.STEREO_EXTRINSICS ->
+        "Показывайте неподвижную доску одновременно обеим камерам."
+    DualPhoneCalibrationStage.COMPLETE -> "Все три этапа завершены."
+}
+
 private fun localQualityLine(
+    snapshot: DualPhoneControlSnapshot,
+    role: DualPhoneRole,
     analysis: DualPhoneCalibrationRealtimeResult?,
 ): String = when {
-    analysis == null -> "Local: waiting for analysis frame"
-    analysis.qualityReady -> "Local: READY"
-    else -> "Local: ${analysis.status}"
+    snapshot.calibrationCollectionComplete -> "Локальная камера: завершено"
+    !snapshot.calibrationStage.isLocalAnalyzerActive(role) ->
+        "Локальная камера: ОЖИДАНИЕ — на этом этапе кадры не принимает"
+    analysis == null -> "Локальная камера: ожидание кадра анализа"
+    analysis.qualityReady -> "Локальная камера: ГОТОВА"
+    else -> "Локальная камера: ${analysis.status}"
 }
 
 private fun peerQualityLine(
+    snapshot: DualPhoneControlSnapshot,
     role: DualPhoneRole,
-    observation: DualPhoneCalibrationObservation?,
-): String = when {
-    role == DualPhoneRole.SLAVE ->
-        "Peer: Master validates both phones and advances the shared pose"
-    observation == null -> "Peer: waiting for Slave observation"
-    observation.qualityReady -> "Peer: READY"
-    else -> "Peer: ${observation.status}"
+): String {
+    if (snapshot.calibrationCollectionComplete) return "Удалённая камера: завершено"
+    if (role == DualPhoneRole.SLAVE) {
+        return "MASTER координирует этап и переключает следующую позу"
+    }
+    if (!snapshot.calibrationStage.requiresSlaveObservation) {
+        return "SLAVE: ОЖИДАНИЕ — его состояние сейчас не блокирует кадр"
+    }
+    val observation = snapshot.calibrationPeerObservation
+        ?: return "SLAVE: ожидание анализа"
+    return if (observation.qualityReady) {
+        "SLAVE: ГОТОВ"
+    } else {
+        "SLAVE: ${observation.status}"
+    }
 }
 
 private fun qualityColor(ready: Boolean): Color =

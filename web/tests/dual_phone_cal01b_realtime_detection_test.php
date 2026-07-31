@@ -6,6 +6,7 @@ $root = dirname(__DIR__, 2);
 $files = [
     'plan' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneCalibrationPosePlan.kt',
     'observation' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneCalibrationControl.kt',
+    'stage' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneCalibrationStage.kt',
     'analyzer' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/calibration/DualPhoneCalibrationRealtimeAnalyzer.kt',
     'store' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/calibration/DualPhoneCalibrationCaptureStore.kt',
     'manager' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneControlManager.kt',
@@ -35,8 +36,15 @@ $requirements = [
         'centre_medium',
         'final_centre_oblique',
     ],
+    'stage' => [
+        'MASTER_INTRINSICS',
+        'SLAVE_INTRINSICS',
+        'STEREO_EXTRINSICS',
+        'targetPoseCount = 12',
+    ],
     'observation' => [
         'DualPhoneCalibrationObservation',
+        'calibration_stage',
         'quality_ready',
         'frame_sequence',
     ],
@@ -48,7 +56,10 @@ $requirements = [
         'poseMatches',
     ],
     'store' => [
-        'dual_phone_intrinsics_samples',
+        'dual_phone_calibration_samples',
+        'master_intrinsics',
+        'slave_intrinsics',
+        'stereo_extrinsics',
         'raw_frames_unrotated',
         'rotation_degrees_applied',
         'capture_manifest.json',
@@ -59,6 +70,9 @@ $requirements = [
         'CALIBRATION_OBSERVATION',
         'CALIBRATION_STATE',
         'calibrationLastAcceptedLocalFrameSequence',
+        'calibrationMasterAcceptedPoseCount',
+        'calibrationSlaveAcceptedPoseCount',
+        'calibrationStereoAcceptedPoseCount',
     ],
     'protocol' => [
         'CALIBRATION_OBSERVATION',
@@ -76,7 +90,9 @@ $requirements = [
         'rotationDegreesApplied = rotationDegrees',
     ],
     'fullscreen' => [
-        'CAL01B',
+        'КАЛИБРОВКА',
+        'КАДР ЗАСЧИТАН',
+        'КАЛИБРОВКА ЗАВЕРШЕНА',
         'DualPhoneCalibrationRealtimeAnalyzer',
         'reportCalibrationObservation',
         'DualPhoneCalibrationCaptureStore',
