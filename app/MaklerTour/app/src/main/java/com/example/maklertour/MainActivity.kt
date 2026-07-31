@@ -125,6 +125,7 @@ import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
 import com.maklertour.data.dualphone.DualPhoneCapabilityProbe
 import com.maklertour.data.dualphone.DualPhoneCalibrationBoardSettings
+import com.maklertour.data.dualphone.DualPhoneCalibrationMode
 import com.maklertour.data.dualphone.DualPhoneControlManager
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
@@ -1522,7 +1523,12 @@ private fun SettingsScreen(
                 dualPhoneControl.stopCapture()
             },
             onStartCalibration = {
-                dualPhoneControl.startCalibrationSession()
+                dualPhoneControl.startCalibrationSession(DualPhoneCalibrationMode.AUTO)
+            },
+            onStartManualCalibration = {
+                dualPhoneControl.startCalibrationSession(
+                    DualPhoneCalibrationMode.MANUAL_STEREO,
+                )
             },
             onExitCalibration = {
                 dualPhoneControl.exitCalibrationSession()

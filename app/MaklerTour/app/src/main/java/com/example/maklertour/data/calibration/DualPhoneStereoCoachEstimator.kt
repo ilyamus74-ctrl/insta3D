@@ -204,6 +204,10 @@ class DualPhoneStereoCoachEstimator : Closeable {
                     "${DualPhoneStereoEstimate.MAX_STEREO_RMS_PX} px"
             meanEpi != null && meanEpi > MAX_FINAL_MEAN_EPIPOLAR_ERROR_PX ->
                 "Средняя эпиполярная ошибка ${format2(meanEpi)} px слишком высокая"
+            meanEpi != null &&
+                meanEpi > DualPhoneStereoEstimate.RECOMMENDED_MEAN_EPIPOLAR_ERROR_PX ->
+                "Stereo R/T рассчитаны с предупреждением: средняя эпиполярная ошибка " +
+                    "${format2(meanEpi)} px"
             delta != null && abs(delta) > max(15.0, (operatorBaselineMm ?: 0.0) * 0.12) ->
                 "Базис отличается от введённого на ${format1(delta)} мм"
             else -> "Stereo R/T рассчитаны; автоматически отброшено пар: $rejected"
@@ -429,7 +433,8 @@ class DualPhoneStereoCoachEstimator : Closeable {
         private const val MAX_REJECTED_PAIRS = 8
         private const val MAX_PAIR_EPIPOLAR_ERROR_PX = 2.5
         private const val OUTLIER_MEDIAN_MULTIPLIER = 2.5
-        private const val MAX_FINAL_MEAN_EPIPOLAR_ERROR_PX = 1.5
+        private const val MAX_FINAL_MEAN_EPIPOLAR_ERROR_PX =
+            DualPhoneStereoEstimate.MAX_MEAN_EPIPOLAR_ERROR_PX
     }
 }
 

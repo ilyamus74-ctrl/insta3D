@@ -52,6 +52,8 @@ import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimate
 import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimator
 import com.maklertour.data.calibration.DualPhoneStereoCoachEstimator
 import com.maklertour.data.calibration.DualPhoneStereoCoachSnapshot
+import com.maklertour.data.calibration.DualPhoneStereoEstimate
+import com.maklertour.data.dualphone.DualPhoneCalibrationMode
 import com.maklertour.data.dualphone.DualPhoneCalibrationObservation
 import com.maklertour.data.dualphone.DualPhoneCalibrationPosePlan
 import com.maklertour.data.dualphone.DualPhoneCalibrationStage
@@ -69,6 +71,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.min
 
 @Composable
@@ -471,7 +474,18 @@ internal fun DualPhoneCalibrationFullscreen(
             }
         }.onSuccess { file ->
             finalProfilePersistenceStatus = if (result.successful) {
-                "ПРОФИЛЬ СОХРАНЁН ✓  ${file.name}"
+                val marginalEpipolar = result.stereo.meanEpipolarErrorPx?.let {
+                    it > DualPhoneStereoEstimate.RECOMMENDED_MEAN_EPIPOLAR_ERROR_PX
+                } == true
+                val marginalBaseline = result.stereo.baselineDeltaMm?.let { delta ->
+                    val expected = result.stereo.operatorBaselineMm ?: 0.0
+                    abs(delta) > maxOf(15.0, expected * 0.12)
+                } == true
+                if (marginalEpipolar || marginalBaseline) {
+                    "ПРОФИЛЬ СОХРАНЁН И АКТИВИРОВАН С ПРЕДУПРЕЖДЕНИЕМ ✓  ${file.name}"
+                } else {
+                    "ПРОФИЛЬ СОХРАНЁН И АКТИВИРОВАН ✓  ${file.name}"
+                }
             } else {
                 "Диагностика сохранена: ${file.name}"
             }
@@ -525,7 +539,7 @@ internal fun DualPhoneCalibrationFullscreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Text(
-                        "КАЛИБРОВКА · ${role.name}",
+                        "КАЛИБРОВКА · ${role.name} · ${snapshot.calibrationMode.displayNameRu}",
                         style = MaterialTheme.typography.titleMedium,
                     )
                     CalibrationStageProgress(snapshot)
@@ -546,7 +560,15 @@ internal fun DualPhoneCalibrationFullscreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
-                            if (snapshot.calibrationStage ==
+                            if (
+                                snapshot.calibrationStage ==
+                                DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
+                                snapshot.calibrationMode ==
+                                DualPhoneCalibrationMode.MANUAL_STEREO
+                            ) {
+                                "Установите доску, полностью остановите её и нажмите на MASTER " +
+                                    "кнопку синхронного снимка."
+                            } else if (snapshot.calibrationStage ==
                                 DualPhoneCalibrationStage.STEREO_EXTRINSICS
                             ) {
                                 "Плавно перемещайте доску так, чтобы её видели обе камеры. " +
@@ -565,6 +587,37 @@ internal fun DualPhoneCalibrationFullscreen(
                             "Доска: ${localStereoSettings.calibrationBoard.summaryRu()}",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        if (snapshot.calibrationMode ==
+                            DualPhoneCalibrationMode.MANUAL_STEREO
+                        ) {
+                            if (role == DualPhoneRole.MASTER) {
+                                Button(
+                                    onClick = controlManager::requestManualStereoPair,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = snapshot.connected,
+                                ) {
+                                    Text(
+                                        if (snapshot.calibrationManualCapturePending) {
+                                            "ПОВТОРИТЬ СИНХРОННЫЙ СНИМОК"
+                                        } else {
+                                            "СНЯТЬ СИНХРОННУЮ ПАРУ"
+                                        },
+                                    )
+                                }
+                                if (snapshot.calibrationManualCapturePending) {
+                                    Text(
+                                        "СНИМОК ВООРУЖЁН — НЕ ДВИГАЙТЕ ДОСКУ",
+                                        color = Color(0xFF7CFC98),
+                                        style = MaterialTheme.typography.titleSmall,
+                                    )
+                                }
+                            } else {
+                                Text(
+                                    "Синхронный снимок запускается кнопкой на MASTER.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
                     }
                     Text(
                         localQualityLine(snapshot, role, localAnalysis),
@@ -723,7 +776,23 @@ internal fun DualPhoneCalibrationFullscreen(
                             }
                             Text(
                                 if (finalResult.successful) {
-                                    "КАЛИБРОВОЧНЫЙ ПРОФИЛЬ ПРИНЯТ ✓"
+                                    val marginalEpipolar =
+                                        finalResult.stereo.meanEpipolarErrorPx?.let {
+                                            it > DualPhoneStereoEstimate
+                                                .RECOMMENDED_MEAN_EPIPOLAR_ERROR_PX
+                                        } == true
+                                    val marginalBaseline =
+                                        finalResult.stereo.baselineDeltaMm?.let { delta ->
+                                            val expected =
+                                                finalResult.stereo.operatorBaselineMm ?: 0.0
+                                            abs(delta) > maxOf(15.0, expected * 0.12)
+                                        } == true
+                                    if (marginalEpipolar || marginalBaseline) {
+                                        "КАЛИБРОВОЧНЫЙ ПРОФИЛЬ ПРИНЯТ " +
+                                            "С ПРЕДУПРЕЖДЕНИЕМ ✓"
+                                    } else {
+                                        "КАЛИБРОВОЧНЫЙ ПРОФИЛЬ ПРИНЯТ ✓"
+                                    }
                                 } else {
                                     "КАЛИБРОВКА НЕ ПРИНЯТА: " +
                                         (finalResult.error ?: "неизвестная ошибка")
@@ -749,16 +818,27 @@ internal fun DualPhoneCalibrationFullscreen(
                         ) {
                             Button(
                                 onClick = {
-                                    controlManager.restartStereoCalibration()
+                                    controlManager.restartStereoCalibration(
+                                        DualPhoneCalibrationMode.AUTO,
+                                    )
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text("ПОВТОРИТЬ СТЕРЕО-КАЛИБРОВКУ")
+                                Text("ПОВТОРИТЬ АВТОКАЛИБРОВКУ")
+                            }
+                            Button(
+                                onClick = {
+                                    controlManager.restartStereoCalibration(
+                                        DualPhoneCalibrationMode.MANUAL_STEREO,
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("ПОВТОРИТЬ ВРУЧНУЮ")
                             }
                             Text(
-                                "Intrinsics K/D обеих камер сохраняются. " +
-                                    "Будут заново сняты только 18 общих пар с live coach и " +
-                                    "пересчитаны R/T и stereo RMS.",
+                                "Intrinsics K/D обеих камер сохраняются. В ручном режиме " +
+                                    "каждая из 18 stereo-пар фиксируется кнопкой на MASTER.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         } else if (

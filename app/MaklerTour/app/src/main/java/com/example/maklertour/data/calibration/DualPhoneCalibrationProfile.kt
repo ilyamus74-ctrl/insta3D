@@ -73,7 +73,8 @@ data class DualPhoneStereoEstimate(
 
     companion object {
         const val MAX_STEREO_RMS_PX = 2.0
-        const val MAX_MEAN_EPIPOLAR_ERROR_PX = 1.5
+        const val RECOMMENDED_MEAN_EPIPOLAR_ERROR_PX = 1.5
+        const val MAX_MEAN_EPIPOLAR_ERROR_PX = 1.75
 
         fun fromJson(json: JSONObject): DualPhoneStereoEstimate =
             DualPhoneStereoEstimate(

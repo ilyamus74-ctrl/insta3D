@@ -68,6 +68,8 @@ data class DualPhoneControlSnapshot(
     val aggregatePackagePath: String? = null,
     val aggregateUploadState: String = "IDLE",
     val calibrationActive: Boolean = false,
+    val calibrationMode: DualPhoneCalibrationMode = DualPhoneCalibrationMode.AUTO,
+    val calibrationManualCapturePending: Boolean = false,
     val calibrationRunId: String? = null,
     val calibrationStage: DualPhoneCalibrationStage =
         DualPhoneCalibrationStage.MASTER_INTRINSICS,
@@ -143,6 +145,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     private var peerCalibrationObservation: DualPhoneCalibrationObservation? = null
     private var localCalibrationReceivedAtMs: Long = 0L
     private var peerCalibrationReceivedAtMs: Long = 0L
+    private var manualStereoCaptureRequestedAtMasterNs: Long? = null
+    private var manualStereoCaptureRequestedAtMasterMs: Long? = null
 
     fun startMaster() {
         val settings = settingsStore.load()
@@ -272,7 +276,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
     }
 
-    fun startCalibrationSession() {
+    fun startCalibrationSession(
+        mode: DualPhoneCalibrationMode = DualPhoneCalibrationMode.AUTO,
+    ) {
         val settings = settingsStore.load()
         val current = mutableState.value
         val baselineMm = settings.operatorLensBaselineMm
@@ -310,6 +316,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         resetCalibrationGateLocked()
         mutableState.value = current.copy(
             calibrationActive = true,
+            calibrationMode = mode,
+            calibrationManualCapturePending = false,
             calibrationRunId = runId,
             calibrationStage = stage,
             calibrationMasterAcceptedPoseCount = 0,
@@ -345,6 +353,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     DualPhoneControlType.ENTER_CALIBRATION,
                     JSONObject()
                         .put("calibration_run_id", runId)
+                        .put("calibration_mode", mode.wireValue)
                         .put("rig_id", settings.rigId)
                         .put("rig_mount_revision", settings.rigMountRevision)
                         .put("operator_lens_baseline_mm", baselineMm)
@@ -364,10 +373,33 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     error.message ?: error.javaClass.simpleName,
                 )
             }
+            if (current.calibrationMode == DualPhoneCalibrationMode.MANUAL_STEREO) {
+                val requestNs = manualStereoCaptureRequestedAtMasterNs ?: return null
+                val requestMs = manualStereoCaptureRequestedAtMasterMs ?: return null
+                val framesAfterButton = if (
+                    clockOffsetNs != null &&
+                    masterObservation.frameTimestampNs > 0L &&
+                    slaveObservation.frameTimestampNs > 0L
+                ) {
+                    masterObservation.frameTimestampNs >= requestNs &&
+                        slaveObservation.frameTimestampNs - clockOffsetNs >= requestNs
+                } else {
+                    localCalibrationReceivedAtMs >= requestMs &&
+                        peerCalibrationReceivedAtMs >= requestMs
+                }
+                if (!framesAfterButton) {
+                    mutableState.value = current.copy(
+                        lastMessage = "Ручной снимок: ожидаются новые кадры после нажатия",
+                    )
+                    return null
+                }
+            }
         }
     }
 
-    fun restartStereoCalibration() {
+    fun restartStereoCalibration(
+        mode: DualPhoneCalibrationMode = DualPhoneCalibrationMode.AUTO,
+    ) {
         val settings = settingsStore.load()
         val current = mutableState.value
         val masterIntrinsics = current.calibrationMasterIntrinsics
@@ -412,6 +444,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         resetCalibrationGateLocked()
         mutableState.value = current.copy(
             calibrationActive = true,
+            calibrationMode = mode,
+            calibrationManualCapturePending = false,
             calibrationRunId = runId,
             calibrationStage = stage,
             calibrationLastAcceptedStage = null,
@@ -438,8 +472,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationCollectionComplete = false,
             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
             lastError = null,
-            lastMessage =
-                "Повторная stereo-калибровка: K/D MASTER и SLAVE сохранены",
+            lastMessage = if (mode == DualPhoneCalibrationMode.MANUAL_STEREO) {
+                "Ручная stereo-калибровка: K/D сохранены, пары снимаются кнопкой"
+            } else {
+                "Авто stereo-калибровка: K/D MASTER и SLAVE сохранены"
+            },
         )
 
         scope.launch {
@@ -448,6 +485,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     DualPhoneControlType.ENTER_CALIBRATION,
                     JSONObject()
                         .put("calibration_run_id", runId)
+                        .put("calibration_mode", mode.wireValue)
                         .put("retry_mode", "STEREO_ONLY")
                         .put("source_calibration_run_id", sourceRunId)
                         .put("rig_id", settings.rigId)
@@ -481,6 +519,56 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     lastMessage =
                         "Повторная stereo-калибровка не запущена; прежний профиль сохранён",
                 )
+            }
+        }
+    }
+
+    fun requestManualStereoPair() {
+        val current = mutableState.value
+        val error = when {
+            settingsStore.load().role != DualPhoneRole.MASTER ->
+                "Ручной снимок доступен только на MASTER"
+            !current.connected ->
+                "SLAVE не подключён"
+            !current.calibrationActive || current.calibrationCollectionComplete ->
+                "Ручная калибровка сейчас не активна"
+            current.calibrationMode != DualPhoneCalibrationMode.MANUAL_STEREO ->
+                "Выбран режим автокалибровки"
+            current.calibrationStage != DualPhoneCalibrationStage.STEREO_EXTRINSICS ->
+                "Ручной синхронный снимок доступен на этапе ОБЕ КАМЕРЫ"
+            else -> null
+        }
+        if (error != null) {
+            mutableState.value = current.copy(lastError = error, lastMessage = error)
+            return
+        }
+
+        val requestedAtNs =
+            SystemClock.elapsedRealtimeNanos() + MANUAL_STEREO_CAPTURE_LEAD_NS
+        val requestedAtMs = SystemClock.elapsedRealtime() +
+            MANUAL_STEREO_CAPTURE_LEAD_NS / 1_000_000L
+        synchronized(calibrationObservationLock) {
+            manualStereoCaptureRequestedAtMasterNs = requestedAtNs
+            manualStereoCaptureRequestedAtMasterMs = requestedAtMs
+            mutableState.value = mutableState.value.copy(
+                calibrationManualCapturePending = true,
+                lastError = null,
+                lastMessage =
+                    "Ручной синхронный снимок вооружён — держите доску неподвижно",
+            )
+        }
+        scope.launch {
+            delay(MANUAL_STEREO_CAPTURE_TIMEOUT_MS)
+            synchronized(calibrationObservationLock) {
+                if (manualStereoCaptureRequestedAtMasterNs == requestedAtNs) {
+                    manualStereoCaptureRequestedAtMasterNs = null
+                    manualStereoCaptureRequestedAtMasterMs = null
+                    mutableState.value = mutableState.value.copy(
+                        calibrationManualCapturePending = false,
+                        lastMessage =
+                            "Снимок не получен: выровняйте доску и нажмите кнопку ещё раз",
+                    )
+                }
             }
         }
     }
@@ -712,6 +800,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             val stage = DualPhoneCalibrationStage.fromWire(
                 payload.optString("stage", current.calibrationStage.wireValue),
             )
+            val calibrationMode = DualPhoneCalibrationMode.fromWire(
+                payload.optString("calibration_mode", current.calibrationMode.wireValue),
+            )
             val targetCount = payload.optInt(
                 "target_pose_count",
                 stage.targetPoseCount,
@@ -748,6 +839,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             localCalibrationReceivedAtMs = 0L
             peerCalibrationReceivedAtMs = 0L
             mutableState.value = current.copy(
+                calibrationMode = calibrationMode,
+                calibrationManualCapturePending =
+                    payload.optBoolean("manual_capture_pending", false),
                 calibrationStage = stage,
                 calibrationMasterAcceptedPoseCount = payload.optInt(
                     "master_accepted_pose_count",
@@ -836,6 +930,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             stage.requiresSlaveObservation &&
             nowMs - peerCalibrationReceivedAtMs > CALIBRATION_OBSERVATION_MAX_AGE_MS
         ) return null
+        if (
+            stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
+            current.calibrationMode == DualPhoneCalibrationMode.MANUAL_STEREO &&
+            manualStereoCaptureRequestedAtMasterNs == null
+        ) {
+            return null
+        }
         if (stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS) {
             val masterObservation = local ?: return null
             val slaveObservation = peer ?: return null
@@ -947,6 +1048,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             .put("target_pose_id", nextTarget.id)
             .put("target_pose_count", nextStage.targetPoseCount)
             .put("instruction", nextInstruction)
+            .put("calibration_mode", current.calibrationMode.wireValue)
+            .put("manual_capture_pending", false)
             .put("acceptance_serial", acceptanceSerial)
             .put("master_frame_sequence", masterSequence ?: JSONObject.NULL)
             .put("slave_frame_sequence", slaveSequence ?: JSONObject.NULL)
@@ -960,6 +1063,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             )
             .put("collection_complete", workflowComplete)
 
+        manualStereoCaptureRequestedAtMasterNs = null
+        manualStereoCaptureRequestedAtMasterMs = null
         localCalibrationObservation = null
         peerCalibrationObservation = null
         localCalibrationReceivedAtMs = 0L
@@ -985,6 +1090,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationPeerObservation = null,
             calibrationLastAcceptedMasterObservation = acceptedMaster,
             calibrationLastAcceptedSlaveObservation = acceptedSlave,
+            calibrationManualCapturePending = false,
             calibrationCollectionComplete = workflowComplete,
             lastMessage = when {
                 workflowComplete ->
@@ -1000,6 +1106,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
 
     private fun resetCalibrationGateLocked() {
         synchronized(calibrationObservationLock) {
+            manualStereoCaptureRequestedAtMasterNs = null
+            manualStereoCaptureRequestedAtMasterMs = null
             localCalibrationObservation = null
             peerCalibrationObservation = null
             localCalibrationReceivedAtMs = 0L
@@ -1445,6 +1553,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         val stage = DualPhoneCalibrationStage.fromWire(
                             payload.optString("stage"),
                         )
+                        val calibrationMode = DualPhoneCalibrationMode.fromWire(
+                            payload.optString("calibration_mode"),
+                        )
                         payload.optJSONObject("board_settings")?.let { boardJson ->
                             val board = DualPhoneCalibrationBoardSettings.fromJson(boardJson)
                             if (board.validationError() == null) {
@@ -1469,6 +1580,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         resetCalibrationGateLocked()
                         mutableState.value = mutableState.value.copy(
                             calibrationActive = true,
+                            calibrationMode = calibrationMode,
+                            calibrationManualCapturePending = false,
                             calibrationRunId = runId,
                             calibrationStage = stage,
                             calibrationMasterAcceptedPoseCount = payload.optInt(
@@ -2370,6 +2483,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         resetCalibrationGateLocked()
         mutableState.value = mutableState.value.copy(
             calibrationActive = false,
+            calibrationMode = DualPhoneCalibrationMode.AUTO,
+            calibrationManualCapturePending = false,
             calibrationRunId = null,
             calibrationStage = DualPhoneCalibrationStage.MASTER_INTRINSICS,
             calibrationMasterAcceptedPoseCount = 0,
@@ -2641,6 +2756,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         private const val CALIBRATION_STEREO_REQUIRED_STABLE_MS = 450L
         private const val CALIBRATION_STEREO_MAX_FRAME_DELTA_MS = 80.0
         private const val CALIBRATION_STEREO_FALLBACK_MAX_DELTA_MS = 150.0
+        private const val MANUAL_STEREO_CAPTURE_LEAD_NS = 180_000_000L
+        private const val MANUAL_STEREO_CAPTURE_TIMEOUT_MS = 4_000L
 
         @Volatile
         private var instance: DualPhoneControlManager? = null

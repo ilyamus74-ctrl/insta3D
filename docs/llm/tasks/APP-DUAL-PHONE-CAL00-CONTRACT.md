@@ -132,6 +132,14 @@ samples.
 CAL02 uses static dual-visible poses. The board must be held still long enough to
 remove residual cross-phone timing error from the extrinsics estimate.
 
+Calibration interaction modes:
+
+- `AUTO`: intrinsics and stereo pairs are accepted automatically by the quality gate.
+- `MANUAL_STEREO`: intrinsics remain automatic; every stereo pair is armed by the
+  operator on Master and must use frames captured after the button press.
+
+Manual capture does not bypass common-corner, stability, timestamp or novelty checks.
+
 After a completed solve, Master may start a stereo-only retry. The retry creates a
 new calibration run, preserves the already validated MASTER and SLAVE intrinsics,
 clears only the stereo-pair counter and in-memory stereo estimator, then captures

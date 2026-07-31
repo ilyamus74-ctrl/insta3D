@@ -60,6 +60,7 @@ fun DualPhoneControlSettingsCard(
     onStartTest: () -> Unit,
     onStopCapture: () -> Unit,
     onStartCalibration: () -> Unit,
+    onStartManualCalibration: () -> Unit,
     onExitCalibration: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -564,11 +565,19 @@ fun DualPhoneControlSettingsCard(
                     enabled = snapshot.phase == DualPhoneControlPhase.CONNECTED &&
                         !snapshot.calibrationActive,
                 ) {
-                    Text("Калибровка двух телефонов")
+                    Text("АВТОКАЛИБРОВКА")
+                }
+                Button(
+                    onClick = onStartManualCalibration,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = snapshot.phase == DualPhoneControlPhase.CONNECTED &&
+                        !snapshot.calibrationActive,
+                ) {
+                    Text("РУЧНАЯ КАЛИБРОВКА")
                 }
                 Text(
-                    "Calibration creates a reusable rig profile and is not attached " +
-                        "to a room session.",
+                    "Авто: все кадры принимаются автоматически. Ручная: K/D собираются " +
+                        "автоматически, а stereo-пары фиксируются кнопкой на MASTER.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(
