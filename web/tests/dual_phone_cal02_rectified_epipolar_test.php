@@ -11,6 +11,11 @@ $required = [
     'Calib3d.stereoRectify(',
     'Calib3d.undistortPoints(',
     'rectifiedVerticalError(',
+    'rectifiedDisparityIsHorizontal(',
+    'slaveProjection.get(0, 3)[0]',
+    'slaveProjection.get(1, 3)[0]',
+    'abs(masterPoints[index].y - slavePoints[index].y)',
+    'abs(masterPoints[index].x - slavePoints[index].x)',
     'MAX_PAIR_RECTIFIED_VERTICAL_ERROR_PX',
     'OUTLIER_MAD_MULTIPLIER',
     'MIN_OUTLIER_MAD_PX',
@@ -27,6 +32,7 @@ $forbidden = [
     'symmetricEpipolarError(',
     'pointLineDistance(',
     'OUTLIER_MEDIAN_MULTIPLIER',
+    '.map { index -> abs(masterPoints[index].y - slavePoints[index].y) }',
 ];
 
 foreach ($forbidden as $needle) {

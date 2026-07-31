@@ -373,14 +373,28 @@ class DualPhoneStereoCoachEstimator : Closeable {
             if (masterPoints.isEmpty() || masterPoints.size != slavePoints.size) {
                 Double.POSITIVE_INFINITY
             } else {
+                val horizontalDisparity =
+                    rectifiedDisparityIsHorizontal(slaveProjection)
                 masterPoints.indices
-                    .map { index -> abs(masterPoints[index].y - slavePoints[index].y) }
+                    .map { index ->
+                        if (horizontalDisparity) {
+                            abs(masterPoints[index].y - slavePoints[index].y)
+                        } else {
+                            abs(masterPoints[index].x - slavePoints[index].x)
+                        }
+                    }
                     .average()
             }
         } finally {
             masterRectified.release()
             slaveRectified.release()
         }
+    }
+
+    private fun rectifiedDisparityIsHorizontal(slaveProjection: Mat): Boolean {
+        val horizontalShift = abs(slaveProjection.get(0, 3)[0])
+        val verticalShift = abs(slaveProjection.get(1, 3)[0])
+        return horizontalShift >= verticalShift
     }
 
     private fun objectPointFor(id: Int, settings: CalibrationSettings): Point3? =
