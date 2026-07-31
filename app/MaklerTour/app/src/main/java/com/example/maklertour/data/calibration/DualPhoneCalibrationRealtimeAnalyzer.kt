@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.os.SystemClock
 import com.maklertour.data.dualphone.DualPhoneCalibrationObservation
 import com.maklertour.data.dualphone.DualPhoneCalibrationPoseTarget
+import com.maklertour.data.dualphone.DualPhoneCharucoCorner
 import com.maklertour.data.dualphone.DualPhoneCalibrationStage
 import com.maklertour.data.phonecamera.CalibrationFrame
 import com.maklertour.data.rig.CalibrationSettings
@@ -65,6 +66,22 @@ data class DualPhoneCalibrationRealtimeResult(
         poseMatches = poseMatches,
         qualityReady = qualityReady,
         status = status,
+        imageWidth = detection.imageWidth,
+        imageHeight = detection.imageHeight,
+        charucoCorners = if (
+            stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS
+        ) {
+            detection.charucoIds.zip(detection.normalizedCornerPoints).map {
+                (id, point) ->
+                DualPhoneCharucoCorner(
+                    id = id,
+                    normalizedX = point.x.toDouble(),
+                    normalizedY = point.y.toDouble(),
+                )
+            }
+        } else {
+            emptyList()
+        },
     )
 }
 

@@ -1426,6 +1426,50 @@ private fun SettingsScreen(
             pairingCode = pairingCodeInput,
             onMasterHostChanged = { masterHostInput = it },
             onPairingCodeChanged = { pairingCodeInput = it },
+            onSaveRigGeometry = { rigId, mountRevision, baselineMm ->
+                val geometryChanged =
+                    dualPhoneSettings.rigId != rigId ||
+                        dualPhoneSettings.rigMountRevision != mountRevision ||
+                        dualPhoneSettings.operatorLensBaselineMm != baselineMm
+                val updatedSettings = dualPhoneSettings.copy(
+                    rigId = rigId,
+                    rigMountRevision = mountRevision,
+                    operatorLensBaselineMm = baselineMm,
+                )
+                dualPhoneStore.save(updatedSettings)
+                val persisted = dualPhoneStore.load()
+                dualPhoneSettings = persisted
+                refreshProfile(
+                    activeProfile.copy(
+                        rigId = rigId,
+                        baselineMm = baselineMm,
+                        calibrationStatus = if (geometryChanged) {
+                            CalibrationStatus.NOT_CALIBRATED
+                        } else {
+                            activeProfile.calibrationStatus
+                        },
+                        calibrationResultPath = if (geometryChanged) {
+                            null
+                        } else {
+                            activeProfile.calibrationResultPath
+                        },
+                        calibrationResult = if (geometryChanged) {
+                            null
+                        } else {
+                            activeProfile.calibrationResult
+                        },
+                    ),
+                )
+                if (
+                    persisted.rigId == rigId &&
+                    persisted.rigMountRevision == mountRevision &&
+                    persisted.operatorLensBaselineMm == baselineMm
+                ) {
+                    "Геометрия сохранена: ${baselineMm} мм"
+                } else {
+                    "Ошибка сохранения геометрии"
+                }
+            },
             onStartMaster = {
                 dualPhoneControl.startMaster()
             },

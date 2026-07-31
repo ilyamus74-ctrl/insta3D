@@ -2,6 +2,8 @@ package com.maklertour.data.dualphone
 
 import android.content.Context
 import android.os.SystemClock
+import com.maklertour.data.calibration.DualPhoneCalibrationProfileResult
+import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -87,6 +89,11 @@ data class DualPhoneControlSnapshot(
     val calibrationLastAcceptedPeerFrameSequence: Long? = null,
     val calibrationLocalObservation: DualPhoneCalibrationObservation? = null,
     val calibrationPeerObservation: DualPhoneCalibrationObservation? = null,
+    val calibrationLastAcceptedMasterObservation: DualPhoneCalibrationObservation? = null,
+    val calibrationLastAcceptedSlaveObservation: DualPhoneCalibrationObservation? = null,
+    val calibrationMasterIntrinsics: DualPhoneLiveIntrinsicsEstimate? = null,
+    val calibrationSlaveIntrinsics: DualPhoneLiveIntrinsicsEstimate? = null,
+    val calibrationFinalResult: DualPhoneCalibrationProfileResult? = null,
     val calibrationCollectionComplete: Boolean = false,
     val clockSync: DualPhoneClockSyncSnapshot = DualPhoneClockSyncSnapshot(),
 )
@@ -320,6 +327,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationLastAcceptedPeerFrameSequence = null,
             calibrationLocalObservation = null,
             calibrationPeerObservation = null,
+            calibrationLastAcceptedMasterObservation = null,
+            calibrationLastAcceptedSlaveObservation = null,
+            calibrationMasterIntrinsics = null,
+            calibrationSlaveIntrinsics = null,
+            calibrationFinalResult = null,
             calibrationCollectionComplete = false,
             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
             lastError = null,
@@ -429,6 +441,118 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
     }
 
+    fun reportCalibrationIntrinsics(
+        calibrationRunId: String,
+        stage: DualPhoneCalibrationStage,
+        estimate: DualPhoneLiveIntrinsicsEstimate,
+    ) {
+        val sourceRole = settingsStore.load().role
+        val validSource = when (stage) {
+            DualPhoneCalibrationStage.MASTER_INTRINSICS ->
+                sourceRole == DualPhoneRole.MASTER
+            DualPhoneCalibrationStage.SLAVE_INTRINSICS ->
+                sourceRole == DualPhoneRole.SLAVE
+            else -> false
+        }
+        val current = mutableState.value
+        if (
+            !validSource ||
+            calibrationRunId != current.calibrationRunId ||
+            !current.calibrationActive
+        ) {
+            return
+        }
+        val payload = JSONObject()
+            .put("calibration_run_id", calibrationRunId)
+            .put("source_role", sourceRole.name)
+            .put("stage", stage.wireValue)
+            .put("estimate", estimate.toJson())
+        applyCalibrationIntrinsics(payload)
+        scope.launch {
+            runCatching {
+                send(DualPhoneControlType.CALIBRATION_INTRINSICS, payload)
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(
+                    lastError = "Intrinsics delivery failed: " +
+                        (error.message ?: error.javaClass.simpleName),
+                )
+            }
+        }
+    }
+
+    fun publishCalibrationResult(result: DualPhoneCalibrationProfileResult) {
+        val current = mutableState.value
+        if (
+            settingsStore.load().role != DualPhoneRole.MASTER ||
+            result.calibrationRunId != current.calibrationRunId ||
+            !current.calibrationActive
+        ) {
+            return
+        }
+        mutableState.value = current.copy(
+            calibrationFinalResult = result,
+            lastError = result.error,
+            lastMessage = if (result.successful) {
+                "Calibration profile ${result.profileId} is ready"
+            } else {
+                "Calibration solve failed: ${result.error ?: "unknown error"}"
+            },
+        )
+        scope.launch {
+            runCatching {
+                send(
+                    DualPhoneControlType.CALIBRATION_RESULT,
+                    result.toJson(),
+                )
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(
+                    lastError = "Final calibration result delivery failed: " +
+                        (error.message ?: error.javaClass.simpleName),
+                )
+            }
+        }
+    }
+
+    private fun applyCalibrationIntrinsics(payload: JSONObject) {
+        val runId = payload.optString("calibration_run_id")
+        val sourceRole = runCatching {
+            DualPhoneRole.valueOf(payload.optString("source_role"))
+        }.getOrNull() ?: return
+        val estimateJson = payload.optJSONObject("estimate") ?: return
+        val estimate = DualPhoneLiveIntrinsicsEstimate.fromJson(estimateJson)
+        val current = mutableState.value
+        if (runId != current.calibrationRunId || !current.calibrationActive) return
+        mutableState.value = when (sourceRole) {
+            DualPhoneRole.MASTER -> current.copy(
+                calibrationMasterIntrinsics = estimate,
+            )
+            DualPhoneRole.SLAVE -> current.copy(
+                calibrationSlaveIntrinsics = estimate,
+            )
+            DualPhoneRole.STANDALONE -> current
+        }
+    }
+
+    private fun applyCalibrationResult(payload: JSONObject) {
+        val result = DualPhoneCalibrationProfileResult.fromJson(payload) ?: return
+        val current = mutableState.value
+        if (
+            result.calibrationRunId != current.calibrationRunId ||
+            !current.calibrationActive
+        ) {
+            return
+        }
+        mutableState.value = current.copy(
+            calibrationFinalResult = result,
+            lastError = result.error,
+            lastMessage = if (result.successful) {
+                "Calibration profile ${result.profileId} received from Master"
+            } else {
+                "Calibration solve failed on Master: ${result.error ?: "unknown error"}"
+            },
+        )
+    }
+
     private fun handleCalibrationObservation(payload: JSONObject) {
         if (settingsStore.load().role != DualPhoneRole.MASTER) return
         val observation = DualPhoneCalibrationObservation.fromJson(payload) ?: return
@@ -490,6 +614,14 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             val completedStage = payload.optNullableString("completed_stage")?.let {
                 DualPhoneCalibrationStage.fromWire(it)
             }
+            val acceptedMasterObservation =
+                payload.optJSONObject("accepted_master_observation")?.let {
+                    DualPhoneCalibrationObservation.fromJson(it)
+                }
+            val acceptedSlaveObservation =
+                payload.optJSONObject("accepted_slave_observation")?.let {
+                    DualPhoneCalibrationObservation.fromJson(it)
+                }
             localCalibrationObservation = null
             peerCalibrationObservation = null
             localCalibrationReceivedAtMs = 0L
@@ -543,6 +675,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     },
                 calibrationLocalObservation = null,
                 calibrationPeerObservation = null,
+                calibrationLastAcceptedMasterObservation =
+                    acceptedMasterObservation,
+                calibrationLastAcceptedSlaveObservation =
+                    acceptedSlaveObservation,
                 calibrationCollectionComplete = workflowComplete,
                 lastMessage = if (workflowComplete) {
                     "Calibration frame collection completed: MASTER, SLAVE and stereo"
@@ -647,6 +783,14 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             .put("acceptance_serial", acceptanceSerial)
             .put("master_frame_sequence", masterSequence ?: JSONObject.NULL)
             .put("slave_frame_sequence", slaveSequence ?: JSONObject.NULL)
+            .put(
+                "accepted_master_observation",
+                acceptedMaster?.toJson() ?: JSONObject.NULL,
+            )
+            .put(
+                "accepted_slave_observation",
+                acceptedSlave?.toJson() ?: JSONObject.NULL,
+            )
             .put("collection_complete", workflowComplete)
 
         localCalibrationObservation = null
@@ -672,6 +816,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationLastAcceptedPeerFrameSequence = slaveSequence,
             calibrationLocalObservation = null,
             calibrationPeerObservation = null,
+            calibrationLastAcceptedMasterObservation = acceptedMaster,
+            calibrationLastAcceptedSlaveObservation = acceptedSlave,
             calibrationCollectionComplete = workflowComplete,
             lastMessage = when {
                 workflowComplete ->
@@ -1177,6 +1323,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             calibrationLastAcceptedPeerFrameSequence = null,
                             calibrationLocalObservation = null,
                             calibrationPeerObservation = null,
+                            calibrationLastAcceptedMasterObservation = null,
+                            calibrationLastAcceptedSlaveObservation = null,
+                            calibrationMasterIntrinsics = null,
+                            calibrationSlaveIntrinsics = null,
+                            calibrationFinalResult = null,
                             calibrationCollectionComplete = false,
                             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
                             lastError = null,
@@ -1222,6 +1373,14 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     localRole == DualPhoneRole.SLAVE
                 ) {
                     applyCalibrationState(payload)
+                }
+                DualPhoneControlType.CALIBRATION_INTRINSICS -> {
+                    applyCalibrationIntrinsics(payload)
+                }
+                DualPhoneControlType.CALIBRATION_RESULT -> if (
+                    localRole == DualPhoneRole.SLAVE
+                ) {
+                    applyCalibrationResult(payload)
                 }
                 DualPhoneControlType.EXIT_CALIBRATION_REQUEST -> if (
                     localRole == DualPhoneRole.MASTER

@@ -14,6 +14,7 @@ import org.opencv.core.Point3
 import org.opencv.core.Size
 import org.opencv.objdetect.CharucoBoard
 import org.opencv.objdetect.Objdetect
+import org.json.JSONObject
 import java.io.Closeable
 import java.util.ArrayDeque
 import java.util.Locale
@@ -22,6 +23,8 @@ import kotlin.math.abs
 data class DualPhoneLiveIntrinsicsEstimate(
     val acceptedFrames: Int,
     val solved: Boolean,
+    val imageWidth: Int = 0,
+    val imageHeight: Int = 0,
     val rms: Double? = null,
     val fx: Double? = null,
     val fy: Double? = null,
@@ -31,6 +34,16 @@ data class DualPhoneLiveIntrinsicsEstimate(
     val k2: Double? = null,
     val status: String,
 ) {
+    val acceptable: Boolean
+        get() = solved &&
+            acceptedFrames >= MIN_FINAL_FRAMES &&
+            imageWidth > 0 &&
+            imageHeight > 0 &&
+            rms != null &&
+            rms.isFinite() &&
+            rms <= MAX_INTRINSICS_RMS_PX &&
+            listOf(fx, fy, cx, cy, k1, k2).all { it != null && it.isFinite() }
+
     fun summary(): String = when {
         solved && rms != null -> buildString {
             append("Предварительные intrinsics: RMS ")
@@ -46,13 +59,48 @@ data class DualPhoneLiveIntrinsicsEstimate(
         }
         else -> status
     }
+
+    fun toJson(): JSONObject = JSONObject()
+        .put("accepted_frames", acceptedFrames)
+        .put("solved", solved)
+        .put("image_width", imageWidth)
+        .put("image_height", imageHeight)
+        .put("rms", rms ?: JSONObject.NULL)
+        .put("fx", fx ?: JSONObject.NULL)
+        .put("fy", fy ?: JSONObject.NULL)
+        .put("cx", cx ?: JSONObject.NULL)
+        .put("cy", cy ?: JSONObject.NULL)
+        .put("k1", k1 ?: JSONObject.NULL)
+        .put("k2", k2 ?: JSONObject.NULL)
+        .put("status", status)
+
+    companion object {
+        const val MIN_FINAL_FRAMES = 10
+        const val MAX_INTRINSICS_RMS_PX = 3.0
+
+        fun fromJson(json: JSONObject): DualPhoneLiveIntrinsicsEstimate =
+            DualPhoneLiveIntrinsicsEstimate(
+                acceptedFrames = json.optInt("accepted_frames", 0),
+                solved = json.optBoolean("solved", false),
+                imageWidth = json.optInt("image_width", 0),
+                imageHeight = json.optInt("image_height", 0),
+                rms = json.optFiniteDouble("rms"),
+                fx = json.optFiniteDouble("fx"),
+                fy = json.optFiniteDouble("fy"),
+                cx = json.optFiniteDouble("cx"),
+                cy = json.optFiniteDouble("cy"),
+                k1 = json.optFiniteDouble("k1"),
+                k2 = json.optFiniteDouble("k2"),
+                status = json.optString("status", "Intrinsics unavailable"),
+            )
+    }
 }
 
 /**
  * Lightweight in-memory preview solver.
  *
  * It recalculates a provisional K/D model after each accepted intrinsics frame.
- * The estimate is UI feedback only; persisted CAL01C output remains authoritative.
+ * A result becomes final only after the minimum frame count and RMS validation pass.
  */
 class DualPhoneLiveIntrinsicsEstimator(
     private val detector: CalibrationBoardDetector = OpenCvCalibrationBoardDetector(),
@@ -124,6 +172,8 @@ class DualPhoneLiveIntrinsicsEstimator(
             DualPhoneLiveIntrinsicsEstimate(
                 acceptedFrames = samples.size,
                 solved = stable,
+                imageWidth = imageSize.width.toInt(),
+                imageHeight = imageSize.height.toInt(),
                 rms = rms.takeIf { it.isFinite() },
                 fx = fx,
                 fy = fy,
@@ -242,6 +292,8 @@ class DualPhoneLiveIntrinsicsEstimator(
         DualPhoneLiveIntrinsicsEstimate(
             acceptedFrames = samples.size,
             solved = false,
+            imageWidth = samples.lastOrNull()?.imageSize?.width?.toInt() ?: 0,
+            imageHeight = samples.lastOrNull()?.imageSize?.height?.toInt() ?: 0,
             status = message,
         )
 
@@ -253,3 +305,6 @@ class DualPhoneLiveIntrinsicsEstimator(
         }
     }
 }
+
+private fun JSONObject.optFiniteDouble(name: String): Double? =
+    if (!has(name) || isNull(name)) null else optDouble(name).takeIf { it.isFinite() }

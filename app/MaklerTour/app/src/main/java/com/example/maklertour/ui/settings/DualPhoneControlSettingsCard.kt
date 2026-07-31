@@ -34,7 +34,6 @@ import com.maklertour.data.dualphone.DualPhoneControlPhase
 import com.maklertour.data.dualphone.DualPhoneControlSnapshot
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
-import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 import com.maklertour.data.phonecamera.DualPhonePreviewBindingRuntime
 import com.maklertour.data.phonecamera.DualPhoneRecorderPreviewRegistry
 import java.util.Locale
@@ -47,6 +46,7 @@ fun DualPhoneControlSettingsCard(
     pairingCode: String,
     onMasterHostChanged: (String) -> Unit,
     onPairingCodeChanged: (String) -> Unit,
+    onSaveRigGeometry: (String, String, Double) -> String,
     onStartMaster: () -> Unit,
     onConnectSlave: () -> Unit,
     onDisconnect: () -> Unit,
@@ -152,14 +152,11 @@ fun DualPhoneControlSettingsCard(
                         if (error != null) {
                             rigSaveMessage = error
                         } else {
-                            DualPhoneStereoSettingsStore(context).save(
-                                settings.copy(
-                                    rigId = rigIdInput.trim(),
-                                    rigMountRevision = mountRevisionInput.trim(),
-                                    operatorLensBaselineMm = baselineMm,
-                                ),
+                            rigSaveMessage = onSaveRigGeometry(
+                                rigIdInput.trim(),
+                                mountRevisionInput.trim(),
+                                requireNotNull(baselineMm),
                             )
-                            rigSaveMessage = "Rig geometry saved"
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),

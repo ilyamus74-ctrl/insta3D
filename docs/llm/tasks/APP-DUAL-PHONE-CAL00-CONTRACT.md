@@ -91,6 +91,25 @@ Every accepted sample produces visible `FRAME ACCEPTED` feedback. Completion of 
 stage and final completion of MASTER, SLAVE and stereo collection must also be shown
 explicitly on both phones.
 
+After the final stereo pair, frame collection is not reported as a successful
+calibration until numerical validation finishes:
+
+```text
+MASTER intrinsics K/D + RMS
+SLAVE intrinsics K/D + RMS
+stereo R/T + stereo RMS
+calculated baseline |T|
+comparison against operator_lens_baseline_mm
+atomic calibration profile persistence
+active_calibration_profile_id update
+```
+
+The Slave sends its final intrinsics model to Master. Accepted stereo observations
+carry ChArUco IDs and raw-frame normalized coordinates; Master computes R/T by common
+IDs with `CALIB_FIX_INTRINSIC`, publishes the final profile to Slave, and both phones
+persist the same profile. A failed RMS/model check must remain visible and must not
+activate the profile.
+
 ## Required pose coverage
 
 CAL01 collects intrinsics independently for each physical camera while preserving a

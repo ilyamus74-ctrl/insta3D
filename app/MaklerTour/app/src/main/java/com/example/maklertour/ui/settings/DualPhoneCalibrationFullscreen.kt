@@ -44,10 +44,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.maklertour.data.calibration.DualPhoneCalibrationCaptureStore
+import com.maklertour.data.calibration.DualPhoneCalibrationProfileResult
+import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
 import com.maklertour.data.calibration.DualPhoneCalibrationRealtimeAnalyzer
 import com.maklertour.data.calibration.DualPhoneCalibrationRealtimeResult
 import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimate
 import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimator
+import com.maklertour.data.calibration.DualPhoneStereoCalibrationEstimator
 import com.maklertour.data.dualphone.DualPhoneCalibrationObservation
 import com.maklertour.data.dualphone.DualPhoneCalibrationPosePlan
 import com.maklertour.data.dualphone.DualPhoneCalibrationStage
@@ -59,6 +62,7 @@ import com.maklertour.data.phonecamera.CalibrationFrame
 import com.maklertour.data.phonecamera.DualPhonePreviewBindingRuntime
 import com.maklertour.data.phonecamera.DualPhoneRecorderPreviewRegistry
 import com.maklertour.data.rig.CalibrationSettings
+import com.maklertour.data.rig.StereoRigProfileStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -80,9 +84,22 @@ internal fun DualPhoneCalibrationFullscreen(
     val captureStore = remember(context) {
         DualPhoneCalibrationCaptureStore(context.applicationContext)
     }
-    val localDeviceId = remember(snapshot.calibrationRunId) {
-        DualPhoneStereoSettingsStore(context.applicationContext).load().deviceId
+    val stereoSettingsStore = remember(context) {
+        DualPhoneStereoSettingsStore(context.applicationContext)
     }
+    val profileStore = remember(context) {
+        DualPhoneCalibrationProfileStore(context.applicationContext)
+    }
+    val rigProfileStore = remember(context) {
+        StereoRigProfileStore(context.applicationContext)
+    }
+    val localStereoSettings = remember(snapshot.calibrationRunId) {
+        stereoSettingsStore.load()
+    }
+    val rigProfile = remember(snapshot.calibrationRunId) {
+        rigProfileStore.loadActiveProfile()
+    }
+    val localDeviceId = localStereoSettings.deviceId
     val boardSettings = remember {
         CalibrationSettings(
             checkerboardInnerCols = 9,
@@ -100,10 +117,18 @@ internal fun DualPhoneCalibrationFullscreen(
     val slaveIntrinsicsEstimator = remember(snapshot.calibrationRunId) {
         DualPhoneLiveIntrinsicsEstimator()
     }
-    DisposableEffect(masterIntrinsicsEstimator, slaveIntrinsicsEstimator) {
+    val stereoEstimator = remember(snapshot.calibrationRunId) {
+        DualPhoneStereoCalibrationEstimator()
+    }
+    DisposableEffect(
+        masterIntrinsicsEstimator,
+        slaveIntrinsicsEstimator,
+        stereoEstimator,
+    ) {
         onDispose {
             masterIntrinsicsEstimator.close()
             slaveIntrinsicsEstimator.close()
+            stereoEstimator.close()
         }
     }
     val target = DualPhoneCalibrationPosePlan.byId(snapshot.calibrationTargetPoseId)
@@ -133,6 +158,15 @@ internal fun DualPhoneCalibrationFullscreen(
     var slaveLiveIntrinsics by remember(snapshot.calibrationRunId) {
         mutableStateOf<DualPhoneLiveIntrinsicsEstimate?>(null)
     }
+    var finalSolveStarted by remember(snapshot.calibrationRunId) {
+        mutableStateOf(false)
+    }
+    var finalSolveStatus by remember(snapshot.calibrationRunId) {
+        mutableStateOf("Ожидание завершения сбора кадров")
+    }
+    var finalProfilePersistenceStatus by remember(snapshot.calibrationRunId) {
+        mutableStateOf("")
+    }
     val displayedLiveIntrinsics = when (snapshot.calibrationStage) {
         DualPhoneCalibrationStage.MASTER_INTRINSICS -> masterLiveIntrinsics
         DualPhoneCalibrationStage.SLAVE_INTRINSICS -> slaveLiveIntrinsics
@@ -144,6 +178,24 @@ internal fun DualPhoneCalibrationFullscreen(
         val acceptedStage = snapshot.calibrationLastAcceptedStage
         if (serial <= 0L || acceptedStage == null) return@LaunchedEffect
         val acceptedCount = acceptedStageCount(acceptedStage, snapshot)
+        if (
+            acceptedStage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
+            role == DualPhoneRole.MASTER
+        ) {
+            val masterObservation =
+                snapshot.calibrationLastAcceptedMasterObservation
+            val slaveObservation =
+                snapshot.calibrationLastAcceptedSlaveObservation
+            if (masterObservation != null && slaveObservation != null) {
+                withContext(Dispatchers.Default) {
+                    stereoEstimator.addAcceptedPair(
+                        master = masterObservation,
+                        slave = slaveObservation,
+                        settings = boardSettings,
+                    )
+                }
+            }
+        }
         acceptanceFeedback = buildString {
             append("КАДР ЗАСЧИТАН ✓  ")
             append(acceptedStage.displayNameRu)
@@ -294,11 +346,119 @@ internal fun DualPhoneCalibrationFullscreen(
                     slaveLiveIntrinsics = estimate
                 else -> Unit
             }
+            estimate?.let {
+                controlManager.reportCalibrationIntrinsics(
+                    calibrationRunId = runId,
+                    stage = acceptedStage,
+                    estimate = it,
+                )
+            }
             persistenceStatus =
                 "Сохранён кадр ${acceptedStage.displayNameRu}: ${file.name}"
         }.onFailure { error ->
             persistenceStatus = "Failed to save accepted sample: " +
                 (error.message ?: error.javaClass.simpleName)
+        }
+    }
+
+    LaunchedEffect(
+        snapshot.calibrationCollectionComplete,
+        snapshot.calibrationRunId,
+        snapshot.calibrationMasterIntrinsics,
+        snapshot.calibrationSlaveIntrinsics,
+        snapshot.calibrationFinalResult,
+        role,
+    ) {
+        if (
+            role != DualPhoneRole.MASTER ||
+            !snapshot.calibrationCollectionComplete ||
+            snapshot.calibrationFinalResult != null ||
+            finalSolveStarted
+        ) {
+            return@LaunchedEffect
+        }
+        finalSolveStarted = true
+        finalSolveStatus = "РАСЧЁТ K/D И STEREO R/T…"
+
+        var masterIntrinsics = currentSnapshot.calibrationMasterIntrinsics
+        var slaveIntrinsics = currentSnapshot.calibrationSlaveIntrinsics
+        repeat(50) {
+            if (masterIntrinsics != null && slaveIntrinsics != null) {
+                return@repeat
+            }
+            delay(100L)
+            masterIntrinsics = currentSnapshot.calibrationMasterIntrinsics
+            slaveIntrinsics = currentSnapshot.calibrationSlaveIntrinsics
+        }
+        val masterResult = masterIntrinsics
+        val slaveResult = slaveIntrinsics
+        if (masterResult == null || slaveResult == null) {
+            finalSolveStatus =
+                "Ожидание итоговых intrinsics MASTER/SLAVE — расчёт ещё не завершён"
+            finalSolveStarted = false
+            return@LaunchedEffect
+        }
+
+        val expectedStereoPairs =
+            currentSnapshot.calibrationStereoAcceptedPoseCount
+        repeat(50) {
+            if (
+                stereoEstimator.pairCount >= expectedStereoPairs ||
+                stereoEstimator.pairCount >=
+                DualPhoneStereoCalibrationEstimator.MIN_PAIRS_FOR_SOLVE
+            ) {
+                return@repeat
+            }
+            delay(100L)
+        }
+
+        val stereoResult = withContext(Dispatchers.Default) {
+            stereoEstimator.solve(
+                master = masterResult,
+                slave = slaveResult,
+                operatorBaselineMm =
+                    localStereoSettings.operatorLensBaselineMm,
+            )
+        }
+        val finalResult = DualPhoneCalibrationProfileResult.build(
+            calibrationRunId = requireNotNull(snapshot.calibrationRunId),
+            rigId = localStereoSettings.rigId,
+            rigMountRevision = localStereoSettings.rigMountRevision,
+            masterDeviceId = localStereoSettings.deviceId,
+            slaveDeviceId = snapshot.peerDeviceId
+                ?: localStereoSettings.peerDeviceId
+                ?: "unknown-slave",
+            masterCameraId = rigProfile.cam0CameraId,
+            slaveCameraId = snapshot.peerCameraId
+                ?: rigProfile.cam1CameraId,
+            masterIntrinsics = masterResult,
+            slaveIntrinsics = slaveResult,
+            stereo = stereoResult,
+        )
+        finalSolveStatus = if (finalResult.successful) {
+            "Численная калибровка завершена"
+        } else {
+            finalResult.error ?: "Численная калибровка завершилась ошибкой"
+        }
+        controlManager.publishCalibrationResult(finalResult)
+    }
+
+    LaunchedEffect(snapshot.calibrationFinalResult?.profileId) {
+        val result = snapshot.calibrationFinalResult ?: return@LaunchedEffect
+        runCatching {
+            withContext(Dispatchers.IO) {
+                profileStore.save(result)
+            }
+        }.onSuccess { file ->
+            finalProfilePersistenceStatus = if (result.successful) {
+                "ПРОФИЛЬ СОХРАНЁН ✓  ${file.name}"
+            } else {
+                "Диагностика сохранена: ${file.name}"
+            }
+        }.onFailure { error ->
+            finalProfilePersistenceStatus =
+                "Ошибка сохранения профиля: " +
+                    (error.message ?: error.javaClass.simpleName)
         }
     }
 
@@ -470,10 +630,62 @@ internal fun DualPhoneCalibrationFullscreen(
                         )
                         Text("MASTER ✓   SLAVE ✓   ОБЕ КАМЕРЫ ✓")
                         Text("ПОСЛЕДНИЙ КАДР ЗАСЧИТАН ✓")
-                        Text(
-                            "Кадры сохранены. Следующий шаг — расчёт K/D и R/T.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                        val finalResult = snapshot.calibrationFinalResult
+                        if (finalResult == null) {
+                            Text(
+                                finalSolveStatus,
+                                color = Color(0xFFFFCC80),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        } else {
+                            Text(
+                                finalIntrinsicsLine(
+                                    "MASTER",
+                                    finalResult.masterIntrinsics,
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                finalIntrinsicsLine(
+                                    "SLAVE",
+                                    finalResult.slaveIntrinsics,
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                finalResult.stereo.summary(),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            finalResult.stereo.operatorBaselineMm?.let {
+                                Text(
+                                    "Заданный базис: ${formatOne(it)} мм · " +
+                                        "расчётный: " +
+                                        "${formatOne(finalResult.stereo.baselineMm ?: 0.0)} мм",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            Text(
+                                if (finalResult.successful) {
+                                    "КАЛИБРОВОЧНЫЙ ПРОФИЛЬ ПРИНЯТ ✓"
+                                } else {
+                                    "КАЛИБРОВКА НЕ ПРИНЯТА: " +
+                                        (finalResult.error ?: "неизвестная ошибка")
+                                },
+                                color = if (finalResult.successful) {
+                                    Color(0xFF7CFC98)
+                                } else {
+                                    Color.Red
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
+                        if (finalProfilePersistenceStatus.isNotBlank()) {
+                            Text(
+                                finalProfilePersistenceStatus,
+                                color = Color(0xFF7CFC98),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
             } else {
@@ -515,7 +727,11 @@ internal fun DualPhoneCalibrationFullscreen(
                     if (snapshot.connected) "Peer connected" else "Peer disconnected",
                     color = Color.White,
                 )
-                Button(onClick = onExit) {
+                Button(
+                    onClick = onExit,
+                    enabled = !snapshot.calibrationCollectionComplete ||
+                        snapshot.calibrationFinalResult != null,
+                ) {
                     Text(
                         if (snapshot.calibrationCollectionComplete) {
                             "ГОТОВО"
@@ -794,6 +1010,23 @@ private fun peerQualityLine(
 
 private fun qualityColor(ready: Boolean): Color =
     if (ready) Color(0xFF7CFC98) else Color(0xFFFFD166)
+
+private fun finalIntrinsicsLine(
+    label: String,
+    estimate: DualPhoneLiveIntrinsicsEstimate,
+): String = if (
+    estimate.rms != null &&
+    estimate.fx != null &&
+    estimate.fy != null &&
+    estimate.k1 != null &&
+    estimate.k2 != null
+) {
+    "$label RMS ${formatThree(estimate.rms)} px · " +
+        "fx ${formatOne(estimate.fx)} · fy ${formatOne(estimate.fy)} · " +
+        "k1 ${formatThree(estimate.k1)} · k2 ${formatThree(estimate.k2)}"
+} else {
+    "$label: ${estimate.status}"
+}
 
 private fun formatOne(value: Double): String =
     String.format(Locale.US, "%.1f", value)

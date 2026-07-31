@@ -1,6 +1,28 @@
 package com.maklertour.data.dualphone
 
+import org.json.JSONArray
 import org.json.JSONObject
+
+data class DualPhoneCharucoCorner(
+    val id: Int,
+    val normalizedX: Double,
+    val normalizedY: Double,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("x", normalizedX)
+        .put("y", normalizedY)
+
+    companion object {
+        fun fromJson(json: JSONObject): DualPhoneCharucoCorner? {
+            val id = json.optInt("id", -1)
+            val x = json.optDouble("x", Double.NaN)
+            val y = json.optDouble("y", Double.NaN)
+            if (id < 0 || !x.isFinite() || !y.isFinite()) return null
+            return DualPhoneCharucoCorner(id, x, y)
+        }
+    }
+}
 
 data class DualPhoneCalibrationObservation(
     val calibrationRunId: String,
@@ -19,6 +41,9 @@ data class DualPhoneCalibrationObservation(
     val poseMatches: Boolean,
     val qualityReady: Boolean,
     val status: String,
+    val imageWidth: Int = 0,
+    val imageHeight: Int = 0,
+    val charucoCorners: List<DualPhoneCharucoCorner> = emptyList(),
     val calibrationStage: DualPhoneCalibrationStage =
         DualPhoneCalibrationStage.MASTER_INTRINSICS,
 ) {
@@ -40,6 +65,14 @@ data class DualPhoneCalibrationObservation(
         .put("pose_matches", poseMatches)
         .put("quality_ready", qualityReady)
         .put("status", status)
+        .put("image_width", imageWidth)
+        .put("image_height", imageHeight)
+        .put(
+            "charuco_corners",
+            JSONArray().also { array ->
+                charucoCorners.forEach { array.put(it.toJson()) }
+            },
+        )
 
     companion object {
         fun fromJson(json: JSONObject): DualPhoneCalibrationObservation? {
@@ -73,6 +106,17 @@ data class DualPhoneCalibrationObservation(
                 poseMatches = json.optBoolean("pose_matches", false),
                 qualityReady = json.optBoolean("quality_ready", false),
                 status = json.optString("status", "Waiting for calibration quality"),
+                imageWidth = json.optInt("image_width", 0),
+                imageHeight = json.optInt("image_height", 0),
+                charucoCorners = buildList {
+                    val array = json.optJSONArray("charuco_corners") ?: JSONArray()
+                    for (index in 0 until array.length()) {
+                        val corner = array.optJSONObject(index)?.let {
+                            DualPhoneCharucoCorner.fromJson(it)
+                        }
+                        if (corner != null) add(corner)
+                    }
+                },
             )
         }
     }
