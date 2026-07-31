@@ -36,7 +36,7 @@ $checks = [
     'contract' => [
         'stereo-only retry',
         'preserves the already validated MASTER and SLAVE intrinsics',
-        '12 new dual-visible pairs',
+        '18 new dual-visible pairs',
     ],
 ];
 

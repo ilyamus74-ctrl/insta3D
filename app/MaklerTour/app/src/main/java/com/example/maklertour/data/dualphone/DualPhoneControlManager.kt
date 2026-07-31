@@ -291,6 +291,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 "Save mount revision before calibration"
             baselineMm == null ->
                 "Save lens-center distance before calibration"
+            settings.calibrationBoard.validationError() != null ->
+                requireNotNull(settings.calibrationBoard.validationError())
             else -> null
         }
         if (error != null) {
@@ -346,6 +348,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         .put("rig_id", settings.rigId)
                         .put("rig_mount_revision", settings.rigMountRevision)
                         .put("operator_lens_baseline_mm", baselineMm)
+                        .put("board_settings", settings.calibrationBoard.toJson())
                         .put("stage", stage.wireValue)
                         .put("master_accepted_pose_count", 0)
                         .put("slave_accepted_pose_count", 0)
@@ -453,6 +456,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             "operator_lens_baseline_mm",
                             settings.operatorLensBaselineMm,
                         )
+                        .put("board_settings", settings.calibrationBoard.toJson())
                         .put("stage", stage.wireValue)
                         .put(
                             "master_accepted_pose_count",
@@ -832,12 +836,58 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             stage.requiresSlaveObservation &&
             nowMs - peerCalibrationReceivedAtMs > CALIBRATION_OBSERVATION_MAX_AGE_MS
         ) return null
-        if (
-            stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
-            kotlin.math.abs(
-                localCalibrationReceivedAtMs - peerCalibrationReceivedAtMs,
-            ) > CALIBRATION_OBSERVATION_PAIR_WINDOW_MS
-        ) return null
+        if (stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS) {
+            val masterObservation = local ?: return null
+            val slaveObservation = peer ?: return null
+            val commonCorners = masterObservation.charucoCorners.map { it.id }.toSet()
+                .intersect(slaveObservation.charucoCorners.map { it.id }.toSet())
+                .size
+            if (commonCorners < CALIBRATION_MIN_COMMON_BOARD_CORNERS) {
+                mutableState.value = current.copy(
+                    lastMessage = "STEREO COACH: общих углов $commonCorners/" +
+                        CALIBRATION_MIN_COMMON_BOARD_CORNERS +
+                        " — отодвиньте доску в общую область",
+                )
+                return null
+            }
+            if (
+                masterObservation.stableMs < CALIBRATION_STEREO_REQUIRED_STABLE_MS ||
+                slaveObservation.stableMs < CALIBRATION_STEREO_REQUIRED_STABLE_MS
+            ) {
+                mutableState.value = current.copy(
+                    lastMessage = "STEREO COACH: замрите — обе камеры должны быть стабильны",
+                )
+                return null
+            }
+            val clockOffsetNs = clockSyncController.currentSnapshot().offsetNs
+            val frameDeltaMs = if (
+                clockOffsetNs != null &&
+                masterObservation.frameTimestampNs > 0L &&
+                slaveObservation.frameTimestampNs > 0L
+            ) {
+                kotlin.math.abs(
+                    masterObservation.frameTimestampNs -
+                        (slaveObservation.frameTimestampNs - clockOffsetNs),
+                ) / 1_000_000.0
+            } else {
+                kotlin.math.abs(
+                    localCalibrationReceivedAtMs - peerCalibrationReceivedAtMs,
+                ).toDouble()
+            }
+            val maxDeltaMs = if (clockOffsetNs != null) {
+                CALIBRATION_STEREO_MAX_FRAME_DELTA_MS
+            } else {
+                CALIBRATION_STEREO_FALLBACK_MAX_DELTA_MS
+            }
+            if (frameDeltaMs > maxDeltaMs) {
+                mutableState.value = current.copy(
+                    lastMessage = "STEREO COACH: кадры разошлись на " +
+                        String.format(java.util.Locale.US, "%.1f", frameDeltaMs) +
+                        " мс — держите доску неподвижно",
+                )
+                return null
+            }
+        }
 
         val acceptedMaster = if (stage.requiresMasterObservation) local else null
         val acceptedSlave = if (stage.requiresSlaveObservation) peer else null
@@ -1395,6 +1445,14 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         val stage = DualPhoneCalibrationStage.fromWire(
                             payload.optString("stage"),
                         )
+                        payload.optJSONObject("board_settings")?.let { boardJson ->
+                            val board = DualPhoneCalibrationBoardSettings.fromJson(boardJson)
+                            if (board.validationError() == null) {
+                                settingsStore.save(
+                                    settingsStore.load().copy(calibrationBoard = board),
+                                )
+                            }
+                        }
                         val preservedMasterIntrinsics =
                             payload.optJSONObject("master_intrinsics")?.let {
                                 DualPhoneLiveIntrinsicsEstimate.fromJson(it)
@@ -2579,7 +2637,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         private const val ARM_PREPARE_TIMEOUT_MS = 60_000L
         private const val CALIBRATION_TARGET_POSE_COUNT = 24
         private const val CALIBRATION_OBSERVATION_MAX_AGE_MS = 1_500L
-        private const val CALIBRATION_OBSERVATION_PAIR_WINDOW_MS = 1_200L
+        private const val CALIBRATION_MIN_COMMON_BOARD_CORNERS = 20
+        private const val CALIBRATION_STEREO_REQUIRED_STABLE_MS = 450L
+        private const val CALIBRATION_STEREO_MAX_FRAME_DELTA_MS = 80.0
+        private const val CALIBRATION_STEREO_FALLBACK_MAX_DELTA_MS = 150.0
 
         @Volatile
         private var instance: DualPhoneControlManager? = null

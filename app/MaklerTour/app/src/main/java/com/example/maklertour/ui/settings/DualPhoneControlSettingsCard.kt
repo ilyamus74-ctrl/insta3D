@@ -12,8 +12,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -31,9 +34,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.maklertour.data.dualphone.DualPhoneClockSyncQuality
 import com.maklertour.data.dualphone.captureSchedulingAllowed
 import com.maklertour.data.dualphone.DualPhoneControlPhase
+import com.maklertour.data.dualphone.DualPhoneCalibrationBoardSettings
 import com.maklertour.data.dualphone.DualPhoneControlSnapshot
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
+import com.maklertour.data.rig.CalibrationBoardType
 import com.maklertour.data.phonecamera.DualPhonePreviewBindingRuntime
 import com.maklertour.data.phonecamera.DualPhoneRecorderPreviewRegistry
 import java.util.Locale
@@ -47,6 +52,7 @@ fun DualPhoneControlSettingsCard(
     onMasterHostChanged: (String) -> Unit,
     onPairingCodeChanged: (String) -> Unit,
     onSaveRigGeometry: (String, String, Double) -> String,
+    onSaveCalibrationBoard: (DualPhoneCalibrationBoardSettings) -> String,
     onStartMaster: () -> Unit,
     onConnectSlave: () -> Unit,
     onDisconnect: () -> Unit,
@@ -67,6 +73,39 @@ fun DualPhoneControlSettingsCard(
         mutableStateOf(settings.operatorLensBaselineMm?.toString().orEmpty())
     }
     var rigSaveMessage by remember { mutableStateOf<String?>(null) }
+    var boardSaveMessage by remember { mutableStateOf<String?>(null) }
+    var boardType by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.boardType)
+    }
+    var boardTypeMenuExpanded by remember { mutableStateOf(false) }
+    var dictionaryMenuExpanded by remember { mutableStateOf(false) }
+    var checkerColsInput by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.checkerboardInnerCols.toString())
+    }
+    var checkerRowsInput by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.checkerboardInnerRows.toString())
+    }
+    var checkerSquareInput by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.checkerboardSquareSizeMm.toString())
+    }
+    var charucoSquaresXInput by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.charucoSquaresX.toString())
+    }
+    var charucoSquaresYInput by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.charucoSquaresY.toString())
+    }
+    var charucoSquareInput by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.charucoSquareLengthMm.toString())
+    }
+    var charucoMarkerInput by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.charucoMarkerLengthMm.toString())
+    }
+    var charucoDictionary by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.charucoDictionary)
+    }
+    var charucoLegacy by remember(settings.calibrationBoard) {
+        mutableStateOf(settings.calibrationBoard.charucoLegacyPattern)
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -164,6 +203,178 @@ fun DualPhoneControlSettingsCard(
                     Text("Save rig geometry")
                 }
                 rigSaveMessage?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+
+                Text(
+                    "Калибровочная доска",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Column {
+                    Button(
+                        onClick = { boardTypeMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (boardType == CalibrationBoardType.CHARUCO) {
+                                "Тип: ChArUco"
+                            } else {
+                                "Тип: обычная шахматка"
+                            },
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = boardTypeMenuExpanded,
+                        onDismissRequest = { boardTypeMenuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("ChArUco") },
+                            onClick = {
+                                boardType = CalibrationBoardType.CHARUCO
+                                boardTypeMenuExpanded = false
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Обычная шахматная доска") },
+                            onClick = {
+                                boardType = CalibrationBoardType.CHESSBOARD_LEGACY
+                                boardTypeMenuExpanded = false
+                            },
+                        )
+                    }
+                }
+
+                if (boardType == CalibrationBoardType.CHARUCO) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = charucoSquaresXInput,
+                            onValueChange = { charucoSquaresXInput = integerInput(it) },
+                            label = { Text("Квадратов X") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = charucoSquaresYInput,
+                            onValueChange = { charucoSquaresYInput = integerInput(it) },
+                            label = { Text("Квадратов Y") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = charucoSquareInput,
+                            onValueChange = { charucoSquareInput = decimalInput(it) },
+                            label = { Text("Квадрат, мм") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = charucoMarkerInput,
+                            onValueChange = { charucoMarkerInput = decimalInput(it) },
+                            label = { Text("Маркер, мм") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Column {
+                        Button(
+                            onClick = { dictionaryMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Словарь: $charucoDictionary")
+                        }
+                        DropdownMenu(
+                            expanded = dictionaryMenuExpanded,
+                            onDismissRequest = { dictionaryMenuExpanded = false },
+                        ) {
+                            DualPhoneCalibrationBoardSettings.SUPPORTED_DICTIONARIES
+                                .forEach { dictionary ->
+                                    DropdownMenuItem(
+                                        text = { Text(dictionary) },
+                                        onClick = {
+                                            charucoDictionary = dictionary
+                                            dictionaryMenuExpanded = false
+                                        },
+                                    )
+                                }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Legacy pattern")
+                        Switch(
+                            checked = charucoLegacy,
+                            onCheckedChange = { charucoLegacy = it },
+                        )
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = checkerColsInput,
+                            onValueChange = { checkerColsInput = integerInput(it) },
+                            label = { Text("Внутренних углов X") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = checkerRowsInput,
+                            onValueChange = { checkerRowsInput = integerInput(it) },
+                            label = { Text("Внутренних углов Y") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    OutlinedTextField(
+                        value = checkerSquareInput,
+                        onValueChange = { checkerSquareInput = decimalInput(it) },
+                        label = { Text("Размер клетки, мм") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        val board = DualPhoneCalibrationBoardSettings(
+                            boardType = boardType,
+                            checkerboardInnerCols = checkerColsInput.toIntOrNull() ?: 0,
+                            checkerboardInnerRows = checkerRowsInput.toIntOrNull() ?: 0,
+                            checkerboardSquareSizeMm =
+                                checkerSquareInput.toDoubleOrNull() ?: 0.0,
+                            charucoSquaresX = charucoSquaresXInput.toIntOrNull() ?: 0,
+                            charucoSquaresY = charucoSquaresYInput.toIntOrNull() ?: 0,
+                            charucoSquareLengthMm =
+                                charucoSquareInput.toDoubleOrNull() ?: 0.0,
+                            charucoMarkerLengthMm =
+                                charucoMarkerInput.toDoubleOrNull() ?: 0.0,
+                            charucoDictionary = charucoDictionary,
+                            minCharucoCorners = settings.calibrationBoard.minCharucoCorners,
+                            charucoLegacyPattern = charucoLegacy,
+                        )
+                        boardSaveMessage = board.validationError()
+                            ?: onSaveCalibrationBoard(board)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Сохранить параметры доски")
+                }
+                Text(
+                    "Текущая: ${settings.calibrationBoard.summaryRu()}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                boardSaveMessage?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall)
                 }
 
@@ -526,6 +737,16 @@ private fun formatOffset(valueNs: Long): String {
     val seconds = valueNs.toDouble() / 1_000_000_000.0
     return String.format(Locale.US, "%+.6f s", seconds)
 }
+
+private fun integerInput(value: String): String =
+    value.filter(Char::isDigit).take(2)
+
+private fun decimalInput(value: String): String =
+    value.replace(',', '.')
+        .filterIndexed { index, char ->
+            char.isDigit() || (char == '.' && index > 0)
+        }
+        .take(8)
 
 private fun transferStageLabel(state: String): String = when (state) {
     "LOCAL_POST_ROLL_AND_FINALIZE" -> "Finalizing local video"

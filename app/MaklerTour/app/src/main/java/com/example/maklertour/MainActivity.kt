@@ -124,6 +124,7 @@ import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
 import com.maklertour.data.dualphone.DualPhoneCapabilityProbe
+import com.maklertour.data.dualphone.DualPhoneCalibrationBoardSettings
 import com.maklertour.data.dualphone.DualPhoneControlManager
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
@@ -1468,6 +1469,29 @@ private fun SettingsScreen(
                     "Геометрия сохранена: ${baselineMm} мм"
                 } else {
                     "Ошибка сохранения геометрии"
+                }
+            },
+            onSaveCalibrationBoard = { board: DualPhoneCalibrationBoardSettings ->
+                val updatedSettings = dualPhoneSettings.copy(
+                    calibrationBoard = board,
+                    activeCalibrationProfileId = null,
+                )
+                dualPhoneStore.save(updatedSettings)
+                dualPhoneSettings = dualPhoneStore.load()
+                refreshProfile(
+                    activeProfile.copy(
+                        calibrationSettings = board.toCalibrationSettings(
+                            activeProfile.calibrationSettings.requiredPairs,
+                        ),
+                        calibrationStatus = CalibrationStatus.NOT_CALIBRATED,
+                        calibrationResultPath = null,
+                        calibrationResult = null,
+                    ),
+                )
+                if (dualPhoneSettings.calibrationBoard == board) {
+                    "Параметры доски сохранены: ${board.summaryRu()}"
+                } else {
+                    "Ошибка сохранения параметров доски"
                 }
             },
             onStartMaster = {

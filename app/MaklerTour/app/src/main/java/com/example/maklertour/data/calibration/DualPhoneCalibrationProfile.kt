@@ -14,6 +14,10 @@ data class DualPhoneStereoEstimate(
     val baselineMm: Double? = null,
     val operatorBaselineMm: Double? = null,
     val baselineDeltaMm: Double? = null,
+    val pairsRejected: Int = 0,
+    val meanEpipolarErrorPx: Double? = null,
+    val maxFrameDeltaMs: Double? = null,
+    val coveragePercent: Int = 0,
     val status: String,
 ) {
     val acceptable: Boolean
@@ -25,7 +29,9 @@ data class DualPhoneStereoEstimate(
             translationMm.size == 3 &&
             baselineMm != null &&
             baselineMm.isFinite() &&
-            baselineMm > 0.0
+            baselineMm > 0.0 &&
+            (meanEpipolarErrorPx == null ||
+                meanEpipolarErrorPx <= MAX_MEAN_EPIPOLAR_ERROR_PX)
 
     fun summary(): String = if (solved && rms != null && baselineMm != null) {
         buildString {
@@ -39,6 +45,12 @@ data class DualPhoneStereoEstimate(
                 append(String.format(Locale.US, "%+.1f", it))
                 append(" мм")
             }
+            meanEpipolarErrorPx?.let {
+                append(" · epi ")
+                append(String.format(Locale.US, "%.2f", it))
+                append(" px")
+            }
+            if (pairsRejected > 0) append(" · отброшено $pairsRejected")
         }
     } else {
         status
@@ -53,10 +65,15 @@ data class DualPhoneStereoEstimate(
         .put("baseline_mm", baselineMm ?: JSONObject.NULL)
         .put("operator_baseline_mm", operatorBaselineMm ?: JSONObject.NULL)
         .put("baseline_delta_mm", baselineDeltaMm ?: JSONObject.NULL)
+        .put("pairs_rejected", pairsRejected)
+        .put("mean_epipolar_error_px", meanEpipolarErrorPx ?: JSONObject.NULL)
+        .put("max_frame_delta_ms", maxFrameDeltaMs ?: JSONObject.NULL)
+        .put("coverage_percent", coveragePercent)
         .put("status", status)
 
     companion object {
         const val MAX_STEREO_RMS_PX = 2.0
+        const val MAX_MEAN_EPIPOLAR_ERROR_PX = 1.5
 
         fun fromJson(json: JSONObject): DualPhoneStereoEstimate =
             DualPhoneStereoEstimate(
@@ -68,6 +85,11 @@ data class DualPhoneStereoEstimate(
                 baselineMm = json.optNullableDouble("baseline_mm"),
                 operatorBaselineMm = json.optNullableDouble("operator_baseline_mm"),
                 baselineDeltaMm = json.optNullableDouble("baseline_delta_mm"),
+                pairsRejected = json.optInt("pairs_rejected", 0),
+                meanEpipolarErrorPx =
+                    json.optNullableDouble("mean_epipolar_error_px"),
+                maxFrameDeltaMs = json.optNullableDouble("max_frame_delta_ms"),
+                coveragePercent = json.optInt("coverage_percent", 0),
                 status = json.optString("status", "Stereo result unavailable"),
             )
     }

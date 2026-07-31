@@ -29,9 +29,11 @@ data class DualPhoneStereoSettings(
     val rigMountRevision: String = "rev-a",
     val operatorLensBaselineMm: Double? = null,
     val activeCalibrationProfileId: String? = null,
+    val calibrationBoard: DualPhoneCalibrationBoardSettings =
+        DualPhoneCalibrationBoardSettings(),
 ) {
     fun toJson(): JSONObject = JSONObject()
-        .put("schema_version", 4)
+        .put("schema_version", 5)
         .put("device_id", deviceId)
         .put("role", role.name)
         .put("transport", transport.name)
@@ -49,6 +51,7 @@ data class DualPhoneStereoSettings(
             operatorLensBaselineMm ?: JSONObject.NULL,
         )
         .put("active_calibration_profile_id", activeCalibrationProfileId ?: JSONObject.NULL)
+        .put("calibration_board", calibrationBoard.toJson())
 }
 
 class DualPhoneStereoSettingsStore(context: Context) {
@@ -102,6 +105,14 @@ class DualPhoneStereoSettingsStore(context: Context) {
                 ?.takeIf { it in 1.0..1_000.0 },
             activeCalibrationProfileId = prefs.getString(KEY_ACTIVE_CALIBRATION_PROFILE_ID, null)
                 ?.takeIf { it.isNotBlank() },
+            calibrationBoard = prefs.getString(KEY_CALIBRATION_BOARD_JSON, null)
+                ?.let { raw ->
+                    runCatching {
+                        DualPhoneCalibrationBoardSettings.fromJson(JSONObject(raw))
+                    }.getOrNull()
+                }
+                ?.takeIf { it.validationError() == null }
+                ?: DualPhoneCalibrationBoardSettings(),
         )
     }
 
@@ -127,6 +138,7 @@ class DualPhoneStereoSettingsStore(context: Context) {
                 settings.operatorLensBaselineMm?.toString(),
             )
             .putString(KEY_ACTIVE_CALIBRATION_PROFILE_ID, settings.activeCalibrationProfileId)
+            .putString(KEY_CALIBRATION_BOARD_JSON, settings.calibrationBoard.toJson().toString())
             .apply()
     }
 
@@ -157,5 +169,7 @@ class DualPhoneStereoSettingsStore(context: Context) {
             "operator_lens_baseline_mm"
         private const val KEY_ACTIVE_CALIBRATION_PROFILE_ID =
             "active_calibration_profile_id"
+        private const val KEY_CALIBRATION_BOARD_JSON =
+            "calibration_board_json"
     }
 }

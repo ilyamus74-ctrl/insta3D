@@ -21,7 +21,7 @@ enum class DualPhoneCalibrationStage(
     STEREO_EXTRINSICS(
         wireValue = "STEREO_EXTRINSICS",
         displayNameRu = "ОБЕ КАМЕРЫ",
-        targetPoseCount = 12,
+        targetPoseCount = 18,
         captureDirectory = "stereo_extrinsics",
     ),
     COMPLETE(

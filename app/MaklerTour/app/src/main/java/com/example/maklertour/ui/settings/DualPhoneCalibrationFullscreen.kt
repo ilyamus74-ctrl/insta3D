@@ -50,7 +50,8 @@ import com.maklertour.data.calibration.DualPhoneCalibrationRealtimeAnalyzer
 import com.maklertour.data.calibration.DualPhoneCalibrationRealtimeResult
 import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimate
 import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimator
-import com.maklertour.data.calibration.DualPhoneStereoCalibrationEstimator
+import com.maklertour.data.calibration.DualPhoneStereoCoachEstimator
+import com.maklertour.data.calibration.DualPhoneStereoCoachSnapshot
 import com.maklertour.data.dualphone.DualPhoneCalibrationObservation
 import com.maklertour.data.dualphone.DualPhoneCalibrationPosePlan
 import com.maklertour.data.dualphone.DualPhoneCalibrationStage
@@ -100,12 +101,9 @@ internal fun DualPhoneCalibrationFullscreen(
         rigProfileStore.loadActiveProfile()
     }
     val localDeviceId = localStereoSettings.deviceId
-    val boardSettings = remember {
-        CalibrationSettings(
-            checkerboardInnerCols = 9,
-            checkerboardInnerRows = 6,
-            squareSizeMm = 22.0,
-            requiredPairs = DualPhoneCalibrationPosePlan.size,
+    val boardSettings = remember(localStereoSettings.calibrationBoard) {
+        localStereoSettings.calibrationBoard.toCalibrationSettings(
+            DualPhoneCalibrationStage.STEREO_EXTRINSICS.targetPoseCount,
         )
     }
     val analyzer = remember(snapshot.calibrationRunId, snapshot.calibrationStage) {
@@ -118,7 +116,7 @@ internal fun DualPhoneCalibrationFullscreen(
         DualPhoneLiveIntrinsicsEstimator()
     }
     val stereoEstimator = remember(snapshot.calibrationRunId) {
-        DualPhoneStereoCalibrationEstimator()
+        DualPhoneStereoCoachEstimator()
     }
     DisposableEffect(
         masterIntrinsicsEstimator,
@@ -158,6 +156,9 @@ internal fun DualPhoneCalibrationFullscreen(
     var slaveLiveIntrinsics by remember(snapshot.calibrationRunId) {
         mutableStateOf<DualPhoneLiveIntrinsicsEstimate?>(null)
     }
+    var stereoCoach by remember(snapshot.calibrationRunId) {
+        mutableStateOf(DualPhoneStereoCoachSnapshot())
+    }
     var finalSolveStarted by remember(snapshot.calibrationRunId) {
         mutableStateOf(false)
     }
@@ -187,13 +188,32 @@ internal fun DualPhoneCalibrationFullscreen(
             val slaveObservation =
                 snapshot.calibrationLastAcceptedSlaveObservation
             if (masterObservation != null && slaveObservation != null) {
-                withContext(Dispatchers.Default) {
+                val frameDeltaMs = stereoFrameDeltaMs(
+                    masterObservation,
+                    slaveObservation,
+                    snapshot.clockSync.offsetNs,
+                )
+                val updatedCoach = withContext(Dispatchers.Default) {
                     stereoEstimator.addAcceptedPair(
                         master = masterObservation,
                         slave = slaveObservation,
                         settings = boardSettings,
+                        frameDeltaMs = frameDeltaMs,
                     )
+                    val masterModel = currentSnapshot.calibrationMasterIntrinsics
+                    val slaveModel = currentSnapshot.calibrationSlaveIntrinsics
+                    if (masterModel != null && slaveModel != null) {
+                        stereoEstimator.snapshot(
+                            master = masterModel,
+                            slave = slaveModel,
+                            operatorBaselineMm =
+                                localStereoSettings.operatorLensBaselineMm,
+                        )
+                    } else {
+                        null
+                    }
                 }
+                if (updatedCoach != null) stereoCoach = updatedCoach
             }
         }
         acceptanceFeedback = buildString {
@@ -405,7 +425,7 @@ internal fun DualPhoneCalibrationFullscreen(
             if (
                 stereoEstimator.pairCount >= expectedStereoPairs ||
                 stereoEstimator.pairCount >=
-                DualPhoneStereoCalibrationEstimator.MIN_PAIRS_FOR_SOLVE
+                DualPhoneStereoCoachEstimator.MIN_PAIRS_FOR_FINAL_SOLVE
             ) {
                 return@repeat
             }
@@ -541,6 +561,10 @@ internal fun DualPhoneCalibrationFullscreen(
                             "Автоснимки этапа: ${snapshot.calibrationAcceptedPoseCount}/" +
                                 snapshot.calibrationTargetPoseCount,
                         )
+                        Text(
+                            "Доска: ${localStereoSettings.calibrationBoard.summaryRu()}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                     Text(
                         localQualityLine(snapshot, role, localAnalysis),
@@ -576,6 +600,39 @@ internal fun DualPhoneCalibrationFullscreen(
                                 "${analysis.detection.expectedCorners} · " +
                                 "резкость ${formatOne(analysis.sharpnessScore)} · " +
                                 "яркость ${formatOne(analysis.meanLuma)}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    if (snapshot.calibrationStage ==
+                        DualPhoneCalibrationStage.STEREO_EXTRINSICS
+                    ) {
+                        val commonCorners = stereoCommonCorners(snapshot)
+                        val currentDelta = stereoFrameDeltaMs(
+                            snapshot.calibrationLocalObservation,
+                            snapshot.calibrationPeerObservation,
+                            snapshot.clockSync.offsetNs,
+                        )
+                        Text(
+                            "STEREO COACH · общих углов $commonCorners · Δt " +
+                                (currentDelta?.let { formatOne(it) + " мс" } ?: "—"),
+                            color = if (
+                                commonCorners >= DualPhoneStereoCoachEstimator.MIN_COMMON_BOARD_IDS &&
+                                currentDelta != null && currentDelta <= 80.0
+                            ) Color(0xFF7CFC98) else Color(0xFFFFCC80),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Text(
+                            stereoCoach.summaryRu(),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Покрытие ${stereoCoach.coveragePercent}% · " +
+                                stereoCoach.coverageGrid,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            stereoCoach.guidance,
+                            color = Color(0xFFFFCC80),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -700,7 +757,7 @@ internal fun DualPhoneCalibrationFullscreen(
                             }
                             Text(
                                 "Intrinsics K/D обеих камер сохраняются. " +
-                                    "Будут заново сняты только 12 общих пар и " +
+                                    "Будут заново сняты только 18 общих пар с live coach и " +
                                     "пересчитаны R/T и stereo RMS.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
@@ -1033,6 +1090,33 @@ private fun peerQualityLine(
     } else {
         "SLAVE: ${observation.status}"
     }
+}
+
+private fun stereoCommonCorners(snapshot: DualPhoneControlSnapshot): Int {
+    val local = snapshot.calibrationLocalObservation ?: return 0
+    val peer = snapshot.calibrationPeerObservation ?: return 0
+    return local.charucoCorners.map { it.id }.toSet()
+        .intersect(peer.charucoCorners.map { it.id }.toSet())
+        .size
+}
+
+private fun stereoFrameDeltaMs(
+    master: DualPhoneCalibrationObservation?,
+    slave: DualPhoneCalibrationObservation?,
+    slaveMinusMasterOffsetNs: Long?,
+): Double? {
+    if (master == null || slave == null) return null
+    if (
+        slaveMinusMasterOffsetNs != null &&
+        master.frameTimestampNs > 0L &&
+        slave.frameTimestampNs > 0L
+    ) {
+        return kotlin.math.abs(
+            master.frameTimestampNs -
+                (slave.frameTimestampNs - slaveMinusMasterOffsetNs),
+        ) / 1_000_000.0
+    }
+    return null
 }
 
 private fun qualityColor(ready: Boolean): Color =

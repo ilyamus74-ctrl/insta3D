@@ -29,6 +29,7 @@ data class DualPhoneCalibrationObservation(
     val poseId: String,
     val frameSequence: Long,
     val observedAtElapsedMs: Long,
+    val frameTimestampNs: Long = 0L,
     val boardFound: Boolean,
     val cornersFound: Int,
     val expectedCorners: Int,
@@ -44,6 +45,11 @@ data class DualPhoneCalibrationObservation(
     val imageWidth: Int = 0,
     val imageHeight: Int = 0,
     val charucoCorners: List<DualPhoneCharucoCorner> = emptyList(),
+    val centreX: Double = 0.0,
+    val centreY: Double = 0.0,
+    val rollDegrees: Double = 0.0,
+    val yawSkew: Double = 0.0,
+    val pitchSkew: Double = 0.0,
     val calibrationStage: DualPhoneCalibrationStage =
         DualPhoneCalibrationStage.MASTER_INTRINSICS,
 ) {
@@ -53,6 +59,7 @@ data class DualPhoneCalibrationObservation(
         .put("pose_id", poseId)
         .put("frame_sequence", frameSequence)
         .put("observed_at_elapsed_ms", observedAtElapsedMs)
+        .put("frame_timestamp_ns", frameTimestampNs)
         .put("board_found", boardFound)
         .put("corners_found", cornersFound)
         .put("expected_corners", expectedCorners)
@@ -73,6 +80,11 @@ data class DualPhoneCalibrationObservation(
                 charucoCorners.forEach { array.put(it.toJson()) }
             },
         )
+        .put("centre_x", centreX)
+        .put("centre_y", centreY)
+        .put("roll_degrees", rollDegrees)
+        .put("yaw_skew", yawSkew)
+        .put("pitch_skew", pitchSkew)
 
     companion object {
         fun fromJson(json: JSONObject): DualPhoneCalibrationObservation? {
@@ -88,6 +100,7 @@ data class DualPhoneCalibrationObservation(
                 poseId = poseId,
                 frameSequence = sequence,
                 observedAtElapsedMs = json.optLong("observed_at_elapsed_ms", 0L),
+                frameTimestampNs = json.optLong("frame_timestamp_ns", 0L),
                 boardFound = json.optBoolean("board_found", false),
                 cornersFound = json.optInt("corners_found", 0),
                 expectedCorners = json.optInt("expected_corners", 0),
@@ -117,6 +130,11 @@ data class DualPhoneCalibrationObservation(
                         if (corner != null) add(corner)
                     }
                 },
+                centreX = json.optDouble("centre_x", 0.0),
+                centreY = json.optDouble("centre_y", 0.0),
+                rollDegrees = json.optDouble("roll_degrees", 0.0),
+                yawSkew = json.optDouble("yaw_skew", 0.0),
+                pitchSkew = json.optDouble("pitch_skew", 0.0),
             )
         }
     }

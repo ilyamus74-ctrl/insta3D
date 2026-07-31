@@ -8,6 +8,7 @@ import com.maklertour.data.dualphone.DualPhoneCalibrationPoseTarget
 import com.maklertour.data.dualphone.DualPhoneCharucoCorner
 import com.maklertour.data.dualphone.DualPhoneCalibrationStage
 import com.maklertour.data.phonecamera.CalibrationFrame
+import com.maklertour.data.rig.CalibrationBoardType
 import com.maklertour.data.rig.CalibrationSettings
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -48,12 +49,21 @@ data class DualPhoneCalibrationRealtimeResult(
         poseId: String,
         stage: DualPhoneCalibrationStage =
             DualPhoneCalibrationStage.MASTER_INTRINSICS,
-    ): DualPhoneCalibrationObservation = DualPhoneCalibrationObservation(
+    ): DualPhoneCalibrationObservation {
+        val correspondenceIds = when {
+            detection.charucoIds.size == detection.normalizedCornerPoints.size ->
+                detection.charucoIds
+            detection.normalizedCornerPoints.isNotEmpty() ->
+                detection.normalizedCornerPoints.indices.toList()
+            else -> emptyList()
+        }
+        return DualPhoneCalibrationObservation(
         calibrationRunId = calibrationRunId,
         calibrationStage = stage,
         poseId = poseId,
         frameSequence = frameSequence,
         observedAtElapsedMs = SystemClock.elapsedRealtime(),
+        frameTimestampNs = frameTimestampNs,
         boardFound = detection.found,
         cornersFound = detection.cornersFound,
         expectedCorners = detection.expectedCorners,
@@ -71,7 +81,7 @@ data class DualPhoneCalibrationRealtimeResult(
         charucoCorners = if (
             stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS
         ) {
-            detection.charucoIds.zip(detection.normalizedCornerPoints).map {
+            correspondenceIds.zip(detection.normalizedCornerPoints).map {
                 (id, point) ->
                 DualPhoneCharucoCorner(
                     id = id,
@@ -82,7 +92,13 @@ data class DualPhoneCalibrationRealtimeResult(
         } else {
             emptyList()
         },
+        centreX = centreX,
+        centreY = centreY,
+        rollDegrees = rollDegrees,
+        yawSkew = yawSkew,
+        pitchSkew = pitchSkew,
     )
+    }
 }
 
 /**
@@ -176,7 +192,7 @@ class DualPhoneCalibrationRealtimeAnalyzer(
             .coerceIn(0f, 1f)
 
         val status = when {
-            !boardFound -> "Покажите камере всю ChArUco-доску"
+            !boardFound -> "Покажите камере всю калибровочную доску"
             boardClipped -> "Отодвиньте доску от края — все углы должны быть в кадре"
             !exposureOk -> "Измените освещение — уберите тень или блики"
             !sharpnessOk -> "Подождите фокус или держите доску неподвижнее"
@@ -222,8 +238,13 @@ class DualPhoneCalibrationRealtimeAnalyzer(
     ): BoardGeometry? {
         if (!detection.found) return null
         val points = detection.normalizedCornerPoints
-        val ids = detection.charucoIds
-        if (points.isEmpty() || points.size != ids.size) return null
+        val ids = when {
+            detection.charucoIds.size == points.size -> detection.charucoIds
+            settings.boardType == CalibrationBoardType.CHESSBOARD_LEGACY ->
+                points.indices.toList()
+            else -> return null
+        }
+        if (points.isEmpty()) return null
 
         val minX = points.minOf { it.x }.toDouble()
         val maxX = points.maxOf { it.x }.toDouble()
@@ -239,7 +260,12 @@ class DualPhoneCalibrationRealtimeAnalyzer(
             maxX > 1.0 - EDGE_MARGIN ||
             maxY > 1.0 - EDGE_MARGIN
 
-        val boardCols = (settings.charucoSquaresX - 1).coerceAtLeast(1)
+        val boardCols = when (settings.boardType) {
+            CalibrationBoardType.CHARUCO ->
+                (settings.charucoSquaresX - 1).coerceAtLeast(1)
+            CalibrationBoardType.CHESSBOARD_LEGACY ->
+                settings.checkerboardInnerCols.coerceAtLeast(1)
+        }
         val indexed = ids.zip(points).map { (id, point) ->
             IndexedCorner(
                 id = id,

@@ -135,8 +135,19 @@ remove residual cross-phone timing error from the extrinsics estimate.
 After a completed solve, Master may start a stereo-only retry. The retry creates a
 new calibration run, preserves the already validated MASTER and SLAVE intrinsics,
 clears only the stereo-pair counter and in-memory stereo estimator, then captures
-12 new dual-visible pairs. The previous accepted profile remains active until the
+18 new dual-visible pairs. The previous accepted profile remains active until the
 replacement stereo solve is accepted.
+
+The board definition is explicit rig configuration. Master stores and transmits the
+selected board type and dimensions. Supported modes are ChArUco and legacy chessboard.
+The calibration UI must show the active board definition before capture; detector,
+object-point generation, manifests and solver use the same values.
+
+CAL02 provides a realtime Stereo Coach. Candidate pairs require common board IDs,
+stability on both phones and a frame-time delta derived from CameraX timestamps and
+the clock model. The UI shows common corners, frame delta, coverage, live RMS,
+live baseline and epipolar residual. Final solve performs robust per-pair outlier
+rejection while keeping at least ten pairs.
 
 ## Profile identity and reuse
 

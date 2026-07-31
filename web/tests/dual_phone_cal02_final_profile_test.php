@@ -5,7 +5,7 @@ declare(strict_types=1);
 $root = dirname(__DIR__, 2);
 $paths = [
     'models' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/calibration/DualPhoneCalibrationProfile.kt',
-    'stereo' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/calibration/DualPhoneStereoCalibrationEstimator.kt',
+    'stereo' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/calibration/DualPhoneStereoCoachEstimator.kt',
     'store' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/calibration/DualPhoneCalibrationProfileStore.kt',
     'live' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/calibration/DualPhoneLiveIntrinsicsEstimator.kt',
     'observation' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneCalibrationControl.kt',
@@ -35,11 +35,11 @@ $required = [
         'baseline_delta_mm',
     ],
     'stereo' => [
-        'DualPhoneStereoCalibrationEstimator',
+        'DualPhoneStereoCoachEstimator',
         'CALIB_FIX_INTRINSIC',
-        'MIN_COMMON_CHARUCO_IDS',
+        'MIN_COMMON_BOARD_IDS',
         'commonIds',
-        'baseline - operatorBaselineMm',
+        'symmetricEpipolarError',
     ],
     'store' => [
         'dual_phone_calibration_profiles',
@@ -74,7 +74,7 @@ $required = [
         'accepted_slave_observation',
     ],
     'fullscreen' => [
-        'DualPhoneStereoCalibrationEstimator',
+        'DualPhoneStereoCoachEstimator',
         'profileStore.save',
         'stereoEstimator.solve',
         'КАЛИБРОВОЧНЫЙ ПРОФИЛЬ ПРИНЯТ',
