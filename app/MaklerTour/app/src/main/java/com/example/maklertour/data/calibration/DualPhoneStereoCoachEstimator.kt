@@ -182,11 +182,22 @@ class DualPhoneStereoCoachEstimator : Closeable {
         var model = solveIndices(active, master, slave)
         while (active.size > MIN_PAIRS_AFTER_REJECTION && rejected < MAX_REJECTED_PAIRS) {
             val errors = model.perPairEpipolarErrors
+            val invalidIndex = errors.indexOfFirst { !it.isFinite() }
+            if (invalidIndex >= 0) {
+                active.removeAt(invalidIndex)
+                rejected += 1
+                model = solveIndices(active, master, slave)
+                continue
+            }
             val median = errors.median()
+            val mad = errors.map { abs(it - median) }.median()
             val worstIndexInActive = errors.indices.maxByOrNull { errors[it] } ?: break
             val worstError = errors[worstIndexInActive]
-            val threshold = max(MAX_PAIR_EPIPOLAR_ERROR_PX, median * OUTLIER_MEDIAN_MULTIPLIER)
-            if (!worstError.isFinite() || worstError <= threshold) break
+            val threshold = max(
+                MAX_PAIR_RECTIFIED_VERTICAL_ERROR_PX,
+                median + OUTLIER_MAD_MULTIPLIER * max(mad, MIN_OUTLIER_MAD_PX),
+            )
+            if (worstError <= threshold) break
             active.removeAt(worstIndexInActive)
             rejected += 1
             model = solveIndices(active, master, slave)
@@ -244,6 +255,11 @@ class DualPhoneStereoCoachEstimator : Closeable {
         val translation = Mat()
         val essential = Mat()
         val fundamental = Mat()
+        val masterRectification = Mat()
+        val slaveRectification = Mat()
+        val masterProjection = Mat()
+        val slaveProjection = Mat()
+        val disparityToDepth = Mat()
         return try {
             val rms = Calib3d.stereoCalibrate(
                 selected.map { it.objectPoints },
@@ -268,6 +284,22 @@ class DualPhoneStereoCoachEstimator : Closeable {
                     translationValues[1] * translationValues[1] +
                     translationValues[2] * translationValues[2],
             )
+            Calib3d.stereoRectify(
+                masterMatrix,
+                masterDist,
+                slaveMatrix,
+                slaveDist,
+                imageSize,
+                rotation,
+                translation,
+                masterRectification,
+                slaveRectification,
+                masterProjection,
+                slaveProjection,
+                disparityToDepth,
+                Calib3d.CALIB_ZERO_DISPARITY,
+                0.0,
+            )
             val fundamentalValues = fundamental.toFlatList()
             SolveModel(
                 rms = rms,
@@ -275,8 +307,18 @@ class DualPhoneStereoCoachEstimator : Closeable {
                 translation = translationValues,
                 fundamental = fundamentalValues,
                 baselineMm = baseline,
-                perPairEpipolarErrors = selected.map {
-                    symmetricEpipolarError(it, fundamentalValues)
+                perPairEpipolarErrors = selected.map { sample ->
+                    rectifiedVerticalError(
+                        sample = sample,
+                        masterMatrix = masterMatrix,
+                        masterDist = masterDist,
+                        slaveMatrix = slaveMatrix,
+                        slaveDist = slaveDist,
+                        masterRectification = masterRectification,
+                        slaveRectification = slaveRectification,
+                        masterProjection = masterProjection,
+                        slaveProjection = slaveProjection,
+                    )
                 },
             )
         } finally {
@@ -288,44 +330,57 @@ class DualPhoneStereoCoachEstimator : Closeable {
             translation.release()
             essential.release()
             fundamental.release()
+            masterRectification.release()
+            slaveRectification.release()
+            masterProjection.release()
+            slaveProjection.release()
+            disparityToDepth.release()
         }
     }
 
-    private fun symmetricEpipolarError(sample: PairSample, f: List<Double>): Double {
-        if (f.size != 9) return Double.POSITIVE_INFINITY
-        val master = sample.masterPoints.toArray()
-        val slave = sample.slavePoints.toArray()
-        if (master.isEmpty() || master.size != slave.size) return Double.POSITIVE_INFINITY
-        var total = 0.0
-        master.indices.forEach { index ->
-            total += pointLineDistance(slave[index], epipolarLine(f, master[index], transpose = false))
-            total += pointLineDistance(master[index], epipolarLine(f, slave[index], transpose = true))
-        }
-        return total / (master.size * 2.0)
-    }
-
-    private fun epipolarLine(f: List<Double>, point: Point, transpose: Boolean): DoubleArray {
-        val x = point.x
-        val y = point.y
-        return if (!transpose) {
-            doubleArrayOf(
-                f[0] * x + f[1] * y + f[2],
-                f[3] * x + f[4] * y + f[5],
-                f[6] * x + f[7] * y + f[8],
+    private fun rectifiedVerticalError(
+        sample: PairSample,
+        masterMatrix: Mat,
+        masterDist: Mat,
+        slaveMatrix: Mat,
+        slaveDist: Mat,
+        masterRectification: Mat,
+        slaveRectification: Mat,
+        masterProjection: Mat,
+        slaveProjection: Mat,
+    ): Double {
+        val masterRectified = MatOfPoint2f()
+        val slaveRectified = MatOfPoint2f()
+        return try {
+            Calib3d.undistortPoints(
+                sample.masterPoints,
+                masterRectified,
+                masterMatrix,
+                masterDist,
+                masterRectification,
+                masterProjection,
             )
-        } else {
-            doubleArrayOf(
-                f[0] * x + f[3] * y + f[6],
-                f[1] * x + f[4] * y + f[7],
-                f[2] * x + f[5] * y + f[8],
+            Calib3d.undistortPoints(
+                sample.slavePoints,
+                slaveRectified,
+                slaveMatrix,
+                slaveDist,
+                slaveRectification,
+                slaveProjection,
             )
+            val masterPoints = masterRectified.toArray()
+            val slavePoints = slaveRectified.toArray()
+            if (masterPoints.isEmpty() || masterPoints.size != slavePoints.size) {
+                Double.POSITIVE_INFINITY
+            } else {
+                masterPoints.indices
+                    .map { index -> abs(masterPoints[index].y - slavePoints[index].y) }
+                    .average()
+            }
+        } finally {
+            masterRectified.release()
+            slaveRectified.release()
         }
-    }
-
-    private fun pointLineDistance(point: Point, line: DoubleArray): Double {
-        val denominator = sqrt(line[0] * line[0] + line[1] * line[1])
-        if (denominator <= 1e-9) return Double.POSITIVE_INFINITY
-        return abs(line[0] * point.x + line[1] * point.y + line[2]) / denominator
     }
 
     private fun objectPointFor(id: Int, settings: CalibrationSettings): Point3? =
@@ -431,8 +486,9 @@ class DualPhoneStereoCoachEstimator : Closeable {
         private const val MIN_PAIRS_AFTER_REJECTION = 10
         private const val MAX_PAIRS = 24
         private const val MAX_REJECTED_PAIRS = 8
-        private const val MAX_PAIR_EPIPOLAR_ERROR_PX = 2.5
-        private const val OUTLIER_MEDIAN_MULTIPLIER = 2.5
+        private const val MAX_PAIR_RECTIFIED_VERTICAL_ERROR_PX = 1.75
+        private const val OUTLIER_MAD_MULTIPLIER = 2.5
+        private const val MIN_OUTLIER_MAD_PX = 0.10
         private const val MAX_FINAL_MEAN_EPIPOLAR_ERROR_PX =
             DualPhoneStereoEstimate.MAX_MEAN_EPIPOLAR_ERROR_PX
     }
