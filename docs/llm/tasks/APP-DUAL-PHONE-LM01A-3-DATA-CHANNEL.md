@@ -4,7 +4,7 @@
 
 ```text
 READY FOR IMPLEMENTATION
-BASELINE REPOSITORY: 0df64e8cda47ba99a9ae90f53eff3a0d96cc3ace
+BASELINE REPOSITORY: 6f8aa859086c3bbcffdd34c02d61349e000aa6d7
 ```
 
 ## Scope
@@ -21,7 +21,7 @@ Connection direction follows the existing configured peer address:
 
 ```text
 SLAVE listens on TCP/45831
-MASTER connects to settings.peerHost:45831
+MASTER connects to controlSnapshot.peerHost:45831
 future reduced-frame payload direction is SLAVE → MASTER
 ```
 

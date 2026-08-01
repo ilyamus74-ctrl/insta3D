@@ -169,7 +169,7 @@ fun DualPhoneLiveStreamSessionCard(
         status.snapshot.owner,
         settings.deviceId,
         settings.role,
-        settings.peerHost,
+        controlSnapshot.peerHost,
     ) {
         val owner = status.snapshot.owner
         if (status.sessionAccepted && owner != null) {
@@ -179,7 +179,7 @@ fun DualPhoneLiveStreamSessionCard(
                         owner = owner,
                         localDeviceId = settings.deviceId,
                         role = settings.role,
-                        peerHost = settings.peerHost,
+                        peerHost = controlSnapshot.peerHost,
                     ),
                 )
             }.onFailure { error ->

@@ -173,7 +173,7 @@ private fun DualPhoneRole.peerRole(): DualPhoneRole = when (this) {
  * LM01A-3 dedicated TCP data channel.
  *
  * Connection direction follows the existing dual-phone address configuration:
- * SLAVE listens, MASTER connects to settings.peerHost. Future reduced frames travel
+ * SLAVE listens, MASTER connects to controlSnapshot.peerHost. Future reduced frames travel
  * in the opposite payload direction, SLAVE -> MASTER, over this same full-duplex
  * socket. The command TCP connection and clock-sync UDP socket are not reused.
  */

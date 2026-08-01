@@ -45,7 +45,7 @@ foreach ($requiredChannel as $token) {
 $requiredCard = [
     'DualPhoneLiveStreamDataChannelController()',
     'DualPhoneLiveStreamDataChannelConfig(',
-    'peerHost = settings.peerHost',
+    'peerHost = controlSnapshot.peerHost',
     'coordinator.markTransportReady()',
     'Data channel:',
     'Кадры камеры ещё не передаются.',
