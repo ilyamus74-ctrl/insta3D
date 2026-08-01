@@ -23,6 +23,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.maklertour.data.dualphone.DualPhoneLiveStreamDataChannelConfig
+import com.example.maklertour.data.dualphone.DualPhoneLiveStreamDataChannelController
+import com.example.maklertour.data.dualphone.DualPhoneLiveStreamDataChannelState
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamMode
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionBlock
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionCoordinator
@@ -97,6 +100,10 @@ fun DualPhoneLiveStreamSessionCard(
     val coordinator = remember {
         DualPhoneLiveStreamSessionCoordinator()
     }
+    val dataChannel = remember {
+        DualPhoneLiveStreamDataChannelController()
+    }
+    val dataChannelSnapshot by dataChannel.state.collectAsState()
 
     var requestedMode by remember {
         mutableStateOf(DualPhoneLiveStreamMode.SYNC_VIDEO)
@@ -157,8 +164,57 @@ fun DualPhoneLiveStreamSessionCard(
     LaunchedEffect(input) {
         status = coordinator.reconcile(input)
     }
-    DisposableEffect(coordinator) {
+    LaunchedEffect(
+        status.sessionAccepted,
+        status.snapshot.owner,
+        settings.deviceId,
+        settings.role,
+        settings.peerHost,
+    ) {
+        val owner = status.snapshot.owner
+        if (status.sessionAccepted && owner != null) {
+            runCatching {
+                dataChannel.start(
+                    DualPhoneLiveStreamDataChannelConfig(
+                        owner = owner,
+                        localDeviceId = settings.deviceId,
+                        role = settings.role,
+                        peerHost = settings.peerHost,
+                    ),
+                )
+            }.onFailure { error ->
+                coordinator.markTransportReconnecting(
+                    error.message ?: error.javaClass.simpleName,
+                )
+                status = coordinator.currentStatus()
+            }
+        } else {
+            dataChannel.stop()
+        }
+    }
+    LaunchedEffect(
+        dataChannelSnapshot.state,
+        dataChannelSnapshot.lastError,
+    ) {
+        when (dataChannelSnapshot.state) {
+            DualPhoneLiveStreamDataChannelState.READY -> {
+                coordinator.markTransportReady()
+                status = coordinator.currentStatus()
+            }
+            DualPhoneLiveStreamDataChannelState.RECONNECTING,
+            DualPhoneLiveStreamDataChannelState.FAILED -> {
+                coordinator.markTransportReconnecting(
+                    dataChannelSnapshot.lastError
+                        ?: "LM01A data channel unavailable",
+                )
+                status = coordinator.currentStatus()
+            }
+            else -> Unit
+        }
+    }
+    DisposableEffect(coordinator, dataChannel) {
         onDispose {
+            dataChannel.close()
             coordinator.release()
         }
     }
@@ -206,6 +262,23 @@ fun DualPhoneLiveStreamSessionCard(
 
             Text("Состояние: ${status.snapshot.state.name}")
             Text(statusText(status))
+            Text(
+                "Data channel: ${dataChannelSnapshot.state.name} · " +
+                    "порт ${dataChannelSnapshot.port}",
+            )
+            dataChannelSnapshot.remoteAddress?.let {
+                Text("Peer socket: $it")
+            }
+            Text(
+                "Пакеты: ↑${dataChannelSnapshot.packetsSent} " +
+                    "↓${dataChannelSnapshot.packetsReceived}",
+            )
+            dataChannelSnapshot.lastRoundTripMs?.let {
+                Text("RTT: ${"%.1f".format(it)} ms")
+            }
+            dataChannelSnapshot.lastError?.let {
+                Text("Data channel error: $it")
+            }
 
             if (
                 status.block ==
@@ -253,8 +326,13 @@ fun DualPhoneLiveStreamSessionCard(
 
             if (status.sessionAccepted) {
                 Text(
-                    "Сессия и калибровка приняты. " +
-                        "Канал кадров ещё не подключён.",
+                    if (dataChannelSnapshot.ready) {
+                        "Отдельный TCP data channel MASTER↔SLAVE подключён. " +
+                            "Кадры камеры ещё не передаются."
+                    } else {
+                        "Сессия и калибровка приняты. " +
+                            "Поднимается отдельный TCP data channel."
+                    },
                 )
                 status.recordingModeIdentitySource?.let {
                     Text("Идентичность режима: $it")

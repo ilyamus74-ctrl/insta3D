@@ -293,6 +293,35 @@ class DualPhoneLiveStreamSessionCoordinator(
     }
 
     @Synchronized
+    fun markTransportReconnecting(reason: String): Boolean {
+        val streamId = currentStreamId ?: return false
+        if (reason.isBlank()) return false
+
+        when (controller.snapshot.state) {
+            DualPhoneLiveStreamState.PREPARING ->
+                controller.markFailed(streamId, reason)
+            DualPhoneLiveStreamState.READY,
+            DualPhoneLiveStreamState.STREAMING ->
+                controller.markDegraded(streamId, reason)
+            DualPhoneLiveStreamState.DEGRADED,
+            DualPhoneLiveStreamState.FAILED,
+            DualPhoneLiveStreamState.RECONNECTING -> Unit
+            else -> return false
+        }
+
+        if (
+            controller.snapshot.state in setOf(
+                DualPhoneLiveStreamState.DEGRADED,
+                DualPhoneLiveStreamState.FAILED,
+            )
+        ) {
+            controller.markReconnecting(streamId)
+        }
+        return controller.snapshot.state ==
+            DualPhoneLiveStreamState.RECONNECTING
+    }
+
+    @Synchronized
     fun markCaptureStarted(): Boolean {
         val streamId = currentStreamId ?: return false
         return controller.start(streamId)
