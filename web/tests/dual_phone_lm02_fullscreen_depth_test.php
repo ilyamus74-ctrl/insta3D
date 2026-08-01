@@ -43,7 +43,8 @@ $checks = [
         str_contains($workspace, 'SLAVE("SLAVE")') &&
         str_contains($workspace, 'SPLIT("SPLIT")') &&
         str_contains($workspace, 'DEPTH("RAW")') &&
-        str_contains($workspace, 'FILTERED("FILTERED")') &&
+        str_contains($workspace, 'FILTERED("DENSE")') &&
+        str_contains($workspace, 'STRICT("STRICT")') &&
         str_contains($workspace, 'CONFIDENCE("CONF")'),
     'SLAVE uses full-screen scan workspace' =>
         str_contains($slave, 'DualPhoneSlaveScanWorkspace'),
@@ -108,7 +109,18 @@ $checks = [
     'exposure normalization and left-right consistency are explicit' =>
         str_contains($filter, 'Imgproc.createCLAHE') &&
         str_contains($filter, 'createLeftRightConsistencyMask') &&
-        str_contains($filter, 'LEFT_RIGHT_TOLERANCE_PX'),
+        str_contains($filter, 'STRICT_LEFT_RIGHT_TOLERANCE_PX') &&
+        str_contains($filter, 'DENSE_LEFT_RIGHT_TOLERANCE_PX'),
+    'LM02.5 separates dense preview from strict geometry' =>
+        str_contains($filter, 'denseConsistentValidMask') &&
+        str_contains($filter, 'strictDepthPreviewJpeg') &&
+        str_contains($workspace, 'DENSE SPATIAL DEPTH') &&
+        str_contains($workspace, 'STRICT TEMPORAL DEPTH'),
+    'LM02.5 exposes filter funnel metrics' =>
+        str_contains($filter, 'denseCoveragePercent') &&
+        str_contains($filter, 'denseLeftRightAcceptedPercent') &&
+        str_contains($filter, 'textureAcceptedPercent') &&
+        str_contains($filter, 'morphologyAcceptedPercent'),
     'motion-aware temporal modes avoid stale pixel drag' =>
         str_contains($filter, 'DualPhoneDepthTemporalMode.STATIC') &&
         str_contains($filter, 'DualPhoneDepthTemporalMode.MOVING') &&

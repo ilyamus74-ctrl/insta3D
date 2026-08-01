@@ -73,6 +73,7 @@ data class DualPhoneLiveDepthSnapshot(
     val depthPreviewJpeg: ByteArray? = null,
     val rawDepthPreviewJpeg: ByteArray? = null,
     val filteredDepthPreviewJpeg: ByteArray? = null,
+    val strictDepthPreviewJpeg: ByteArray? = null,
     val confidencePreviewJpeg: ByteArray? = null,
     val firstProcessedElapsedMs: Long? = null,
     val processingMs: Long? = null,
@@ -82,6 +83,10 @@ data class DualPhoneLiveDepthSnapshot(
     val motionScorePercent: Double = 0.0,
     val temporalMode: String = "WAITING",
     val leftRightAcceptedPercent: Double = 0.0,
+    val denseLeftRightAcceptedPercent: Double = 0.0,
+    val denseCoveragePercent: Double = 0.0,
+    val textureAcceptedPercent: Double = 0.0,
+    val morphologyAcceptedPercent: Double = 0.0,
     val qualityProfile: String = "WAITING",
     val thermalState: String = "UNSUPPORTED",
     val workWidth: Int = 0,
@@ -130,6 +135,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         val depthPreviewJpeg: ByteArray,
         val rawDepthPreviewJpeg: ByteArray,
         val filteredDepthPreviewJpeg: ByteArray,
+        val strictDepthPreviewJpeg: ByteArray,
         val confidencePreviewJpeg: ByteArray,
         val rawValidPercent: Double,
         val filteredValidPercent: Double,
@@ -144,6 +150,10 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         val motionScorePercent: Double,
         val temporalMode: DualPhoneDepthTemporalMode,
         val leftRightAcceptedPercent: Double,
+        val denseLeftRightAcceptedPercent: Double,
+        val denseCoveragePercent: Double,
+        val textureAcceptedPercent: Double,
+        val morphologyAcceptedPercent: Double,
         val workWidth: Int,
         val workHeight: Int,
     )
@@ -316,6 +326,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                         depthPreviewJpeg = result.depthPreviewJpeg,
                         rawDepthPreviewJpeg = result.rawDepthPreviewJpeg,
                         filteredDepthPreviewJpeg = result.filteredDepthPreviewJpeg,
+                        strictDepthPreviewJpeg = result.strictDepthPreviewJpeg,
                         confidencePreviewJpeg = result.confidencePreviewJpeg,
                         firstProcessedElapsedMs =
                             current.firstProcessedElapsedMs ?: finishedAtMs,
@@ -330,6 +341,13 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                         temporalMode = result.temporalMode.name,
                         leftRightAcceptedPercent =
                             result.leftRightAcceptedPercent,
+                        denseLeftRightAcceptedPercent =
+                            result.denseLeftRightAcceptedPercent,
+                        denseCoveragePercent = result.denseCoveragePercent,
+                        textureAcceptedPercent =
+                            result.textureAcceptedPercent,
+                        morphologyAcceptedPercent =
+                            result.morphologyAcceptedPercent,
                         qualityProfile = performanceAfter.profile.name,
                         thermalState = performanceAfter.thermalState.name,
                         workWidth = result.workWidth,
@@ -598,9 +616,10 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 rectifiedMasterJpeg = encodeJpeg(workMaster),
                 rectifiedSlaveJpeg = encodeJpeg(workSlave),
                 disparityPreviewJpeg = filtered.rawDepthPreviewJpeg,
-                depthPreviewJpeg = filtered.filteredDepthPreviewJpeg,
+                depthPreviewJpeg = filtered.strictDepthPreviewJpeg,
                 rawDepthPreviewJpeg = filtered.rawDepthPreviewJpeg,
                 filteredDepthPreviewJpeg = filtered.filteredDepthPreviewJpeg,
+                strictDepthPreviewJpeg = filtered.strictDepthPreviewJpeg,
                 confidencePreviewJpeg = filtered.confidencePreviewJpeg,
                 rawValidPercent = filtered.rawValidPercent,
                 filteredValidPercent = filtered.filteredValidPercent,
@@ -616,6 +635,13 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 temporalMode = filtered.temporalMode,
                 leftRightAcceptedPercent =
                     filtered.leftRightAcceptedPercent,
+                denseLeftRightAcceptedPercent =
+                    filtered.denseLeftRightAcceptedPercent,
+                denseCoveragePercent = filtered.denseCoveragePercent,
+                textureAcceptedPercent =
+                    filtered.textureAcceptedPercent,
+                morphologyAcceptedPercent =
+                    filtered.morphologyAcceptedPercent,
                 workWidth = workMaster.cols(),
                 workHeight = workMaster.rows(),
             )

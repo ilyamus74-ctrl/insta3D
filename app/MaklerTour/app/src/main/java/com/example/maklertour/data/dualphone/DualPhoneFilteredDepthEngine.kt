@@ -26,9 +26,11 @@ enum class DualPhoneDepthTemporalMode {
 data class DualPhoneFilteredDepthResult(
     val rawDepthPreviewJpeg: ByteArray,
     val filteredDepthPreviewJpeg: ByteArray,
+    val strictDepthPreviewJpeg: ByteArray,
     val confidencePreviewJpeg: ByteArray,
     val rawValidPercent: Double,
     val filteredValidPercent: Double,
+    val denseCoveragePercent: Double,
     val stableCoveragePercent: Double,
     val highConfidencePercent: Double,
     val medianDepthMeters: Double?,
@@ -36,6 +38,9 @@ data class DualPhoneFilteredDepthResult(
     val motionScorePercent: Double,
     val temporalMode: DualPhoneDepthTemporalMode,
     val leftRightAcceptedPercent: Double,
+    val denseLeftRightAcceptedPercent: Double,
+    val textureAcceptedPercent: Double,
+    val morphologyAcceptedPercent: Double,
 )
 
 /**
@@ -79,18 +84,25 @@ class DualPhoneFilteredDepthEngine : Closeable {
         val rawMaxMask = Mat()
         val rawValidMask = Mat()
         val leftRightMask = Mat()
+        val denseLeftRightMask = Mat()
         val consistentValidMask = Mat()
+        val denseConsistentValidMask = Mat()
         val gradientX16 = Mat()
         val gradientY16 = Mat()
         val gradientX8 = Mat()
         val gradientY8 = Mat()
         val texture = Mat()
         val textureMask = Mat()
+        val denseTextureMask = Mat()
         val strongTextureMask = Mat()
         val filteredMask = Mat()
+        val denseFilteredMask = Mat()
         val openedMask = Mat()
         val closedMask = Mat()
+        val denseClosedMask = Mat()
         val invalidMask = Mat()
+        val denseInvalidMask = Mat()
+        val denseDisparity = Mat()
         val kernel = Imgproc.getStructuringElement(
             Imgproc.MORPH_ELLIPSE,
             Size(3.0, 3.0),
@@ -100,6 +112,7 @@ class DualPhoneFilteredDepthEngine : Closeable {
         val highConfidenceMask = Mat()
         val rawHeatmap = Mat()
         val filteredHeatmap = Mat()
+        val strictHeatmap = Mat()
         val confidence = Mat.zeros(
             grayMaster.rows(),
             grayMaster.cols(),
@@ -157,16 +170,31 @@ class DualPhoneFilteredDepthEngine : Closeable {
                     leftDisparity = rawDisparity,
                     rightDisparity = rightDisparity,
                     output = leftRightMask,
+                    tolerancePx = STRICT_LEFT_RIGHT_TOLERANCE_PX,
+                )
+                createLeftRightConsistencyMask(
+                    leftDisparity = rawDisparity,
+                    rightDisparity = rightDisparity,
+                    output = denseLeftRightMask,
+                    tolerancePx = DENSE_LEFT_RIGHT_TOLERANCE_PX,
                 )
                 Core.bitwise_and(rawValidMask, leftRightMask, consistentValidMask)
+                Core.bitwise_and(rawValidMask, denseLeftRightMask, denseConsistentValidMask)
             } else {
                 rawValidMask.copyTo(consistentValidMask)
+                rawValidMask.copyTo(denseConsistentValidMask)
             }
-            val consistentCount = Core.countNonZero(consistentValidMask)
+            val strictConsistentCount = Core.countNonZero(consistentValidMask)
+            val denseConsistentCount = Core.countNonZero(denseConsistentValidMask)
             val leftRightAcceptedPercent = when {
                 !enableLeftRightCheck -> 100.0
                 rawValidCount == 0 -> 0.0
-                else -> consistentCount * 100.0 / rawValidCount
+                else -> strictConsistentCount * 100.0 / rawValidCount
+            }
+            val denseLeftRightAcceptedPercent = when {
+                !enableLeftRightCheck -> 100.0
+                rawValidCount == 0 -> 0.0
+                else -> denseConsistentCount * 100.0 / rawValidCount
             }
 
             Imgproc.medianBlur(rawDisparity, spatialDisparity, 5)
@@ -197,11 +225,31 @@ class DualPhoneFilteredDepthEngine : Closeable {
             )
             Core.compare(
                 texture,
+                Scalar(DENSE_MIN_TEXTURE_GRADIENT.toDouble()),
+                denseTextureMask,
+                Core.CMP_GT,
+            )
+            Core.compare(
+                texture,
                 Scalar(HIGH_TEXTURE_GRADIENT.toDouble()),
                 strongTextureMask,
                 Core.CMP_GT,
             )
             Core.bitwise_and(consistentValidMask, textureMask, filteredMask)
+            Core.bitwise_and(
+                denseConsistentValidMask,
+                denseTextureMask,
+                denseFilteredMask,
+            )
+            Imgproc.morphologyEx(
+                denseFilteredMask,
+                denseClosedMask,
+                Imgproc.MORPH_CLOSE,
+                kernel,
+            )
+            spatialDisparity.copyTo(denseDisparity)
+            Core.bitwise_not(denseClosedMask, denseInvalidMask)
+            denseDisparity.setTo(Scalar(0.0), denseInvalidMask)
             Imgproc.morphologyEx(
                 filteredMask,
                 openedMask,
@@ -239,10 +287,11 @@ class DualPhoneFilteredDepthEngine : Closeable {
             Core.bitwise_and(stableMask, strongTextureMask, highConfidenceMask)
 
             createHeatmap(rawDisparity, rawValidMask, rawHeatmap)
-            createHeatmap(stableDisparity, stableMask, filteredHeatmap)
+            createHeatmap(denseDisparity, denseClosedMask, filteredHeatmap)
+            createHeatmap(stableDisparity, stableMask, strictHeatmap)
 
             confidence.setTo(LOW_CONFIDENCE_BGR, rawValidMask)
-            confidence.setTo(MEDIUM_CONFIDENCE_BGR, closedMask)
+            confidence.setTo(MEDIUM_CONFIDENCE_BGR, denseClosedMask)
             confidence.setTo(HIGH_CONFIDENCE_BGR, highConfidenceMask)
 
             val metrics = depthMetrics(
@@ -253,13 +302,17 @@ class DualPhoneFilteredDepthEngine : Closeable {
             )
             val jitter = updateDepthJitter(metrics.medianDepthMeters)
             val totalPixels = grayMaster.rows().toDouble() * grayMaster.cols().toDouble()
+            val denseTextureCount = Core.countNonZero(denseFilteredMask)
+            val denseMorphologyCount = Core.countNonZero(denseClosedMask)
 
             return DualPhoneFilteredDepthResult(
                 rawDepthPreviewJpeg = encodeJpeg(rawHeatmap),
                 filteredDepthPreviewJpeg = encodeJpeg(filteredHeatmap),
+                strictDepthPreviewJpeg = encodeJpeg(strictHeatmap),
                 confidencePreviewJpeg = encodeJpeg(confidence),
                 rawValidPercent = percent(rawValidMask, totalPixels),
                 filteredValidPercent = percent(closedMask, totalPixels),
+                denseCoveragePercent = percent(denseClosedMask, totalPixels),
                 stableCoveragePercent = percent(stableMask, totalPixels),
                 highConfidencePercent = percent(highConfidenceMask, totalPixels),
                 medianDepthMeters = metrics.medianDepthMeters,
@@ -267,6 +320,9 @@ class DualPhoneFilteredDepthEngine : Closeable {
                 motionScorePercent = motionScore,
                 temporalMode = temporalMode,
                 leftRightAcceptedPercent = leftRightAcceptedPercent,
+                denseLeftRightAcceptedPercent = denseLeftRightAcceptedPercent,
+                textureAcceptedPercent = ratioPercent(denseTextureCount, denseConsistentCount),
+                morphologyAcceptedPercent = ratioPercent(denseMorphologyCount, denseTextureCount),
             )
         } finally {
             claheMaster.collectGarbage()
@@ -283,24 +339,32 @@ class DualPhoneFilteredDepthEngine : Closeable {
                 rawMaxMask,
                 rawValidMask,
                 leftRightMask,
+                denseLeftRightMask,
                 consistentValidMask,
+                denseConsistentValidMask,
                 gradientX16,
                 gradientY16,
                 gradientX8,
                 gradientY8,
                 texture,
                 textureMask,
+                denseTextureMask,
                 strongTextureMask,
                 filteredMask,
+                denseFilteredMask,
                 openedMask,
                 closedMask,
+                denseClosedMask,
                 invalidMask,
+                denseInvalidMask,
+                denseDisparity,
                 kernel,
                 stableDisparity,
                 stableMask,
                 highConfidenceMask,
                 rawHeatmap,
                 filteredHeatmap,
+                strictHeatmap,
                 confidence,
             ).forEach { it.release() }
         }
@@ -461,6 +525,7 @@ class DualPhoneFilteredDepthEngine : Closeable {
         leftDisparity: Mat,
         rightDisparity: Mat,
         output: Mat,
+        tolerancePx: Float,
     ) {
         val rows = leftDisparity.rows()
         val columns = leftDisparity.cols()
@@ -482,7 +547,7 @@ class DualPhoneFilteredDepthEngine : Closeable {
                 val rightValue = right[rowOffset + rightColumn]
                 if (
                     rightValue < -MIN_VALID_DISPARITY.toFloat() &&
-                    abs(leftValue + rightValue) <= LEFT_RIGHT_TOLERANCE_PX
+                    abs(leftValue + rightValue) <= tolerancePx
                 ) {
                     mask[index] = 0xff.toByte()
                 }
@@ -560,6 +625,11 @@ class DualPhoneFilteredDepthEngine : Closeable {
     private fun percent(mask: Mat, totalPixels: Double): Double =
         if (totalPixels <= 0.0) 0.0 else Core.countNonZero(mask) * 100.0 / totalPixels
 
+    private fun ratioPercent(numerator: Int, denominator: Int): Double =
+        if (denominator <= 0) 0.0 else {
+            numerator.toDouble() * 100.0 / denominator.toDouble()
+        }
+
     private fun encodeJpeg(mat: Mat): ByteArray {
         val output = MatOfByte()
         val parameters = MatOfInt(
@@ -596,6 +666,7 @@ class DualPhoneFilteredDepthEngine : Closeable {
         private const val SGBM_BLOCK_SIZE = 5
         private const val MIN_VALID_DISPARITY = 1.0
         private const val MIN_TEXTURE_GRADIENT = 12
+        private const val DENSE_MIN_TEXTURE_GRADIENT = 5
         private const val HIGH_TEXTURE_GRADIENT = 30
         private const val TEMPORAL_WINDOW_FRAMES = 5
         private const val MIN_TEMPORAL_VOTES = 3
@@ -603,7 +674,8 @@ class DualPhoneFilteredDepthEngine : Closeable {
         private const val MAX_TEMPORAL_SPREAD_RATIO = 0.10f
         private const val MOVING_MOTION_PERCENT = 2.5
         private const val RESET_MOTION_PERCENT = 8.0
-        private const val LEFT_RIGHT_TOLERANCE_PX = 1.5f
+        private const val STRICT_LEFT_RIGHT_TOLERANCE_PX = 1.5f
+        private const val DENSE_LEFT_RIGHT_TOLERANCE_PX = 3.0f
         private const val CLAHE_CLIP_LIMIT = 2.0
         private val CLAHE_TILE_GRID = Size(8.0, 8.0)
         private val MOTION_SAMPLE_SIZE = Size(80.0, 60.0)

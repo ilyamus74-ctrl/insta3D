@@ -304,3 +304,30 @@ length is scaled along the final disparity axis.
 Once a valid depth result exists, transient pair collection and processing must
 retain the last published depth state and image. UI state may report that the next
 pair is pending without replacing a usable map with a blank `PAIRING` surface.
+
+## LM02.5 dense preview and strict geometry contract
+
+```text
+baseline: ff741e2654f1a45a7ebf3930c96f59a6f17d65ca
+```
+
+Live depth publishes two intentionally different masks:
+
+```text
+DENSE   relaxed left-right gate, low texture threshold, spatial close only
+STRICT  original left-right gate, texture gate and motion-aware temporal consensus
+```
+
+`DENSE` is for operator preview, tracking candidates and later confidence-weighted
+accumulation. It is not measurement-safe. `STRICT` and HIGH confidence remain the
+only products eligible for future wall/plane measurement gates.
+
+The UI reports the filter funnel: raw valid, strict and dense left-right
+acceptance, dense texture acceptance, dense morphology retention, dense coverage,
+strict spatial coverage and strict temporal coverage.
+
+An external texture projector is optional. The algorithm does not decode or
+calibrate a projector pattern; visible texture is consumed as ordinary stereo
+features. Any projector attached to the rig must be certified eye-safe for the
+intended use. Visible projected patterns must be disabled for texture-video
+recording because they contaminate the captured surface appearance.

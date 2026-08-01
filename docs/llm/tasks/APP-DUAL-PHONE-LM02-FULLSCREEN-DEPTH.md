@@ -179,3 +179,20 @@ is still an immediate floor, but recovery no longer requires replacing the strea
 StereoSGBM input is explicitly resized after rectification/processing rotation to
 the selected `480x270` or `320x240` work size. The last valid depth publication is
 kept visible while the next pair is collected or processed.
+
+## LM02.5 — dense preview and strict geometry
+
+LM02.4.1 restored 10 FPS media and exact 480x270 depth processing. Testing on
+plain walls still showed a large reduction from RAW candidates to strict temporal
+coverage. LM02.5 therefore separates a dense operator/tracking product from the
+strict geometry product instead of weakening the future measurement mask.
+
+```text
+RAW     all valid SGBM candidates
+DENSE   relaxed LR + low texture + spatial close
+STRICT  strict LR + texture + morphology + temporal consensus
+CONF    LOW/MEDIUM from dense candidates, HIGH from strict stable candidates
+```
+
+The filter funnel is exposed in the MASTER overlay. A projected pseudo-random
+texture may increase RAW and DENSE coverage on blank surfaces, but is optional.

@@ -2928,3 +2928,23 @@ future LM03 point-cloud/trajectory stages
 ```text
 web/tests/dual_phone_lm02_fullscreen_depth_test.php
 ```
+
+## C33 — Android dual-phone dense preview versus strict geometry
+
+### Invariants
+
+* DENSE and STRICT are separate depth products;
+* DENSE may use relaxed left-right and texture gates for preview/tracking;
+* STRICT preserves strict correspondence, morphology and temporal consensus;
+* HIGH confidence is derived from STRICT, not from DENSE;
+* DENSE must never be presented as final measurement or wall geometry;
+* UI exposes raw, dense, strict-spatial, strict-temporal and funnel metrics;
+* projected texture is optional and is treated as ordinary visual texture;
+* visible projected texture must be disabled during texture-video capture;
+* no projector may alter K/D/R/T, stream identity or session ownership.
+
+### Contract checks
+
+```text
+web/tests/dual_phone_lm02_fullscreen_depth_test.php
+```

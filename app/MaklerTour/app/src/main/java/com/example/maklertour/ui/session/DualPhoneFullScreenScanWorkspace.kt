@@ -58,7 +58,8 @@ enum class DualPhoneMasterScanView(val label: String) {
     SLAVE("SLAVE"),
     SPLIT("SPLIT"),
     DEPTH("RAW"),
-    FILTERED("FILTERED"),
+    FILTERED("DENSE"),
+    STRICT("STRICT"),
     CONFIDENCE("CONF"),
 }
 
@@ -308,7 +309,15 @@ private fun MasterScanViewport(
                 DepthViewport(
                     bytes = depth.filteredDepthPreviewJpeg,
                     emptyText = depth.state.name,
-                    title = "FILTERED TEMPORAL DEPTH",
+                    title = "DENSE SPATIAL DEPTH · PREVIEW / TRACKING",
+                    depth = depth,
+                )
+            }
+            DualPhoneMasterScanView.STRICT -> {
+                DepthViewport(
+                    bytes = depth.strictDepthPreviewJpeg,
+                    emptyText = depth.state.name,
+                    title = "STRICT TEMPORAL DEPTH · GEOMETRY",
                     depth = depth,
                 )
             }
@@ -437,8 +446,16 @@ private fun MasterStatusOverlay(
             )
             Text(
                 "raw ${depth.rawValidDisparityPercent.format1()}% · " +
-                    "filtered ${depth.filteredValidDisparityPercent.format1()}% · " +
+                    "dense ${depth.denseCoveragePercent.format1()}% · " +
+                    "strict ${depth.filteredValidDisparityPercent.format1()}% / " +
                     "stable ${depth.stableCoveragePercent.format1()}%",
+                color = Color.White,
+            )
+            Text(
+                "gates LR ${depth.leftRightAcceptedPercent.format1()} / " +
+                    "${depth.denseLeftRightAcceptedPercent.format1()}% · " +
+                    "texture ${depth.textureAcceptedPercent.format1()}% · " +
+                    "morph ${depth.morphologyAcceptedPercent.format1()}%",
                 color = Color.White,
             )
             Text(
