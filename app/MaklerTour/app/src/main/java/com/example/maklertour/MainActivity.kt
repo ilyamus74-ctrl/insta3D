@@ -2170,6 +2170,9 @@ private fun CameraScreen(
                             enabled = connected && !videoScanBusy && !isCapturing && scanName.isNotBlank(),
                         ) { Text(stringResource(R.string.start_video_scan)) }
                     }
+                    com.example.maklertour.ui.session.DualPhoneLiveStreamSessionCard(
+                        selectedSessionId = selectedSessionId,
+                    )
                     Button(
                         onClick = {
                             if (selectedSessionName == null) showNoSessionDialog = true else showPhoneCameraScan = true
