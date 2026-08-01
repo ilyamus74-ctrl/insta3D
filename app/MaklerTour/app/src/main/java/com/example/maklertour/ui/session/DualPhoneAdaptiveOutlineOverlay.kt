@@ -79,18 +79,14 @@ internal fun DualPhoneAdaptiveOutlineViewport(
         freshness == DualPhoneDepthFreshness.HOLD ||
         freshness == DualPhoneDepthFreshness.STALE
 
-    val baseBytes = if (showDepth && depth.rectifiedMasterJpeg != null) {
-        depth.rectifiedMasterJpeg
-    } else {
-        masterFrame?.jpegBytes
-    }
-    val baseRotation = if (showDepth && depth.rectifiedMasterJpeg != null) {
-        depth.displayRotationDegrees
-    } else {
-        masterFrame?.imageProxyRotationDegrees ?: 0
-    }
-    val denseBytes = depth.filteredDepthPreviewJpeg.takeIf { showDepth }
-    val strictBytes = depth.strictDepthPreviewJpeg.takeIf { showDepth }
+    // The operator background never switches from the natural camera frame to
+    // the rectified processing buffer. Rectification changes crop and geometry,
+    // so mixing both as one full-screen layer caused a visible jump and made
+    // door frames and room corners hard to recognize.
+    val baseBytes = masterFrame?.jpegBytes
+    val baseRotation = masterFrame?.imageProxyRotationDegrees ?: 0
+    val denseBytes: ByteArray? = null
+    val strictBytes: ByteArray? = null
 
     val baseBitmap = remember(baseBytes) { baseBytes?.decodeAdaptiveBitmap() }
     val denseBitmap = remember(denseBytes) { denseBytes?.decodeAdaptiveBitmap() }
@@ -171,6 +167,14 @@ internal fun DualPhoneAdaptiveOutlineViewport(
                 paint.alpha = 255
             }
         }
+
+        DualPhoneRectifiedDepthInset(
+            depth = depth,
+            showDepth = showDepth,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 58.dp, end = 12.dp),
+        )
 
         Surface(
             modifier = Modifier

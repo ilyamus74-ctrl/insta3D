@@ -570,21 +570,21 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 pair.master.imageProxyRotationDegrees - processingRotationDegrees,
             )
 
-            // The performance profile is expressed in the horizontal-disparity
-            // coordinate system. A vertical stereo baseline is rotated by 90°
-            // before matching, so its width/height must be swapped. Resizing the
-            // rotated 270×480 image back into 480×270 distorted room geometry.
-            val workSize = if (vertical) {
-                Size(
-                    performanceProfile.workHeight.toDouble(),
-                    performanceProfile.workWidth.toDouble(),
-                )
+            val maxWorkWidth = if (vertical) {
+                performanceProfile.workHeight
             } else {
-                Size(
-                    performanceProfile.workWidth.toDouble(),
-                    performanceProfile.workHeight.toDouble(),
-                )
+                performanceProfile.workWidth
             }
+            val maxWorkHeight = if (vertical) {
+                performanceProfile.workWidth
+            } else {
+                performanceProfile.workHeight
+            }
+            val workSize = aspectPreservingSize(
+                source = depthMaster,
+                maxWidth = maxWorkWidth,
+                maxHeight = maxWorkHeight,
+            )
             Imgproc.resize(
                 depthMaster,
                 workMaster,
@@ -727,6 +727,26 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         )
         val width = (sourceWidth * scale).toInt().coerceAtLeast(64)
         val height = (sourceHeight * scale).toInt().coerceAtLeast(48)
+        return Size(width.toDouble(), height.toDouble())
+    }
+
+    /**
+     * Fits the already-rotated rectified image inside the profile envelope
+     * without changing its native aspect ratio and without upscaling it.
+     */
+    private fun aspectPreservingSize(
+        source: Mat,
+        maxWidth: Int,
+        maxHeight: Int,
+    ): Size {
+        check(source.cols() > 0 && source.rows() > 0)
+        val scale = minOf(
+            1.0,
+            maxWidth.toDouble() / source.cols().toDouble(),
+            maxHeight.toDouble() / source.rows().toDouble(),
+        )
+        val width = (source.cols() * scale).toInt().coerceAtLeast(64)
+        val height = (source.rows() * scale).toInt().coerceAtLeast(48)
         return Size(width.toDouble(), height.toDouble())
     }
 
