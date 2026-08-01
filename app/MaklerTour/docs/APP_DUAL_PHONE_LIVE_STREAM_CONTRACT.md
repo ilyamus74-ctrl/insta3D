@@ -277,3 +277,30 @@ and is released on size/profile/stream replacement.
 MASTER diagnostics expose motion score, temporal mode, left-right acceptance,
 active work resolution, thermal state, target depth FPS and processing p50/p95.
 These remain diagnostic inputs for LM03 and are not final room measurements.
+
+## LM02.4.1 fast producer and adaptive-profile correction
+
+```text
+baseline: 72012941f2120c25dd81721df4d93fd2950d9ba2
+media target: 10 FPS
+depth target: at most 5 FPS
+```
+
+Reduced-frame production performs at most one JPEG encode per accepted CameraX
+frame. If scaling is required, raw NV21 luma/chroma planes are reduced before
+`YuvImage.compressToJpeg`; a full-size JPEG must not be decoded into a Bitmap and
+encoded again.
+
+OpenCV/JIT warm-up samples are excluded from profile decisions. Downgrades require
+sustained slow p95 windows, while a long stable window may promote the profile after
+the device cools. Thermal status remains an immediate floor and is not permanently
+latched after recovery.
+
+Rectification may use its source-preserving intermediate size, but both rotated
+stereo buffers are resized identically to the active profile before StereoSGBM:
+`480x270` for QUALITY and `320x240` for BALANCED/THROTTLED. The rectified focal
+length is scaled along the final disparity axis.
+
+Once a valid depth result exists, transient pair collection and processing must
+retain the last published depth state and image. UI state may report that the next
+pair is pending without replacing a usable map with a blank `PAIRING` surface.

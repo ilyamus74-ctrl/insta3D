@@ -33,19 +33,21 @@ data class DualPhoneDepthPerformanceSnapshot(
 )
 
 /**
- * LM02.4 adaptive depth budget.
+ * LM02.4.1 adaptive depth budget with warm-up exclusion and hysteresis.
  *
- * Media remains at 10 FPS. Depth receives a finite CPU budget that leaves margin
- * for Compose, CameraX and the future full-resolution texture recording path.
- * A stream may downgrade, but never upgrades again until reset, preventing thermal
- * or p95 oscillation during a scan.
+ * Media remains at 10 FPS. OpenCV/JIT warm-up samples do not trigger a permanent
+ * downgrade. Sustained slow windows downgrade the profile, while a long stable
+ * window may promote it again. Thermal status remains an immediate floor but is
+ * not latched forever after the device cools.
  */
 class DualPhoneDepthPerformanceController(context: Context) {
     private val powerManager =
         context.applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
     private val processingDurationsMs = ArrayDeque<Long>()
-    private var performanceFloor = 0
-    private var thermalFloorLatch = 0
+    private var adaptiveLevel = 0
+    private var warmupRemaining = INITIAL_WARMUP_SAMPLES
+    private var slowWindows = 0
+    private var fastWindows = 0
 
     @Synchronized
     fun snapshot(): DualPhoneDepthPerformanceSnapshot {
@@ -57,8 +59,7 @@ class DualPhoneDepthPerformanceController(context: Context) {
             DualPhoneDepthThermalState.HOT -> 2
             DualPhoneDepthThermalState.CRITICAL -> 3
         }
-        thermalFloorLatch = maxOf(thermalFloorLatch, thermalFloor)
-        val level = maxOf(thermalFloorLatch, performanceFloor)
+        val level = maxOf(thermalFloor, adaptiveLevel)
         return DualPhoneDepthPerformanceSnapshot(
             thermalState = thermal,
             profile = PROFILES[level],
@@ -69,20 +70,47 @@ class DualPhoneDepthPerformanceController(context: Context) {
 
     @Synchronized
     fun recordProcessing(durationMs: Long) {
+        if (warmupRemaining > 0) {
+            warmupRemaining -= 1
+            return
+        }
         processingDurationsMs.addLast(durationMs.coerceAtLeast(0L))
         while (processingDurationsMs.size > MAX_PROCESSING_SAMPLES) {
             processingDurationsMs.removeFirst()
         }
-        if (processingDurationsMs.size < MIN_SAMPLES_FOR_DOWNGRADE) return
+        if (processingDurationsMs.size < MIN_SAMPLES_FOR_DECISION) return
+
         val p95 = percentile(0.95) ?: return
+        val downgradeThreshold = when (adaptiveLevel) {
+            0 -> QUALITY_MAX_P95_MS
+            1 -> BALANCED_MAX_P95_MS
+            else -> Long.MAX_VALUE
+        }
+        if (p95 > downgradeThreshold) {
+            slowWindows += 1
+        } else {
+            slowWindows = 0
+        }
+
+        val upgradeThreshold = when (adaptiveLevel) {
+            1 -> BALANCED_UPGRADE_P95_MS
+            2 -> THROTTLED_UPGRADE_P95_MS
+            else -> null
+        }
+        if (upgradeThreshold != null && p95 <= upgradeThreshold) {
+            fastWindows += 1
+        } else {
+            fastWindows = 0
+        }
+
         when {
-            performanceFloor == 0 && p95 > QUALITY_MAX_P95_MS -> {
-                performanceFloor = 1
-                processingDurationsMs.clear()
+            slowWindows >= DOWNGRADE_WINDOWS && adaptiveLevel < MAX_ADAPTIVE_LEVEL -> {
+                adaptiveLevel += 1
+                resetDecisionWindow(TRANSITION_WARMUP_SAMPLES)
             }
-            performanceFloor == 1 && p95 > BALANCED_MAX_P95_MS -> {
-                performanceFloor = 2
-                processingDurationsMs.clear()
+            fastWindows >= UPGRADE_WINDOWS && adaptiveLevel > 0 -> {
+                adaptiveLevel -= 1
+                resetDecisionWindow(TRANSITION_WARMUP_SAMPLES)
             }
         }
     }
@@ -90,8 +118,17 @@ class DualPhoneDepthPerformanceController(context: Context) {
     @Synchronized
     fun reset() {
         processingDurationsMs.clear()
-        performanceFloor = 0
-        thermalFloorLatch = 0
+        adaptiveLevel = 0
+        warmupRemaining = INITIAL_WARMUP_SAMPLES
+        slowWindows = 0
+        fastWindows = 0
+    }
+
+    private fun resetDecisionWindow(warmupSamples: Int) {
+        processingDurationsMs.clear()
+        warmupRemaining = warmupSamples
+        slowWindows = 0
+        fastWindows = 0
     }
 
     private fun thermalState(): DualPhoneDepthThermalState {
@@ -116,9 +153,16 @@ class DualPhoneDepthPerformanceController(context: Context) {
 
     companion object {
         private const val MAX_PROCESSING_SAMPLES = 30
-        private const val MIN_SAMPLES_FOR_DOWNGRADE = 8
-        private const val QUALITY_MAX_P95_MS = 140L
-        private const val BALANCED_MAX_P95_MS = 160L
+        private const val MIN_SAMPLES_FOR_DECISION = 12
+        private const val INITIAL_WARMUP_SAMPLES = 12
+        private const val TRANSITION_WARMUP_SAMPLES = 6
+        private const val DOWNGRADE_WINDOWS = 3
+        private const val UPGRADE_WINDOWS = 12
+        private const val MAX_ADAPTIVE_LEVEL = 2
+        private const val QUALITY_MAX_P95_MS = 150L
+        private const val BALANCED_MAX_P95_MS = 175L
+        private const val BALANCED_UPGRADE_P95_MS = 110L
+        private const val THROTTLED_UPGRADE_P95_MS = 135L
 
         private val PROFILES = listOf(
             DualPhoneDepthPerformanceProfile(

@@ -164,3 +164,18 @@ The default quality profile uses 480x270 at a 200 ms start interval. Processing 
 and Android thermal state can downgrade to 320x240 or suspend only depth. LIVE media
 continues at 10 FPS so control, operator preview and the future texture recorder
 remain independent.
+
+## LM02.4.1 — corrective producer and profile slice
+
+Real-device testing found that MASTER remained near 10 FPS while the older SLAVE
+fell to about 1.4 FPS. The bottleneck was the reduced-frame producer performing a
+full-size JPEG encode, Bitmap decode/scale and second JPEG encode for one accepted
+frame. LM02.4.1 scales NV21 before one JPEG encode.
+
+The adaptive controller now ignores OpenCV/JIT warm-up, requires sustained slow
+windows before downgrade and may promote after a long stable period. Thermal status
+is still an immediate floor, but recovery no longer requires replacing the stream.
+
+StereoSGBM input is explicitly resized after rectification/processing rotation to
+the selected `480x270` or `320x240` work size. The last valid depth publication is
+kept visible while the next pair is collected or processed.

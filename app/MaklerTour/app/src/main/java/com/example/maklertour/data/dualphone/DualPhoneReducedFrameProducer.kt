@@ -260,52 +260,87 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         }
         val sourceWidth = image.width
         val sourceHeight = image.height
-        val nv21 = image.toNv21()
-        val original = ByteArrayOutputStream().use { output ->
+        val scale = minOf(
+            1.0,
+            DualPhoneReducedFrame.MAX_WIDTH.toDouble() / sourceWidth,
+            DualPhoneReducedFrame.MAX_HEIGHT.toDouble() / sourceHeight,
+        )
+        val targetWidth = evenDimension((sourceWidth * scale).toInt())
+        val targetHeight = evenDimension((sourceHeight * scale).toInt())
+        val sourceNv21 = image.toNv21()
+        val encodedNv21 = if (
+            targetWidth == sourceWidth && targetHeight == sourceHeight
+        ) {
+            sourceNv21
+        } else {
+            downscaleNv21(
+                source = sourceNv21,
+                sourceWidth = sourceWidth,
+                sourceHeight = sourceHeight,
+                targetWidth = targetWidth,
+                targetHeight = targetHeight,
+            )
+        }
+        val bytes = ByteArrayOutputStream().use { output ->
             val success = YuvImage(
-                nv21,
+                encodedNv21,
                 ImageFormat.NV21,
-                sourceWidth,
-                sourceHeight,
+                targetWidth,
+                targetHeight,
                 null,
             ).compressToJpeg(
-                Rect(0, 0, sourceWidth, sourceHeight),
+                Rect(0, 0, targetWidth, targetHeight),
                 JPEG_QUALITY,
                 output,
             )
             require(success) { "JPEG compression failed" }
             output.toByteArray()
         }
-        val scale = minOf(
-            1.0,
-            DualPhoneReducedFrame.MAX_WIDTH.toDouble() / sourceWidth,
-            DualPhoneReducedFrame.MAX_HEIGHT.toDouble() / sourceHeight,
-        )
-        if (scale >= 1.0) {
-            return EncodedJpeg(sourceWidth, sourceHeight, original)
-        }
-
-        val sourceBitmap = BitmapFactory.decodeByteArray(
-            original,
-            0,
-            original.size,
-        ) ?: error("JPEG decode before scale failed")
-        val targetWidth = (sourceWidth * scale).toInt().coerceAtLeast(1)
-        val targetHeight = (sourceHeight * scale).toInt().coerceAtLeast(1)
-        val scaled = Bitmap.createScaledBitmap(
-            sourceBitmap,
-            targetWidth,
-            targetHeight,
-            true,
-        )
-        val bytes = ByteArrayOutputStream().use { output ->
-            require(scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output))
-            output.toByteArray()
-        }
-        if (scaled !== sourceBitmap) scaled.recycle()
-        sourceBitmap.recycle()
         return EncodedJpeg(targetWidth, targetHeight, bytes)
     }
+
+    private fun downscaleNv21(
+        source: ByteArray,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        targetWidth: Int,
+        targetHeight: Int,
+    ): ByteArray {
+        require(sourceWidth % 2 == 0 && sourceHeight % 2 == 0)
+        require(targetWidth % 2 == 0 && targetHeight % 2 == 0)
+        val output = ByteArray(targetWidth * targetHeight * 3 / 2)
+
+        for (targetY in 0 until targetHeight) {
+            val sourceY = targetY * sourceHeight / targetHeight
+            val sourceRow = sourceY * sourceWidth
+            val targetRow = targetY * targetWidth
+            for (targetX in 0 until targetWidth) {
+                val sourceX = targetX * sourceWidth / targetWidth
+                output[targetRow + targetX] = source[sourceRow + sourceX]
+            }
+        }
+
+        val sourceChromaOffset = sourceWidth * sourceHeight
+        val targetChromaOffset = targetWidth * targetHeight
+        val sourceChromaHeight = sourceHeight / 2
+        val targetChromaHeight = targetHeight / 2
+        for (targetY in 0 until targetChromaHeight) {
+            val sourceY = targetY * sourceChromaHeight / targetChromaHeight
+            val sourceRow = sourceChromaOffset + sourceY * sourceWidth
+            val targetRow = targetChromaOffset + targetY * targetWidth
+            for (targetX in 0 until targetWidth / 2) {
+                val sourceX = targetX * (sourceWidth / 2) / (targetWidth / 2)
+                val sourceIndex = sourceRow + sourceX * 2
+                val targetIndex = targetRow + targetX * 2
+                output[targetIndex] = source[sourceIndex]
+                output[targetIndex + 1] = source[sourceIndex + 1]
+            }
+        }
+        return output
+    }
+
+    private fun evenDimension(value: Int): Int =
+        (value.coerceAtLeast(2) / 2) * 2
 
     private fun ImageProxy.toNv21(): ByteArray {
         val output = ByteArray(width * height * 3 / 2)

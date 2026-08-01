@@ -237,7 +237,11 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 lastRejectedKey = pairKey
                 update { current ->
                     current.copy(
-                        state = DualPhoneLiveDepthState.PAIRING,
+                        state = if (current.processedPairs > 0L) {
+                            current.state
+                        } else {
+                            DualPhoneLiveDepthState.PAIRING
+                        },
                         localFrameSequence = pair.master.frameSequence,
                         remoteFrameSequence = pair.slave.frameSequence,
                         pairDeltaMs = pair.deltaNs / 1_000_000.0,
@@ -257,12 +261,16 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         removeConsumed(pair)
         update { current ->
             current.copy(
-                state = DualPhoneLiveDepthState.PROCESSING,
+                state = if (current.processedPairs > 0L) {
+                    current.state
+                } else {
+                    DualPhoneLiveDepthState.PROCESSING
+                },
                 localFrameSequence = pair.master.frameSequence,
                 remoteFrameSequence = pair.slave.frameSequence,
                 pairDeltaMs = pair.deltaNs / 1_000_000.0,
                 pairQuality = pairQuality(pair.deltaNs),
-                message = "Rectifying real pair and computing disparity",
+                message = "Processing the next synchronized depth pair",
                 lastError = null,
             )
         }
@@ -412,6 +420,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         val rectifiedSlave = Mat()
         val depthMaster = Mat()
         val depthSlave = Mat()
+        val workMaster = Mat()
+        val workSlave = Mat()
         val grayMaster = Mat()
         val graySlave = Mat()
 
@@ -542,14 +552,37 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 pair.master.imageProxyRotationDegrees - processingRotationDegrees,
             )
 
-            Imgproc.cvtColor(depthMaster, grayMaster, Imgproc.COLOR_BGR2GRAY)
-            Imgproc.cvtColor(depthSlave, graySlave, Imgproc.COLOR_BGR2GRAY)
+            val workSize = Size(
+                performanceProfile.workWidth.toDouble(),
+                performanceProfile.workHeight.toDouble(),
+            )
+            Imgproc.resize(
+                depthMaster,
+                workMaster,
+                workSize,
+                0.0,
+                0.0,
+                Imgproc.INTER_AREA,
+            )
+            Imgproc.resize(
+                depthSlave,
+                workSlave,
+                workSize,
+                0.0,
+                0.0,
+                Imgproc.INTER_AREA,
+            )
+            Imgproc.cvtColor(workMaster, grayMaster, Imgproc.COLOR_BGR2GRAY)
+            Imgproc.cvtColor(workSlave, graySlave, Imgproc.COLOR_BGR2GRAY)
 
-            val focalPx = if (vertical) {
+            val rectifiedFocalPx = if (vertical) {
                 projectionMaster.get(1, 1)?.getOrNull(0)
             } else {
                 projectionMaster.get(0, 0)?.getOrNull(0)
             } ?: error("DEPTH_BLOCKED: rectified focal length is unavailable")
+            val focalPx = rectifiedFocalPx *
+                performanceProfile.workWidth.toDouble() /
+                depthMaster.cols().coerceAtLeast(1)
             val baselineMm = profile.stereo.baselineMm
                 ?: error("DEPTH_BLOCKED: baseline is unavailable")
             val filtered = filteredDepthEngine.process(
@@ -562,8 +595,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
             )
 
             return ProcessedDepth(
-                rectifiedMasterJpeg = encodeJpeg(depthMaster),
-                rectifiedSlaveJpeg = encodeJpeg(depthSlave),
+                rectifiedMasterJpeg = encodeJpeg(workMaster),
+                rectifiedSlaveJpeg = encodeJpeg(workSlave),
                 disparityPreviewJpeg = filtered.rawDepthPreviewJpeg,
                 depthPreviewJpeg = filtered.filteredDepthPreviewJpeg,
                 rawDepthPreviewJpeg = filtered.rawDepthPreviewJpeg,
@@ -583,8 +616,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 temporalMode = filtered.temporalMode,
                 leftRightAcceptedPercent =
                     filtered.leftRightAcceptedPercent,
-                workWidth = target.width.toInt(),
-                workHeight = target.height.toInt(),
+                workWidth = workMaster.cols(),
+                workHeight = workMaster.rows(),
             )
         } finally {
             listOf(
@@ -611,6 +644,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 rectifiedSlave,
                 depthMaster,
                 depthSlave,
+                workMaster,
+                workSlave,
                 grayMaster,
                 graySlave,
             ).forEach { it.release() }
@@ -794,7 +829,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         if (processing.get()) return
         update { current ->
             current.copy(
-                state = state,
+                state = if (current.processedPairs > 0L) current.state else state,
                 message = message,
                 lastError = null,
             )

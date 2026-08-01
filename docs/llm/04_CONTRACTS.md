@@ -2831,6 +2831,28 @@ future LM03 tracking and room-geometry stages
 web/tests/dual_phone_lm02_fullscreen_depth_test.php
 ```
 
+## C34 — Android fast reduced-frame producer and profile recovery
+
+### Invariants
+
+* one accepted reduced frame causes at most one JPEG encode;
+* NV21 is reduced before JPEG compression when the CameraX source is oversized;
+* no full-size JPEG-to-Bitmap-to-JPEG scaling path is allowed;
+* OpenCV/JIT warm-up samples do not participate in adaptive-profile decisions;
+* downgrade requires sustained slow p95 windows;
+* a long stable window may promote BALANCED/THROTTLED after recovery;
+* thermal state remains an immediate profile floor but is not permanently latched;
+* final StereoSGBM buffers exactly match the active 480x270 or 320x240 profile;
+* focal length is scaled along the final horizontal disparity axis;
+* the last valid depth map remains published while the next pair is pending;
+* LIVE/HYBRID ownership and future texture-video budget remain independent.
+
+### Contract checks
+
+```text
+web/tests/dual_phone_lm02_fullscreen_depth_test.php
+```
+
 ## C32 — Android dual-phone live display orientation and cadence
 
 ### Producer

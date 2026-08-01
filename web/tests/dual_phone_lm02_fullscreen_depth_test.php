@@ -119,6 +119,26 @@ $checks = [
         str_contains($performance, 'PowerManager.THERMAL_STATUS_SEVERE') &&
         str_contains($depth, 'THERMAL_PAUSED') &&
         str_contains($depth, 'performance.profile.minProcessingIntervalMs'),
+    'LM02.4.1 reduced producer performs one JPEG encode' =>
+        str_contains($producer, 'downscaleNv21') &&
+        str_contains($producer, 'encodedNv21') &&
+        !str_contains($producer, 'BitmapFactory.decodeByteArray') &&
+        !str_contains($producer, 'Bitmap.createScaledBitmap'),
+    'LM02.4.1 controller excludes warmup and permits recovery' =>
+        str_contains($performance, 'INITIAL_WARMUP_SAMPLES') &&
+        str_contains($performance, 'DOWNGRADE_WINDOWS') &&
+        str_contains($performance, 'UPGRADE_WINDOWS') &&
+        str_contains($performance, 'adaptiveLevel -= 1') &&
+        !str_contains($performance, 'thermalFloorLatch'),
+    'LM02.4.1 uses exact processing profile geometry' =>
+        str_contains($depth, 'val workSize = Size(') &&
+        str_contains($depth, 'performanceProfile.workWidth.toDouble()') &&
+        str_contains($depth, 'Imgproc.resize(') &&
+        str_contains($depth, 'workWidth = workMaster.cols()') &&
+        str_contains($depth, 'workHeight = workMaster.rows()'),
+    'LM02.4.1 retains the last valid depth publication' =>
+        str_contains($depth, 'current.processedPairs > 0L') &&
+        str_contains($depth, 'Processing the next synchronized depth pair'),
     'temporal history is bounded and resettable' =>
         str_contains($filter, 'TEMPORAL_WINDOW_FRAMES = 5') &&
         str_contains($filter, 'MIN_TEMPORAL_VOTES = 3') &&
