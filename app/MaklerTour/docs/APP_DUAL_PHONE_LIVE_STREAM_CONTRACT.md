@@ -169,3 +169,32 @@ the calibration matrices and transported JPEG pixels are not rewritten.
 The displayed median distance and heatmap are diagnostic. LM02 must not claim a
 completed room model, room skeleton, scan coverage or final measurement. Those
 claims require LM03 and later tracking/geometry gates.
+
+## LM02.2 filtered depth and confidence contract
+
+```text
+baseline: ead23db0d49c66bc1be3aa2bd1c132b7b2f60959
+```
+
+Raw rectified stereo input is processed with `StereoSGBM`. The processor must
+apply an explicit disparity range gate, a texture gate, spatial morphology and a
+bounded temporal consensus before publishing filtered depth.
+
+Temporal state is limited to five disparity maps. A stable pixel requires at least
+three agreeing temporal samples once three or more maps are available. Stream or
+session replacement clears every temporal disparity and median-depth sample.
+
+MASTER UI exposes separate `RAW`, `FILTERED` and `CONF` views. Confidence colors
+have fixed categorical meaning:
+
+```text
+GREEN   HIGH
+ORANGE  MEDIUM
+RED     LOW
+BLACK   INVALID
+```
+
+Required diagnostics are raw valid percentage, filtered valid percentage, stable
+coverage, high-confidence coverage, median depth, depth jitter, pair delta and
+processing time. These values describe the current diagnostic depth pipeline only
+and must not be presented as final room measurements or completed scan coverage.

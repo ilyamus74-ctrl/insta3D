@@ -53,11 +53,13 @@ import com.example.maklertour.data.dualphone.DualPhoneReducedFrame
 import com.maklertour.data.dualphone.DualPhoneControlManager
 import java.util.Locale
 
-enum class DualPhoneMasterScanView {
-    MASTER,
-    SLAVE,
-    SPLIT,
-    DEPTH,
+enum class DualPhoneMasterScanView(val label: String) {
+    MASTER("MASTER"),
+    SLAVE("SLAVE"),
+    SPLIT("SPLIT"),
+    DEPTH("RAW"),
+    FILTERED("FILTERED"),
+    CONFIDENCE("CONF"),
 }
 
 /**
@@ -84,7 +86,7 @@ fun DualPhoneMasterScanDialog(
         DualPhoneLiveDepthProcessor(appContext)
     }
     val depth by depthProcessor.state.collectAsState()
-    var view by remember { mutableStateOf(DualPhoneMasterScanView.DEPTH) }
+    var view by remember { mutableStateOf(DualPhoneMasterScanView.FILTERED) }
 
     DisposableEffect(depthProcessor) {
         onDispose { depthProcessor.close() }
@@ -295,25 +297,68 @@ private fun MasterScanViewport(
                 SplitFrames(masterFrame, slaveFrame, Modifier.fillMaxSize())
             }
             DualPhoneMasterScanView.DEPTH -> {
-                EncodedViewport(
-                    bytes = depth.depthPreviewJpeg,
+                DepthViewport(
+                    bytes = depth.rawDepthPreviewJpeg,
                     emptyText = depth.state.name,
-                    modifier = Modifier.fillMaxSize(),
+                    title = "RAW SGBM",
+                    depth = depth,
                 )
-                PictureInPictureBytes(
-                    bytes = depth.rectifiedMasterJpeg,
-                    title = "RECT MASTER",
-                    modifier = Modifier.align(Alignment.TopEnd),
+            }
+            DualPhoneMasterScanView.FILTERED -> {
+                DepthViewport(
+                    bytes = depth.filteredDepthPreviewJpeg,
+                    emptyText = depth.state.name,
+                    title = "FILTERED TEMPORAL DEPTH",
+                    depth = depth,
                 )
-                PictureInPictureBytes(
-                    bytes = depth.rectifiedSlaveJpeg,
-                    title = "RECT SLAVE",
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 118.dp),
+            }
+            DualPhoneMasterScanView.CONFIDENCE -> {
+                DepthViewport(
+                    bytes = depth.confidencePreviewJpeg,
+                    emptyText = depth.state.name,
+                    title = "CONFIDENCE · GREEN HIGH · ORANGE MEDIUM · RED LOW",
+                    depth = depth,
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun DepthViewport(
+    bytes: ByteArray?,
+    emptyText: String,
+    title: String,
+    depth: DualPhoneLiveDepthSnapshot,
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        EncodedViewport(
+            bytes = bytes,
+            emptyText = emptyText,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Text(
+            title,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 12.dp)
+                .background(Color.Black.copy(alpha = 0.62f))
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+        )
+        PictureInPictureBytes(
+            bytes = depth.rectifiedMasterJpeg,
+            title = "RECT MASTER",
+            modifier = Modifier.align(Alignment.TopEnd),
+        )
+        PictureInPictureBytes(
+            bytes = depth.rectifiedSlaveJpeg,
+            title = "RECT SLAVE",
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 118.dp),
+        )
     }
 }
 
@@ -371,8 +416,15 @@ private fun MasterStatusOverlay(
                 color = Color.White,
             )
             Text(
-                "valid ${depth.validDisparityPercent.format1()}% · " +
+                "raw ${depth.rawValidDisparityPercent.format1()}% · " +
+                    "filtered ${depth.filteredValidDisparityPercent.format1()}% · " +
+                    "stable ${depth.stableCoveragePercent.format1()}%",
+                color = Color.White,
+            )
+            Text(
+                "high ${depth.highConfidencePercent.format1()}% · " +
                     "median ${DualPhoneLiveDepthProcessor.formatMeters(depth.medianDepthMeters)} · " +
+                    "jitter ${depth.depthJitterMeters.formatMeters()} · " +
                     "${depth.processingMs ?: 0L} ms",
                 color = Color.White,
             )
@@ -407,9 +459,9 @@ private fun MasterScanControls(
             ) {
                 DualPhoneMasterScanView.entries.forEach { item ->
                     if (item == selectedView) {
-                        Button(onClick = { onView(item) }) { Text(item.name) }
+                        Button(onClick = { onView(item) }) { Text(item.label) }
                     } else {
-                        OutlinedButton(onClick = { onView(item) }) { Text(item.name) }
+                        OutlinedButton(onClick = { onView(item) }) { Text(item.label) }
                     }
                 }
             }
@@ -604,4 +656,10 @@ private fun Double?.formatMs(): String = if (this == null) {
     "—"
 } else {
     String.format(Locale.US, "%.1f ms", this)
+}
+
+private fun Double?.formatMeters(): String = if (this == null) {
+    "—"
+} else {
+    String.format(Locale.US, "%.2f m", this)
 }

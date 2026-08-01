@@ -89,3 +89,40 @@ walls or a room skeleton.
 APP-DUAL-PHONE-LM03
 rig trajectory, tracking quality, floor/wall extraction and live room skeleton
 ```
+
+## LM02.2 — filtered depth and confidence map
+
+Baseline:
+
+```text
+ead23db0d49c66bc1be3aa2bd1c132b7b2f60959
+```
+
+The raw `StereoBM` preview is replaced by bounded `StereoSGBM` processing with
+spatial and temporal quality gates:
+
+```text
+raw disparity range gate
+texture-gradient gate
+3×3 morphology open/close
+five-frame bounded temporal history
+temporal median with at least three agreeing samples
+confidence categories HIGH / MEDIUM / LOW / INVALID
+```
+
+MASTER exposes three diagnostic products:
+
+```text
+RAW        unfiltered SGBM disparity heatmap
+FILTERED   temporal-median filtered depth heatmap
+CONF       confidence map: green HIGH, orange MEDIUM, red LOW, black INVALID
+```
+
+The overlay reports raw valid, spatially filtered valid, temporally stable
+coverage, high-confidence coverage, median depth and depth jitter. The existing
+`validDisparityPercent` field remains a compatibility alias for filtered valid
+coverage.
+
+All histories are bounded to five disparity maps and are reset whenever
+`stream_id`, mode or active depth session changes. LM02.2 still provides diagnostic
+depth only; it does not claim walls, trajectory, measurements or a room skeleton.

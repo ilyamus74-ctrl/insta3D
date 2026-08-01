@@ -2810,6 +2810,13 @@ future LM03 tracking and room-geometry stages
 * `stream_id` must match before pairing;
 * SLAVE elapsed timestamps are converted to the MASTER clock domain;
 * histories are bounded and old frames cannot accumulate;
+* LM02.2 uses `StereoSGBM`, not the original raw `StereoBM` preview;
+* disparity passes explicit range, texture and spatial morphology gates;
+* temporal disparity history is bounded to five maps and reset on stream replacement;
+* stable depth requires temporal agreement before publication;
+* MASTER exposes separate RAW, FILTERED and CONF confidence views;
+* confidence colors have fixed HIGH/MEDIUM/LOW/INVALID semantics;
+* raw valid, filtered valid, stable coverage and depth jitter remain diagnostic metrics;
 * accepted pair delta is at most 120 ms and `READY` requires at most 35 ms;
 * rectification uses the accepted active calibration K/D/R/T/baseline;
 * transported raw pixels are not UI-rotated before calibration math;

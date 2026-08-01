@@ -21,7 +21,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.opencv.android.OpenCVLoader
 import org.opencv.calib3d.Calib3d
-import org.opencv.calib3d.StereoBM
 import org.opencv.core.Core
 import org.opencv.core.CvType
 import org.opencv.core.Mat
@@ -57,13 +56,21 @@ data class DualPhoneLiveDepthSnapshot(
     val processedPairs: Long = 0L,
     val rejectedPairs: Long = 0L,
     val validDisparityPercent: Double = 0.0,
+    val rawValidDisparityPercent: Double = 0.0,
+    val filteredValidDisparityPercent: Double = 0.0,
+    val stableCoveragePercent: Double = 0.0,
+    val highConfidencePercent: Double = 0.0,
     val medianDepthMeters: Double? = null,
+    val depthJitterMeters: Double? = null,
     val baselineAxis: String? = null,
     val depthInputRotation: String = "none",
     val rectifiedMasterJpeg: ByteArray? = null,
     val rectifiedSlaveJpeg: ByteArray? = null,
     val disparityPreviewJpeg: ByteArray? = null,
     val depthPreviewJpeg: ByteArray? = null,
+    val rawDepthPreviewJpeg: ByteArray? = null,
+    val filteredDepthPreviewJpeg: ByteArray? = null,
+    val confidencePreviewJpeg: ByteArray? = null,
     val processingMs: Long? = null,
     val lastUpdatedElapsedMs: Long? = null,
     val message: String = "Waiting for real MASTER and SLAVE frames",
@@ -75,7 +82,7 @@ data class DualPhoneLiveDepthSnapshot(
  *
  * The processor keeps short bounded frame histories, converts SLAVE elapsed time
  * into the MASTER clock domain, rectifies a real pair with the accepted calibration
- * profile and computes a low-resolution StereoBM disparity/depth preview.
+ * profile and computes bounded StereoSGBM filtered depth/confidence previews.
  */
 class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
     private data class StereoPair(
@@ -89,8 +96,15 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         val rectifiedSlaveJpeg: ByteArray,
         val disparityPreviewJpeg: ByteArray,
         val depthPreviewJpeg: ByteArray,
-        val validPercent: Double,
+        val rawDepthPreviewJpeg: ByteArray,
+        val filteredDepthPreviewJpeg: ByteArray,
+        val confidencePreviewJpeg: ByteArray,
+        val rawValidPercent: Double,
+        val filteredValidPercent: Double,
+        val stableCoveragePercent: Double,
+        val highConfidencePercent: Double,
         val medianDepthMeters: Double?,
+        val depthJitterMeters: Double?,
         val baselineAxis: String,
         val depthInputRotation: String,
     )
@@ -104,6 +118,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
     private val masterFrames = ArrayDeque<DualPhoneReducedFrame>()
     private val slaveFrames = ArrayDeque<DualPhoneReducedFrame>()
     private val mutableState = MutableStateFlow(DualPhoneLiveDepthSnapshot())
+    private val filteredDepthEngine = DualPhoneFilteredDepthEngine()
 
     val state: StateFlow<DualPhoneLiveDepthSnapshot> = mutableState.asStateFlow()
 
@@ -197,7 +212,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 val elapsedMs = SystemClock.elapsedRealtime() - startedMs
                 val deltaMs = pair.deltaNs / 1_000_000.0
                 val outputState = when {
-                    result.validPercent < MIN_VALID_PERCENT ->
+                    result.stableCoveragePercent < MIN_STABLE_PERCENT ->
                         DualPhoneLiveDepthState.LOW_TEXTURE
                     pair.deltaNs > READY_PAIR_DELTA_NS ->
                         DualPhoneLiveDepthState.LATE_PAIR
@@ -209,23 +224,31 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                         pairDeltaMs = deltaMs,
                         pairQuality = pairQuality(pair.deltaNs),
                         processedPairs = current.processedPairs + 1L,
-                        validDisparityPercent = result.validPercent,
+                        validDisparityPercent = result.filteredValidPercent,
+                        rawValidDisparityPercent = result.rawValidPercent,
+                        filteredValidDisparityPercent = result.filteredValidPercent,
+                        stableCoveragePercent = result.stableCoveragePercent,
+                        highConfidencePercent = result.highConfidencePercent,
                         medianDepthMeters = result.medianDepthMeters,
+                        depthJitterMeters = result.depthJitterMeters,
                         baselineAxis = result.baselineAxis,
                         depthInputRotation = result.depthInputRotation,
                         rectifiedMasterJpeg = result.rectifiedMasterJpeg,
                         rectifiedSlaveJpeg = result.rectifiedSlaveJpeg,
                         disparityPreviewJpeg = result.disparityPreviewJpeg,
                         depthPreviewJpeg = result.depthPreviewJpeg,
+                        rawDepthPreviewJpeg = result.rawDepthPreviewJpeg,
+                        filteredDepthPreviewJpeg = result.filteredDepthPreviewJpeg,
+                        confidencePreviewJpeg = result.confidencePreviewJpeg,
                         processingMs = elapsedMs,
                         lastUpdatedElapsedMs = SystemClock.elapsedRealtime(),
                         message = when (outputState) {
                             DualPhoneLiveDepthState.READY ->
-                                "Real rectified pair and first depth preview are ready"
+                                "Filtered temporal depth and confidence are ready"
                             DualPhoneLiveDepthState.LATE_PAIR ->
                                 "Depth updated from a late pair; move more slowly"
                             DualPhoneLiveDepthState.LOW_TEXTURE ->
-                                "Depth updated, but the scene has too little stereo texture"
+                                "Filtered depth updated, but stable coverage is still low"
                             else -> current.message
                         },
                         lastError = null,
@@ -254,11 +277,13 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         synchronized(lock) {
             resetHistories(null)
         }
+        filteredDepthEngine.reset()
         mutableState.value = DualPhoneLiveDepthSnapshot()
     }
 
     override fun close() {
         reset()
+        filteredDepthEngine.close()
         scope.cancel()
     }
 
@@ -296,12 +321,6 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         val depthSlave = Mat()
         val grayMaster = Mat()
         val graySlave = Mat()
-        val disparity16 = Mat()
-        val disparity32 = Mat()
-        val disparity8 = Mat()
-        val validMask = Mat()
-        val invalidMask = Mat()
-        val heatmap = Mat()
 
         try {
             val target = targetSize(masterRaw, slaveRaw)
@@ -419,34 +438,6 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
 
             Imgproc.cvtColor(depthMaster, grayMaster, Imgproc.COLOR_BGR2GRAY)
             Imgproc.cvtColor(depthSlave, graySlave, Imgproc.COLOR_BGR2GRAY)
-            val disparities = chooseNumDisparities(grayMaster.cols())
-            val stereo = StereoBM.create(disparities, BLOCK_SIZE)
-            try {
-                stereo.setTextureThreshold(8)
-                stereo.setUniquenessRatio(10)
-                stereo.compute(grayMaster, graySlave, disparity16)
-            } finally {
-                stereo.clear()
-            }
-            disparity16.convertTo(disparity32, CvType.CV_32F, 1.0 / 16.0)
-            Core.compare(
-                disparity32,
-                Scalar(MIN_VALID_DISPARITY),
-                validMask,
-                Core.CMP_GT,
-            )
-            Core.normalize(
-                disparity32,
-                disparity8,
-                0.0,
-                255.0,
-                Core.NORM_MINMAX,
-                CvType.CV_8U,
-                validMask,
-            )
-            Imgproc.applyColorMap(disparity8, heatmap, Imgproc.COLORMAP_TURBO)
-            Core.bitwise_not(validMask, invalidMask)
-            heatmap.setTo(Scalar(0.0, 0.0, 0.0), invalidMask)
 
             val focalPx = if (vertical) {
                 projectionMaster.get(1, 1)?.getOrNull(0)
@@ -455,8 +446,9 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
             } ?: error("DEPTH_BLOCKED: rectified focal length is unavailable")
             val baselineMm = profile.stereo.baselineMm
                 ?: error("DEPTH_BLOCKED: baseline is unavailable")
-            val metrics = depthMetrics(
-                disparity32 = disparity32,
+            val filtered = filteredDepthEngine.process(
+                grayMaster = grayMaster,
+                graySlave = graySlave,
                 focalPx = focalPx,
                 baselineMm = baselineMm,
             )
@@ -464,10 +456,17 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
             return ProcessedDepth(
                 rectifiedMasterJpeg = encodeJpeg(depthMaster),
                 rectifiedSlaveJpeg = encodeJpeg(depthSlave),
-                disparityPreviewJpeg = encodeJpeg(disparity8),
-                depthPreviewJpeg = encodeJpeg(heatmap),
-                validPercent = metrics.first,
-                medianDepthMeters = metrics.second,
+                disparityPreviewJpeg = filtered.rawDepthPreviewJpeg,
+                depthPreviewJpeg = filtered.filteredDepthPreviewJpeg,
+                rawDepthPreviewJpeg = filtered.rawDepthPreviewJpeg,
+                filteredDepthPreviewJpeg = filtered.filteredDepthPreviewJpeg,
+                confidencePreviewJpeg = filtered.confidencePreviewJpeg,
+                rawValidPercent = filtered.rawValidPercent,
+                filteredValidPercent = filtered.filteredValidPercent,
+                stableCoveragePercent = filtered.stableCoveragePercent,
+                highConfidencePercent = filtered.highConfidencePercent,
+                medianDepthMeters = filtered.medianDepthMeters,
+                depthJitterMeters = filtered.depthJitterMeters,
                 baselineAxis = baselineAxis,
                 depthInputRotation = depthInputRotation,
             )
@@ -498,12 +497,6 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 depthSlave,
                 grayMaster,
                 graySlave,
-                disparity16,
-                disparity32,
-                disparity8,
-                validMask,
-                invalidMask,
-                heatmap,
             ).forEach { it.release() }
         }
     }
@@ -569,37 +562,6 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         )
         output.create(3, 3, CvType.CV_64F)
         output.put(0, 0, *values)
-    }
-
-    private fun depthMetrics(
-        disparity32: Mat,
-        focalPx: Double,
-        baselineMm: Double,
-    ): Pair<Double, Double?> {
-        val depths = ArrayList<Double>()
-        var sampled = 0
-        var valid = 0
-        var row = 0
-        while (row < disparity32.rows()) {
-            var column = 0
-            while (column < disparity32.cols()) {
-                sampled += 1
-                val disparity = disparity32.get(row, column)?.getOrNull(0) ?: 0.0
-                if (disparity > MIN_VALID_DISPARITY) {
-                    val meters = focalPx * baselineMm / disparity / 1_000.0
-                    if (meters in MIN_DEPTH_METERS..MAX_DEPTH_METERS) {
-                        valid += 1
-                        depths += meters
-                    }
-                }
-                column += METRIC_SAMPLE_STEP
-            }
-            row += METRIC_SAMPLE_STEP
-        }
-        depths.sort()
-        val median = if (depths.isEmpty()) null else depths[depths.size / 2]
-        val percent = if (sampled == 0) 0.0 else valid * 100.0 / sampled
-        return percent to median
     }
 
     private fun encodeJpeg(mat: Mat): ByteArray {
@@ -694,17 +656,13 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         lastRejectedKey = null
         cachedProfileId = null
         cachedProfile = null
+        filteredDepthEngine.reset()
     }
 
     private fun pairQuality(deltaNs: Long): String = when {
         deltaNs <= READY_PAIR_DELTA_NS -> "READY"
         deltaNs <= MAX_PAIR_DELTA_NS -> "LATE"
         else -> "DROPPED"
-    }
-
-    private fun chooseNumDisparities(width: Int): Int {
-        val maximum = ((width / 4) / 16 * 16).coerceAtLeast(16)
-        return minOf(DEFAULT_NUM_DISPARITIES, maximum)
     }
 
     private fun publishWaiting(state: DualPhoneLiveDepthState, message: String) {
@@ -743,13 +701,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         private const val MAX_PAIR_DELTA_NS = 120_000_000L
         private const val WORK_WIDTH = 320
         private const val WORK_HEIGHT = 240
-        private const val DEFAULT_NUM_DISPARITIES = 64
-        private const val BLOCK_SIZE = 15
-        private const val MIN_VALID_DISPARITY = 1.0
-        private const val MIN_VALID_PERCENT = 2.0
-        private const val MIN_DEPTH_METERS = 0.20
-        private const val MAX_DEPTH_METERS = 20.0
-        private const val METRIC_SAMPLE_STEP = 4
+        private const val MIN_STABLE_PERCENT = 2.0
         private const val OUTPUT_JPEG_QUALITY = 78
 
         private val openCvReady: Boolean by lazy {
