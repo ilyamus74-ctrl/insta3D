@@ -576,7 +576,9 @@ class DualPhoneReducedFrameTransport : Closeable {
         output: DataOutputStream,
         hello: DualPhoneLiveStreamDataChannelHello,
     ) {
-        val bytes = hello.encode().toByteArray(StandardCharsets.UTF_8)
+        val bytes = helloToJson(hello)
+            .toString()
+            .toByteArray(StandardCharsets.UTF_8)
         require(bytes.size <= MAX_HELLO_BYTES)
         output.writeInt(bytes.size)
         output.write(bytes)
@@ -588,10 +590,42 @@ class DualPhoneReducedFrameTransport : Closeable {
         require(size in 2..MAX_HELLO_BYTES) { "Invalid media hello size" }
         val bytes = ByteArray(size)
         input.readFully(bytes)
-        return DualPhoneLiveStreamDataChannelHello.decode(
-            String(bytes, StandardCharsets.UTF_8),
+        return helloFromJson(
+            JSONObject(String(bytes, StandardCharsets.UTF_8)),
         )
     }
+
+    private fun helloToJson(
+        hello: DualPhoneLiveStreamDataChannelHello,
+    ): JSONObject = JSONObject()
+        .put("session_uuid", hello.sessionUuid)
+        .put("dual_capture_id", hello.dualCaptureId)
+        .put("stream_id", hello.streamId)
+        .put("local_device_id", hello.localDeviceId)
+        .put("expected_peer_device_id", hello.expectedPeerDeviceId)
+        .put("role", hello.role.name)
+        .put("calibration_identity", hello.calibrationIdentity)
+        .put("rig_mount_revision", hello.rigMountRevision)
+        .put("capture_mode", hello.captureMode.name)
+        .put("recording_mode_identity", hello.recordingModeIdentity)
+
+    private fun helloFromJson(
+        json: JSONObject,
+    ): DualPhoneLiveStreamDataChannelHello =
+        DualPhoneLiveStreamDataChannelHello(
+            sessionUuid = json.getString("session_uuid"),
+            dualCaptureId = json.getString("dual_capture_id"),
+            streamId = json.getString("stream_id"),
+            localDeviceId = json.getString("local_device_id"),
+            expectedPeerDeviceId = json.getString("expected_peer_device_id"),
+            role = DualPhoneRole.valueOf(json.getString("role")),
+            calibrationIdentity = json.getString("calibration_identity"),
+            rigMountRevision = json.getString("rig_mount_revision"),
+            captureMode = DualPhoneLiveStreamMode.valueOf(
+                json.getString("capture_mode"),
+            ),
+            recordingModeIdentity = json.getString("recording_mode_identity"),
+        )
 
     private fun configureSocket(socket: Socket) {
         socket.tcpNoDelay = true
