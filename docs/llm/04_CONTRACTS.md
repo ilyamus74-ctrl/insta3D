@@ -2830,3 +2830,39 @@ future LM03 tracking and room-geometry stages
 ```text
 web/tests/dual_phone_lm02_fullscreen_depth_test.php
 ```
+
+## C32 — Android dual-phone live display orientation and cadence
+
+### Producer
+
+```text
+DualPhoneReducedFrameProducer
+DualPhoneLiveDepthProcessor
+```
+
+### Consumer
+
+```text
+DualPhoneFullScreenScanWorkspace
+future LM03 tracking/geometry stage
+```
+
+### Invariants
+
+* reduced-frame producer target is 10 FPS with CameraX keep-only-latest;
+* depth starts at most once per 250 ms and does not consume every media frame;
+* pair and temporal histories remain bounded;
+* `processing_rotation_degrees` describes only the disparity processing buffer;
+* `display_rotation_degrees` is derived from MASTER frame display metadata;
+* RECT, RAW, FILTERED and CONF use display rotation only in Compose drawing;
+* raw JPEG pixels and accepted K/D/R/T remain unchanged;
+* READY remains at most 35 ms and accepted pairs remain at most 120 ms;
+* UI reports actual media/depth FPS, pair-quality ratio and utilization;
+* higher cadence must not introduce an unbounded queue or weaken drop accounting.
+
+### Contract checks
+
+```text
+web/tests/dual_phone_lm01b_reduced_frame_stream_test.php
+web/tests/dual_phone_lm02_fullscreen_depth_test.php
+```

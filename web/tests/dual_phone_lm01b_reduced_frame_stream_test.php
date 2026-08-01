@@ -39,7 +39,7 @@ $requiredTransport = [
 
 $requiredProducer = [
     'ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST',
-    'private const val TARGET_FPS = 5L',
+    'private const val TARGET_FPS = 10L',
     'private const val JPEG_QUALITY = 65',
     'rotationAppliedDegrees = 0',
     'STREAM_UNAVAILABLE',

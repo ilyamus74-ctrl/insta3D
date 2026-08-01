@@ -54,6 +54,8 @@ data class DualPhoneLiveDepthSnapshot(
     val pairDeltaMs: Double? = null,
     val pairQuality: String = "WAITING",
     val processedPairs: Long = 0L,
+    val readyPairs: Long = 0L,
+    val latePairs: Long = 0L,
     val rejectedPairs: Long = 0L,
     val validDisparityPercent: Double = 0.0,
     val rawValidDisparityPercent: Double = 0.0,
@@ -71,11 +73,30 @@ data class DualPhoneLiveDepthSnapshot(
     val rawDepthPreviewJpeg: ByteArray? = null,
     val filteredDepthPreviewJpeg: ByteArray? = null,
     val confidencePreviewJpeg: ByteArray? = null,
+    val firstProcessedElapsedMs: Long? = null,
     val processingMs: Long? = null,
+    val processingUtilizationPercent: Double = 0.0,
+    val processingRotationDegrees: Int = 0,
+    val displayRotationDegrees: Int = 0,
     val lastUpdatedElapsedMs: Long? = null,
     val message: String = "Waiting for real MASTER and SLAVE frames",
     val lastError: String? = null,
-)
+) {
+    val depthFps: Double
+        get() {
+            if (processedPairs < 2L) return 0.0
+            val first = firstProcessedElapsedMs ?: return 0.0
+            val last = lastUpdatedElapsedMs ?: return 0.0
+            val seconds = (last - first).coerceAtLeast(1L) / 1_000.0
+            return (processedPairs - 1L).toDouble() / seconds
+        }
+
+    val readyPairPercent: Double
+        get() {
+            val accepted = readyPairs + latePairs
+            return if (accepted == 0L) 0.0 else readyPairs * 100.0 / accepted
+        }
+}
 
 /**
  * LM02 live stereo pairer and first diagnostic depth processor.
@@ -107,6 +128,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         val depthJitterMeters: Double?,
         val baselineAxis: String,
         val depthInputRotation: String,
+        val processingRotationDegrees: Int,
+        val displayRotationDegrees: Int,
     )
 
     private val appContext = context.applicationContext
@@ -209,8 +232,10 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
             runCatching {
                 process(pair)
             }.onSuccess { result ->
-                val elapsedMs = SystemClock.elapsedRealtime() - startedMs
+                val finishedAtMs = SystemClock.elapsedRealtime()
+                val elapsedMs = finishedAtMs - startedMs
                 val deltaMs = pair.deltaNs / 1_000_000.0
+                val readyPair = pair.deltaNs <= READY_PAIR_DELTA_NS
                 val outputState = when {
                     result.stableCoveragePercent < MIN_STABLE_PERCENT ->
                         DualPhoneLiveDepthState.LOW_TEXTURE
@@ -224,6 +249,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                         pairDeltaMs = deltaMs,
                         pairQuality = pairQuality(pair.deltaNs),
                         processedPairs = current.processedPairs + 1L,
+                        readyPairs = current.readyPairs + if (readyPair) 1L else 0L,
+                        latePairs = current.latePairs + if (readyPair) 0L else 1L,
                         validDisparityPercent = result.filteredValidPercent,
                         rawValidDisparityPercent = result.rawValidPercent,
                         filteredValidDisparityPercent = result.filteredValidPercent,
@@ -240,8 +267,15 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                         rawDepthPreviewJpeg = result.rawDepthPreviewJpeg,
                         filteredDepthPreviewJpeg = result.filteredDepthPreviewJpeg,
                         confidencePreviewJpeg = result.confidencePreviewJpeg,
+                        firstProcessedElapsedMs =
+                            current.firstProcessedElapsedMs ?: finishedAtMs,
                         processingMs = elapsedMs,
-                        lastUpdatedElapsedMs = SystemClock.elapsedRealtime(),
+                        processingUtilizationPercent =
+                            elapsedMs * 100.0 / MIN_PROCESSING_INTERVAL_MS,
+                        processingRotationDegrees =
+                            result.processingRotationDegrees,
+                        displayRotationDegrees = result.displayRotationDegrees,
+                        lastUpdatedElapsedMs = finishedAtMs,
                         message = when (outputState) {
                             DualPhoneLiveDepthState.READY ->
                                 "Filtered temporal depth and confidence are ready"
@@ -435,6 +469,14 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 Core.ROTATE_90_CLOCKWISE -> "rotate_90_cw"
                 else -> "none"
             }
+            val processingRotationDegrees = when (rotation) {
+                Core.ROTATE_90_COUNTERCLOCKWISE -> -90
+                Core.ROTATE_90_CLOCKWISE -> 90
+                else -> 0
+            }
+            val displayRotationDegrees = normalizeRotationDegrees(
+                pair.master.imageProxyRotationDegrees - processingRotationDegrees,
+            )
 
             Imgproc.cvtColor(depthMaster, grayMaster, Imgproc.COLOR_BGR2GRAY)
             Imgproc.cvtColor(depthSlave, graySlave, Imgproc.COLOR_BGR2GRAY)
@@ -469,6 +511,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 depthJitterMeters = filtered.depthJitterMeters,
                 baselineAxis = baselineAxis,
                 depthInputRotation = depthInputRotation,
+                processingRotationDegrees = processingRotationDegrees,
+                displayRotationDegrees = displayRotationDegrees,
             )
         } finally {
             listOf(
@@ -665,6 +709,9 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         else -> "DROPPED"
     }
 
+    private fun normalizeRotationDegrees(value: Int): Int =
+        ((value % 360) + 360) % 360
+
     private fun publishWaiting(state: DualPhoneLiveDepthState, message: String) {
         if (processing.get()) return
         update { current ->
@@ -696,7 +743,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
 
     companion object {
         private const val MAX_HISTORY_FRAMES = 8
-        private const val MIN_PROCESSING_INTERVAL_MS = 450L
+        private const val MIN_PROCESSING_INTERVAL_MS = 250L
         private const val READY_PAIR_DELTA_NS = 35_000_000L
         private const val MAX_PAIR_DELTA_NS = 120_000_000L
         private const val WORK_WIDTH = 320

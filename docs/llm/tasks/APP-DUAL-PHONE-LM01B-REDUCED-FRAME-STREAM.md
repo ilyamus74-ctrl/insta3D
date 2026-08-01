@@ -40,7 +40,7 @@ the TCP/45831 heartbeat.
 
 ```text
 maximum dimensions       640x360
-producer target rate     5 FPS
+producer target rate     10 FPS
 encoding                 JPEG
 JPEG quality             65
 maximum JPEG payload     256 KiB

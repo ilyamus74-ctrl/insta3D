@@ -336,6 +336,7 @@ private fun DepthViewport(
             bytes = bytes,
             emptyText = emptyText,
             modifier = Modifier.fillMaxSize(),
+            rotationDegrees = depth.displayRotationDegrees,
         )
         Text(
             title,
@@ -350,11 +351,13 @@ private fun DepthViewport(
         PictureInPictureBytes(
             bytes = depth.rectifiedMasterJpeg,
             title = "RECT MASTER",
+            rotationDegrees = depth.displayRotationDegrees,
             modifier = Modifier.align(Alignment.TopEnd),
         )
         PictureInPictureBytes(
             bytes = depth.rectifiedSlaveJpeg,
             title = "RECT SLAVE",
+            rotationDegrees = depth.displayRotationDegrees,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(top = 118.dp),
@@ -390,6 +393,11 @@ private fun MasterStatusOverlay(
     clockReady: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val remoteFrame = snapshot.mediaTransport.latestFrame
+    val remoteReplaced = remoteFrame?.senderFramesReplacedBeforeSend ?: 0L
+    val oversizeDrops = snapshot.localFrameProducer.framesDroppedOversize +
+        (remoteFrame?.senderFramesDroppedOversize ?: 0L)
+
     Surface(
         modifier = modifier,
         color = Color.Black.copy(alpha = 0.68f),
@@ -416,6 +424,18 @@ private fun MasterStatusOverlay(
                 color = Color.White,
             )
             Text(
+                "media M ${snapshot.localFrameProducer.effectiveFps.format1()} / " +
+                    "S ${snapshot.remoteMediaFps().format1()} FPS · " +
+                    "depth ${depth.depthFps.format1()} FPS",
+                color = Color.White,
+            )
+            Text(
+                "pairs READY ${depth.readyPairPercent.format1()}% " +
+                    "(${depth.readyPairs}) · LATE ${depth.latePairs} · " +
+                    "DROP ${depth.rejectedPairs}",
+                color = Color.White,
+            )
+            Text(
                 "raw ${depth.rawValidDisparityPercent.format1()}% · " +
                     "filtered ${depth.filteredValidDisparityPercent.format1()}% · " +
                     "stable ${depth.stableCoveragePercent.format1()}%",
@@ -426,6 +446,13 @@ private fun MasterStatusOverlay(
                     "median ${DualPhoneLiveDepthProcessor.formatMeters(depth.medianDepthMeters)} · " +
                     "jitter ${depth.depthJitterMeters.formatMeters()} · " +
                     "${depth.processingMs ?: 0L} ms",
+                color = Color.White,
+            )
+            Text(
+                "util ${depth.processingUtilizationPercent.format1()}% · " +
+                    "replaced $remoteReplaced · oversize $oversizeDrops · " +
+                    "display ${depth.displayRotationDegrees}° / " +
+                    "processing ${depth.processingRotationDegrees}°",
                 color = Color.White,
             )
             depth.lastError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -516,6 +543,7 @@ private fun PictureInPictureFrame(
 private fun PictureInPictureBytes(
     bytes: ByteArray?,
     title: String,
+    rotationDegrees: Int,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -525,7 +553,12 @@ private fun PictureInPictureBytes(
         tonalElevation = 6.dp,
     ) {
         Box {
-            EncodedViewport(bytes, title, Modifier.fillMaxSize())
+            EncodedViewport(
+                bytes = bytes,
+                emptyText = title,
+                modifier = Modifier.fillMaxSize(),
+                rotationDegrees = rotationDegrees,
+            )
             Text(
                 title,
                 modifier = Modifier
@@ -565,6 +598,7 @@ private fun EncodedViewport(
     bytes: ByteArray?,
     emptyText: String,
     modifier: Modifier = Modifier,
+    rotationDegrees: Int = 0,
 ) {
     val bitmap = remember(bytes) { bytes?.decodeBitmap() }
     DisposableEffect(bitmap) {
@@ -574,7 +608,7 @@ private fun EncodedViewport(
     }
     BitmapViewport(
         bitmap = bitmap,
-        rotationDegrees = 0,
+        rotationDegrees = rotationDegrees,
         emptyText = emptyText,
         modifier = modifier,
     )
@@ -649,6 +683,15 @@ private fun drawCenterCropBitmap(
 
 private fun ByteArray.decodeBitmap(): Bitmap? =
     BitmapFactory.decodeByteArray(this, 0, size)
+
+private fun DualPhoneApplicationRuntimeSnapshot.remoteMediaFps(): Double {
+    val media = mediaTransport
+    if (media.framesReceived < 2L) return 0.0
+    val first = media.firstFrameReceivedElapsedMs ?: return 0.0
+    val last = media.lastFrameReceivedElapsedMs ?: return 0.0
+    val seconds = (last - first).coerceAtLeast(1L) / 1_000.0
+    return (media.framesReceived - 1L).toDouble() / seconds
+}
 
 private fun Double.format1(): String = String.format(Locale.US, "%.1f", this)
 

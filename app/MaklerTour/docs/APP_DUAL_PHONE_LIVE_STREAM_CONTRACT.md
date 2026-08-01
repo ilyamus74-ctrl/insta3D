@@ -60,7 +60,7 @@ Required bounds:
 ```text
 width <= 640
 height <= 360
-target producer rate = 5 FPS
+target producer rate = 10 FPS
 encoding = JPEG
 JPEG quality = 65
 payload_size <= 256 KiB
@@ -198,3 +198,36 @@ Required diagnostics are raw valid percentage, filtered valid percentage, stable
 coverage, high-confidence coverage, median depth, depth jitter, pair delta and
 processing time. These values describe the current diagnostic depth pipeline only
 and must not be presented as final room measurements or completed scan coverage.
+
+## LM02.3 display orientation and faster live-depth contract
+
+```text
+baseline: c203f5b519de503b96e9b9f1b4009cab7066e8f3
+media target: 10 FPS
+depth target: 4 FPS
+```
+
+The raw JPEG envelope, camera calibration coordinates and rectification matrices
+remain unchanged. `depth_input_rotation` is a processing-only transform used to
+make a vertical rectified baseline horizontal for StereoSGBM. The UI must derive
+a separate display transform:
+
+```text
+display_rotation = normalize(
+    MASTER image_proxy_rotation_degrees - processing_rotation_degrees
+)
+```
+
+RECT MASTER, RECT SLAVE, RAW, FILTERED and CONF previews use that display rotation.
+No preview correction may rewrite transported pixels, K/D/R/T, disparity input or
+temporal depth history.
+
+The producer throttle is 10 FPS while the depth processor is independently bounded
+to one start every 250 ms. Latest-only transport, finite frame histories and the
+five-map temporal filter remain mandatory. Increasing cadence must not create an
+unbounded encoder, socket, bitmap or disparity queue.
+
+MASTER diagnostics expose actual MASTER/SLAVE media FPS, actual depth FPS, READY
+pair percentage, READY/LATE/DROPPED counters, processing utilization and sender
+replacement/oversize counters. The `READY <= 35 ms` and `DROP > 120 ms` gates are
+not relaxed.

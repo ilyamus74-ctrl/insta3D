@@ -126,3 +126,29 @@ coverage.
 All histories are bounded to five disparity maps and are reset whenever
 `stream_id`, mode or active depth session changes. LM02.2 still provides diagnostic
 depth only; it does not claim walls, trajectory, measurements or a room skeleton.
+
+## LM02.3 — display orientation and faster cadence
+
+Runtime acceptance of LM02.2 exposed two independent issues: mathematical
+processing orientation was shown directly in Compose, and the 5 FPS media cadence
+allowed otherwise valid closest pairs to remain `LATE` around 50–100 ms.
+
+LM02.3 keeps raw/calibration math unchanged and publishes explicit processing and
+display rotations. The display transform is derived from MASTER
+`image_proxy_rotation_degrees` minus the rotation applied only to the rectified
+disparity input. RECT, RAW, FILTERED and CONF views consume the display transform;
+StereoSGBM and temporal filtering continue consuming the existing processing
+buffer.
+
+```text
+media producer target     10 FPS
+depth start interval      250 ms
+nominal depth target      4 FPS
+READY pair gate           <= 35 ms
+maximum accepted pair     <= 120 ms
+```
+
+MASTER additionally reports actual media/depth cadence, pair-quality ratio,
+processing utilization and bounded sender drop/replacement counters. The higher
+rate does not change latest-only transport, finite pair histories or the five-map
+temporal window.

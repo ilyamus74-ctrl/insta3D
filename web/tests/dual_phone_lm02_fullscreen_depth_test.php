@@ -37,8 +37,8 @@ $checks = [
     'workspace disables platform default width' =>
         str_contains($workspace, 'usePlatformDefaultWidth = false'),
     'MASTER overlay exposes all views' =>
-        str_contains($workspace, 'MASTER,') &&
-        str_contains($workspace, 'SLAVE,') &&
+        str_contains($workspace, 'MASTER("MASTER")') &&
+        str_contains($workspace, 'SLAVE("SLAVE")') &&
         str_contains($workspace, 'SPLIT("SPLIT")') &&
         str_contains($workspace, 'DEPTH("RAW")') &&
         str_contains($workspace, 'FILTERED("FILTERED")') &&
@@ -72,6 +72,24 @@ $checks = [
     'pair gates are explicit' =>
         str_contains($depth, 'READY_PAIR_DELTA_NS = 35_000_000L') &&
         str_contains($depth, 'MAX_PAIR_DELTA_NS = 120_000_000L'),
+    'LM02.3 increases bounded media and depth cadence' =>
+        str_contains($producer, 'TARGET_FPS = 10L') &&
+        str_contains($depth, 'MIN_PROCESSING_INTERVAL_MS = 250L'),
+    'processing orientation is display-only metadata' =>
+        str_contains(
+            $depth,
+            'pair.master.imageProxyRotationDegrees - processingRotationDegrees',
+        ) &&
+        str_contains($depth, 'displayRotationDegrees = displayRotationDegrees') &&
+        str_contains(
+            $workspace,
+            'rotationDegrees = depth.displayRotationDegrees',
+        ),
+    'MASTER exposes live throughput and pair diagnostics' =>
+        str_contains($workspace, 'snapshot.remoteMediaFps()') &&
+        str_contains($workspace, 'depth.depthFps') &&
+        str_contains($workspace, 'depth.readyPairPercent') &&
+        str_contains($workspace, 'processingUtilizationPercent'),
     'real calibration rectification is used' =>
         str_contains($depth, 'Calib3d.stereoRectify') &&
         str_contains($depth, 'Calib3d.initUndistortRectifyMap'),
