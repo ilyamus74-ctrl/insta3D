@@ -210,6 +210,9 @@ fun DualPhoneLiveStreamSessionCard(
             runtimeSnapshot.lastError?.let {
                 Text("Runtime error: $it")
             }
+            if (requestedMode.streamEnabled) {
+                DualPhoneLiveDualPreview(snapshot = runtimeSnapshot)
+            }
 
             if (
                 status.block ==

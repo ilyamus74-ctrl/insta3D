@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -24,8 +26,8 @@ import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntimeSnapshot
 /**
  * Locked application surface shown while MASTER owns the SLAVE work mode.
  *
- * LM01A-4 intentionally renders a structural guide and transport diagnostics only.
- * CameraX preview/reduced-frame overlays are attached by the following LM01A slice.
+ * LM01B adds the bounded local reduced preview and media-channel diagnostics.
+ * Metric depth, room geometry and scan coverage remain outside this slice.
  */
 @Composable
 fun DualPhoneSlaveWorkScreen(
@@ -41,8 +43,9 @@ fun DualPhoneSlaveWorkScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -59,6 +62,10 @@ fun DualPhoneSlaveWorkScreen(
                         "SLAVE остаётся ведомым во всех рабочих разделах. " +
                             "Только раздел «Настройки» возвращает локальное управление.",
                     )
+                }
+
+                if (snapshot.requestedMode.streamEnabled) {
+                    DualPhoneSlaveLocalPreview(snapshot = snapshot)
                 }
 
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -78,6 +85,10 @@ fun DualPhoneSlaveWorkScreen(
                         Text(
                             "Data channel: ${snapshot.dataChannel.state.name} · " +
                                 "TCP/${snapshot.dataChannel.port}",
+                        )
+                        Text(
+                            "Media channel: ${snapshot.mediaTransport.state.name} · " +
+                                "TCP/${snapshot.mediaTransport.port}",
                         )
                         Text(
                             "Peer: ${snapshot.peerDeviceId ?: "не определён"}",

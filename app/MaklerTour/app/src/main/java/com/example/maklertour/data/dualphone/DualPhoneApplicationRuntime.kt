@@ -56,6 +56,10 @@ data class DualPhoneApplicationRuntimeSnapshot(
         ),
     val dataChannel: DualPhoneLiveStreamDataChannelSnapshot =
         DualPhoneLiveStreamDataChannelSnapshot(),
+    val mediaTransport: DualPhoneReducedFrameTransportSnapshot =
+        DualPhoneReducedFrameTransportSnapshot(),
+    val localFrameProducer: DualPhoneReducedFrameProducerSnapshot =
+        DualPhoneReducedFrameProducerSnapshot(),
     val controlConnected: Boolean = false,
     val controlPhase: DualPhoneControlPhase = DualPhoneControlPhase.STOPPED,
     val peerDeviceId: String? = null,
@@ -68,13 +72,15 @@ data class DualPhoneApplicationRuntimeSnapshot(
  *
  * The controller intentionally outlives Compose destinations. MASTER is the only
  * device allowed to request a work mode. SLAVE accepts that mode through the
- * existing control channel, starts the TCP/45831 listener, and exposes a locked
- * work-screen state until MASTER exits work mode or the control link is lost.
+ * existing control channel, starts the TCP/45831 session channel and the bounded
+ * TCP/45832 reduced-frame channel, and exposes a locked work-screen state until
+ * MASTER exits work mode or the control link is lost.
  */
 class DualPhoneApplicationRuntime private constructor(context: Context) : Closeable {
     private data class PendingMasterStart(
         val commandId: String,
         val config: DualPhoneLiveStreamDataChannelConfig?,
+        val mediaConfig: DualPhoneReducedFrameTransportConfig?,
     )
 
     private val appContext = context.applicationContext
@@ -84,6 +90,8 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
     private val controlManager = DualPhoneControlManager.get(appContext)
     private val coordinator = DualPhoneLiveStreamSessionCoordinator()
     private val dataChannel = DualPhoneLiveStreamDataChannelController()
+    private val mediaTransport = DualPhoneReducedFrameTransport()
+    private val frameProducer = DualPhoneReducedFrameProducer(appContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutableState = MutableStateFlow(
         DualPhoneApplicationRuntimeSnapshot(
@@ -97,6 +105,10 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
 
     @Volatile
     private var pendingMasterStart: PendingMasterStart? = null
+    @Volatile
+    private var activeMediaConfig: DualPhoneReducedFrameTransportConfig? = null
+    @Volatile
+    private var activeProducerStreamId: String? = null
 
     init {
         scope.launch {
@@ -104,6 +116,12 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         }
         scope.launch {
             dataChannel.state.collect { handleDataChannelSnapshot(it) }
+        }
+        scope.launch {
+            mediaTransport.state.collect { handleMediaTransportSnapshot(it) }
+        }
+        scope.launch {
+            frameProducer.state.collect { handleFrameProducerSnapshot(it) }
         }
     }
 
@@ -134,7 +152,9 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         pendingMasterStart = PendingMasterStart(
             commandId = commandId,
             config = null,
+            mediaConfig = null,
         )
+        stopReducedFramePipeline()
         dataChannel.stop()
         coordinator.release()
         mutableState.value = current.copy(
@@ -146,6 +166,8 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             sessionUuid = null,
             sessionStatus = coordinator.currentStatus(),
             dataChannel = dataChannel.snapshot,
+            mediaTransport = mediaTransport.snapshot,
+            localFrameProducer = frameProducer.snapshot,
             lastMessage = "Waiting for SLAVE managed application screen",
             lastError = null,
         )
@@ -203,8 +225,21 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             null
         }
 
+        val mediaConfig = config?.let {
+            DualPhoneReducedFrameTransportConfig(
+                owner = it.owner,
+                localDeviceId = it.localDeviceId,
+                role = it.role,
+                peerHost = it.peerHost,
+            )
+        }
         val commandId = "work-${UUID.randomUUID()}"
-        pendingMasterStart = PendingMasterStart(commandId, config)
+        pendingMasterStart = PendingMasterStart(
+            commandId = commandId,
+            config = config,
+            mediaConfig = mediaConfig,
+        )
+        stopReducedFramePipeline()
         dataChannel.stop()
         mutableState.value = mutableState.value.copy(
             applicationMode = DualPhoneApplicationMode.fromStreamMode(mode),
@@ -215,6 +250,8 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             sessionUuid = sessionUuid,
             sessionStatus = status,
             dataChannel = dataChannel.snapshot,
+            mediaTransport = mediaTransport.snapshot,
+            localFrameProducer = frameProducer.snapshot,
             lastMessage = if (config != null) {
                 "Waiting for SLAVE TCP/45831 listener"
             } else {
@@ -342,6 +379,7 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         }
 
         pendingMasterStart = null
+        stopReducedFramePipeline()
         dataChannel.stop()
         mutableState.value = mutableState.value.copy(
             applicationMode = applicationMode,
@@ -351,6 +389,8 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             peerAcknowledged = true,
             sessionUuid = sessionUuid,
             dataChannel = dataChannel.snapshot,
+            mediaTransport = mediaTransport.snapshot,
+            localFrameProducer = frameProducer.snapshot,
             lastMessage = "SLAVE is working under MASTER control",
             lastError = null,
         )
@@ -450,6 +490,8 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             mutableState.value = mutableState.value.copy(
                 sessionStatus = status,
                 dataChannel = dataChannel.snapshot,
+                mediaTransport = mediaTransport.snapshot,
+                localFrameProducer = frameProducer.snapshot,
                 lastMessage = "MASTER controls SLAVE; listener start failed",
                 lastError = reason,
             )
@@ -461,6 +503,14 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             )
         }
 
+        val mediaConfig = DualPhoneReducedFrameTransportConfig(
+            owner = sessionOwner,
+            localDeviceId = settings.deviceId,
+            role = DualPhoneRole.SLAVE,
+        )
+        activeMediaConfig = mediaConfig
+        mediaTransport.start(mediaConfig)
+
         mutableState.value = mutableState.value.copy(
             applicationMode = applicationMode,
             requestedMode = acceptedMode,
@@ -470,6 +520,8 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             sessionUuid = acceptedSessionUuid,
             sessionStatus = status,
             dataChannel = dataChannel.snapshot,
+            mediaTransport = mediaTransport.snapshot,
+            localFrameProducer = frameProducer.snapshot,
             lastMessage = "SLAVE work mode is controlled by MASTER",
             lastError = null,
         )
@@ -497,10 +549,13 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
 
         pendingMasterStart = null
         if (!accepted) {
+            stopReducedFramePipeline()
             dataChannel.stop()
             mutableState.value = mutableState.value.copy(
                 peerAcknowledged = false,
                 dataChannel = dataChannel.snapshot,
+                mediaTransport = mediaTransport.snapshot,
+                localFrameProducer = frameProducer.snapshot,
                 lastMessage = "SLAVE did not enter managed work mode",
                 lastError = reason ?: "SLAVE_REJECTED_WORK_MODE",
             )
@@ -509,10 +564,13 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
 
         val config = pending.config
         if (!transportAccepted || config == null) {
+            stopReducedFramePipeline()
             dataChannel.stop()
             mutableState.value = mutableState.value.copy(
                 peerAcknowledged = true,
                 dataChannel = dataChannel.snapshot,
+                mediaTransport = mediaTransport.snapshot,
+                localFrameProducer = frameProducer.snapshot,
                 lastMessage = if (config == null && reason == null) {
                     "SLAVE entered the managed application screen"
                 } else {
@@ -524,10 +582,16 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         }
 
         dataChannel.start(config)
+        pending.mediaConfig?.let { mediaConfig ->
+            activeMediaConfig = mediaConfig
+            mediaTransport.start(mediaConfig)
+        }
         mutableState.value = mutableState.value.copy(
             peerAcknowledged = true,
             dataChannel = dataChannel.snapshot,
-            lastMessage = "SLAVE listener acknowledged; MASTER is connecting",
+            mediaTransport = mediaTransport.snapshot,
+            localFrameProducer = frameProducer.snapshot,
+            lastMessage = "SLAVE listeners acknowledged; MASTER is connecting",
             lastError = null,
         )
     }
@@ -628,6 +692,80 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         )
     }
 
+    @Synchronized
+    private fun handleMediaTransportSnapshot(
+        snapshot: DualPhoneReducedFrameTransportSnapshot,
+    ) {
+        val current = mutableState.value
+        val pipelineError = if (current.requestedMode.streamEnabled) {
+            snapshot.lastError
+                ?: frameProducer.snapshot.lastError
+                ?: dataChannel.snapshot.lastError
+        } else {
+            current.lastError
+        }
+        mutableState.value = current.copy(
+            mediaTransport = snapshot,
+            lastError = pipelineError,
+        )
+        reconcileFrameProducer(snapshot)
+    }
+
+    @Synchronized
+    private fun handleFrameProducerSnapshot(
+        snapshot: DualPhoneReducedFrameProducerSnapshot,
+    ) {
+        val current = mutableState.value
+        val pipelineError = if (current.requestedMode.streamEnabled) {
+            snapshot.lastError
+                ?: mediaTransport.snapshot.lastError
+                ?: dataChannel.snapshot.lastError
+        } else {
+            current.lastError
+        }
+        mutableState.value = current.copy(
+            localFrameProducer = snapshot,
+            lastError = pipelineError,
+        )
+    }
+
+    @Synchronized
+    private fun reconcileFrameProducer(
+        mediaSnapshot: DualPhoneReducedFrameTransportSnapshot,
+    ) {
+        val config = activeMediaConfig
+        val shouldRun =
+            config != null &&
+                mutableState.value.requestedMode.streamEnabled &&
+                mediaSnapshot.state == DualPhoneReducedFrameTransportState.READY
+        if (!shouldRun) {
+            if (activeProducerStreamId != null) {
+                activeProducerStreamId = null
+                frameProducer.stop()
+            }
+            return
+        }
+        val activeConfig = requireNotNull(config)
+        if (activeProducerStreamId == activeConfig.owner.streamId) return
+        activeProducerStreamId = activeConfig.owner.streamId
+        frameProducer.start(
+            owner = activeConfig.owner,
+            role = activeConfig.role,
+        ) { frame ->
+            if (activeConfig.role == DualPhoneRole.SLAVE) {
+                mediaTransport.offerFrame(frame)
+            }
+        }
+    }
+
+    @Synchronized
+    private fun stopReducedFramePipeline() {
+        activeProducerStreamId = null
+        activeMediaConfig = null
+        frameProducer.stop()
+        mediaTransport.stop()
+    }
+
     private fun reconcile(
         sessionUuid: String?,
         mode: DualPhoneLiveStreamMode,
@@ -653,6 +791,7 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         error: String?,
     ) {
         pendingMasterStart = null
+        stopReducedFramePipeline()
         dataChannel.stop()
         coordinator.release()
         mutableState.value = mutableState.value.copy(
@@ -663,6 +802,8 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             sessionUuid = null,
             sessionStatus = coordinator.currentStatus(),
             dataChannel = dataChannel.snapshot,
+            mediaTransport = mediaTransport.snapshot,
+            localFrameProducer = frameProducer.snapshot,
             lastMessage = message,
             lastError = error,
         )
@@ -688,8 +829,13 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         .put("application_mode", mutableState.value.applicationMode.name)
         .put("data_channel_state", dataChannel.snapshot.state.name)
         .put("data_channel_port", dataChannel.snapshot.port)
+        .put("media_channel_state", mediaTransport.snapshot.state.name)
+        .put("media_channel_port", mediaTransport.snapshot.port)
 
     override fun close() {
+        stopReducedFramePipeline()
+        mediaTransport.close()
+        frameProducer.close()
         dataChannel.close()
         coordinator.release()
         scope.cancel()
