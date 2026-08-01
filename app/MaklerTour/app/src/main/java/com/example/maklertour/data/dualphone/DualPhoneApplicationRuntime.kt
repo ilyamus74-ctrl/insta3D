@@ -22,7 +22,7 @@ import org.json.JSONObject
 
 enum class DualPhoneApplicationMode {
     SETTINGS,
-    WORK_CAMERA,
+    WORK_APP,
     WORK_LIVE,
     WORK_HYBRID;
 
@@ -34,7 +34,7 @@ enum class DualPhoneApplicationMode {
             when (mode) {
                 DualPhoneLiveStreamMode.LIVE_METRIC -> WORK_LIVE
                 DualPhoneLiveStreamMode.HYBRID -> WORK_HYBRID
-                DualPhoneLiveStreamMode.SYNC_VIDEO -> WORK_CAMERA
+                DualPhoneLiveStreamMode.SYNC_VIDEO -> WORK_APP
             }
     }
 }
@@ -108,26 +108,29 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
     }
 
     @Synchronized
-    fun enterCameraWorkSurface() {
+    fun enterManagedWorkSurface(forcePassive: Boolean = false) {
         val settings = settingsStore.load()
         val control = controlManager.state.value
         if (settings.role != DualPhoneRole.MASTER) {
             return
         }
         if (!control.connected) {
-            publishError("Connect SLAVE before opening the managed Camera screen")
+            publishError("Connect SLAVE before opening a managed work section")
             return
         }
 
         val current = mutableState.value
         if (
-            current.applicationMode == DualPhoneApplicationMode.WORK_CAMERA &&
+            current.applicationMode == DualPhoneApplicationMode.WORK_APP &&
             (current.peerAcknowledged || pendingMasterStart != null)
         ) {
             return
         }
+        if (current.applicationMode.working && !forcePassive) {
+            return
+        }
 
-        val commandId = "work-camera-${UUID.randomUUID()}"
+        val commandId = "work-surface-${UUID.randomUUID()}"
         pendingMasterStart = PendingMasterStart(
             commandId = commandId,
             config = null,
@@ -135,7 +138,7 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         dataChannel.stop()
         coordinator.release()
         mutableState.value = current.copy(
-            applicationMode = DualPhoneApplicationMode.WORK_CAMERA,
+            applicationMode = DualPhoneApplicationMode.WORK_APP,
             requestedMode = DualPhoneLiveStreamMode.SYNC_VIDEO,
             localRole = DualPhoneRole.MASTER,
             masterManaged = false,
@@ -143,7 +146,7 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             sessionUuid = null,
             sessionStatus = coordinator.currentStatus(),
             dataChannel = dataChannel.snapshot,
-            lastMessage = "Waiting for SLAVE managed Camera screen",
+            lastMessage = "Waiting for SLAVE managed application screen",
             lastError = null,
         )
 
@@ -156,7 +159,7 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
                 )
                 .put(
                     "application_mode",
-                    DualPhoneApplicationMode.WORK_CAMERA.name,
+                    DualPhoneApplicationMode.WORK_APP.name,
                 )
                 .put(
                     "capture_mode",
@@ -176,7 +179,7 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             return
         }
         if (!mode.streamEnabled) {
-            enterCameraWorkSurface()
+            enterManagedWorkSurface(forcePassive = true)
             return
         }
 
@@ -352,12 +355,12 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             lastError = null,
         )
 
-        if (applicationMode == DualPhoneApplicationMode.WORK_CAMERA) {
+        if (applicationMode == DualPhoneApplicationMode.WORK_APP) {
             coordinator.release()
             mutableState.value = mutableState.value.copy(
                 sessionStatus = coordinator.currentStatus(),
                 lastMessage =
-                    "SLAVE Camera screen is controlled by MASTER; waiting for LIVE/HYBRID",
+                    "SLAVE application is controlled by MASTER; waiting for LIVE/HYBRID",
             )
             return workModeAck(
                 commandId = commandId,
@@ -511,7 +514,7 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
                 peerAcknowledged = true,
                 dataChannel = dataChannel.snapshot,
                 lastMessage = if (config == null && reason == null) {
-                    "SLAVE entered the managed Camera screen"
+                    "SLAVE entered the managed application screen"
                 } else {
                     "SLAVE entered managed mode; data channel is blocked"
                 },

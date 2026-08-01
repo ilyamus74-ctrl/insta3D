@@ -472,3 +472,33 @@ VIDEO item: exactly one ScanVideo, bindingId = app_scan_uuid
 Adding or retrying one video must not iterate over or transfer other videos in the same session. `clearUploadQueueForVideo(scanVideoId)` removes only the queue item bound to that video. Previously `UPLOADED` or `CONFIRMED` videos must never be retransmitted by a new-video queue item.
 
 The canonical edited tree is `/home/ilyamus/Документы/Insta3D/app/MaklerTour`. When a separate Android Studio build tree is used, changed Gradle files (`build.gradle.kts`, `app/build.gradle.kts`, `gradle/libs.versions.toml`) must be copied together with source files before the build gate is run.
+
+## Dual-phone application ownership contract (2026-08-01)
+
+After MASTER and SLAVE are paired, MASTER owns the SLAVE application surface in
+all normal work sections:
+
+```text
+Sessions
+Orders
+Camera
+Draft
+Queue
+```
+
+SLAVE must show a locked `SLAVE · УПРАВЛЯЕТСЯ MASTER` screen without normal bottom
+navigation. Only the MASTER Settings section returns SLAVE to local Settings via
+`EXIT_WORK_MODE`; the control channel remains paired.
+
+The passive managed state is `WORK_APP`. The in-card `Выкл. LIVE` action may
+stop LIVE/HYBRID and return to `WORK_APP`, but it must not send `EXIT_WORK_MODE`.
+
+Navigation ownership belongs to the root application/navigation layer. A Camera
+Compose card must not independently claim or release SLAVE. Moving between work
+sections must not stop or recreate an active LIVE/HYBRID TCP/45831 data channel.
+Transport readiness and application ownership are independent: a blocked or failed
+data channel is shown inside the managed SLAVE screen and does not restore normal
+SLAVE navigation.
+
+Loss of the control channel and the explicit emergency disconnect button are the
+only additional release paths.

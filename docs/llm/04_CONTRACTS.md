@@ -2600,6 +2600,84 @@ old APK compatibility
 
 ---
 
+# 35. C30 — Android dual-phone MASTER ↔ SLAVE application ownership
+
+## Статус
+
+```text
+INTERNAL
+MVP
+CRITICAL
+```
+
+## Producer
+
+```text
+MASTER navigation and DualPhoneApplicationRuntime
+```
+
+## Consumer
+
+```text
+SLAVE DualPhoneApplicationRuntime and DualPhoneSlaveWorkScreen
+```
+
+## Managed sections
+
+После pairing следующие разделы MASTER считаются рабочими:
+
+```text
+sessions
+orders
+camera
+draft
+queue
+```
+
+`WORK_APP` является пассивным управляемым состоянием без LIVE/HYBRID transport.
+
+SLAVE во всех рабочих разделах показывает заблокированный экран
+`SLAVE · УПРАВЛЯЕТСЯ MASTER` и не предоставляет обычную нижнюю навигацию.
+
+## Release section
+
+```text
+settings
+```
+
+Только переход MASTER в Settings отправляет `EXIT_WORK_MODE` и возвращает SLAVE
+в локальный экран настроек. Pairing/control channel при этом сохраняется.
+
+## Инварианты
+
+* переход между рабочими разделами не освобождает SLAVE;
+* переход между рабочими разделами не останавливает активный LIVE/HYBRID transport;
+* кнопка `Выкл. LIVE` возвращает `WORK_LIVE/WORK_HYBRID → WORK_APP`, но не отправляет `EXIT_WORK_MODE`;
+* состояние управления приложением не равно состоянию TCP/45831;
+* ошибка/блокировка data channel отображается внутри управляемого экрана SLAVE;
+* потеря control channel освобождает SLAVE безопасным образом;
+* SLAVE сохраняет аварийную локальную кнопку отключения;
+* camera-only условие `currentRoute != AppTab.Camera.route` запрещено как regression;
+* запуск управляемого состояния должен находиться на уровне root navigation, а не
+  внутри Compose-карточки Camera.
+
+## Control messages
+
+```text
+ENTER_WORK_MODE
+ENTER_WORK_MODE_ACK
+EXIT_WORK_MODE
+EXIT_WORK_MODE_ACK
+```
+
+## Contract checks
+
+```text
+web/tests/dual_phone_lm01a_navigation_ownership_test.php
+```
+
+---
+
 # 35. Матрица cross-system контрактов
 
 | Контракт                 | Producer              | Consumer         |        Риск |

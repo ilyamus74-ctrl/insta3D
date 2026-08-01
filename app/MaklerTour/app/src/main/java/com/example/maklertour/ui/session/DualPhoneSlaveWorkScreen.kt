@@ -51,9 +51,13 @@ fun DualPhoneSlaveWorkScreen(
                         text = "SLAVE · УПРАВЛЯЕТСЯ MASTER",
                         style = MaterialTheme.typography.headlineSmall,
                     )
-                    Text("Режим: ${snapshot.applicationMode.name}")
+                    Text("Команда MASTER: ${snapshot.applicationMode.name}")
                     Text(
                         "Сессия: ${snapshot.sessionUuid ?: "не определена"}",
+                    )
+                    Text(
+                        "SLAVE остаётся ведомым во всех рабочих разделах. " +
+                            "Только раздел «Настройки» возвращает локальное управление.",
                     )
                 }
 
@@ -62,7 +66,7 @@ fun DualPhoneSlaveWorkScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text("Рабочая структура SLAVE")
+                        Text("Управляемый рабочий экран SLAVE")
                         Text(
                             "Control: ${snapshot.controlPhase.name} · " +
                                 if (snapshot.controlConnected) {

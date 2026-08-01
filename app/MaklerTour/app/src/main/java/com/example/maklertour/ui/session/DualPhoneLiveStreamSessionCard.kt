@@ -11,7 +11,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -135,15 +134,6 @@ fun DualPhoneLiveStreamSessionCard(
         }
     }
 
-    LaunchedEffect(settings.role, controlSnapshot.connected) {
-        if (
-            settings.role == DualPhoneRole.MASTER &&
-            controlSnapshot.connected
-        ) {
-            applicationRuntime.enterCameraWorkSurface()
-        }
-    }
-
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -182,10 +172,14 @@ fun DualPhoneLiveStreamSessionCard(
                         },
                     )
                     OutlinedButton(
-                        onClick = applicationRuntime::exitWorkMode,
-                        enabled = runtimeSnapshot.applicationMode.working,
+                        onClick = {
+                            applicationRuntime.enterManagedWorkSurface(
+                                forcePassive = true,
+                            )
+                        },
+                        enabled = requestedMode.streamEnabled,
                     ) {
-                        Text("Настройки")
+                        Text("Выкл. LIVE")
                     }
                 }
             } else {

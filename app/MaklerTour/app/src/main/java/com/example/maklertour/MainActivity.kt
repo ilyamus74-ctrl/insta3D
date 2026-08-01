@@ -437,17 +437,18 @@ private fun MaklerTourApp() {
 
     LaunchedEffect(
         currentRoute,
-        dualPhoneRuntimeState.applicationMode,
         dualPhoneRuntimeState.localRole,
-        dualPhoneRuntimeState.masterManaged,
+        dualPhoneRuntimeState.controlConnected,
     ) {
-        if (currentRoute == null) return@LaunchedEffect
-        if (
-            dualPhoneRuntimeState.localRole == DualPhoneRole.MASTER &&
-            dualPhoneRuntimeState.applicationMode.working &&
-            currentRoute != AppTab.Camera.route
-        ) {
-            dualPhoneRuntime.exitWorkMode()
+        val route = currentRoute ?: return@LaunchedEffect
+        if (dualPhoneRuntimeState.localRole == DualPhoneRole.MASTER) {
+            if (route == AppTab.Settings.route) {
+                if (dualPhoneRuntimeState.applicationMode.working) {
+                    dualPhoneRuntime.exitWorkMode()
+                }
+            } else if (dualPhoneRuntimeState.controlConnected) {
+                dualPhoneRuntime.enterManagedWorkSurface()
+            }
         }
         if (
             dualPhoneRuntimeState.localRole == DualPhoneRole.SLAVE &&
