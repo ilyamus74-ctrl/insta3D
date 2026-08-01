@@ -9,6 +9,7 @@ $files = [
     'workspace' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/session/DualPhoneFullScreenScanWorkspace.kt',
     'depth' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneLiveDepthProcessor.kt',
     'producer' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneReducedFrameProducer.kt',
+    'runtime' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneApplicationRuntime.kt',
     'contract' => $root . '/app/MaklerTour/docs/APP_DUAL_PHONE_LIVE_STREAM_CONTRACT.md',
 ];
 
@@ -24,6 +25,7 @@ $slave = file_get_contents($files['slave']);
 $workspace = file_get_contents($files['workspace']);
 $depth = file_get_contents($files['depth']);
 $producer = file_get_contents($files['producer']);
+$runtime = file_get_contents($files['runtime']);
 $contract = file_get_contents($files['contract']);
 
 $checks = [
@@ -41,6 +43,16 @@ $checks = [
         str_contains($slave, 'DualPhoneSlaveScanWorkspace'),
     'SLAVE keeps emergency action' =>
         str_contains($workspace, 'Аварийно отключить SLAVE'),
+    'MASTER publishes authoritative stream identity' =>
+        str_contains($runtime, '"stream_id",') &&
+        str_contains($runtime, 'owner?.streamId ?: JSONObject.NULL'),
+    'SLAVE adopts MASTER stream identity' =>
+        str_contains($runtime, 'payload.optString("stream_id")') &&
+        str_contains($runtime, 'streamId = masterStreamId') &&
+        str_contains($runtime, 'MASTER_STREAM_ID_MISSING'),
+    'depth keeps strict stream identity gate' =>
+        str_contains($depth, 'masterFrame.streamId != slaveFrame.streamId') &&
+        str_contains($depth, 'MASTER and SLAVE stream_id do not match'),
     'pairing consumes clock offset' =>
         str_contains($depth, 'clockSync.offsetNs') &&
         str_contains($depth, 'slaveToMasterTime'),

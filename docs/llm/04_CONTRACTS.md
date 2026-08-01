@@ -2805,6 +2805,8 @@ future LM03 tracking and room-geometry stages
 * SLAVE does not receive local LIVE/HYBRID or STOP authority;
 * full-screen UI does not create another CameraX producer or network socket;
 * only real LM01B frames may enter pairing and depth;
+* MASTER generates the authoritative `stream_id` for each LIVE/HYBRID start;
+* `ENTER_WORK_MODE` carries that ID and SLAVE adopts it for both producers/transports;
 * `stream_id` must match before pairing;
 * SLAVE elapsed timestamps are converted to the MASTER clock domain;
 * histories are bounded and old frames cannot accumulate;

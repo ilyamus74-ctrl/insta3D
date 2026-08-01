@@ -275,6 +275,10 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
                     "session_uuid",
                     sessionUuid ?: JSONObject.NULL,
                 )
+                .put(
+                    "stream_id",
+                    owner?.streamId ?: JSONObject.NULL,
+                )
                 .put("capture_mode", mode.name)
                 .put(
                     "calibration_profile_id",
@@ -454,6 +458,23 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             )
         }
 
+        val masterStreamId = payload.optString("stream_id")
+            .trim()
+            .takeIf { it.isNotBlank() && it != "null" }
+        if (masterStreamId == null) {
+            mutableState.value = mutableState.value.copy(
+                sessionStatus = status,
+                lastMessage = "MASTER controls SLAVE; data channel is blocked",
+                lastError = "MASTER_STREAM_ID_MISSING",
+            )
+            return workModeAck(
+                commandId = commandId,
+                accepted = true,
+                reason = "MASTER_STREAM_ID_MISSING",
+                transportAccepted = false,
+            )
+        }
+
         val masterRecordingModeIdentity =
             payload.optString("recording_mode_identity")
                 .trim()
@@ -473,6 +494,7 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         }
 
         val sessionOwner = owner.copy(
+            streamId = masterStreamId,
             recordingModeIdentity = masterRecordingModeIdentity,
         )
         val startError = runCatching {

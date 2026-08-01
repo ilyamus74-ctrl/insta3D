@@ -57,6 +57,11 @@ DROPPED     delta > 120 ms
 Depth processing is throttled to approximately two updates per second so the UI,
 network and CameraX encoder stay responsive.
 
+MASTER creates one authoritative `stream_id` when LIVE/HYBRID starts and sends it
+in `ENTER_WORK_MODE`. SLAVE replaces its locally reconciled stream ID with this
+value before starting CameraX and both TCP channels. This keeps MASTER and SLAVE
+frames in one pairing namespace while retaining strict mismatch blocking.
+
 ## Rectification and depth
 
 Input is the real unrotated LM01B JPEG pair. The active accepted calibration
