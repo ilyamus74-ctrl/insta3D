@@ -28,10 +28,12 @@ import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionBlock
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionCoordinator
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionInput
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionStatus
+import com.maklertour.data.calibration.DualPhoneCalibrationCameraIdentityRepair
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
 import com.maklertour.data.dualphone.DualPhoneControlManager
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
+import com.maklertour.data.phonecamera.PhoneCameraLensRepository
 
 /**
  * Returns true only for MASTER/SLAVE roles.
@@ -89,6 +91,9 @@ fun DualPhoneLiveStreamSessionCard(
     val profileStore = remember(appContext) {
         DualPhoneCalibrationProfileStore(appContext)
     }
+    val lensRepository = remember(appContext) {
+        PhoneCameraLensRepository(appContext)
+    }
     val coordinator = remember {
         DualPhoneLiveStreamSessionCoordinator()
     }
@@ -97,6 +102,9 @@ fun DualPhoneLiveStreamSessionCard(
         mutableStateOf(DualPhoneLiveStreamMode.SYNC_VIDEO)
     }
     var refreshSerial by remember { mutableStateOf(0) }
+    var cameraIdentityRepairStatus by remember {
+        mutableStateOf<String?>(null)
+    }
     val settings = remember(controlSnapshot, refreshSerial) {
         settingsStore.load()
     }
@@ -106,6 +114,26 @@ fun DualPhoneLiveStreamSessionCard(
     ) {
         settings.activeCalibrationProfileId
             ?.let(profileStore::load)
+    }
+    val localSelectedCameraId = remember(refreshSerial) {
+        runCatching {
+            lensRepository.selectedOrDefault().first.cameraId
+        }.getOrNull()
+    }
+    val cameraIdentityRepair = remember(
+        calibrationProfile,
+        settings.role,
+        localSelectedCameraId,
+        controlSnapshot.peerCameraId,
+    ) {
+        calibrationProfile?.let { profile ->
+            DualPhoneCalibrationCameraIdentityRepair.repair(
+                profile = profile,
+                localRole = settings.role,
+                localCameraId = localSelectedCameraId,
+                peerCameraId = controlSnapshot.peerCameraId,
+            )
+        }
     }
     val input = remember(
         selectedSessionId,
@@ -178,6 +206,50 @@ fun DualPhoneLiveStreamSessionCard(
 
             Text("Состояние: ${status.snapshot.state.name}")
             Text(statusText(status))
+
+            if (
+                status.block ==
+                    DualPhoneLiveStreamSessionBlock.MISSING_CAMERA_IDENTITY
+            ) {
+                Text(
+                    "Локальная камера: " +
+                        (localSelectedCameraId ?: "не определена"),
+                )
+                Text(
+                    "Камера второго телефона: " +
+                        (controlSnapshot.peerCameraId ?: "не получена"),
+                )
+                cameraIdentityRepair?.let { repair ->
+                    Text(repair.message)
+                    Button(
+                        onClick = {
+                            val repairedProfile = repair.profile
+                            if (repairedProfile == null || !repair.changed) {
+                                cameraIdentityRepairStatus = repair.message
+                            } else {
+                                cameraIdentityRepairStatus = runCatching {
+                                    profileStore.save(repairedProfile)
+                                    refreshSerial += 1
+                                    "ID камер сохранены в calibration profile"
+                                }.getOrElse { error ->
+                                    "Не удалось сохранить ID камер: " +
+                                        (
+                                            error.message
+                                                ?: error.javaClass.simpleName
+                                        )
+                                }
+                            }
+                        },
+                        enabled = repair.profile != null && repair.changed,
+                    ) {
+                        Text("Восстановить ID камер")
+                    }
+                }
+            }
+
+            cameraIdentityRepairStatus?.let {
+                Text(it)
+            }
 
             if (status.sessionAccepted) {
                 Text(
