@@ -75,6 +75,11 @@ data class DualPhoneLiveDepthSnapshot(
     val filteredDepthPreviewJpeg: ByteArray? = null,
     val strictDepthPreviewJpeg: ByteArray? = null,
     val confidencePreviewJpeg: ByteArray? = null,
+    val registeredMasterJpeg: ByteArray? = null,
+    val registeredDenseOverlayPng: ByteArray? = null,
+    val registeredStrictOutlinePng: ByteArray? = null,
+    val registeredRotationDegrees: Int = 0,
+    val registeredMasterFrameSequence: Long? = null,
     val firstProcessedElapsedMs: Long? = null,
     val processingMs: Long? = null,
     val processingUtilizationPercent: Double = 0.0,
@@ -137,6 +142,11 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         val filteredDepthPreviewJpeg: ByteArray,
         val strictDepthPreviewJpeg: ByteArray,
         val confidencePreviewJpeg: ByteArray,
+        val registeredMasterJpeg: ByteArray,
+        val registeredDenseOverlayPng: ByteArray,
+        val registeredStrictOutlinePng: ByteArray,
+        val registeredRotationDegrees: Int,
+        val registeredMasterFrameSequence: Long,
         val rawValidPercent: Double,
         val filteredValidPercent: Double,
         val stableCoveragePercent: Double,
@@ -328,6 +338,15 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                         filteredDepthPreviewJpeg = result.filteredDepthPreviewJpeg,
                         strictDepthPreviewJpeg = result.strictDepthPreviewJpeg,
                         confidencePreviewJpeg = result.confidencePreviewJpeg,
+                        registeredMasterJpeg = result.registeredMasterJpeg,
+                        registeredDenseOverlayPng =
+                            result.registeredDenseOverlayPng,
+                        registeredStrictOutlinePng =
+                            result.registeredStrictOutlinePng,
+                        registeredRotationDegrees =
+                            result.registeredRotationDegrees,
+                        registeredMasterFrameSequence =
+                            result.registeredMasterFrameSequence,
                         firstProcessedElapsedMs =
                             current.firstProcessedElapsedMs ?: finishedAtMs,
                         processingMs = elapsedMs,
@@ -622,6 +641,21 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 enableLeftRightCheck =
                     performanceProfile.enableLeftRightCheck,
             )
+            val registered = DualPhoneRawCameraOverlayProjector.project(
+                pairedMasterJpeg = pair.master.jpegBytes,
+                masterRaw = masterRaw,
+                masterInput = masterInput,
+                mapMasterX = mapMasterX,
+                mapMasterY = mapMasterY,
+                depthMaster = depthMaster,
+                workMaster = workMaster,
+                denseDepthJpeg = filtered.filteredDepthPreviewJpeg,
+                strictDepthJpeg = filtered.strictDepthPreviewJpeg,
+                processingRotation = rotation,
+                displayRotationDegrees =
+                    pair.master.imageProxyRotationDegrees,
+                masterFrameSequence = pair.master.frameSequence,
+            )
 
             return ProcessedDepth(
                 rectifiedMasterJpeg = encodeJpeg(workMaster),
@@ -632,6 +666,11 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 filteredDepthPreviewJpeg = filtered.filteredDepthPreviewJpeg,
                 strictDepthPreviewJpeg = filtered.strictDepthPreviewJpeg,
                 confidencePreviewJpeg = filtered.confidencePreviewJpeg,
+                registeredMasterJpeg = registered.pairedMasterJpeg,
+                registeredDenseOverlayPng = registered.denseOverlayPng,
+                registeredStrictOutlinePng = registered.strictOutlinePng,
+                registeredRotationDegrees = registered.displayRotationDegrees,
+                registeredMasterFrameSequence = registered.masterFrameSequence,
                 rawValidPercent = filtered.rawValidPercent,
                 filteredValidPercent = filtered.filteredValidPercent,
                 stableCoveragePercent = filtered.stableCoveragePercent,

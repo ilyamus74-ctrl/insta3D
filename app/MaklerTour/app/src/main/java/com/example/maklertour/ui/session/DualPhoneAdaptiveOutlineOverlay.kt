@@ -79,25 +79,30 @@ internal fun DualPhoneAdaptiveOutlineViewport(
         freshness == DualPhoneDepthFreshness.HOLD ||
         freshness == DualPhoneDepthFreshness.STALE
 
-    // The operator background never switches from the natural camera frame to
-    // the rectified processing buffer. Rectification changes crop and geometry,
-    // so mixing both as one full-screen layer caused a visible jump and made
-    // door frames and room corners hard to recognize.
-    val baseBytes = masterFrame?.jpegBytes
-    val baseRotation = masterFrame?.imageProxyRotationDegrees ?: 0
-    val denseBytes: ByteArray? = null
-    val strictBytes: ByteArray? = null
+    // The registered products are generated from the exact paired natural
+    // MASTER frame. They therefore share one raw-camera pixel coordinate system
+    // without replacing the operator view with a rectified image.
+    val registered = showDepth &&
+        depth.registeredMasterJpeg != null &&
+        depth.registeredDenseOverlayPng != null &&
+        depth.registeredStrictOutlinePng != null
+    val baseBytes = if (registered) {
+        depth.registeredMasterJpeg
+    } else {
+        masterFrame?.jpegBytes
+    }
+    val baseRotation = if (registered) {
+        depth.registeredRotationDegrees
+    } else {
+        masterFrame?.imageProxyRotationDegrees ?: 0
+    }
+    val denseBytes = depth.registeredDenseOverlayPng.takeIf { registered }
+    val strictBytes = depth.registeredStrictOutlinePng.takeIf { registered }
 
     val baseBitmap = remember(baseBytes) { baseBytes?.decodeAdaptiveBitmap() }
     val denseBitmap = remember(denseBytes) { denseBytes?.decodeAdaptiveBitmap() }
     val strictOutlineBitmap = remember(strictBytes) {
-        strictBytes?.decodeAdaptiveBitmap()?.let { strict ->
-            try {
-                strict.createDepthOutlineBitmap()
-            } finally {
-                if (!strict.isRecycled) strict.recycle()
-            }
-        }
+        strictBytes?.decodeAdaptiveBitmap()
     }
 
     DisposableEffect(baseBitmap) {
@@ -134,9 +139,9 @@ internal fun DualPhoneAdaptiveOutlineViewport(
                 }
                 denseBitmap?.let { bitmap ->
                     paint.alpha = when (freshness) {
-                        DualPhoneDepthFreshness.LIVE -> 72
-                        DualPhoneDepthFreshness.HOLD -> 52
-                        DualPhoneDepthFreshness.STALE -> 32
+                        DualPhoneDepthFreshness.LIVE -> 255
+                        DualPhoneDepthFreshness.HOLD -> 190
+                        DualPhoneDepthFreshness.STALE -> 110
                         else -> 0
                     }
                     drawAdaptiveCenterCropBitmap(
@@ -217,7 +222,9 @@ private fun operatorStatusText(
         DualPhoneLiveDepthState.PROCESSING -> "PROCESSING"
         else -> freshness.label
     }
-    return "OUTLINE · $startup · ${inferredSceneProfile(depth)} · " +
+    val registration = depth.registeredMasterFrameSequence?.let { "REG #$it" }
+        ?: "REG WAIT"
+    return "OUTLINE · $startup · $registration · ${inferredSceneProfile(depth)} · " +
         depthAgeLabel(depth, nowElapsedMs, publishedInCurrentStream)
 }
 
