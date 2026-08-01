@@ -24,7 +24,7 @@ $checks = [
     'OUTLINE is the default operator view' =>
         str_contains($workspace, 'OVERLAY("OUTLINE")') &&
         str_contains($workspace, 'mutableStateOf(DualPhoneMasterScanView.OVERLAY)') &&
-        str_contains($workspace, 'DualPhoneAdaptiveOutlineViewport'),
+        str_contains($workspace, 'DualPhoneContourFirstViewport'),
     'camera remains visible while depth waits or expires' =>
         str_contains($outline, 'masterFrame?.jpegBytes') &&
         str_contains($outline, 'DualPhoneDepthFreshness.EXPIRED') &&

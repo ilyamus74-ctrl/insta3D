@@ -58,6 +58,8 @@ enum class DualPhoneMasterScanView(val label: String) {
     SLAVE("SLAVE"),
     SPLIT("SPLIT"),
     OVERLAY("OUTLINE"),
+    ASSIST("ASSIST"),
+    HEATMAP("HEAT"),
     DEPTH("RAW"),
     FILTERED("DENSE"),
     STRICT("STRICT"),
@@ -181,7 +183,7 @@ fun DualPhoneSlaveScanWorkspace(
     var showInfo by remember { mutableStateOf(true) }
     Surface(modifier = modifier.fillMaxSize(), color = Color.Black) {
         Box(modifier = Modifier.fillMaxSize()) {
-            FrameViewport(
+            DualPhoneSlaveAspectSafePreview(
                 frame = snapshot.localFrameProducer.latestFrame,
                 emptyText = snapshot.localFrameProducer.state.name,
                 modifier = Modifier.fillMaxSize(),
@@ -228,6 +230,13 @@ fun DualPhoneSlaveScanWorkspace(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text("LIVE PREVIEW", color = Color.White)
+                        Text(
+                            "source " +
+                                "${snapshot.localFrameProducer.latestFrame?.width ?: 0}×" +
+                                "${snapshot.localFrameProducer.latestFrame?.height ?: 0}",
+                            color = Color.White,
+                        )
+                        Text("display FIT_CENTER · crop 0%", color = Color.White)
                         Text(
                             "encoded ${snapshot.localFrameProducer.framesEncoded}",
                             color = Color.White,
@@ -279,10 +288,13 @@ private fun MasterScanViewport(
     val slaveFrame = snapshot.mediaTransport.latestFrame
     Box(modifier = modifier.background(Color.Black)) {
         when (view) {
-            DualPhoneMasterScanView.OVERLAY -> {
-                DualPhoneAdaptiveOutlineViewport(
+            DualPhoneMasterScanView.OVERLAY,
+            DualPhoneMasterScanView.ASSIST,
+            DualPhoneMasterScanView.HEATMAP -> {
+                DualPhoneContourFirstViewport(
                     masterFrame = masterFrame,
                     depth = depth,
+                    mode = view.toOperatorOverlayMode(),
                     modifier = Modifier.fillMaxSize(),
                 )
             }
