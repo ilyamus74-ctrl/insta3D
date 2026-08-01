@@ -156,6 +156,9 @@ import com.maklertour.i18n.withAppLanguage
 import com.maklertour.ui.components.AppSectionCard
 import com.maklertour.ui.components.AppStorageStatusRow
 import com.maklertour.ui.settings.DualPhoneControlSettingsCard
+import com.example.maklertour.data.dualphone.DualPhoneApplicationMode
+import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntime
+import com.example.maklertour.ui.session.DualPhoneSlaveWorkScreen
 import com.example.maklertour.auth.AuthStorage
 import com.example.maklertour.auth.LoginResult
 import com.example.maklertour.auth.MobileAuthApi
@@ -270,6 +273,12 @@ private fun iconForTab(tab: AppTab): ImageVector = when (tab) {
 private fun MaklerTourApp() {
     val navController = rememberNavController()
     val baseContext = LocalContext.current
+    val dualPhoneRuntime = remember(baseContext.applicationContext) {
+        DualPhoneApplicationRuntime.get(baseContext.applicationContext)
+    }
+    val dualPhoneRuntimeState by dualPhoneRuntime.state.collectAsState()
+    val rootBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = rootBackStackEntry?.destination?.route
     val lifecycleOwner = LocalLifecycleOwner.current
     val authStorage = remember { AuthStorage(baseContext.applicationContext) }
     val authApi = remember { MobileAuthApi(baseContext.applicationContext) }
@@ -426,7 +435,46 @@ private fun MaklerTourApp() {
         return
     }
 
+    LaunchedEffect(
+        currentRoute,
+        dualPhoneRuntimeState.applicationMode,
+        dualPhoneRuntimeState.localRole,
+        dualPhoneRuntimeState.masterManaged,
+    ) {
+        if (currentRoute == null) return@LaunchedEffect
+        if (
+            dualPhoneRuntimeState.localRole == DualPhoneRole.MASTER &&
+            dualPhoneRuntimeState.applicationMode.working &&
+            currentRoute != AppTab.Camera.route
+        ) {
+            dualPhoneRuntime.exitWorkMode()
+        }
+        if (
+            dualPhoneRuntimeState.localRole == DualPhoneRole.SLAVE &&
+            dualPhoneRuntimeState.masterManaged &&
+            dualPhoneRuntimeState.applicationMode ==
+                DualPhoneApplicationMode.SETTINGS &&
+            currentRoute != AppTab.Settings.route
+        ) {
+            navController.navigate(AppTab.Settings.route) {
+                launchSingleTop = true
+            }
+        }
+    }
+
     CompositionLocalProvider(LocalContext provides localizedContext) {
+        if (
+            dualPhoneRuntimeState.localRole == DualPhoneRole.SLAVE &&
+            dualPhoneRuntimeState.masterManaged &&
+            dualPhoneRuntimeState.applicationMode.working
+        ) {
+            DualPhoneSlaveWorkScreen(
+                snapshot = dualPhoneRuntimeState,
+                onEmergencyDisconnect = dualPhoneRuntime::emergencyDisconnect,
+            )
+            return@CompositionLocalProvider
+        }
+
         state.captureBundleNotice?.let { notice ->
             CaptureBundleNoticeDialog(
                 notice = notice,

@@ -11,7 +11,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,13 +22,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.maklertour.data.dualphone.DualPhoneLiveStreamDataChannelConfig
-import com.example.maklertour.data.dualphone.DualPhoneLiveStreamDataChannelController
-import com.example.maklertour.data.dualphone.DualPhoneLiveStreamDataChannelState
+import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntime
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamMode
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionBlock
-import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionCoordinator
-import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionInput
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionStatus
 import com.maklertour.data.calibration.DualPhoneCalibrationCameraIdentityRepair
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
@@ -97,17 +92,13 @@ fun DualPhoneLiveStreamSessionCard(
     val lensRepository = remember(appContext) {
         PhoneCameraLensRepository(appContext)
     }
-    val coordinator = remember {
-        DualPhoneLiveStreamSessionCoordinator()
+    val applicationRuntime = remember(appContext) {
+        DualPhoneApplicationRuntime.get(appContext)
     }
-    val dataChannel = remember {
-        DualPhoneLiveStreamDataChannelController()
-    }
-    val dataChannelSnapshot by dataChannel.state.collectAsState()
-
-    var requestedMode by remember {
-        mutableStateOf(DualPhoneLiveStreamMode.SYNC_VIDEO)
-    }
+    val runtimeSnapshot by applicationRuntime.state.collectAsState()
+    val requestedMode = runtimeSnapshot.requestedMode
+    val status = runtimeSnapshot.sessionStatus
+    val dataChannelSnapshot = runtimeSnapshot.dataChannel
     var refreshSerial by remember { mutableStateOf(0) }
     var cameraIdentityRepairStatus by remember {
         mutableStateOf<String?>(null)
@@ -142,82 +133,6 @@ fun DualPhoneLiveStreamSessionCard(
             )
         }
     }
-    val input = remember(
-        selectedSessionId,
-        requestedMode,
-        settings,
-        controlSnapshot,
-        calibrationProfile,
-    ) {
-        DualPhoneLiveStreamSessionInput(
-            sessionUuid = selectedSessionId,
-            requestedMode = requestedMode,
-            settings = settings,
-            control = controlSnapshot,
-            calibrationProfile = calibrationProfile,
-        )
-    }
-    var status by remember {
-        mutableStateOf(coordinator.currentStatus())
-    }
-
-    LaunchedEffect(input) {
-        status = coordinator.reconcile(input)
-    }
-    LaunchedEffect(
-        status.sessionAccepted,
-        status.snapshot.owner,
-        settings.deviceId,
-        settings.role,
-        controlSnapshot.peerHost,
-    ) {
-        val owner = status.snapshot.owner
-        if (status.sessionAccepted && owner != null) {
-            runCatching {
-                dataChannel.start(
-                    DualPhoneLiveStreamDataChannelConfig(
-                        owner = owner,
-                        localDeviceId = settings.deviceId,
-                        role = settings.role,
-                        peerHost = controlSnapshot.peerHost,
-                    ),
-                )
-            }.onFailure { error ->
-                coordinator.markTransportReconnecting(
-                    error.message ?: error.javaClass.simpleName,
-                )
-                status = coordinator.currentStatus()
-            }
-        } else {
-            dataChannel.stop()
-        }
-    }
-    LaunchedEffect(
-        dataChannelSnapshot.state,
-        dataChannelSnapshot.lastError,
-    ) {
-        when (dataChannelSnapshot.state) {
-            DualPhoneLiveStreamDataChannelState.READY -> {
-                coordinator.markTransportReady()
-                status = coordinator.currentStatus()
-            }
-            DualPhoneLiveStreamDataChannelState.RECONNECTING,
-            DualPhoneLiveStreamDataChannelState.FAILED -> {
-                coordinator.markTransportReconnecting(
-                    dataChannelSnapshot.lastError
-                        ?: "LM01A data channel unavailable",
-                )
-                status = coordinator.currentStatus()
-            }
-            else -> Unit
-        }
-    }
-    DisposableEffect(coordinator, dataChannel) {
-        onDispose {
-            dataChannel.close()
-            coordinator.release()
-        }
-    }
 
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
@@ -230,36 +145,44 @@ fun DualPhoneLiveStreamSessionCard(
                     "Старая кнопка «Начать видео-скан» к нему не относится.",
             )
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                modeButton(
-                    label = "LIVE",
-                    selected = requestedMode ==
-                        DualPhoneLiveStreamMode.LIVE_METRIC,
-                    onClick = {
-                        requestedMode = DualPhoneLiveStreamMode.LIVE_METRIC
-                    },
-                )
-                modeButton(
-                    label = "HYBRID",
-                    selected = requestedMode ==
-                        DualPhoneLiveStreamMode.HYBRID,
-                    onClick = {
-                        requestedMode = DualPhoneLiveStreamMode.HYBRID
-                    },
-                )
-                OutlinedButton(
-                    onClick = {
-                        requestedMode = DualPhoneLiveStreamMode.SYNC_VIDEO
-                    },
-                    enabled = requestedMode !=
-                        DualPhoneLiveStreamMode.SYNC_VIDEO,
+            if (settings.role == DualPhoneRole.MASTER) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Выкл.")
+                    modeButton(
+                        label = "LIVE",
+                        selected = requestedMode ==
+                            DualPhoneLiveStreamMode.LIVE_METRIC,
+                        onClick = {
+                            applicationRuntime.enterWorkMode(
+                                selectedSessionId,
+                                DualPhoneLiveStreamMode.LIVE_METRIC,
+                            )
+                        },
+                    )
+                    modeButton(
+                        label = "HYBRID",
+                        selected = requestedMode ==
+                            DualPhoneLiveStreamMode.HYBRID,
+                        onClick = {
+                            applicationRuntime.enterWorkMode(
+                                selectedSessionId,
+                                DualPhoneLiveStreamMode.HYBRID,
+                            )
+                        },
+                    )
+                    OutlinedButton(
+                        onClick = applicationRuntime::exitWorkMode,
+                        enabled = requestedMode.streamEnabled,
+                    ) {
+                        Text("Настройки")
+                    }
                 }
+            } else {
+                Text("LIVE/HYBRID выбираются только на MASTER.")
             }
 
+            Text("App mode: ${runtimeSnapshot.applicationMode.name}")
             Text("Состояние: ${status.snapshot.state.name}")
             Text(statusText(status))
             Text(
@@ -278,6 +201,10 @@ fun DualPhoneLiveStreamSessionCard(
             }
             dataChannelSnapshot.lastError?.let {
                 Text("Data channel error: $it")
+            }
+            Text(runtimeSnapshot.lastMessage)
+            runtimeSnapshot.lastError?.let {
+                Text("Runtime error: $it")
             }
 
             if (
@@ -303,6 +230,7 @@ fun DualPhoneLiveStreamSessionCard(
                                 cameraIdentityRepairStatus = runCatching {
                                     profileStore.save(repairedProfile)
                                     refreshSerial += 1
+                                    applicationRuntime.refresh()
                                     "ID камер сохранены в calibration profile"
                                 }.getOrElse { error ->
                                     "Не удалось сохранить ID камер: " +
@@ -340,7 +268,10 @@ fun DualPhoneLiveStreamSessionCard(
             }
 
             OutlinedButton(
-                onClick = { refreshSerial += 1 },
+                onClick = {
+                    refreshSerial += 1
+                    applicationRuntime.refresh()
+                },
             ) {
                 Text("Обновить проверку")
             }

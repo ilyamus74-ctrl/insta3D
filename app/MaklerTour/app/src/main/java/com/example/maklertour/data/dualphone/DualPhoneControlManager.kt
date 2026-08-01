@@ -2,6 +2,7 @@ package com.maklertour.data.dualphone
 
 import android.content.Context
 import android.os.SystemClock
+import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntime
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileResult
 import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimate
 import kotlinx.coroutines.CoroutineScope
@@ -1536,6 +1537,84 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
     }
 
+    fun requestEnterWorkMode(payload: JSONObject) {
+        launchMasterCommand(
+            command = DualPhoneControlType.ENTER_WORK_MODE,
+            allowedPhases = setOf(DualPhoneControlPhase.CONNECTED),
+        ) {
+            send(DualPhoneControlType.ENTER_WORK_MODE, payload)
+            mutableState.value = mutableState.value.copy(
+                lastCommand = DualPhoneControlType.ENTER_WORK_MODE,
+                lastError = null,
+                lastMessage = "Waiting for SLAVE work-mode acknowledgement",
+            )
+        }
+    }
+
+    fun requestExitWorkMode(payload: JSONObject) {
+        launchMasterCommand(
+            command = DualPhoneControlType.EXIT_WORK_MODE,
+            allowedPhases = setOf(
+                DualPhoneControlPhase.CONNECTED,
+                DualPhoneControlPhase.ARMING,
+                DualPhoneControlPhase.ARMED,
+                DualPhoneControlPhase.START_SCHEDULED,
+                DualPhoneControlPhase.RECORDING,
+            ),
+        ) {
+            send(DualPhoneControlType.EXIT_WORK_MODE, payload)
+            mutableState.value = mutableState.value.copy(
+                lastCommand = DualPhoneControlType.EXIT_WORK_MODE,
+                lastError = null,
+                lastMessage = "Returning SLAVE to settings mode",
+            )
+        }
+    }
+
+    private fun handleApplicationRuntimeControlMessage(
+        localRole: DualPhoneRole,
+        type: String,
+        payload: JSONObject,
+    ): Boolean {
+        when (type) {
+            DualPhoneControlType.ENTER_WORK_MODE -> if (
+                localRole == DualPhoneRole.SLAVE
+            ) {
+                val ack = DualPhoneApplicationRuntime
+                    .get(appContext)
+                    .handleRemoteEnterWorkMode(payload)
+                send(DualPhoneControlType.ENTER_WORK_MODE_ACK, ack)
+                return true
+            }
+            DualPhoneControlType.ENTER_WORK_MODE_ACK -> if (
+                localRole == DualPhoneRole.MASTER
+            ) {
+                DualPhoneApplicationRuntime
+                    .get(appContext)
+                    .handleRemoteEnterWorkModeAck(payload)
+                return true
+            }
+            DualPhoneControlType.EXIT_WORK_MODE -> if (
+                localRole == DualPhoneRole.SLAVE
+            ) {
+                val ack = DualPhoneApplicationRuntime
+                    .get(appContext)
+                    .handleRemoteExitWorkMode(payload)
+                send(DualPhoneControlType.EXIT_WORK_MODE_ACK, ack)
+                return true
+            }
+            DualPhoneControlType.EXIT_WORK_MODE_ACK -> if (
+                localRole == DualPhoneRole.MASTER
+            ) {
+                DualPhoneApplicationRuntime
+                    .get(appContext)
+                    .handleRemoteExitWorkModeAck(payload)
+                return true
+            }
+        }
+        return false
+    }
+
     fun stop() {
         stopTransport("Control channel stopped")
         mutableState.value = DualPhoneControlSnapshot(
@@ -1628,6 +1707,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             markRx()
             val type = message.getString("type")
             val payload = message.getJSONObject("payload")
+            if (handleApplicationRuntimeControlMessage(localRole, type, payload)) {
+                continue
+            }
             when (type) {
                 DualPhoneControlType.PING -> send(
                     DualPhoneControlType.PONG,
