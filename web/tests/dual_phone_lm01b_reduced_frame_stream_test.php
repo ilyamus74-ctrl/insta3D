@@ -23,9 +23,9 @@ $contract = file_get_contents($appContractPath);
 
 $requiredTransport = [
     'const val DEFAULT_PORT = 45_832',
-    'const val MAX_WIDTH = 640',
-    'const val MAX_HEIGHT = 360',
-    'const val MAX_PAYLOAD_BYTES = 256 * 1024',
+    'const val MAX_WIDTH = 960',
+    'const val MAX_HEIGHT = 540',
+    'const val MAX_PAYLOAD_BYTES = 512 * 1024',
     'AtomicReference<DualPhoneReducedFrame?>',
     'framesReplacedBeforeSend',
     'pendingFrame.getAndSet(frame)',

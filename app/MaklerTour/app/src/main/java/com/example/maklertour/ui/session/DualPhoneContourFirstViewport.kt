@@ -163,7 +163,7 @@ internal fun DualPhoneContourFirstViewport(
                     )
                 }
                 strictBitmap?.let { bitmap ->
-                    paint.alpha = strictPaintAlpha(freshness)
+                    paint.alpha = strictPaintAlpha(mode, freshness)
                     drawContourCenterCrop(
                         canvas = canvas,
                         bitmap = bitmap,
@@ -235,13 +235,22 @@ private fun densePaintAlpha(
     }
 }
 
-private fun strictPaintAlpha(freshness: ContourDepthFreshness): Int =
-    when (freshness) {
-        ContourDepthFreshness.LIVE -> 255
-        ContourDepthFreshness.HOLD -> 205
-        ContourDepthFreshness.STALE -> 130
+private fun strictPaintAlpha(
+    mode: DualPhoneOperatorOverlayMode,
+    freshness: ContourDepthFreshness,
+): Int {
+    val liveAlpha = when (mode) {
+        DualPhoneOperatorOverlayMode.OUTLINE -> 0
+        DualPhoneOperatorOverlayMode.ASSIST -> 72
+        DualPhoneOperatorOverlayMode.HEATMAP -> 190
+    }
+    return when (freshness) {
+        ContourDepthFreshness.LIVE -> liveAlpha
+        ContourDepthFreshness.HOLD -> liveAlpha * 3 / 4
+        ContourDepthFreshness.STALE -> liveAlpha * 2 / 5
         else -> 0
     }
+}
 
 private fun contourFreshness(
     depth: DualPhoneLiveDepthSnapshot,

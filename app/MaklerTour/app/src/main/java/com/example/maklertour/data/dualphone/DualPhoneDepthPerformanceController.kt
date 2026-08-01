@@ -56,8 +56,8 @@ class DualPhoneDepthPerformanceController(context: Context) {
             DualPhoneDepthThermalState.UNSUPPORTED,
             DualPhoneDepthThermalState.NORMAL -> 0
             DualPhoneDepthThermalState.WARM -> 2
-            DualPhoneDepthThermalState.HOT -> 3
-            DualPhoneDepthThermalState.CRITICAL -> 4
+            DualPhoneDepthThermalState.HOT -> 4
+            DualPhoneDepthThermalState.CRITICAL -> 5
         }
         val level = maxOf(thermalFloor, adaptiveLevel)
         return DualPhoneDepthPerformanceSnapshot(
@@ -82,9 +82,10 @@ class DualPhoneDepthPerformanceController(context: Context) {
 
         val p95 = percentile(0.95) ?: return
         val downgradeThreshold = when (adaptiveLevel) {
-            0 -> HIGH_RES_MAX_P95_MS
-            1 -> QUALITY_MAX_P95_MS
-            2 -> BALANCED_MAX_P95_MS
+            0 -> ULTRA_MAX_P95_MS
+            1 -> HIGH_RES_MAX_P95_MS
+            2 -> QUALITY_MAX_P95_MS
+            3 -> BALANCED_MAX_P95_MS
             else -> Long.MAX_VALUE
         }
         if (p95 > downgradeThreshold) {
@@ -94,9 +95,10 @@ class DualPhoneDepthPerformanceController(context: Context) {
         }
 
         val upgradeThreshold = when (adaptiveLevel) {
-            1 -> HIGH_RES_UPGRADE_P95_MS
-            2 -> QUALITY_UPGRADE_P95_MS
-            3 -> THROTTLED_UPGRADE_P95_MS
+            1 -> ULTRA_UPGRADE_P95_MS
+            2 -> HIGH_RES_UPGRADE_P95_MS
+            3 -> QUALITY_UPGRADE_P95_MS
+            4 -> THROTTLED_UPGRADE_P95_MS
             else -> null
         }
         if (upgradeThreshold != null && p95 <= upgradeThreshold) {
@@ -160,15 +162,24 @@ class DualPhoneDepthPerformanceController(context: Context) {
         private const val TRANSITION_WARMUP_SAMPLES = 6
         private const val DOWNGRADE_WINDOWS = 3
         private const val UPGRADE_WINDOWS = 12
-        private const val MAX_ADAPTIVE_LEVEL = 3
+        private const val MAX_ADAPTIVE_LEVEL = 4
+        private const val ULTRA_MAX_P95_MS = 340L
         private const val HIGH_RES_MAX_P95_MS = 190L
         private const val QUALITY_MAX_P95_MS = 150L
         private const val BALANCED_MAX_P95_MS = 175L
+        private const val ULTRA_UPGRADE_P95_MS = 170L
         private const val HIGH_RES_UPGRADE_P95_MS = 95L
         private const val QUALITY_UPGRADE_P95_MS = 110L
         private const val THROTTLED_UPGRADE_P95_MS = 135L
 
         private val PROFILES = listOf(
+            DualPhoneDepthPerformanceProfile(
+                name = "ULTRA_960",
+                workWidth = 960,
+                workHeight = 540,
+                minProcessingIntervalMs = 400L,
+                enableLeftRightCheck = true,
+            ),
             DualPhoneDepthPerformanceProfile(
                 name = "HIGH_640",
                 workWidth = 640,

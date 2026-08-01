@@ -115,9 +115,9 @@ data class DualPhoneReducedFrame(
 
     companion object {
         const val SCHEMA_VERSION = 1
-        const val MAX_WIDTH = 640
-        const val MAX_HEIGHT = 360
-        const val MAX_PAYLOAD_BYTES = 256 * 1024
+        const val MAX_WIDTH = 960
+        const val MAX_HEIGHT = 540
+        const val MAX_PAYLOAD_BYTES = 512 * 1024
         const val ENCODING_JPEG = "JPEG"
 
         internal fun fromWire(header: JSONObject, jpegBytes: ByteArray):

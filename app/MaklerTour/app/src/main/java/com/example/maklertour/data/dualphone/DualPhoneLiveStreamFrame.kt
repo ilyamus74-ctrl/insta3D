@@ -58,9 +58,9 @@ data class DualPhoneLiveStreamFrame(
 
     companion object {
         const val SCHEMA_VERSION: Int = 1
-        const val MAX_WIDTH: Int = 640
-        const val MAX_HEIGHT: Int = 360
-        const val MAX_PAYLOAD_BYTES: Int = 256 * 1024
+        const val MAX_WIDTH: Int = 960
+        const val MAX_HEIGHT: Int = 540
+        const val MAX_PAYLOAD_BYTES: Int = 512 * 1024
         private const val CRC32_MAX: Long = 0xffff_ffffL
         private val VALID_ROTATIONS: Set<Int> = setOf(0, 90, 180, 270)
     }
