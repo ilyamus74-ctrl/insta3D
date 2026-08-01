@@ -57,6 +57,7 @@ enum class DualPhoneMasterScanView(val label: String) {
     MASTER("MASTER"),
     SLAVE("SLAVE"),
     SPLIT("SPLIT"),
+    OVERLAY("OUTLINE"),
     DEPTH("RAW"),
     FILTERED("DENSE"),
     STRICT("STRICT"),
@@ -87,7 +88,7 @@ fun DualPhoneMasterScanDialog(
         DualPhoneLiveDepthProcessor(appContext)
     }
     val depth by depthProcessor.state.collectAsState()
-    var view by remember { mutableStateOf(DualPhoneMasterScanView.FILTERED) }
+    var view by remember { mutableStateOf(DualPhoneMasterScanView.OVERLAY) }
 
     DisposableEffect(depthProcessor) {
         onDispose { depthProcessor.close() }
@@ -278,6 +279,13 @@ private fun MasterScanViewport(
     val slaveFrame = snapshot.mediaTransport.latestFrame
     Box(modifier = modifier.background(Color.Black)) {
         when (view) {
+            DualPhoneMasterScanView.OVERLAY -> {
+                DualPhoneAdaptiveOutlineViewport(
+                    masterFrame = masterFrame,
+                    depth = depth,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
             DualPhoneMasterScanView.MASTER -> {
                 FrameViewport(masterFrame, "MASTER camera", Modifier.fillMaxSize())
                 PictureInPictureFrame(

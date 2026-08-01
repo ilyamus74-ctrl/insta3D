@@ -23,6 +23,16 @@ enum class DualPhoneDepthTemporalMode {
     RESET,
 }
 
+private enum class DualPhoneDenseSceneProfile(
+    val leftRightTolerancePx: Float,
+    val textureThreshold: Int,
+) {
+    TEXTURED(3.0f, 5),
+    LOW_TEXTURE(4.5f, 2),
+    MOVING(3.5f, 4),
+    STATIC_REFINE(2.5f, 5),
+}
+
 data class DualPhoneFilteredDepthResult(
     val rawDepthPreviewJpeg: ByteArray,
     val filteredDepthPreviewJpeg: ByteArray,
@@ -57,6 +67,9 @@ class DualPhoneFilteredDepthEngine : Closeable {
     private var previousMotionFrame: Mat? = null
     private var activeRows = 0
     private var activeColumns = 0
+    private var activeDenseSceneProfile = DualPhoneDenseSceneProfile.TEXTURED
+    private var pendingDenseSceneProfile = DualPhoneDenseSceneProfile.TEXTURED
+    private var pendingDenseSceneFrames = 0
 
     @Synchronized
     fun process(
@@ -151,6 +164,14 @@ class DualPhoneFilteredDepthEngine : Closeable {
             Core.bitwise_and(rawMinMask, rawMaxMask, rawValidMask)
 
             val rawValidCount = Core.countNonZero(rawValidMask)
+            val rawCoveragePercent = if (grayMaster.total() <= 0L) {
+                0.0
+            } else {
+                rawValidCount * 100.0 / grayMaster.total().toDouble()
+            }
+            val denseSceneProfile = stabilizeDenseSceneProfile(
+                chooseDenseSceneProfile(motionScore, rawCoveragePercent),
+            )
             if (enableLeftRightCheck) {
                 val reverse = createStereo(
                     minDisparity = -numDisparities,
@@ -176,7 +197,7 @@ class DualPhoneFilteredDepthEngine : Closeable {
                     leftDisparity = rawDisparity,
                     rightDisparity = rightDisparity,
                     output = denseLeftRightMask,
-                    tolerancePx = DENSE_LEFT_RIGHT_TOLERANCE_PX,
+                    tolerancePx = denseSceneProfile.leftRightTolerancePx,
                 )
                 Core.bitwise_and(rawValidMask, leftRightMask, consistentValidMask)
                 Core.bitwise_and(rawValidMask, denseLeftRightMask, denseConsistentValidMask)
@@ -225,7 +246,7 @@ class DualPhoneFilteredDepthEngine : Closeable {
             )
             Core.compare(
                 texture,
-                Scalar(DENSE_MIN_TEXTURE_GRADIENT.toDouble()),
+                Scalar(denseSceneProfile.textureThreshold.toDouble()),
                 denseTextureMask,
                 Core.CMP_GT,
             )
@@ -286,9 +307,27 @@ class DualPhoneFilteredDepthEngine : Closeable {
             stableMask.put(0, 0, temporal.mask)
             Core.bitwise_and(stableMask, strongTextureMask, highConfidenceMask)
 
-            createHeatmap(rawDisparity, rawValidMask, rawHeatmap)
-            createHeatmap(denseDisparity, denseClosedMask, filteredHeatmap)
-            createHeatmap(stableDisparity, stableMask, strictHeatmap)
+            createMetricHeatmap(
+                disparity = rawDisparity,
+                mask = rawValidMask,
+                focalPx = focalPx,
+                baselineMm = baselineMm,
+                output = rawHeatmap,
+            )
+            createMetricHeatmap(
+                disparity = denseDisparity,
+                mask = denseClosedMask,
+                focalPx = focalPx,
+                baselineMm = baselineMm,
+                output = filteredHeatmap,
+            )
+            createMetricHeatmap(
+                disparity = stableDisparity,
+                mask = stableMask,
+                focalPx = focalPx,
+                baselineMm = baselineMm,
+                output = strictHeatmap,
+            )
 
             confidence.setTo(LOW_CONFIDENCE_BGR, rawValidMask)
             confidence.setTo(MEDIUM_CONFIDENCE_BGR, denseClosedMask)
@@ -378,6 +417,9 @@ class DualPhoneFilteredDepthEngine : Closeable {
         previousMotionFrame = null
         activeRows = 0
         activeColumns = 0
+        activeDenseSceneProfile = DualPhoneDenseSceneProfile.TEXTURED
+        pendingDenseSceneProfile = DualPhoneDenseSceneProfile.TEXTURED
+        pendingDenseSceneFrames = 0
     }
 
     override fun close() {
@@ -439,6 +481,47 @@ class DualPhoneFilteredDepthEngine : Closeable {
             reduced.release()
             difference.release()
         }
+    }
+
+    private fun chooseDenseSceneProfile(
+        motionScorePercent: Double,
+        rawCoveragePercent: Double,
+    ): DualPhoneDenseSceneProfile = when {
+        motionScorePercent >= RESET_MOTION_PERCENT ->
+            DualPhoneDenseSceneProfile.MOVING
+        rawCoveragePercent < LOW_TEXTURE_RAW_PERCENT ->
+            DualPhoneDenseSceneProfile.LOW_TEXTURE
+        motionScorePercent <= STATIC_REFINE_MOTION_PERCENT &&
+            rawCoveragePercent >= STATIC_REFINE_RAW_PERCENT ->
+            DualPhoneDenseSceneProfile.STATIC_REFINE
+        else -> DualPhoneDenseSceneProfile.TEXTURED
+    }
+
+    private fun stabilizeDenseSceneProfile(
+        candidate: DualPhoneDenseSceneProfile,
+    ): DualPhoneDenseSceneProfile {
+        if (candidate == DualPhoneDenseSceneProfile.MOVING) {
+            activeDenseSceneProfile = candidate
+            pendingDenseSceneProfile = candidate
+            pendingDenseSceneFrames = 0
+            return activeDenseSceneProfile
+        }
+        if (candidate == activeDenseSceneProfile) {
+            pendingDenseSceneProfile = candidate
+            pendingDenseSceneFrames = 0
+            return activeDenseSceneProfile
+        }
+        if (candidate != pendingDenseSceneProfile) {
+            pendingDenseSceneProfile = candidate
+            pendingDenseSceneFrames = 1
+        } else {
+            pendingDenseSceneFrames += 1
+        }
+        if (pendingDenseSceneFrames >= DENSE_PROFILE_HYSTERESIS_FRAMES) {
+            activeDenseSceneProfile = candidate
+            pendingDenseSceneFrames = 0
+        }
+        return activeDenseSceneProfile
     }
 
     private fun temporalMode(motionScorePercent: Double): DualPhoneDepthTemporalMode =
@@ -557,27 +640,68 @@ class DualPhoneFilteredDepthEngine : Closeable {
         output.put(0, 0, mask)
     }
 
-    private fun createHeatmap(disparity: Mat, mask: Mat, output: Mat) {
-        val normalized = Mat()
-        val invalid = Mat()
-        try {
-            Core.normalize(
-                disparity,
-                normalized,
-                0.0,
-                255.0,
-                Core.NORM_MINMAX,
-                CvType.CV_8U,
-                mask,
-            )
-            Imgproc.applyColorMap(normalized, output, Imgproc.COLORMAP_TURBO)
-            Core.bitwise_not(mask, invalid)
-            output.setTo(Scalar(0.0, 0.0, 0.0), invalid)
-        } finally {
-            normalized.release()
-            invalid.release()
+    private fun createMetricHeatmap(
+        disparity: Mat,
+        mask: Mat,
+        focalPx: Double,
+        baselineMm: Double,
+        output: Mat,
+    ) {
+        val total = disparity.rows() * disparity.cols()
+        val disparityValues = FloatArray(total)
+        val maskValues = ByteArray(total)
+        val bgr = ByteArray(total * 3)
+        disparity.get(0, 0, disparityValues)
+        mask.get(0, 0, maskValues)
+
+        for (index in 0 until total) {
+            if (maskValues[index].toInt() and 0xff == 0) continue
+            val disparityPx = disparityValues[index].toDouble()
+            if (disparityPx <= MIN_VALID_DISPARITY) continue
+            val meters = focalPx * baselineMm / disparityPx / 1_000.0
+            writeMetricColor(bgr, index * 3, meters)
         }
+        output.create(disparity.rows(), disparity.cols(), CvType.CV_8UC3)
+        output.put(0, 0, bgr)
     }
+
+    private fun writeMetricColor(
+        output: ByteArray,
+        offset: Int,
+        meters: Double,
+    ) {
+        if (!meters.isFinite()) return
+        val clamped = meters.coerceIn(METRIC_NEAR_METERS, METRIC_FAR_METERS)
+        var upper = 1
+        while (
+            upper < METRIC_COLOR_STOPS.size &&
+            clamped > METRIC_COLOR_STOPS[upper].meters
+        ) {
+            upper += 1
+        }
+        upper = upper.coerceAtMost(METRIC_COLOR_STOPS.lastIndex)
+        val lower = (upper - 1).coerceAtLeast(0)
+        val from = METRIC_COLOR_STOPS[lower]
+        val to = METRIC_COLOR_STOPS[upper]
+        val span = (to.meters - from.meters).coerceAtLeast(0.0001)
+        val ratio = ((clamped - from.meters) / span).coerceIn(0.0, 1.0)
+        output[offset] = interpolateColor(from.blue, to.blue, ratio)
+        output[offset + 1] = interpolateColor(from.green, to.green, ratio)
+        output[offset + 2] = interpolateColor(from.red, to.red, ratio)
+    }
+
+    private fun interpolateColor(from: Int, to: Int, ratio: Double): Byte =
+        (from + (to - from) * ratio)
+            .roundToInt()
+            .coerceIn(0, 255)
+            .toByte()
+
+    private data class MetricColorStop(
+        val meters: Double,
+        val blue: Int,
+        val green: Int,
+        val red: Int,
+    )
 
     private fun depthMetrics(
         disparity: Mat,
@@ -676,6 +800,20 @@ class DualPhoneFilteredDepthEngine : Closeable {
         private const val RESET_MOTION_PERCENT = 8.0
         private const val STRICT_LEFT_RIGHT_TOLERANCE_PX = 1.5f
         private const val DENSE_LEFT_RIGHT_TOLERANCE_PX = 3.0f
+        private const val LOW_TEXTURE_RAW_PERCENT = 18.0
+        private const val STATIC_REFINE_RAW_PERCENT = 25.0
+        private const val STATIC_REFINE_MOTION_PERCENT = 0.8
+        private const val DENSE_PROFILE_HYSTERESIS_FRAMES = 3
+        private const val METRIC_NEAR_METERS = 0.5
+        private const val METRIC_FAR_METERS = 6.0
+        private val METRIC_COLOR_STOPS = arrayOf(
+            MetricColorStop(0.5, 0, 0, 255),
+            MetricColorStop(1.0, 0, 165, 255),
+            MetricColorStop(2.0, 0, 255, 255),
+            MetricColorStop(3.0, 0, 255, 0),
+            MetricColorStop(4.0, 255, 255, 0),
+            MetricColorStop(6.0, 255, 0, 0),
+        )
         private const val CLAHE_CLIP_LIMIT = 2.0
         private val CLAHE_TILE_GRID = Size(8.0, 8.0)
         private val MOTION_SAMPLE_SIZE = Size(80.0, 60.0)
