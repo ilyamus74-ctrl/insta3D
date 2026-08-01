@@ -2083,6 +2083,8 @@ private fun CameraScreen(
     val videoScanBusy = videoScanUiState in setOf(VideoScanUiState.SWITCHING_MODE, VideoScanUiState.RECORDING, VideoScanUiState.STOPPING)
     val defaultPointName = stringResource(R.string.point_default_format, selectedSessionPointsCount + 1)
     val defaultScanName = stringResource(R.string.scan_video_default_name_format, scanVideos.size + 1)
+    val dualPhoneCaptureSelected =
+        com.example.maklertour.ui.session.rememberDualPhoneCaptureSelected()
     LaunchedEffect(connected) {
         while (connected) {
             delay(5_000)
@@ -2116,7 +2118,18 @@ private fun CameraScreen(
                 }
             }
 
-            AppSectionCard(title = stringResource(R.string.capture_point)) {
+            AppSectionCard(
+                title = if (dualPhoneCaptureSelected) {
+                    "Dual-phone capture"
+                } else {
+                    stringResource(R.string.capture_point)
+                },
+            ) {
+                if (dualPhoneCaptureSelected) {
+                    com.example.maklertour.ui.session.DualPhoneLiveStreamSessionCard(
+                        selectedSessionId = selectedSessionId,
+                    )
+                } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { captureMode = CaptureMode.PHOTO_POINT },
@@ -2170,9 +2183,6 @@ private fun CameraScreen(
                             enabled = connected && !videoScanBusy && !isCapturing && scanName.isNotBlank(),
                         ) { Text(stringResource(R.string.start_video_scan)) }
                     }
-                    com.example.maklertour.ui.session.DualPhoneLiveStreamSessionCard(
-                        selectedSessionId = selectedSessionId,
-                    )
                     Button(
                         onClick = {
                             if (selectedSessionName == null) showNoSessionDialog = true else showPhoneCameraScan = true
@@ -2211,6 +2221,7 @@ private fun CameraScreen(
                         onDownload = onDownloadVideoScan,
                         debugMode = debugMode,
                     )
+                }
                 }
             }
         }

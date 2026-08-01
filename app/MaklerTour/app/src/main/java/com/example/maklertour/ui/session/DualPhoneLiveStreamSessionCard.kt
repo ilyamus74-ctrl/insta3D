@@ -20,6 +20,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamMode
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionBlock
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionCoordinator
@@ -27,7 +30,41 @@ import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionInput
 import com.example.maklertour.data.dualphone.DualPhoneLiveStreamSessionStatus
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
 import com.maklertour.data.dualphone.DualPhoneControlManager
+import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
+
+/**
+ * Returns true only for MASTER/SLAVE roles.
+ *
+ * The role is reloaded when the Camera destination resumes, so changing it in
+ * Settings immediately switches the Camera menu on return.
+ */
+@Composable
+fun rememberDualPhoneCaptureSelected(): Boolean {
+    val context = LocalContext.current
+    val appContext = context.applicationContext
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val settingsStore = remember(appContext) {
+        DualPhoneStereoSettingsStore(appContext)
+    }
+    var role by remember(settingsStore) {
+        mutableStateOf(settingsStore.load().role)
+    }
+
+    DisposableEffect(lifecycleOwner, settingsStore) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                role = settingsStore.load().role
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    return role != DualPhoneRole.STANDALONE
+}
 
 /**
  * Session-visible LM01A card.
