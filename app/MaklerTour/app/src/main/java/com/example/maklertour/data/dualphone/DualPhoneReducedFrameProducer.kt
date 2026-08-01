@@ -189,6 +189,7 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
                 current.copy(framesObserved = current.framesObserved + 1L)
             }
             val sensorTimestampNs = image.imageInfo.timestamp
+            val analysisReceivedElapsedRealtimeNs = SystemClock.elapsedRealtimeNanos()
             val previousTimestampNs = lastAcceptedTimestampNs.get()
             if (
                 previousTimestampNs > 0L &&
@@ -226,8 +227,8 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
                 role = activeRole,
                 frameSequence = sequence.getAndIncrement(),
                 sensorTimestampNs = sensorTimestampNs,
-                captureElapsedRealtimeNs = SystemClock.elapsedRealtimeNanos(),
-                timestampSource = "CAMERAX_IMAGE_INFO",
+                captureElapsedRealtimeNs = analysisReceivedElapsedRealtimeNs,
+                timestampSource = "CAMERAX_IMAGE_INFO_WITH_ANALYSIS_RECEIVE_ELAPSED_REALTIME",
                 clockModelRevision = 0L,
                 width = encoded.width,
                 height = encoded.height,

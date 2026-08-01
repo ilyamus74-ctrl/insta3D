@@ -26,8 +26,8 @@ import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntimeSnapshot
 /**
  * Locked application surface shown while MASTER owns the SLAVE work mode.
  *
- * LM01B adds the bounded local reduced preview and media-channel diagnostics.
- * Metric depth, room geometry and scan coverage remain outside this slice.
+ * LM02 replaces the diagnostic card with a full-screen local camera preview while
+ * LIVE/HYBRID is active. Passive WORK_APP keeps the managed diagnostic surface.
  */
 @Composable
 fun DualPhoneSlaveWorkScreen(
@@ -35,6 +35,15 @@ fun DualPhoneSlaveWorkScreen(
     onEmergencyDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (snapshot.requestedMode.streamEnabled) {
+        DualPhoneSlaveScanWorkspace(
+            snapshot = snapshot,
+            onEmergencyDisconnect = onEmergencyDisconnect,
+            modifier = modifier,
+        )
+        return
+    }
+
     Surface(modifier = modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
             SlaveStructureGuide(
@@ -62,10 +71,6 @@ fun DualPhoneSlaveWorkScreen(
                         "SLAVE остаётся ведомым во всех рабочих разделах. " +
                             "Только раздел «Настройки» возвращает локальное управление.",
                     )
-                }
-
-                if (snapshot.requestedMode.streamEnabled) {
-                    DualPhoneSlaveLocalPreview(snapshot = snapshot)
                 }
 
                 Card(modifier = Modifier.fillMaxWidth()) {

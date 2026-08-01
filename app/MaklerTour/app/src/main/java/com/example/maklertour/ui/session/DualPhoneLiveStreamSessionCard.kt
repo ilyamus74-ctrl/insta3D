@@ -67,10 +67,10 @@ fun rememberDualPhoneCaptureSelected(): Boolean {
 }
 
 /**
- * Session-visible LM01A card.
+ * Session-visible dual-phone live card.
  *
- * It performs identity/calibration gating and exposes PREPARING only. No frame socket
- * or CameraX analysis output is started by this slice.
+ * LM02 launches a separate full-screen scan workspace after LIVE/HYBRID while
+ * preserving the application-scoped runtime and the bounded LM01B media pipeline.
  */
 @Composable
 fun DualPhoneLiveStreamSessionCard(
@@ -103,6 +103,7 @@ fun DualPhoneLiveStreamSessionCard(
     var cameraIdentityRepairStatus by remember {
         mutableStateOf<String?>(null)
     }
+    var showScanWorkspace by remember { mutableStateOf(false) }
     val settings = remember(controlSnapshot, refreshSerial) {
         settingsStore.load()
     }
@@ -158,6 +159,7 @@ fun DualPhoneLiveStreamSessionCard(
                                 selectedSessionId,
                                 DualPhoneLiveStreamMode.LIVE_METRIC,
                             )
+                            showScanWorkspace = true
                         },
                     )
                     modeButton(
@@ -169,6 +171,7 @@ fun DualPhoneLiveStreamSessionCard(
                                 selectedSessionId,
                                 DualPhoneLiveStreamMode.HYBRID,
                             )
+                            showScanWorkspace = true
                         },
                     )
                     OutlinedButton(
@@ -176,10 +179,18 @@ fun DualPhoneLiveStreamSessionCard(
                             applicationRuntime.enterManagedWorkSurface(
                                 forcePassive = true,
                             )
+                            showScanWorkspace = false
                         },
                         enabled = requestedMode.streamEnabled,
                     ) {
                         Text("Выкл. LIVE")
+                    }
+                }
+                if (requestedMode.streamEnabled) {
+                    OutlinedButton(
+                        onClick = { showScanWorkspace = true },
+                    ) {
+                        Text("Открыть полноэкранный скан")
                     }
                 }
             } else {
@@ -283,6 +294,15 @@ fun DualPhoneLiveStreamSessionCard(
                 Text("Обновить проверку")
             }
         }
+    }
+
+    if (showScanWorkspace && settings.role == DualPhoneRole.MASTER) {
+        DualPhoneMasterScanDialog(
+            snapshot = runtimeSnapshot,
+            selectedSessionId = selectedSessionId,
+            applicationRuntime = applicationRuntime,
+            onDismiss = { showScanWorkspace = false },
+        )
     }
 }
 

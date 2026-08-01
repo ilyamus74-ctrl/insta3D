@@ -108,3 +108,58 @@ Those claims require LM02 and later quality gates.
 The producer, analyzer, pending JPEG, accepted socket and server socket are closed
 on mode replacement, `Выкл. LIVE`, Settings, disconnect, emergency release and
 runtime close.
+
+## LM02 full-screen scan and first depth contract
+
+```text
+baseline: bb25f4bf6931ecb8df3f149932d0729cddfc0ef0
+```
+
+After MASTER selects LIVE or HYBRID, the Camera card opens a separate full-screen
+scan workspace. Closing the workspace only hides it; `СТОП`, `Выкл. LIVE` or
+MASTER Settings stop the live pipeline.
+
+MASTER overlay controls may select:
+
+```text
+MASTER
+SLAVE
+SPLIT
+DEPTH
+LIVE
+HYBRID
+STOP
+MINIMIZE
+```
+
+SLAVE uses its local preview as the full-screen background. It remains managed by
+MASTER and may expose only local diagnostic visibility controls plus the emergency
+disconnect action. It must not select LIVE/HYBRID or stop the MASTER session.
+
+The first depth preview requires all of the following:
+
+```text
+real MASTER reduced frame
+real SLAVE reduced frame
+matching stream_id/session ownership
+ready clock-sync model
+accepted active calibration profile
+accepted MASTER/SLAVE intrinsics
+accepted stereo R/T and baseline
+```
+
+`capture_elapsed_realtime_ns` is sampled when CameraX delivers the frame to the
+analyzer, before JPEG scaling/compression. SLAVE elapsed time is then converted to
+the MASTER clock domain before pair selection. Frame history is bounded to eight
+frames per role. Pairs within
+35 ms are `READY`; pairs between 35 and 120 ms are `LATE`; larger deltas are not
+processed.
+
+LM02 rectifies both real frames with OpenCV `stereoRectify` and
+`initUndistortRectifyMap`, then computes a low-resolution `StereoBM` disparity
+preview. Vertical rectified baselines are rotated only for the disparity input;
+the calibration matrices and transported JPEG pixels are not rewritten.
+
+The displayed median distance and heatmap are diagnostic. LM02 must not claim a
+completed room model, room skeleton, scan coverage or final measurement. Those
+claims require LM03 and later tracking/geometry gates.

@@ -2779,3 +2779,45 @@ Raw stereo coordinates
 ## AUTO-B06 standalone dense preview contract
 
 A valid completed standalone Auto Photo sparse component can create an independent `COLMAP_RECONSTRUCTION_PREVIEW` with `pipeline_run_id=NULL`, exact `merged/merged_fused.ply` output, server-resolved Preview settings and both dense-only markers. Chunks/retries inherit its settings. Both markers suppress automatic mesh; neither marker alone changes legacy behavior.
+
+## C31 — Android dual-phone live pairing, rectification and diagnostic depth
+
+### Producer
+
+```text
+DualPhoneReducedFrameProducer
+DualPhoneReducedFrameTransport
+DualPhoneLiveDepthProcessor
+```
+
+### Consumer
+
+```text
+DualPhoneMasterScanDialog
+DualPhoneSlaveScanWorkspace
+future LM03 tracking and room-geometry stages
+```
+
+### Invariants
+
+* LIVE/HYBRID opens a separate full-screen MASTER workspace;
+* the SLAVE preview occupies its managed full-screen surface;
+* SLAVE does not receive local LIVE/HYBRID or STOP authority;
+* full-screen UI does not create another CameraX producer or network socket;
+* only real LM01B frames may enter pairing and depth;
+* `stream_id` must match before pairing;
+* SLAVE elapsed timestamps are converted to the MASTER clock domain;
+* histories are bounded and old frames cannot accumulate;
+* accepted pair delta is at most 120 ms and `READY` requires at most 35 ms;
+* rectification uses the accepted active calibration K/D/R/T/baseline;
+* transported raw pixels are not UI-rotated before calibration math;
+* vertical baseline rotation is applied only to the rectified disparity input;
+* LM02 output is a diagnostic disparity/depth preview, not a completed room scan;
+* minimizing the workspace does not stop LIVE/HYBRID;
+* explicit STOP returns both phones to passive `WORK_APP`.
+
+### Contract checks
+
+```text
+web/tests/dual_phone_lm02_fullscreen_depth_test.php
+```

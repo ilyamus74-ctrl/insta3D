@@ -1,0 +1,80 @@
+<?php
+
+declare(strict_types=1);
+
+$root = dirname(__DIR__, 2);
+$files = [
+    'card' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/session/DualPhoneLiveStreamSessionCard.kt',
+    'slave' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/session/DualPhoneSlaveWorkScreen.kt',
+    'workspace' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/session/DualPhoneFullScreenScanWorkspace.kt',
+    'depth' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneLiveDepthProcessor.kt',
+    'producer' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneReducedFrameProducer.kt',
+    'contract' => $root . '/app/MaklerTour/docs/APP_DUAL_PHONE_LIVE_STREAM_CONTRACT.md',
+];
+
+foreach ($files as $name => $path) {
+    if (!is_file($path)) {
+        fwrite(STDERR, "[FAIL] missing {$name}: {$path}\n");
+        exit(1);
+    }
+}
+
+$card = file_get_contents($files['card']);
+$slave = file_get_contents($files['slave']);
+$workspace = file_get_contents($files['workspace']);
+$depth = file_get_contents($files['depth']);
+$producer = file_get_contents($files['producer']);
+$contract = file_get_contents($files['contract']);
+
+$checks = [
+    'LIVE opens full-screen workspace' =>
+        str_contains($card, 'showScanWorkspace = true') &&
+        str_contains($card, 'DualPhoneMasterScanDialog'),
+    'workspace disables platform default width' =>
+        str_contains($workspace, 'usePlatformDefaultWidth = false'),
+    'MASTER overlay exposes all views' =>
+        str_contains($workspace, 'MASTER,') &&
+        str_contains($workspace, 'SLAVE,') &&
+        str_contains($workspace, 'SPLIT,') &&
+        str_contains($workspace, 'DEPTH,'),
+    'SLAVE uses full-screen scan workspace' =>
+        str_contains($slave, 'DualPhoneSlaveScanWorkspace'),
+    'SLAVE keeps emergency action' =>
+        str_contains($workspace, 'Аварийно отключить SLAVE'),
+    'pairing consumes clock offset' =>
+        str_contains($depth, 'clockSync.offsetNs') &&
+        str_contains($depth, 'slaveToMasterTime'),
+    'capture timestamp is sampled before JPEG encoding' =>
+        strpos($producer, 'analysisReceivedElapsedRealtimeNs') <
+            strpos($producer, 'val encoded = encodeJpeg(image)') &&
+        str_contains(
+            $producer,
+            'captureElapsedRealtimeNs = analysisReceivedElapsedRealtimeNs',
+        ),
+    'pair histories remain bounded' =>
+        str_contains($depth, 'MAX_HISTORY_FRAMES = 8'),
+    'pair gates are explicit' =>
+        str_contains($depth, 'READY_PAIR_DELTA_NS = 35_000_000L') &&
+        str_contains($depth, 'MAX_PAIR_DELTA_NS = 120_000_000L'),
+    'real calibration rectification is used' =>
+        str_contains($depth, 'Calib3d.stereoRectify') &&
+        str_contains($depth, 'Calib3d.initUndistortRectifyMap'),
+    'real disparity is computed' =>
+        str_contains($depth, 'StereoBM.create') &&
+        str_contains($depth, 'stereo.compute'),
+    'contract rejects premature room-model claims' =>
+        str_contains($contract, 'diagnostic') &&
+        str_contains($contract, 'must not claim'),
+];
+
+$failed = false;
+foreach ($checks as $label => $ok) {
+    if ($ok) {
+        echo "[OK] {$label}\n";
+    } else {
+        fwrite(STDERR, "[FAIL] {$label}\n");
+        $failed = true;
+    }
+}
+
+exit($failed ? 1 : 0);
