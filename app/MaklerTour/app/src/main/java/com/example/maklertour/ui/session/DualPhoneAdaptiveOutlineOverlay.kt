@@ -334,7 +334,10 @@ private fun drawAdaptiveCenterCropBitmap(
     val quarterTurn = normalized == 90 || normalized == 270
     val displayWidth = if (quarterTurn) bitmap.height else bitmap.width
     val displayHeight = if (quarterTurn) bitmap.width else bitmap.height
-    val scale = maxOf(
+    // FIT_CENTER keeps the full rectified frame and its aspect ratio. All LM02.6
+    // layers share the same processing dimensions and rotation, therefore the
+    // base image, DENSE depth and STRICT outline use the same visible transform.
+    val scale = minOf(
         viewportWidth / displayWidth.toFloat(),
         viewportHeight / displayHeight.toFloat(),
     )

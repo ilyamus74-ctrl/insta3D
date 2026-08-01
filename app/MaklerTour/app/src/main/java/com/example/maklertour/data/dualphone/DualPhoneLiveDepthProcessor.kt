@@ -570,10 +570,21 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 pair.master.imageProxyRotationDegrees - processingRotationDegrees,
             )
 
-            val workSize = Size(
-                performanceProfile.workWidth.toDouble(),
-                performanceProfile.workHeight.toDouble(),
-            )
+            // The performance profile is expressed in the horizontal-disparity
+            // coordinate system. A vertical stereo baseline is rotated by 90°
+            // before matching, so its width/height must be swapped. Resizing the
+            // rotated 270×480 image back into 480×270 distorted room geometry.
+            val workSize = if (vertical) {
+                Size(
+                    performanceProfile.workHeight.toDouble(),
+                    performanceProfile.workWidth.toDouble(),
+                )
+            } else {
+                Size(
+                    performanceProfile.workWidth.toDouble(),
+                    performanceProfile.workHeight.toDouble(),
+                )
+            }
             Imgproc.resize(
                 depthMaster,
                 workMaster,
@@ -599,7 +610,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 projectionMaster.get(0, 0)?.getOrNull(0)
             } ?: error("DEPTH_BLOCKED: rectified focal length is unavailable")
             val focalPx = rectifiedFocalPx *
-                performanceProfile.workWidth.toDouble() /
+                workMaster.cols().toDouble() /
                 depthMaster.cols().coerceAtLeast(1)
             val baselineMm = profile.stereo.baselineMm
                 ?: error("DEPTH_BLOCKED: baseline is unavailable")
