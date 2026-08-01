@@ -13,6 +13,9 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -41,6 +44,11 @@ data class DualPhoneReducedFrameProducerSnapshot(
     val state: DualPhoneReducedFrameProducerState =
         DualPhoneReducedFrameProducerState.STOPPED,
     val cameraId: String? = null,
+    val analysisSourceWidth: Int = 0,
+    val analysisSourceHeight: Int = 0,
+    val encodedWidth: Int = 0,
+    val encodedHeight: Int = 0,
+    val sourceAspectCropped: Boolean = false,
     val framesObserved: Long = 0L,
     val framesThrottled: Long = 0L,
     val framesEncoded: Long = 0L,
@@ -158,13 +166,19 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         }
 
         val lifecycle = ProducerLifecycleOwner().also { it.start() }
-        val imageAnalysis = ImageAnalysis.Builder()
-            .setTargetResolution(
-                Size(
-                    DualPhoneReducedFrame.MAX_WIDTH,
-                    DualPhoneReducedFrame.MAX_HEIGHT,
+        val resolutionSelector = ResolutionSelector.Builder()
+            .setAspectRatioStrategy(
+                AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY,
+            )
+            .setResolutionStrategy(
+                ResolutionStrategy(
+                    Size(CAPTURE_TARGET_WIDTH, CAPTURE_TARGET_HEIGHT),
+                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
                 ),
             )
+            .build()
+        val imageAnalysis = ImageAnalysis.Builder()
+            .setResolutionSelector(resolutionSelector)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
         imageAnalysis.setAnalyzer(analyzerExecutor) { image ->
@@ -239,6 +253,11 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
             val nowMs = SystemClock.elapsedRealtime()
             update { current ->
                 current.copy(
+                    analysisSourceWidth = encoded.sourceWidth,
+                    analysisSourceHeight = encoded.sourceHeight,
+                    encodedWidth = encoded.width,
+                    encodedHeight = encoded.height,
+                    sourceAspectCropped = encoded.sourceAspectCropped,
                     framesEncoded = current.framesEncoded + 1L,
                     bytesEncoded = current.bytesEncoded + encoded.bytes.size,
                     lastFrameElapsedMs = nowMs,
@@ -260,23 +279,39 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         }
         val sourceWidth = image.width
         val sourceHeight = image.height
-        val scale = minOf(
-            1.0,
-            DualPhoneReducedFrame.MAX_WIDTH.toDouble() / sourceWidth,
-            DualPhoneReducedFrame.MAX_HEIGHT.toDouble() / sourceHeight,
-        )
-        val targetWidth = evenDimension((sourceWidth * scale).toInt())
-        val targetHeight = evenDimension((sourceHeight * scale).toInt())
         val sourceNv21 = image.toNv21()
-        val encodedNv21 = if (
-            targetWidth == sourceWidth && targetHeight == sourceHeight
+        val crop = centerCrop16By9(sourceWidth, sourceHeight)
+        val croppedNv21 = if (
+            crop.left == 0 &&
+            crop.top == 0 &&
+            crop.width == sourceWidth &&
+            crop.height == sourceHeight
         ) {
             sourceNv21
         } else {
-            downscaleNv21(
+            cropNv21(
                 source = sourceNv21,
                 sourceWidth = sourceWidth,
                 sourceHeight = sourceHeight,
+                crop = crop,
+            )
+        }
+        val scale = minOf(
+            1.0,
+            DualPhoneReducedFrame.MAX_WIDTH.toDouble() / crop.width,
+            DualPhoneReducedFrame.MAX_HEIGHT.toDouble() / crop.height,
+        )
+        val targetWidth = evenDimension((crop.width * scale).toInt())
+        val targetHeight = evenDimension((crop.height * scale).toInt())
+        val encodedNv21 = if (
+            targetWidth == crop.width && targetHeight == crop.height
+        ) {
+            croppedNv21
+        } else {
+            downscaleNv21(
+                source = croppedNv21,
+                sourceWidth = crop.width,
+                sourceHeight = crop.height,
                 targetWidth = targetWidth,
                 targetHeight = targetHeight,
             )
@@ -296,7 +331,82 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
             require(success) { "JPEG compression failed" }
             output.toByteArray()
         }
-        return EncodedJpeg(targetWidth, targetHeight, bytes)
+        return EncodedJpeg(
+            width = targetWidth,
+            height = targetHeight,
+            bytes = bytes,
+            sourceWidth = sourceWidth,
+            sourceHeight = sourceHeight,
+            sourceAspectCropped =
+                crop.width != sourceWidth || crop.height != sourceHeight,
+        )
+    }
+
+    private fun centerCrop16By9(
+        sourceWidth: Int,
+        sourceHeight: Int,
+    ): CropRegion {
+        require(sourceWidth >= 2 && sourceHeight >= 2)
+        val sourceIsWiderThan16By9 =
+            sourceWidth.toLong() * 9L > sourceHeight.toLong() * 16L
+        val sourceIsNarrowerThan16By9 =
+            sourceWidth.toLong() * 9L < sourceHeight.toLong() * 16L
+        val cropWidth: Int
+        val cropHeight: Int
+        when {
+            sourceIsWiderThan16By9 -> {
+                cropHeight = evenDimension(sourceHeight)
+                cropWidth = evenDimension(cropHeight * 16 / 9)
+                    .coerceAtMost(evenDimension(sourceWidth))
+            }
+            sourceIsNarrowerThan16By9 -> {
+                cropWidth = evenDimension(sourceWidth)
+                cropHeight = evenDimension(cropWidth * 9 / 16)
+                    .coerceAtMost(evenDimension(sourceHeight))
+            }
+            else -> {
+                cropWidth = evenDimension(sourceWidth)
+                cropHeight = evenDimension(sourceHeight)
+            }
+        }
+        val left = (((sourceWidth - cropWidth) / 2) / 2) * 2
+        val top = (((sourceHeight - cropHeight) / 2) / 2) * 2
+        return CropRegion(
+            left = left,
+            top = top,
+            width = cropWidth,
+            height = cropHeight,
+        )
+    }
+
+    private fun cropNv21(
+        source: ByteArray,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        crop: CropRegion,
+    ): ByteArray {
+        require(sourceWidth % 2 == 0 && sourceHeight % 2 == 0)
+        require(crop.left % 2 == 0 && crop.top % 2 == 0)
+        require(crop.width % 2 == 0 && crop.height % 2 == 0)
+        require(crop.left + crop.width <= sourceWidth)
+        require(crop.top + crop.height <= sourceHeight)
+        val output = ByteArray(crop.width * crop.height * 3 / 2)
+        for (row in 0 until crop.height) {
+            val sourceOffset = (crop.top + row) * sourceWidth + crop.left
+            val outputOffset = row * crop.width
+            System.arraycopy(source, sourceOffset, output, outputOffset, crop.width)
+        }
+        val sourceChromaOffset = sourceWidth * sourceHeight
+        val outputChromaOffset = crop.width * crop.height
+        for (row in 0 until crop.height / 2) {
+            val sourceOffset =
+                sourceChromaOffset +
+                    (crop.top / 2 + row) * sourceWidth +
+                    crop.left
+            val outputOffset = outputChromaOffset + row * crop.width
+            System.arraycopy(source, sourceOffset, output, outputOffset, crop.width)
+        }
+        return output
     }
 
     private fun downscaleNv21(
@@ -440,6 +550,16 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         val width: Int,
         val height: Int,
         val bytes: ByteArray,
+        val sourceWidth: Int,
+        val sourceHeight: Int,
+        val sourceAspectCropped: Boolean,
+    )
+
+    private data class CropRegion(
+        val left: Int,
+        val top: Int,
+        val width: Int,
+        val height: Int,
     )
 
     private class ProducerLifecycleOwner : LifecycleOwner {
@@ -459,6 +579,8 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
     }
 
     companion object {
+        private const val CAPTURE_TARGET_WIDTH = 1_280
+        private const val CAPTURE_TARGET_HEIGHT = 720
         private const val TARGET_FPS = 10L
         private const val FRAME_INTERVAL_NS = 1_000_000_000L / TARGET_FPS
         private const val JPEG_QUALITY = 65

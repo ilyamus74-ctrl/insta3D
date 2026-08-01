@@ -231,9 +231,20 @@ fun DualPhoneSlaveScanWorkspace(
                     ) {
                         Text("LIVE PREVIEW", color = Color.White)
                         Text(
-                            "source " +
-                                "${snapshot.localFrameProducer.latestFrame?.width ?: 0}×" +
-                                "${snapshot.localFrameProducer.latestFrame?.height ?: 0}",
+                            "capture " +
+                                "${snapshot.localFrameProducer.analysisSourceWidth}×" +
+                                "${snapshot.localFrameProducer.analysisSourceHeight}",
+                            color = Color.White,
+                        )
+                        Text(
+                            "stereo " +
+                                "${snapshot.localFrameProducer.encodedWidth}×" +
+                                "${snapshot.localFrameProducer.encodedHeight} · " +
+                                if (snapshot.localFrameProducer.sourceAspectCropped) {
+                                    "16:9 CENTER CROP"
+                                } else {
+                                    "16:9 NATIVE"
+                                },
                             color = Color.White,
                         )
                         Text("display FIT_CENTER · crop 0%", color = Color.White)
