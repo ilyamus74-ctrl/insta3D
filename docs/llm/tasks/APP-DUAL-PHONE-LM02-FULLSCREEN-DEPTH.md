@@ -152,3 +152,15 @@ MASTER additionally reports actual media/depth cadence, pair-quality ratio,
 processing utilization and bounded sender drop/replacement counters. The higher
 rate does not change latest-only transport, finite pair histories or the five-map
 temporal window.
+
+## LM02.4 — motion-aware high-quality depth
+
+LM02.3 device testing showed enough compute headroom for five depth updates per
+second, but the fixed same-pixel 3-of-5 filter erased most depth while the rig was
+moving. LM02.4 adds motion modes, exposure normalization, reverse-disparity
+consistency and an adaptive CPU/thermal budget.
+
+The default quality profile uses 480x270 at a 200 ms start interval. Processing p95
+and Android thermal state can downgrade to 320x240 or suspend only depth. LIVE media
+continues at 10 FPS so control, operator preview and the future texture recorder
+remain independent.

@@ -2866,3 +2866,43 @@ future LM03 tracking/geometry stage
 web/tests/dual_phone_lm01b_reduced_frame_stream_test.php
 web/tests/dual_phone_lm02_fullscreen_depth_test.php
 ```
+
+## C33 — Android dual-phone motion-aware adaptive live depth
+
+### Producer
+
+```text
+DualPhoneFilteredDepthEngine
+DualPhoneDepthPerformanceController
+DualPhoneLiveDepthProcessor
+```
+
+### Consumer
+
+```text
+DualPhoneFullScreenScanWorkspace
+future LM03 point-cloud/trajectory stages
+```
+
+### Invariants
+
+* media stays at 10 FPS while depth is independently budgeted;
+* quality depth targets 480x270 at 5 FPS, with bounded fallback profiles;
+* future full-resolution texture recording remains a separate owner and must keep
+  CPU, camera and storage headroom;
+* CLAHE normalizes MASTER/SLAVE grayscale input before matching only;
+* quality/balanced profiles apply reverse disparity and left-right consistency;
+* STATIC/MOVING/RESET temporal modes prevent stale same-pixel history during motion;
+* all disparity, motion, timing and pair histories are finite and resettable;
+* thermal protection may reduce or pause depth but may not release LIVE ownership,
+  CameraX media, TCP/45831 or TCP/45832;
+* one stream may downgrade but does not oscillate back to a higher profile;
+* raw JPEG pixels and calibration K/D/R/T are never rewritten;
+* UI reports profile, resolution, thermal state, motion, LR acceptance and p50/p95;
+* LM02.4 remains diagnostic and does not claim trajectory, walls or a room model.
+
+### Contract checks
+
+```text
+web/tests/dual_phone_lm02_fullscreen_depth_test.php
+```

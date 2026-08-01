@@ -449,9 +449,25 @@ private fun MasterStatusOverlay(
                 color = Color.White,
             )
             Text(
+                "profile ${depth.qualityProfile} · ${depth.workWidth}×${depth.workHeight} · " +
+                    "target ${depth.targetDepthFps.format1()} FPS · " +
+                    "thermal ${depth.thermalState}",
+                color = Color.White,
+            )
+            Text(
+                "motion ${depth.motionScorePercent.format1()}% ${depth.temporalMode} · " +
+                    "LR ${depth.leftRightAcceptedPercent.format1()}%",
+                color = Color.White,
+            )
+            Text(
                 "util ${depth.processingUtilizationPercent.format1()}% · " +
-                    "replaced $remoteReplaced · oversize $oversizeDrops · " +
-                    "display ${depth.displayRotationDegrees}° / " +
+                    "p50 ${depth.processingP50Ms ?: 0L} / " +
+                    "p95 ${depth.processingP95Ms ?: 0L} ms · " +
+                    "replaced $remoteReplaced · oversize $oversizeDrops",
+                color = Color.White,
+            )
+            Text(
+                "display ${depth.displayRotationDegrees}° / " +
                     "processing ${depth.processingRotationDegrees}°",
                 color = Color.White,
             )

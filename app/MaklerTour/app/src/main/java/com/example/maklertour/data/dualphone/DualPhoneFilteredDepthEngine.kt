@@ -13,7 +13,15 @@ import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgcodecs.Imgcodecs
 import org.opencv.imgproc.Imgproc
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
+
+enum class DualPhoneDepthTemporalMode {
+    STATIC,
+    MOVING,
+    RESET,
+}
 
 data class DualPhoneFilteredDepthResult(
     val rawDepthPreviewJpeg: ByteArray,
@@ -25,18 +33,25 @@ data class DualPhoneFilteredDepthResult(
     val highConfidencePercent: Double,
     val medianDepthMeters: Double?,
     val depthJitterMeters: Double?,
+    val motionScorePercent: Double,
+    val temporalMode: DualPhoneDepthTemporalMode,
+    val leftRightAcceptedPercent: Double,
 )
 
 /**
- * LM02.2 bounded spatial/temporal filter for rectified stereo input.
+ * LM02.4 motion-aware bounded filter for rectified stereo input.
  *
- * The engine uses StereoSGBM, rejects weak-texture and out-of-range disparity,
- * removes isolated regions with morphology, keeps at most five filtered disparity
- * maps, and publishes a temporal-median depth plus categorical confidence preview.
+ * CLAHE reduces exposure mismatch before StereoSGBM. Optional reverse disparity
+ * applies a left-right consistency gate. Motion controls the finite temporal
+ * history: STATIC keeps 3-of-5 consensus, MOVING uses 2-of-2/3 and RESET publishes
+ * the current spatial map without dragging stale pixels across the scene.
  */
 class DualPhoneFilteredDepthEngine : Closeable {
     private val temporalDisparities = ArrayDeque<Mat>()
     private val medianDepthHistory = ArrayDeque<Double>()
+    private var previousMotionFrame: Mat? = null
+    private var activeRows = 0
+    private var activeColumns = 0
 
     @Synchronized
     fun process(
@@ -44,17 +59,27 @@ class DualPhoneFilteredDepthEngine : Closeable {
         graySlave: Mat,
         focalPx: Double,
         baselineMm: Double,
+        enableLeftRightCheck: Boolean,
     ): DualPhoneFilteredDepthResult {
         require(!grayMaster.empty() && !graySlave.empty())
         require(grayMaster.size() == graySlave.size())
         require(focalPx > 0.0 && baselineMm > 0.0)
+        if (grayMaster.rows() != activeRows || grayMaster.cols() != activeColumns) {
+            resetHistoriesForSize(grayMaster.rows(), grayMaster.cols())
+        }
 
+        val normalizedMaster = Mat()
+        val normalizedSlave = Mat()
         val disparity16 = Mat()
+        val rightDisparity16 = Mat()
         val rawDisparity = Mat()
+        val rightDisparity = Mat()
         val spatialDisparity = Mat()
         val rawMinMask = Mat()
         val rawMaxMask = Mat()
         val rawValidMask = Mat()
+        val leftRightMask = Mat()
+        val consistentValidMask = Mat()
         val gradientX16 = Mat()
         val gradientY16 = Mat()
         val gradientX8 = Mat()
@@ -80,25 +105,19 @@ class DualPhoneFilteredDepthEngine : Closeable {
             grayMaster.cols(),
             CvType.CV_8UC3,
         )
+        val claheMaster = Imgproc.createCLAHE(CLAHE_CLIP_LIMIT, CLAHE_TILE_GRID)
+        val claheSlave = Imgproc.createCLAHE(CLAHE_CLIP_LIMIT, CLAHE_TILE_GRID)
 
         try {
-            val numDisparities = chooseNumDisparities(grayMaster.cols())
-            val blockSize = SGBM_BLOCK_SIZE
-            val stereo = StereoSGBM.create(
-                0,
-                numDisparities,
-                blockSize,
-                8 * blockSize * blockSize,
-                32 * blockSize * blockSize,
-                1,
-                31,
-                10,
-                80,
-                2,
-                StereoSGBM.MODE_SGBM_3WAY,
-            )
+            claheMaster.apply(grayMaster, normalizedMaster)
+            claheSlave.apply(graySlave, normalizedSlave)
+            val motionScore = calculateMotionScore(normalizedMaster)
+            val temporalMode = temporalMode(motionScore)
+
+            val numDisparities = chooseNumDisparities(normalizedMaster.cols())
+            val stereo = createStereo(minDisparity = 0, numDisparities = numDisparities)
             try {
-                stereo.compute(grayMaster, graySlave, disparity16)
+                stereo.compute(normalizedMaster, normalizedSlave, disparity16)
             } finally {
                 stereo.clear()
             }
@@ -118,9 +137,41 @@ class DualPhoneFilteredDepthEngine : Closeable {
             )
             Core.bitwise_and(rawMinMask, rawMaxMask, rawValidMask)
 
+            val rawValidCount = Core.countNonZero(rawValidMask)
+            if (enableLeftRightCheck) {
+                val reverse = createStereo(
+                    minDisparity = -numDisparities,
+                    numDisparities = numDisparities,
+                )
+                try {
+                    reverse.compute(normalizedSlave, normalizedMaster, rightDisparity16)
+                } finally {
+                    reverse.clear()
+                }
+                rightDisparity16.convertTo(
+                    rightDisparity,
+                    CvType.CV_32F,
+                    1.0 / 16.0,
+                )
+                createLeftRightConsistencyMask(
+                    leftDisparity = rawDisparity,
+                    rightDisparity = rightDisparity,
+                    output = leftRightMask,
+                )
+                Core.bitwise_and(rawValidMask, leftRightMask, consistentValidMask)
+            } else {
+                rawValidMask.copyTo(consistentValidMask)
+            }
+            val consistentCount = Core.countNonZero(consistentValidMask)
+            val leftRightAcceptedPercent = when {
+                !enableLeftRightCheck -> 100.0
+                rawValidCount == 0 -> 0.0
+                else -> consistentCount * 100.0 / rawValidCount
+            }
+
             Imgproc.medianBlur(rawDisparity, spatialDisparity, 5)
             Imgproc.Sobel(
-                grayMaster,
+                normalizedMaster,
                 gradientX16,
                 CvType.CV_16S,
                 1,
@@ -128,7 +179,7 @@ class DualPhoneFilteredDepthEngine : Closeable {
                 3,
             )
             Imgproc.Sobel(
-                grayMaster,
+                normalizedMaster,
                 gradientY16,
                 CvType.CV_16S,
                 0,
@@ -150,7 +201,7 @@ class DualPhoneFilteredDepthEngine : Closeable {
                 strongTextureMask,
                 Core.CMP_GT,
             )
-            Core.bitwise_and(rawValidMask, textureMask, filteredMask)
+            Core.bitwise_and(consistentValidMask, textureMask, filteredMask)
             Imgproc.morphologyEx(
                 filteredMask,
                 openedMask,
@@ -166,10 +217,12 @@ class DualPhoneFilteredDepthEngine : Closeable {
             Core.bitwise_not(closedMask, invalidMask)
             spatialDisparity.setTo(Scalar(0.0), invalidMask)
 
+            prepareTemporalHistory(temporalMode)
             pushTemporal(spatialDisparity)
             val temporal = temporalMedian(
                 rows = spatialDisparity.rows(),
                 columns = spatialDisparity.cols(),
+                mode = temporalMode,
             )
             stableDisparity.create(
                 spatialDisparity.rows(),
@@ -211,15 +264,26 @@ class DualPhoneFilteredDepthEngine : Closeable {
                 highConfidencePercent = percent(highConfidenceMask, totalPixels),
                 medianDepthMeters = metrics.medianDepthMeters,
                 depthJitterMeters = jitter,
+                motionScorePercent = motionScore,
+                temporalMode = temporalMode,
+                leftRightAcceptedPercent = leftRightAcceptedPercent,
             )
         } finally {
+            claheMaster.collectGarbage()
+            claheSlave.collectGarbage()
             listOf(
+                normalizedMaster,
+                normalizedSlave,
                 disparity16,
+                rightDisparity16,
                 rawDisparity,
+                rightDisparity,
                 spatialDisparity,
                 rawMinMask,
                 rawMaxMask,
                 rawValidMask,
+                leftRightMask,
+                consistentValidMask,
                 gradientX16,
                 gradientY16,
                 gradientX8,
@@ -244,13 +308,94 @@ class DualPhoneFilteredDepthEngine : Closeable {
 
     @Synchronized
     fun reset() {
-        temporalDisparities.forEach { it.release() }
-        temporalDisparities.clear()
+        clearTemporalDisparities()
         medianDepthHistory.clear()
+        previousMotionFrame?.release()
+        previousMotionFrame = null
+        activeRows = 0
+        activeColumns = 0
     }
 
     override fun close() {
         reset()
+    }
+
+    private fun createStereo(
+        minDisparity: Int,
+        numDisparities: Int,
+    ): StereoSGBM {
+        val blockSize = SGBM_BLOCK_SIZE
+        return StereoSGBM.create(
+            minDisparity,
+            numDisparities,
+            blockSize,
+            8 * blockSize * blockSize,
+            32 * blockSize * blockSize,
+            1,
+            31,
+            10,
+            80,
+            2,
+            StereoSGBM.MODE_SGBM_3WAY,
+        )
+    }
+
+    private fun resetHistoriesForSize(rows: Int, columns: Int) {
+        clearTemporalDisparities()
+        medianDepthHistory.clear()
+        previousMotionFrame?.release()
+        previousMotionFrame = null
+        activeRows = rows
+        activeColumns = columns
+    }
+
+    private fun calculateMotionScore(current: Mat): Double {
+        val reduced = Mat()
+        val difference = Mat()
+        try {
+            Imgproc.resize(
+                current,
+                reduced,
+                MOTION_SAMPLE_SIZE,
+                0.0,
+                0.0,
+                Imgproc.INTER_AREA,
+            )
+            val previous = previousMotionFrame
+            val score = if (previous == null || previous.size() != reduced.size()) {
+                0.0
+            } else {
+                Core.absdiff(previous, reduced, difference)
+                Core.mean(difference).`val`[0] * 100.0 / 255.0
+            }
+            previousMotionFrame?.release()
+            previousMotionFrame = reduced.clone()
+            return score
+        } finally {
+            reduced.release()
+            difference.release()
+        }
+    }
+
+    private fun temporalMode(motionScorePercent: Double): DualPhoneDepthTemporalMode =
+        when {
+            motionScorePercent >= RESET_MOTION_PERCENT ->
+                DualPhoneDepthTemporalMode.RESET
+            motionScorePercent >= MOVING_MOTION_PERCENT ->
+                DualPhoneDepthTemporalMode.MOVING
+            else -> DualPhoneDepthTemporalMode.STATIC
+        }
+
+    private fun prepareTemporalHistory(mode: DualPhoneDepthTemporalMode) {
+        when (mode) {
+            DualPhoneDepthTemporalMode.RESET -> clearTemporalDisparities()
+            DualPhoneDepthTemporalMode.MOVING -> {
+                while (temporalDisparities.size > 1) {
+                    temporalDisparities.removeFirst().release()
+                }
+            }
+            DualPhoneDepthTemporalMode.STATIC -> Unit
+        }
     }
 
     private fun pushTemporal(disparity: Mat) {
@@ -260,15 +405,28 @@ class DualPhoneFilteredDepthEngine : Closeable {
         }
     }
 
-    private fun temporalMedian(rows: Int, columns: Int): TemporalResult {
+    private fun clearTemporalDisparities() {
+        temporalDisparities.forEach { it.release() }
+        temporalDisparities.clear()
+    }
+
+    private fun temporalMedian(
+        rows: Int,
+        columns: Int,
+        mode: DualPhoneDepthTemporalMode,
+    ): TemporalResult {
         val total = rows * columns
         val history = temporalDisparities.map { mat ->
             FloatArray(total).also { values -> mat.get(0, 0, values) }
         }
-        val requiredVotes = when (history.size) {
-            0, 1 -> 1
-            2 -> 2
-            else -> MIN_TEMPORAL_VOTES
+        val requiredVotes = when (mode) {
+            DualPhoneDepthTemporalMode.RESET -> 1
+            DualPhoneDepthTemporalMode.MOVING -> minOf(2, history.size)
+            DualPhoneDepthTemporalMode.STATIC -> when (history.size) {
+                0, 1 -> 1
+                2 -> 2
+                else -> MIN_TEMPORAL_VOTES
+            }
         }
         val output = FloatArray(total)
         val mask = ByteArray(total)
@@ -291,12 +449,47 @@ class DualPhoneFilteredDepthEngine : Closeable {
                 MAX_TEMPORAL_SPREAD_PX,
                 median * MAX_TEMPORAL_SPREAD_RATIO,
             )
-            if (spread <= allowedSpread) {
+            if (mode == DualPhoneDepthTemporalMode.RESET || spread <= allowedSpread) {
                 output[index] = median
                 mask[index] = 0xff.toByte()
             }
         }
         return TemporalResult(output, mask)
+    }
+
+    private fun createLeftRightConsistencyMask(
+        leftDisparity: Mat,
+        rightDisparity: Mat,
+        output: Mat,
+    ) {
+        val rows = leftDisparity.rows()
+        val columns = leftDisparity.cols()
+        val total = rows * columns
+        val left = FloatArray(total)
+        val right = FloatArray(total)
+        val mask = ByteArray(total)
+        leftDisparity.get(0, 0, left)
+        rightDisparity.get(0, 0, right)
+
+        for (row in 0 until rows) {
+            val rowOffset = row * columns
+            for (column in 0 until columns) {
+                val index = rowOffset + column
+                val leftValue = left[index]
+                if (leftValue <= MIN_VALID_DISPARITY.toFloat()) continue
+                val rightColumn = (column - leftValue).roundToInt()
+                if (rightColumn !in 0 until columns) continue
+                val rightValue = right[rowOffset + rightColumn]
+                if (
+                    rightValue < -MIN_VALID_DISPARITY.toFloat() &&
+                    abs(leftValue + rightValue) <= LEFT_RIGHT_TOLERANCE_PX
+                ) {
+                    mask[index] = 0xff.toByte()
+                }
+            }
+        }
+        output.create(rows, columns, CvType.CV_8U)
+        output.put(0, 0, mask)
     }
 
     private fun createHeatmap(disparity: Mat, mask: Mat, output: Mat) {
@@ -408,6 +601,12 @@ class DualPhoneFilteredDepthEngine : Closeable {
         private const val MIN_TEMPORAL_VOTES = 3
         private const val MAX_TEMPORAL_SPREAD_PX = 1.5f
         private const val MAX_TEMPORAL_SPREAD_RATIO = 0.10f
+        private const val MOVING_MOTION_PERCENT = 2.5
+        private const val RESET_MOTION_PERCENT = 8.0
+        private const val LEFT_RIGHT_TOLERANCE_PX = 1.5f
+        private const val CLAHE_CLIP_LIMIT = 2.0
+        private val CLAHE_TILE_GRID = Size(8.0, 8.0)
+        private val MOTION_SAMPLE_SIZE = Size(80.0, 60.0)
         private const val MIN_DEPTH_METERS = 0.20
         private const val MAX_DEPTH_METERS = 20.0
         private const val METRIC_SAMPLE_STEP = 4

@@ -9,6 +9,7 @@ $files = [
     'workspace' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/session/DualPhoneFullScreenScanWorkspace.kt',
     'depth' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneLiveDepthProcessor.kt',
     'filter' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneFilteredDepthEngine.kt',
+    'performance' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneDepthPerformanceController.kt',
     'producer' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneReducedFrameProducer.kt',
     'runtime' => $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneApplicationRuntime.kt',
     'contract' => $root . '/app/MaklerTour/docs/APP_DUAL_PHONE_LIVE_STREAM_CONTRACT.md',
@@ -26,6 +27,7 @@ $slave = file_get_contents($files['slave']);
 $workspace = file_get_contents($files['workspace']);
 $depth = file_get_contents($files['depth']);
 $filter = file_get_contents($files['filter']);
+$performance = file_get_contents($files['performance']);
 $producer = file_get_contents($files['producer']);
 $runtime = file_get_contents($files['runtime']);
 $contract = file_get_contents($files['contract']);
@@ -72,9 +74,11 @@ $checks = [
     'pair gates are explicit' =>
         str_contains($depth, 'READY_PAIR_DELTA_NS = 35_000_000L') &&
         str_contains($depth, 'MAX_PAIR_DELTA_NS = 120_000_000L'),
-    'LM02.3 increases bounded media and depth cadence' =>
+    'LM02.4 keeps 10 FPS media and adaptive bounded depth cadence' =>
         str_contains($producer, 'TARGET_FPS = 10L') &&
-        str_contains($depth, 'MIN_PROCESSING_INTERVAL_MS = 250L'),
+        str_contains($performance, 'name = "QUALITY_480"') &&
+        str_contains($performance, 'minProcessingIntervalMs = 200L') &&
+        str_contains($performance, 'name = "THERMAL_PAUSED"'),
     'processing orientation is display-only metadata' =>
         str_contains(
             $depth,
@@ -101,6 +105,20 @@ $checks = [
         str_contains($filter, 'MIN_TEXTURE_GRADIENT') &&
         str_contains($filter, 'Imgproc.MORPH_OPEN') &&
         str_contains($filter, 'Imgproc.MORPH_CLOSE'),
+    'exposure normalization and left-right consistency are explicit' =>
+        str_contains($filter, 'Imgproc.createCLAHE') &&
+        str_contains($filter, 'createLeftRightConsistencyMask') &&
+        str_contains($filter, 'LEFT_RIGHT_TOLERANCE_PX'),
+    'motion-aware temporal modes avoid stale pixel drag' =>
+        str_contains($filter, 'DualPhoneDepthTemporalMode.STATIC') &&
+        str_contains($filter, 'DualPhoneDepthTemporalMode.MOVING') &&
+        str_contains($filter, 'DualPhoneDepthTemporalMode.RESET') &&
+        str_contains($filter, 'calculateMotionScore'),
+    'adaptive controller preserves recording and thermal headroom' =>
+        str_contains($performance, 'QUALITY_MAX_P95_MS') &&
+        str_contains($performance, 'PowerManager.THERMAL_STATUS_SEVERE') &&
+        str_contains($depth, 'THERMAL_PAUSED') &&
+        str_contains($depth, 'performance.profile.minProcessingIntervalMs'),
     'temporal history is bounded and resettable' =>
         str_contains($filter, 'TEMPORAL_WINDOW_FRAMES = 5') &&
         str_contains($filter, 'MIN_TEMPORAL_VOTES = 3') &&
@@ -116,6 +134,11 @@ $checks = [
         str_contains($workspace, 'filteredValidDisparityPercent') &&
         str_contains($workspace, 'stableCoveragePercent') &&
         str_contains($workspace, 'depthJitterMeters'),
+    'MASTER exposes motion quality and thermal diagnostics' =>
+        str_contains($workspace, 'motionScorePercent') &&
+        str_contains($workspace, 'leftRightAcceptedPercent') &&
+        str_contains($workspace, 'qualityProfile') &&
+        str_contains($workspace, 'processingP95Ms'),
     'contract rejects premature room-model claims' =>
         str_contains($contract, 'diagnostic') &&
         str_contains($contract, 'must not claim'),

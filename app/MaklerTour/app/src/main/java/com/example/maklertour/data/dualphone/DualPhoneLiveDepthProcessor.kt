@@ -43,6 +43,7 @@ enum class DualPhoneLiveDepthState {
     READY,
     LATE_PAIR,
     LOW_TEXTURE,
+    THERMAL_PAUSED,
     BLOCKED,
     FAILED,
 }
@@ -78,6 +79,16 @@ data class DualPhoneLiveDepthSnapshot(
     val processingUtilizationPercent: Double = 0.0,
     val processingRotationDegrees: Int = 0,
     val displayRotationDegrees: Int = 0,
+    val motionScorePercent: Double = 0.0,
+    val temporalMode: String = "WAITING",
+    val leftRightAcceptedPercent: Double = 0.0,
+    val qualityProfile: String = "WAITING",
+    val thermalState: String = "UNSUPPORTED",
+    val workWidth: Int = 0,
+    val workHeight: Int = 0,
+    val targetDepthFps: Double = 0.0,
+    val processingP50Ms: Long? = null,
+    val processingP95Ms: Long? = null,
     val lastUpdatedElapsedMs: Long? = null,
     val message: String = "Waiting for real MASTER and SLAVE frames",
     val lastError: String? = null,
@@ -130,6 +141,11 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         val depthInputRotation: String,
         val processingRotationDegrees: Int,
         val displayRotationDegrees: Int,
+        val motionScorePercent: Double,
+        val temporalMode: DualPhoneDepthTemporalMode,
+        val leftRightAcceptedPercent: Double,
+        val workWidth: Int,
+        val workHeight: Int,
     )
 
     private val appContext = context.applicationContext
@@ -142,6 +158,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
     private val slaveFrames = ArrayDeque<DualPhoneReducedFrame>()
     private val mutableState = MutableStateFlow(DualPhoneLiveDepthSnapshot())
     private val filteredDepthEngine = DualPhoneFilteredDepthEngine()
+    private val performanceController =
+        DualPhoneDepthPerformanceController(appContext)
 
     val state: StateFlow<DualPhoneLiveDepthSnapshot> = mutableState.asStateFlow()
 
@@ -188,10 +206,32 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
             findBestPair(clockSync)
         } ?: return
 
+        val performance = performanceController.snapshot()
+        if (performance.profile.paused) {
+            update { current ->
+                current.copy(
+                    state = DualPhoneLiveDepthState.THERMAL_PAUSED,
+                    qualityProfile = performance.profile.name,
+                    thermalState = performance.thermalState.name,
+                    targetDepthFps = 0.0,
+                    processingP50Ms = performance.processingP50Ms,
+                    processingP95Ms = performance.processingP95Ms,
+                    message = "Depth paused by thermal protection; LIVE media remains active",
+                    lastError = null,
+                )
+            }
+            return
+        }
+
         val pairKey = "${pair.master.frameSequence}:${pair.slave.frameSequence}"
         val nowMs = SystemClock.elapsedRealtime()
         if (pairKey == lastProcessedKey || processing.get()) return
-        if (nowMs - lastProcessingStartedMs < MIN_PROCESSING_INTERVAL_MS) return
+        if (
+            nowMs - lastProcessingStartedMs <
+            performance.profile.minProcessingIntervalMs
+        ) {
+            return
+        }
         if (pair.deltaNs > MAX_PAIR_DELTA_NS) {
             if (lastRejectedKey != pairKey) {
                 lastRejectedKey = pairKey
@@ -230,10 +270,12 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         scope.launch {
             val startedMs = SystemClock.elapsedRealtime()
             runCatching {
-                process(pair)
+                process(pair, performance.profile)
             }.onSuccess { result ->
                 val finishedAtMs = SystemClock.elapsedRealtime()
                 val elapsedMs = finishedAtMs - startedMs
+                performanceController.recordProcessing(elapsedMs)
+                val performanceAfter = performanceController.snapshot()
                 val deltaMs = pair.deltaNs / 1_000_000.0
                 val readyPair = pair.deltaNs <= READY_PAIR_DELTA_NS
                 val outputState = when {
@@ -271,10 +313,23 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                             current.firstProcessedElapsedMs ?: finishedAtMs,
                         processingMs = elapsedMs,
                         processingUtilizationPercent =
-                            elapsedMs * 100.0 / MIN_PROCESSING_INTERVAL_MS,
+                            elapsedMs * 100.0 /
+                                performance.profile.minProcessingIntervalMs,
                         processingRotationDegrees =
                             result.processingRotationDegrees,
                         displayRotationDegrees = result.displayRotationDegrees,
+                        motionScorePercent = result.motionScorePercent,
+                        temporalMode = result.temporalMode.name,
+                        leftRightAcceptedPercent =
+                            result.leftRightAcceptedPercent,
+                        qualityProfile = performanceAfter.profile.name,
+                        thermalState = performanceAfter.thermalState.name,
+                        workWidth = result.workWidth,
+                        workHeight = result.workHeight,
+                        targetDepthFps =
+                            performanceAfter.profile.targetDepthFps,
+                        processingP50Ms = performanceAfter.processingP50Ms,
+                        processingP95Ms = performanceAfter.processingP95Ms,
                         lastUpdatedElapsedMs = finishedAtMs,
                         message = when (outputState) {
                             DualPhoneLiveDepthState.READY ->
@@ -312,6 +367,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
             resetHistories(null)
         }
         filteredDepthEngine.reset()
+        performanceController.reset()
         mutableState.value = DualPhoneLiveDepthSnapshot()
     }
 
@@ -321,7 +377,10 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         scope.cancel()
     }
 
-    private fun process(pair: StereoPair): ProcessedDepth {
+    private fun process(
+        pair: StereoPair,
+        performanceProfile: DualPhoneDepthPerformanceProfile,
+    ): ProcessedDepth {
         check(openCvReady) {
             "DEPTH_BLOCKED: OpenCV is unavailable"
         }
@@ -357,7 +416,12 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         val graySlave = Mat()
 
         try {
-            val target = targetSize(masterRaw, slaveRaw)
+            val target = targetSize(
+                master = masterRaw,
+                slave = slaveRaw,
+                workWidth = performanceProfile.workWidth,
+                workHeight = performanceProfile.workHeight,
+            )
             Imgproc.resize(masterRaw, masterInput, target, 0.0, 0.0, Imgproc.INTER_AREA)
             Imgproc.resize(slaveRaw, slaveInput, target, 0.0, 0.0, Imgproc.INTER_AREA)
 
@@ -493,6 +557,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 graySlave = graySlave,
                 focalPx = focalPx,
                 baselineMm = baselineMm,
+                enableLeftRightCheck =
+                    performanceProfile.enableLeftRightCheck,
             )
 
             return ProcessedDepth(
@@ -513,6 +579,12 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
                 depthInputRotation = depthInputRotation,
                 processingRotationDegrees = processingRotationDegrees,
                 displayRotationDegrees = displayRotationDegrees,
+                motionScorePercent = filtered.motionScorePercent,
+                temporalMode = filtered.temporalMode,
+                leftRightAcceptedPercent =
+                    filtered.leftRightAcceptedPercent,
+                workWidth = target.width.toInt(),
+                workHeight = target.height.toInt(),
             )
         } finally {
             listOf(
@@ -567,14 +639,19 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         }
     }
 
-    private fun targetSize(master: Mat, slave: Mat): Size {
+    private fun targetSize(
+        master: Mat,
+        slave: Mat,
+        workWidth: Int,
+        workHeight: Int,
+    ): Size {
         val sourceWidth = minOf(master.cols(), slave.cols())
         val sourceHeight = minOf(master.rows(), slave.rows())
         check(sourceWidth > 0 && sourceHeight > 0)
         val scale = minOf(
             1.0,
-            WORK_WIDTH.toDouble() / sourceWidth,
-            WORK_HEIGHT.toDouble() / sourceHeight,
+            workWidth.toDouble() / sourceWidth,
+            workHeight.toDouble() / sourceHeight,
         )
         val width = (sourceWidth * scale).toInt().coerceAtLeast(64)
         val height = (sourceHeight * scale).toInt().coerceAtLeast(48)
@@ -701,6 +778,7 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
         cachedProfileId = null
         cachedProfile = null
         filteredDepthEngine.reset()
+        performanceController.reset()
     }
 
     private fun pairQuality(deltaNs: Long): String = when {
@@ -743,11 +821,8 @@ class DualPhoneLiveDepthProcessor(context: Context) : Closeable {
 
     companion object {
         private const val MAX_HISTORY_FRAMES = 8
-        private const val MIN_PROCESSING_INTERVAL_MS = 250L
         private const val READY_PAIR_DELTA_NS = 35_000_000L
         private const val MAX_PAIR_DELTA_NS = 120_000_000L
-        private const val WORK_WIDTH = 320
-        private const val WORK_HEIGHT = 240
         private const val MIN_STABLE_PERCENT = 2.0
         private const val OUTPUT_JPEG_QUALITY = 78
 

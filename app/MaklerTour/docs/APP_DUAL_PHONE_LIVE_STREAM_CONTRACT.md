@@ -231,3 +231,49 @@ MASTER diagnostics expose actual MASTER/SLAVE media FPS, actual depth FPS, READY
 pair percentage, READY/LATE/DROPPED counters, processing utilization and sender
 replacement/oversize counters. The `READY <= 35 ms` and `DROP > 120 ms` gates are
 not relaxed.
+
+## LM02.4 motion-aware high-quality depth contract
+
+```text
+baseline: 938b73fa417c1f9389034cd8c0ee67c25249fab6
+media target: 10 FPS
+quality depth target: 5 FPS
+```
+
+The future texture-video recorder is a separate full-resolution pipeline. Live
+depth must not consume the entire device budget or change recording resolution,
+FPS, codec, exposure policy or file ownership. The depth controller therefore
+keeps bounded work profiles and permanently downgrades for the current stream when
+processing p95 exceeds its reserved budget.
+
+```text
+QUALITY_480    480x270, 200 ms, left-right check enabled
+BALANCED_320   320x240, 200 ms, left-right check enabled
+THROTTLED_320  320x240, 333 ms, left-right check disabled
+THERMAL_PAUSED LIVE media remains active; depth processing is suspended
+```
+
+Android thermal status may only reduce depth work. It must not stop CameraX media,
+TCP/45831, TCP/45832 or future texture recording. A new stream/reset may restore
+the quality profile after the device cools.
+
+Before StereoSGBM, independent CLAHE normalization reduces MASTER/SLAVE exposure
+mismatch. Quality and balanced profiles compute reverse disparity and apply a
+left-right consistency gate. THROTTLED may skip the reverse pass to preserve the
+recording/UI budget.
+
+Temporal filtering is motion-aware:
+
+```text
+STATIC  strict 3-of-5 temporal consensus
+MOVING  bounded two-frame consensus
+RESET   old disparity history is released; current spatial map is published
+```
+
+Motion handling must never warp or rewrite transported JPEG pixels, calibration
+matrices or rectification maps. Every disparity and motion history remains bounded
+and is released on size/profile/stream replacement.
+
+MASTER diagnostics expose motion score, temporal mode, left-right acceptance,
+active work resolution, thermal state, target depth FPS and processing p50/p95.
+These remain diagnostic inputs for LM03 and are not final room measurements.
