@@ -22,6 +22,7 @@ import org.json.JSONObject
 
 enum class DualPhoneApplicationMode {
     SETTINGS,
+    WORK_CAMERA,
     WORK_LIVE,
     WORK_HYBRID;
 
@@ -33,7 +34,7 @@ enum class DualPhoneApplicationMode {
             when (mode) {
                 DualPhoneLiveStreamMode.LIVE_METRIC -> WORK_LIVE
                 DualPhoneLiveStreamMode.HYBRID -> WORK_HYBRID
-                DualPhoneLiveStreamMode.SYNC_VIDEO -> SETTINGS
+                DualPhoneLiveStreamMode.SYNC_VIDEO -> WORK_CAMERA
             }
     }
 }
@@ -73,7 +74,7 @@ data class DualPhoneApplicationRuntimeSnapshot(
 class DualPhoneApplicationRuntime private constructor(context: Context) : Closeable {
     private data class PendingMasterStart(
         val commandId: String,
-        val config: DualPhoneLiveStreamDataChannelConfig,
+        val config: DualPhoneLiveStreamDataChannelConfig?,
     )
 
     private val appContext = context.applicationContext
@@ -107,6 +108,64 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
     }
 
     @Synchronized
+    fun enterCameraWorkSurface() {
+        val settings = settingsStore.load()
+        val control = controlManager.state.value
+        if (settings.role != DualPhoneRole.MASTER) {
+            return
+        }
+        if (!control.connected) {
+            publishError("Connect SLAVE before opening the managed Camera screen")
+            return
+        }
+
+        val current = mutableState.value
+        if (
+            current.applicationMode == DualPhoneApplicationMode.WORK_CAMERA &&
+            (current.peerAcknowledged || pendingMasterStart != null)
+        ) {
+            return
+        }
+
+        val commandId = "work-camera-${UUID.randomUUID()}"
+        pendingMasterStart = PendingMasterStart(
+            commandId = commandId,
+            config = null,
+        )
+        dataChannel.stop()
+        coordinator.release()
+        mutableState.value = current.copy(
+            applicationMode = DualPhoneApplicationMode.WORK_CAMERA,
+            requestedMode = DualPhoneLiveStreamMode.SYNC_VIDEO,
+            localRole = DualPhoneRole.MASTER,
+            masterManaged = false,
+            peerAcknowledged = false,
+            sessionUuid = null,
+            sessionStatus = coordinator.currentStatus(),
+            dataChannel = dataChannel.snapshot,
+            lastMessage = "Waiting for SLAVE managed Camera screen",
+            lastError = null,
+        )
+
+        controlManager.requestEnterWorkMode(
+            JSONObject()
+                .put("command_id", commandId)
+                .put(
+                    "dual_capture_id",
+                    control.dualCaptureId ?: JSONObject.NULL,
+                )
+                .put(
+                    "application_mode",
+                    DualPhoneApplicationMode.WORK_CAMERA.name,
+                )
+                .put(
+                    "capture_mode",
+                    DualPhoneLiveStreamMode.SYNC_VIDEO.name,
+                ),
+        )
+    }
+
+    @Synchronized
     fun enterWorkMode(
         sessionUuid: String?,
         mode: DualPhoneLiveStreamMode,
@@ -117,43 +176,31 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             return
         }
         if (!mode.streamEnabled) {
-            exitWorkMode()
+            enterCameraWorkSurface()
+            return
+        }
+
+        val control = controlManager.state.value
+        if (!control.connected) {
+            publishError("Connect SLAVE before selecting LIVE or HYBRID")
             return
         }
 
         val status = reconcile(sessionUuid, mode)
         val owner = status.snapshot.owner
-        if (!status.sessionAccepted || owner == null) {
-            pendingMasterStart = null
-            dataChannel.stop()
-            mutableState.value = mutableState.value.copy(
-                applicationMode = DualPhoneApplicationMode.SETTINGS,
-                requestedMode = mode,
-                localRole = settings.role,
-                peerAcknowledged = false,
-                sessionUuid = sessionUuid,
-                sessionStatus = status,
-                dataChannel = dataChannel.snapshot,
-                lastMessage = "Work mode was not accepted locally",
-                lastError = status.block.name,
-            )
-            return
-        }
-
-        val control = controlManager.state.value
         val peerHost = control.peerHost?.trim()?.takeIf { it.isNotBlank() }
-        if (peerHost == null) {
-            publishError("MASTER has no SLAVE peer address")
-            return
+        val config = if (status.sessionAccepted && owner != null && peerHost != null) {
+            DualPhoneLiveStreamDataChannelConfig(
+                owner = owner,
+                localDeviceId = settings.deviceId,
+                role = DualPhoneRole.MASTER,
+                peerHost = peerHost,
+            )
+        } else {
+            null
         }
 
         val commandId = "work-${UUID.randomUUID()}"
-        val config = DualPhoneLiveStreamDataChannelConfig(
-            owner = owner,
-            localDeviceId = settings.deviceId,
-            role = DualPhoneRole.MASTER,
-            peerHost = peerHost,
-        )
         pendingMasterStart = PendingMasterStart(commandId, config)
         dataChannel.stop()
         mutableState.value = mutableState.value.copy(
@@ -162,22 +209,49 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             localRole = DualPhoneRole.MASTER,
             masterManaged = false,
             peerAcknowledged = false,
-            sessionUuid = owner.sessionUuid,
+            sessionUuid = sessionUuid,
             sessionStatus = status,
             dataChannel = dataChannel.snapshot,
-            lastMessage = "Waiting for SLAVE TCP/45831 listener",
-            lastError = null,
+            lastMessage = if (config != null) {
+                "Waiting for SLAVE TCP/45831 listener"
+            } else {
+                "SLAVE is entering managed mode; local transport is blocked"
+            },
+            lastError = if (config == null) status.block.name else null,
         )
 
         controlManager.requestEnterWorkMode(
             JSONObject()
                 .put("command_id", commandId)
-                .put("dual_capture_id", owner.dualCaptureId)
-                .put("session_uuid", owner.sessionUuid)
-                .put("capture_mode", owner.captureMode.name)
-                .put("calibration_profile_id", owner.calibrationIdentity)
-                .put("rig_mount_revision", owner.rigMountRevision)
-                .put("recording_mode_identity", owner.recordingModeIdentity),
+                .put(
+                    "dual_capture_id",
+                    control.dualCaptureId ?: JSONObject.NULL,
+                )
+                .put(
+                    "application_mode",
+                    DualPhoneApplicationMode.fromStreamMode(mode).name,
+                )
+                .put(
+                    "session_uuid",
+                    sessionUuid ?: JSONObject.NULL,
+                )
+                .put("capture_mode", mode.name)
+                .put(
+                    "calibration_profile_id",
+                    owner?.calibrationIdentity ?: JSONObject.NULL,
+                )
+                .put(
+                    "rig_mount_revision",
+                    owner?.rigMountRevision ?: JSONObject.NULL,
+                )
+                .put(
+                    "recording_mode_identity",
+                    owner?.recordingModeIdentity ?: JSONObject.NULL,
+                )
+                .put(
+                    "master_transport_block",
+                    if (config == null) status.block.name else JSONObject.NULL,
+                ),
         )
     }
 
@@ -229,26 +303,89 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         val settings = settingsStore.load()
         val control = controlManager.state.value
         val mode = runCatching {
-            DualPhoneLiveStreamMode.valueOf(payload.optString("capture_mode"))
+            DualPhoneLiveStreamMode.valueOf(
+                payload.optString(
+                    "capture_mode",
+                    DualPhoneLiveStreamMode.SYNC_VIDEO.name,
+                ),
+            )
         }.getOrNull()
+        val applicationMode = runCatching {
+            DualPhoneApplicationMode.valueOf(
+                payload.optString("application_mode"),
+            )
+        }.getOrNull() ?: mode?.let(
+            DualPhoneApplicationMode::fromStreamMode,
+        )
         val sessionUuid = payload.optString("session_uuid")
             .trim()
-            .takeIf { it.isNotBlank() }
+            .takeIf { it.isNotBlank() && it != "null" }
 
         val preconditionError = when {
             settings.role != DualPhoneRole.SLAVE -> "LOCAL_ROLE_IS_NOT_SLAVE"
             !control.connected -> "CONTROL_CHANNEL_NOT_CONNECTED"
-            mode?.streamEnabled != true -> "UNSUPPORTED_WORK_MODE"
-            sessionUuid == null -> "SESSION_UUID_MISSING"
+            applicationMode?.working != true -> "UNSUPPORTED_APPLICATION_MODE"
             payload.optString("dual_capture_id") != control.dualCaptureId ->
                 "DUAL_CAPTURE_ID_MISMATCH"
             else -> null
         }
-        if (preconditionError != null) {
-            return workModeAck(commandId, false, preconditionError)
+        if (preconditionError != null || applicationMode == null) {
+            return workModeAck(
+                commandId = commandId,
+                accepted = false,
+                reason = preconditionError ?: "APPLICATION_MODE_MISSING",
+                transportAccepted = false,
+            )
         }
 
-        val acceptedMode = requireNotNull(mode)
+        pendingMasterStart = null
+        dataChannel.stop()
+        mutableState.value = mutableState.value.copy(
+            applicationMode = applicationMode,
+            requestedMode = mode ?: DualPhoneLiveStreamMode.SYNC_VIDEO,
+            localRole = DualPhoneRole.SLAVE,
+            masterManaged = true,
+            peerAcknowledged = true,
+            sessionUuid = sessionUuid,
+            dataChannel = dataChannel.snapshot,
+            lastMessage = "SLAVE is working under MASTER control",
+            lastError = null,
+        )
+
+        if (applicationMode == DualPhoneApplicationMode.WORK_CAMERA) {
+            coordinator.release()
+            mutableState.value = mutableState.value.copy(
+                sessionStatus = coordinator.currentStatus(),
+                lastMessage =
+                    "SLAVE Camera screen is controlled by MASTER; waiting for LIVE/HYBRID",
+            )
+            return workModeAck(
+                commandId = commandId,
+                accepted = true,
+                reason = null,
+                transportAccepted = false,
+            )
+        }
+
+        val acceptedMode = mode
+        val transportPrecondition = when {
+            acceptedMode?.streamEnabled != true -> "UNSUPPORTED_WORK_MODE"
+            sessionUuid == null -> "SESSION_UUID_MISSING"
+            else -> null
+        }
+        if (transportPrecondition != null || acceptedMode == null) {
+            mutableState.value = mutableState.value.copy(
+                lastMessage = "MASTER controls SLAVE; data channel is blocked",
+                lastError = transportPrecondition ?: "CAPTURE_MODE_MISSING",
+            )
+            return workModeAck(
+                commandId = commandId,
+                accepted = true,
+                reason = transportPrecondition ?: "CAPTURE_MODE_MISSING",
+                transportAccepted = false,
+            )
+        }
+
         val acceptedSessionUuid = requireNotNull(sessionUuid)
         val status = reconcile(acceptedSessionUuid, acceptedMode)
         val owner = status.snapshot.owner
@@ -258,41 +395,71 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
                 owner.calibrationIdentity -> "CALIBRATION_PROFILE_MISMATCH"
             payload.optString("rig_mount_revision") !=
                 owner.rigMountRevision -> "RIG_MOUNT_REVISION_MISMATCH"
-            payload.optString("recording_mode_identity") !=
-                owner.recordingModeIdentity -> "RECORDING_MODE_IDENTITY_MISMATCH"
             else -> null
         }
         if (identityError != null || owner == null) {
+            mutableState.value = mutableState.value.copy(
+                sessionStatus = status,
+                lastMessage = "MASTER controls SLAVE; data channel is blocked",
+                lastError = identityError ?: "OWNER_NOT_ACCEPTED",
+            )
             return workModeAck(
                 commandId = commandId,
-                accepted = false,
+                accepted = true,
                 reason = identityError ?: "OWNER_NOT_ACCEPTED",
+                transportAccepted = false,
             )
         }
 
-        pendingMasterStart = null
+        val masterRecordingModeIdentity =
+            payload.optString("recording_mode_identity")
+                .trim()
+                .takeIf { it.isNotBlank() && it != "null" }
+        if (masterRecordingModeIdentity == null) {
+            mutableState.value = mutableState.value.copy(
+                sessionStatus = status,
+                lastMessage = "MASTER controls SLAVE; data channel is blocked",
+                lastError = "MASTER_RECORDING_MODE_IDENTITY_MISSING",
+            )
+            return workModeAck(
+                commandId = commandId,
+                accepted = true,
+                reason = "MASTER_RECORDING_MODE_IDENTITY_MISSING",
+                transportAccepted = false,
+            )
+        }
+
+        val sessionOwner = owner.copy(
+            recordingModeIdentity = masterRecordingModeIdentity,
+        )
         val startError = runCatching {
             dataChannel.start(
                 DualPhoneLiveStreamDataChannelConfig(
-                    owner = owner,
+                    owner = sessionOwner,
                     localDeviceId = settings.deviceId,
                     role = DualPhoneRole.SLAVE,
                 ),
             )
         }.exceptionOrNull()
         if (startError != null) {
-            coordinator.markTransportReconnecting(
-                startError.message ?: startError.javaClass.simpleName,
+            val reason =
+                startError.message ?: "SLAVE_LISTENER_START_FAILED"
+            mutableState.value = mutableState.value.copy(
+                sessionStatus = status,
+                dataChannel = dataChannel.snapshot,
+                lastMessage = "MASTER controls SLAVE; listener start failed",
+                lastError = reason,
             )
             return workModeAck(
                 commandId = commandId,
-                accepted = false,
-                reason = startError.message ?: "SLAVE_LISTENER_START_FAILED",
+                accepted = true,
+                reason = reason,
+                transportAccepted = false,
             )
         }
+
         mutableState.value = mutableState.value.copy(
-            applicationMode =
-                DualPhoneApplicationMode.fromStreamMode(acceptedMode),
+            applicationMode = applicationMode,
             requestedMode = acceptedMode,
             localRole = DualPhoneRole.SLAVE,
             masterManaged = true,
@@ -303,7 +470,12 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
             lastMessage = "SLAVE work mode is controlled by MASTER",
             lastError = null,
         )
-        return workModeAck(commandId, true, null)
+        return workModeAck(
+            commandId = commandId,
+            accepted = true,
+            reason = null,
+            transportAccepted = true,
+        )
     }
 
     @Synchronized
@@ -311,23 +483,44 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         val pending = pendingMasterStart ?: return
         if (payload.optString("command_id") != pending.commandId) return
 
-        if (!payload.optBoolean("accepted", false)) {
-            pendingMasterStart = null
+        val accepted = payload.optBoolean("accepted", false)
+        val transportAccepted = payload.optBoolean(
+            "transport_accepted",
+            accepted,
+        )
+        val reason = payload.optString("reason")
+            .trim()
+            .takeIf { it.isNotBlank() && it != "null" }
+
+        pendingMasterStart = null
+        if (!accepted) {
             dataChannel.stop()
-            val reason = payload.optString("reason", "SLAVE_REJECTED_WORK_MODE")
-            coordinator.markTransportReconnecting(reason)
             mutableState.value = mutableState.value.copy(
                 peerAcknowledged = false,
-                sessionStatus = coordinator.currentStatus(),
                 dataChannel = dataChannel.snapshot,
-                lastMessage = "SLAVE rejected work mode",
-                lastError = reason,
+                lastMessage = "SLAVE did not enter managed work mode",
+                lastError = reason ?: "SLAVE_REJECTED_WORK_MODE",
             )
             return
         }
 
-        pendingMasterStart = null
-        dataChannel.start(pending.config)
+        val config = pending.config
+        if (!transportAccepted || config == null) {
+            dataChannel.stop()
+            mutableState.value = mutableState.value.copy(
+                peerAcknowledged = true,
+                dataChannel = dataChannel.snapshot,
+                lastMessage = if (config == null && reason == null) {
+                    "SLAVE entered the managed Camera screen"
+                } else {
+                    "SLAVE entered managed mode; data channel is blocked"
+                },
+                lastError = reason ?: mutableState.value.lastError,
+            )
+            return
+        }
+
+        dataChannel.start(config)
         mutableState.value = mutableState.value.copy(
             peerAcknowledged = true,
             dataChannel = dataChannel.snapshot,
@@ -483,9 +676,11 @@ class DualPhoneApplicationRuntime private constructor(context: Context) : Closea
         commandId: String,
         accepted: Boolean,
         reason: String?,
+        transportAccepted: Boolean = accepted,
     ): JSONObject = JSONObject()
         .put("command_id", commandId)
         .put("accepted", accepted)
+        .put("transport_accepted", transportAccepted)
         .put("reason", reason ?: JSONObject.NULL)
         .put("application_mode", mutableState.value.applicationMode.name)
         .put("data_channel_state", dataChannel.snapshot.state.name)
