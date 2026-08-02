@@ -10,7 +10,7 @@
 namespace maklertour::dual_phone {
 
 inline constexpr std::uint32_t kProtocolSchema = 1;
-inline constexpr std::size_t kMaxHelloBytes = 16U * 1024U;
+inline constexpr std::size_t kMaxHelloBytes = 256U * 1024U;
 inline constexpr std::size_t kMaxHeaderBytes = 64U * 1024U;
 inline constexpr std::size_t kMaxPayloadBytes = 2U * 1024U * 1024U;
 

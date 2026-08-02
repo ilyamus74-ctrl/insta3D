@@ -6,6 +6,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.SystemClock
+import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
 import java.io.BufferedInputStream
@@ -71,6 +72,8 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
 
     private val appContext = context.applicationContext
     private val producer = DualPhoneReducedFrameProducer(appContext)
+    private val calibrationProfileStore =
+        DualPhoneCalibrationProfileStore(appContext)
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "lm02-7b-laptop-uplink").apply { isDaemon = true }
     }
@@ -177,13 +180,25 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
             publish()
         }
 
+        val calibrationProfile = if (
+            config.slot == DualPhoneLaptopCameraSlot.CAMERA_A
+        ) {
+            stereoSettings.activeCalibrationProfileId?.let { profileId ->
+                calibrationProfileStore.load(profileId)?.toJson()
+            }
+        } else {
+            null
+        }
+
         worker.execute {
             connectionLoop(
                 token = token,
                 config = config,
                 deviceId = stereoSettings.deviceId,
                 rigId = stereoSettings.rigId,
+                rigMountRevision = stereoSettings.rigMountRevision,
                 calibrationId = stereoSettings.activeCalibrationProfileId,
+                calibrationProfile = calibrationProfile,
             )
         }
     }
@@ -198,7 +213,9 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         config: DualPhoneLaptopUplinkConfig,
         deviceId: String,
         rigId: String,
+        rigMountRevision: String,
         calibrationId: String?,
+        calibrationProfile: JSONObject?,
     ) {
         var firstAttempt = true
         while (active.get() && generation.get() == token) {
@@ -248,9 +265,18 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
                         .put("session_id", sessionId)
                         .put("capture_mode", "ANDROID_CAMERAX")
                         .put("rig_id", rigId)
+                        .put("rig_mount_revision", rigMountRevision)
                         .put(
                             "calibration_profile_id",
                             calibrationId ?: JSONObject.NULL,
+                        )
+                        .put(
+                            "calibration_authority",
+                            config.slot == DualPhoneLaptopCameraSlot.CAMERA_A,
+                        )
+                        .put(
+                            "calibration_profile",
+                            calibrationProfile ?: JSONObject.NULL,
                         )
                         .put("client_monotonic_ns", helloClientNs)
                         .toString(),
@@ -588,7 +614,7 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
 
     companion object {
         private const val PROTOCOL_SCHEMA = 1
-        private const val MAX_HELLO_BYTES = 16 * 1024
+        private const val MAX_HELLO_BYTES = 256 * 1024
         private const val MAX_HEADER_BYTES = 64 * 1024
         private const val MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
         private const val CONNECT_TIMEOUT_MS = 3_000

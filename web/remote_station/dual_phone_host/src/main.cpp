@@ -10,6 +10,7 @@
 #include <functional>
 #include <csignal>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <netinet/in.h>
@@ -35,13 +36,18 @@ struct Options {
     int http_port = 48641;
     std::filesystem::path output = "./sessions";
     std::filesystem::path web_root = "./web";
+    std::filesystem::path session_path_file;
     std::size_t archive_every = 0;
 };
 
-void signal_handler(int) {
+void request_shutdown() {
     running.store(false);
     const int fd = ingest_server_fd.exchange(-1);
     if (fd >= 0) ::close(fd);
+}
+
+void signal_handler(int) {
+    request_shutdown();
 }
 
 int parse_port(const std::string& value) {
@@ -64,6 +70,7 @@ Options parse_options(const int argc, char** argv) {
         else if (arg == "--http-port") options.http_port = parse_port(take());
         else if (arg == "--output") options.output = take();
         else if (arg == "--web-root") options.web_root = take();
+        else if (arg == "--session-path-file") options.session_path_file = take();
         else if (arg == "--archive-every") options.archive_every = std::stoul(take());
         else if (arg == "--help") {
             std::cout << "maklertour-dual-phone-host\n"
@@ -73,6 +80,7 @@ Options parse_options(const int argc, char** argv) {
                       << "  --http-port 48641\n"
                       << "  --output ./sessions\n"
                       << "  --web-root ./web\n"
+                      << "  --session-path-file /tmp/current-session\n"
                       << "  --archive-every 1 (0 disables JPEG archive)\n";
             std::exit(0);
         } else throw std::runtime_error("unknown argument: " + arg);
@@ -202,8 +210,20 @@ int main(const int argc, char** argv) {
         std::signal(SIGTERM, signal_handler);
 
         mdp::HostState state(options.output, options.archive_every);
-        mdp::HttpDashboard dashboard(state, options.http_bind, options.http_port,
-                                     options.web_root);
+        if (!options.session_path_file.empty()) {
+            std::ofstream session_path(options.session_path_file);
+            if (!session_path) {
+                throw std::runtime_error("cannot write session path file");
+            }
+            session_path << state.session_directory().string() << '\n';
+        }
+        mdp::HttpDashboard dashboard(
+            state,
+            options.http_bind,
+            options.http_port,
+            options.web_root,
+            request_shutdown
+        );
         dashboard.start();
         const int server = create_server(options);
         ingest_server_fd.store(server);

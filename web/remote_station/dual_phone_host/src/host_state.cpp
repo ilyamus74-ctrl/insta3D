@@ -101,6 +101,19 @@ bool HostState::camera_connected(const CameraSlot slot,
     camera.connected = true;
     camera.device_id = device_id;
     camera.remote_address = remote_address;
+
+    const auto hello_path = session_dir_ /
+        (slot == CameraSlot::A ? "camera_a_hello.json" : "camera_b_hello.json");
+    std::ofstream(hello_path) << std::setw(2) << hello << '\n';
+    if (
+        slot == CameraSlot::A &&
+        hello.contains("calibration_profile") &&
+        hello.at("calibration_profile").is_object()
+    ) {
+        std::ofstream(session_dir_ / "stereo_calibration.json")
+            << std::setw(2) << hello.at("calibration_profile") << '\n';
+    }
+
     nlohmann::json event = {
         {"ts", utc_iso8601_now()}, {"level", "INFO"},
         {"event", "CAMERA_CONNECTED"}, {"slot", slot_name(slot)},

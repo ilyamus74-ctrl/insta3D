@@ -7,9 +7,13 @@
 <style>
 :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
 body { margin: 0; background: #101014; color: #f5f5f7; }
-header { position: sticky; top: 0; z-index: 2; padding: 14px 18px; background: rgba(17,17,23,.94); border-bottom: 1px solid #33333d; }
+header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 18px; background: rgba(17,17,23,.94); border-bottom: 1px solid #33333d; }
+.header-copy { min-width: 0; }
 h1 { margin: 0 0 6px; font-size: 20px; }
 #summary { font-family: ui-monospace, monospace; font-size: 13px; color: #c9c9d3; }
+#stopButton { flex: 0 0 auto; border: 1px solid #6d5361; border-radius: 10px; padding: 9px 12px; background: #2a1820; color: #ffdbe8; cursor: pointer; font-weight: 650; }
+#stopButton:hover { background: #3a202b; }
+#stopButton:disabled { cursor: wait; opacity: .65; }
 .grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 12px; }
 .camera { position: relative; min-height: 320px; background: #050506; border: 1px solid #33333d; border-radius: 14px; overflow: hidden; }
 .camera img { width: 100%; height: 100%; min-height: 320px; object-fit: contain; display: block; }
@@ -21,7 +25,15 @@ pre { max-height: 220px; overflow: auto; font-size: 12px; white-space: pre-wrap;
 </style>
 </head>
 <body>
-<header><h1>MaklerTour · CPU Laptop Stereo Host</h1><div id="summary">waiting for host…</div></header>
+<header>
+  <div class="header-copy">
+    <h1>MaklerTour · CPU Laptop Stereo Host</h1>
+    <div id="summary">waiting for host…</div>
+  </div>
+  <button id="stopButton" type="button" title="F8 or Alt+S">
+    Stop + pack JSON · F8
+  </button>
+</header>
 <div class="grid">
   <div class="camera"><img id="cameraA"><div id="labelA" class="label">CAMERA_A · WAITING</div></div>
   <div class="camera"><img id="cameraB"><div id="labelB" class="label">CAMERA_B · WAITING</div></div>
@@ -29,6 +41,35 @@ pre { max-height: 220px; overflow: auto; font-size: 12px; white-space: pre-wrap;
 <section><strong>Diagnostic JSON</strong><pre id="json"></pre></section>
 <script>
 const fmt = n => Number(n || 0).toFixed(1);
+let stopping = false;
+
+async function stopAndPack() {
+  if (stopping) return;
+  if (!window.confirm('Stop the laptop host and package JSON diagnostics?')) return;
+  stopping = true;
+  stopButton.disabled = true;
+  stopButton.textContent = 'Stopping…';
+  summary.textContent = 'Stopping host; JSON diagnostics will be packed in the terminal…';
+  try {
+    const response = await fetch('/api/control/stop', {method: 'POST'});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    stopButton.textContent = 'Packaging JSON…';
+  } catch (error) {
+    stopping = false;
+    stopButton.disabled = false;
+    stopButton.textContent = 'Stop + pack JSON · F8';
+    summary.textContent = `stop failed: ${error}`;
+  }
+}
+
+stopButton.addEventListener('click', stopAndPack);
+window.addEventListener('keydown', event => {
+  if (event.key === 'F8' || (event.altKey && event.key.toLowerCase() === 's')) {
+    event.preventDefault();
+    stopAndPack();
+  }
+});
+
 function label(name, camera) {
   const latest = camera.latest || {};
   const clockRtt = Number(latest.clock_rtt_ns || 0) / 1000000;
@@ -54,7 +95,11 @@ async function refresh() {
     const tick = Date.now();
     if (status.camera_a.latest) cameraA.src = `/camera/a.jpg?t=${tick}`;
     if (status.camera_b.latest) cameraB.src = `/camera/b.jpg?t=${tick}`;
-  } catch (error) { summary.textContent = `dashboard error: ${error}`; }
+  } catch (error) {
+    summary.textContent = stopping
+      ? 'Host stopped; JSON diagnostics are being packed in the terminal.'
+      : `dashboard error: ${error}`;
+  }
 }
 setInterval(refresh, 250); refresh();
 </script>

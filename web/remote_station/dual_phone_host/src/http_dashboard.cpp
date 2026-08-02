@@ -4,6 +4,7 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -25,6 +26,7 @@ std::vector<std::uint8_t> read_binary_file(const std::filesystem::path& path) {
 std::string status_text(const int status) {
     switch (status) {
         case 200: return "OK";
+        case 202: return "Accepted";
         case 404: return "Not Found";
         default: return "Error";
     }
@@ -33,9 +35,11 @@ std::string status_text(const int status) {
 }  // namespace
 
 HttpDashboard::HttpDashboard(HostState& state, std::string bind_address,
-                             const int port, std::filesystem::path web_root)
+                             const int port, std::filesystem::path web_root,
+                             std::function<void()> shutdown_callback)
     : state_(state), bind_address_(std::move(bind_address)), port_(port),
-      web_root_(std::move(web_root)) {}
+      web_root_(std::move(web_root)),
+      shutdown_callback_(std::move(shutdown_callback)) {}
 
 HttpDashboard::~HttpDashboard() { stop(); }
 
@@ -92,10 +96,6 @@ void HttpDashboard::handle_client(const int client_fd) {
     std::string target;
     std::string version;
     input >> method >> target >> version;
-    if (method != "GET") {
-        send_text(client_fd, 404, "text/plain", "GET only\n");
-        return;
-    }
     while (true) {
         const auto header = read_line(client_fd, 8192);
         if (header.empty()) break;
@@ -103,6 +103,22 @@ void HttpDashboard::handle_client(const int client_fd) {
 
     const auto query = target.find('?');
     const auto path = target.substr(0, query);
+    if (method == "POST" && path == "/api/control/stop") {
+        state_.log_event("INFO", "GUI_STOP_REQUESTED",
+                         {{"action", "STOP_AND_PACK_JSON"}});
+        send_text(client_fd, 202, "application/json",
+                  R"({"accepted":true,"action":"STOP_AND_PACK_JSON"})");
+        const auto callback = shutdown_callback_;
+        std::thread([callback] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            if (callback) callback();
+        }).detach();
+        return;
+    }
+    if (method != "GET") {
+        send_text(client_fd, 404, "text/plain", "GET only\n");
+        return;
+    }
     if (path == "/" || path == "/index.html") {
         const auto body = read_binary_file(web_root_ / "index.html");
         send_response(client_fd, 200, "text/html; charset=utf-8", body);

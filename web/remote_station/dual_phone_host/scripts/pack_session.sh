@@ -51,7 +51,16 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 PACKAGE_ROOT="$WORK_DIR/$(basename "$SESSION_DIR")"
 mkdir -p "$PACKAGE_ROOT"
 
-for name in session.json events.jsonl pairs.jsonl imu_a.jsonl imu_b.jsonl; do
+for name in \
+  session.json \
+  events.jsonl \
+  pairs.jsonl \
+  imu_a.jsonl \
+  imu_b.jsonl \
+  camera_a_hello.json \
+  camera_b_hello.json \
+  stereo_calibration.json
+do
   [[ -f "$SESSION_DIR/$name" ]] && cp -a "$SESSION_DIR/$name" "$PACKAGE_ROOT/"
 done
 

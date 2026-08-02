@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -12,7 +13,8 @@ namespace maklertour::dual_phone {
 class HttpDashboard {
 public:
     HttpDashboard(HostState& state, std::string bind_address, int port,
-                  std::filesystem::path web_root);
+                  std::filesystem::path web_root,
+                  std::function<void()> shutdown_callback);
     ~HttpDashboard();
 
     void start();
@@ -31,6 +33,7 @@ private:
     std::string bind_address_;
     int port_;
     std::filesystem::path web_root_;
+    std::function<void()> shutdown_callback_;
     std::atomic<bool> running_{false};
     int server_fd_ = -1;
     std::thread thread_;
