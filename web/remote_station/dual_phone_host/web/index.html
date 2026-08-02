@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MaklerTour Dual Phone Host</title>
+<style>
+:root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+body { margin: 0; background: #101014; color: #f5f5f7; }
+header { position: sticky; top: 0; z-index: 2; padding: 14px 18px; background: rgba(17,17,23,.94); border-bottom: 1px solid #33333d; }
+h1 { margin: 0 0 6px; font-size: 20px; }
+#summary { font-family: ui-monospace, monospace; font-size: 13px; color: #c9c9d3; }
+.grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 12px; }
+.camera { position: relative; min-height: 320px; background: #050506; border: 1px solid #33333d; border-radius: 14px; overflow: hidden; }
+.camera img { width: 100%; height: 100%; min-height: 320px; object-fit: contain; display: block; }
+.label { position: absolute; top: 10px; left: 10px; padding: 8px 10px; border-radius: 9px; background: rgba(0,0,0,.72); font-family: ui-monospace, monospace; white-space: pre-line; }
+.ok { color: #72f59a; } .bad { color: #ff7d7d; }
+section { margin: 0 12px 12px; padding: 12px; border: 1px solid #33333d; border-radius: 14px; background: #17171d; }
+pre { max-height: 220px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header><h1>MaklerTour · CPU Laptop Stereo Host</h1><div id="summary">waiting for host…</div></header>
+<div class="grid">
+  <div class="camera"><img id="cameraA"><div id="labelA" class="label">CAMERA_A · WAITING</div></div>
+  <div class="camera"><img id="cameraB"><div id="labelB" class="label">CAMERA_B · WAITING</div></div>
+</div>
+<section><strong>Diagnostic JSON</strong><pre id="json"></pre></section>
+<script>
+const fmt = n => Number(n || 0).toFixed(1);
+function label(name, camera) {
+  const latest = camera.latest || {};
+  return `${name} · ${camera.connected ? 'READY' : 'WAITING'}\n` +
+    `${camera.device_id || 'no device'}\n` +
+    `${latest.width || 0}×${latest.height || 0} · ${fmt(camera.fps)} FPS\n` +
+    `frame ${latest.sequence ?? '—'} · ${(camera.bytes/1048576).toFixed(1)} MiB`;
+}
+async function refresh() {
+  try {
+    const status = await (await fetch('/api/status', {cache:'no-store'})).json();
+    labelA.textContent = label('CAMERA_A', status.camera_a);
+    labelB.textContent = label('CAMERA_B', status.camera_b);
+    labelA.className = 'label ' + (status.camera_a.connected ? 'ok' : 'bad');
+    labelB.className = 'label ' + (status.camera_b.connected ? 'ok' : 'bad');
+    const pair = status.pairing;
+    summary.textContent = `A ${fmt(status.camera_a.fps)} FPS · B ${fmt(status.camera_b.fps)} FPS · pair Δ ${fmt(pair.last_delta_ms)} ms · ready ${pair.ready_pairs}/${pair.pairs}`;
+    json.textContent = JSON.stringify(status, null, 2);
+    const tick = Date.now();
+    if (status.camera_a.latest) cameraA.src = `/camera/a.jpg?t=${tick}`;
+    if (status.camera_b.latest) cameraB.src = `/camera/b.jpg?t=${tick}`;
+  } catch (error) { summary.textContent = `dashboard error: ${error}`; }
+}
+setInterval(refresh, 250); refresh();
+</script>
+</body>
+</html>
