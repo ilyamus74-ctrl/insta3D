@@ -7,12 +7,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
 find_package(nlohmann_json 3.10 REQUIRED)
+find_package(OpenCV 4 REQUIRED COMPONENTS core imgcodecs imgproc calib3d)
 
 add_executable(maklertour-dual-phone-host
     src/main.cpp
     src/protocol.cpp
     src/host_state.cpp
     src/http_dashboard.cpp
+    src/stereo_preview.cpp
+    src/stereo_preview_processing.cpp
 )
 
 add_executable(maklertour-dual-phone-synthetic-client
@@ -20,15 +23,26 @@ add_executable(maklertour-dual-phone-synthetic-client
     src/protocol.cpp
 )
 
+target_include_directories(maklertour-dual-phone-host PRIVATE
+    src
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(maklertour-dual-phone-host PRIVATE
+    Threads::Threads
+    nlohmann_json::nlohmann_json
+    ${OpenCV_LIBS}
+)
+
+target_include_directories(maklertour-dual-phone-synthetic-client PRIVATE src)
+target_link_libraries(maklertour-dual-phone-synthetic-client PRIVATE
+    Threads::Threads
+    nlohmann_json::nlohmann_json
+)
+
 foreach(target
     maklertour-dual-phone-host
     maklertour-dual-phone-synthetic-client
 )
-    target_include_directories(${target} PRIVATE src)
-    target_link_libraries(${target} PRIVATE
-        Threads::Threads
-        nlohmann_json::nlohmann_json
-    )
     target_compile_options(${target} PRIVATE
         -Wall -Wextra -Wpedantic -Wconversion -Wshadow
     )

@@ -55,6 +55,8 @@ for name in \
   session.json \
   events.jsonl \
   pairs.jsonl \
+  stereo_preview.jsonl \
+  stereo_preview_status.json \
   imu_a.jsonl \
   imu_b.jsonl \
   camera_a_hello.json \

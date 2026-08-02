@@ -14,14 +14,19 @@ h1 { margin: 0 0 6px; font-size: 20px; }
 #stopButton { flex: 0 0 auto; border: 1px solid #6d5361; border-radius: 10px; padding: 9px 12px; background: #2a1820; color: #ffdbe8; cursor: pointer; font-weight: 650; }
 #stopButton:hover { background: #3a202b; }
 #stopButton:disabled { cursor: wait; opacity: .65; }
+.block-title { margin: 14px 14px 0; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.block-title h2 { margin: 0; font-size: 16px; }
+.block-title span { font-family: ui-monospace, monospace; font-size: 12px; color: #aaaab7; text-align: right; }
 .grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 12px; }
-.camera { position: relative; min-height: 320px; background: #050506; border: 1px solid #33333d; border-radius: 14px; overflow: hidden; }
-.camera img { width: 100%; height: 100%; min-height: 320px; object-fit: contain; display: block; }
-.label { position: absolute; top: 10px; left: 10px; padding: 8px 10px; border-radius: 9px; background: rgba(0,0,0,.72); font-family: ui-monospace, monospace; white-space: pre-line; }
-.ok { color: #72f59a; } .bad { color: #ff7d7d; }
+.camera { position: relative; min-height: 300px; background: #050506; border: 1px solid #33333d; border-radius: 14px; overflow: hidden; }
+.camera img { width: 100%; height: 100%; min-height: 300px; object-fit: contain; display: block; }
+.disparity { margin: 0 12px 12px; min-height: 360px; }
+.disparity img { min-height: 360px; }
+.label { position: absolute; top: 10px; left: 10px; max-width: calc(100% - 40px); padding: 8px 10px; border-radius: 9px; background: rgba(0,0,0,.76); font-family: ui-monospace, monospace; white-space: pre-line; overflow-wrap: anywhere; }
+.ok { color: #72f59a; } .bad { color: #ff7d7d; } .warn { color: #ffd66e; }
 section { margin: 0 12px 12px; padding: 12px; border: 1px solid #33333d; border-radius: 14px; background: #17171d; }
-pre { max-height: 220px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
-@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+pre { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .block-title { align-items: flex-start; flex-direction: column; } }
 </style>
 </head>
 <body>
@@ -34,14 +39,50 @@ pre { max-height: 220px; overflow: auto; font-size: 12px; white-space: pre-wrap;
     Stop + pack JSON · F8
   </button>
 </header>
+
+<div class="block-title">
+  <h2>Raw phone uplink</h2>
+  <span id="pairStatus">waiting for synchronized frames</span>
+</div>
 <div class="grid">
   <div class="camera"><img id="cameraA"><div id="labelA" class="label">CAMERA_A · WAITING</div></div>
   <div class="camera"><img id="cameraB"><div id="labelB" class="label">CAMERA_B · WAITING</div></div>
 </div>
+
+<div class="block-title">
+  <h2>Calibrated rectification</h2>
+  <span id="calibrationStatus">waiting for calibration profile</span>
+</div>
+<div class="grid">
+  <div class="camera"><img id="rectifiedA"><div id="rectifiedLabelA" class="label warn">RECTIFIED_A · WAITING</div></div>
+  <div class="camera"><img id="rectifiedB"><div id="rectifiedLabelB" class="label warn">RECTIFIED_B · WAITING</div></div>
+</div>
+<div class="camera disparity">
+  <img id="disparity">
+  <div id="disparityLabel" class="label warn">STEREOSGBM · WAITING</div>
+</div>
+
 <section><strong>Diagnostic JSON</strong><pre id="json"></pre></section>
 <script>
 const fmt = n => Number(n || 0).toFixed(1);
+const percent = n => `${(Number(n || 0) * 100).toFixed(1)}%`;
+const stopButton = document.getElementById('stopButton');
+const summary = document.getElementById('summary');
+const pairStatus = document.getElementById('pairStatus');
+const calibrationStatus = document.getElementById('calibrationStatus');
+const labelA = document.getElementById('labelA');
+const labelB = document.getElementById('labelB');
+const cameraA = document.getElementById('cameraA');
+const cameraB = document.getElementById('cameraB');
+const rectifiedA = document.getElementById('rectifiedA');
+const rectifiedB = document.getElementById('rectifiedB');
+const rectifiedLabelA = document.getElementById('rectifiedLabelA');
+const rectifiedLabelB = document.getElementById('rectifiedLabelB');
+const disparity = document.getElementById('disparity');
+const disparityLabel = document.getElementById('disparityLabel');
+const diagnosticJson = document.getElementById('json');
 let stopping = false;
+let lastStereoPair = -1;
 
 async function stopAndPack() {
   if (stopping) return;
@@ -70,31 +111,77 @@ window.addEventListener('keydown', event => {
   }
 });
 
-function label(name, camera) {
+function cameraLabel(name, camera) {
   const latest = camera.latest || {};
   const clockRtt = Number(latest.clock_rtt_ns || 0) / 1000000;
   return `${name} · ${camera.connected ? 'READY' : 'WAITING'}\n` +
     `${camera.device_id || 'no device'}\n` +
     `${latest.width || 0}×${latest.height || 0} · ${fmt(camera.fps)} FPS\n` +
-    `frame ${latest.sequence ?? '—'} · ${(camera.bytes/1048576).toFixed(1)} MiB\n` +
+    `frame ${latest.sequence ?? '—'} · ${(Number(camera.bytes || 0)/1048576).toFixed(1)} MiB\n` +
     `clock ${fmt(clockRtt)} ms · queue ${camera.pair_queue_depth || 0} · dropped ${camera.pair_frames_dropped || 0}`;
 }
+
+function updateStereo(stereo) {
+  const calibration = stereo.calibration || {};
+  const processing = stereo.processing || {};
+  const previews = stereo.previews || {};
+  const ready = calibration.state === 'READY';
+  const profile = calibration.profile_id || 'no profile';
+  const order = calibration.roles_reversed ? 'runtime order reversed' : 'profile order';
+  calibrationStatus.textContent =
+    `${calibration.state || 'UNKNOWN'} · ${profile} · ${order}` +
+    (calibration.error ? ` · ${calibration.error}` : '');
+  calibrationStatus.className = ready ? 'ok' : (calibration.state === 'ERROR' ? 'bad' : 'warn');
+
+  const dimensions = calibration.runtime_width && calibration.runtime_height
+    ? `${calibration.runtime_width}×${calibration.runtime_height}`
+    : 'size pending';
+  const processingLine =
+    `pair ${processing.last_success_pair_index || '—'} · ${fmt(processing.fps)} proc FPS · ` +
+    `${fmt(processing.last_duration_ms)} ms · valid ${percent(processing.valid_disparity_ratio)}`;
+  const errorLine = processing.last_error ? `\n${processing.last_error}` : '';
+  rectifiedLabelA.textContent = `RECTIFIED_A · ${previews.rectified_a_ready ? 'READY' : 'WAITING'}\n${dimensions}${errorLine}`;
+  rectifiedLabelB.textContent = `RECTIFIED_B · ${previews.rectified_b_ready ? 'READY' : 'WAITING'}\n${dimensions}${errorLine}`;
+  disparityLabel.textContent = `STEREOSGBM · ${previews.disparity_ready ? 'READY' : 'WAITING'}\n${processingLine}${errorLine}`;
+  rectifiedLabelA.className = `label ${previews.rectified_a_ready ? 'ok' : (processing.last_error ? 'bad' : 'warn')}`;
+  rectifiedLabelB.className = `label ${previews.rectified_b_ready ? 'ok' : (processing.last_error ? 'bad' : 'warn')}`;
+  disparityLabel.className = `label ${previews.disparity_ready ? 'ok' : (processing.last_error ? 'bad' : 'warn')}`;
+
+  const pairIndex = Number(processing.last_success_pair_index || 0);
+  if (pairIndex > 0 && pairIndex !== lastStereoPair) {
+    const tick = Date.now();
+    if (previews.rectified_a_ready) rectifiedA.src = `/stereo/rectified_a.jpg?t=${tick}`;
+    if (previews.rectified_b_ready) rectifiedB.src = `/stereo/rectified_b.jpg?t=${tick}`;
+    if (previews.disparity_ready) disparity.src = `/stereo/disparity.jpg?t=${tick}`;
+    lastStereoPair = pairIndex;
+  }
+}
+
 async function refresh() {
   try {
-    const status = await (await fetch('/api/status', {cache:'no-store'})).json();
-    labelA.textContent = label('CAMERA_A', status.camera_a);
-    labelB.textContent = label('CAMERA_B', status.camera_b);
+    const response = await fetch('/api/status', {cache:'no-store'});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const status = await response.json();
+    labelA.textContent = cameraLabel('CAMERA_A', status.camera_a);
+    labelB.textContent = cameraLabel('CAMERA_B', status.camera_b);
     labelA.className = 'label ' + (status.camera_a.connected ? 'ok' : 'bad');
     labelB.className = 'label ' + (status.camera_b.connected ? 'ok' : 'bad');
     const pair = status.pairing;
+    const stereo = status.stereo_preview || {};
+    const processing = stereo.processing || {};
+    const calibration = stereo.calibration || {};
+    pairStatus.textContent =
+      `Δ ${fmt(pair.last_delta_ms)} ms · ready ${pair.ready_pairs}/${pair.pairs} · ` +
+      `queues ${pair.queue_a}/${pair.queue_b} · dropped ${pair.dropped_a}/${pair.dropped_b}`;
     summary.textContent =
       `A ${fmt(status.camera_a.fps)} FPS · B ${fmt(status.camera_b.fps)} FPS · ` +
-      `pair Δ ${fmt(pair.last_delta_ms)} ms · ready ${pair.ready_pairs}/${pair.pairs} · ` +
-      `queues ${pair.queue_a}/${pair.queue_b} · dropped ${pair.dropped_a}/${pair.dropped_b}`;
-    json.textContent = JSON.stringify(status, null, 2);
+      `pair Δ ${fmt(pair.last_delta_ms)} ms · rectification ${calibration.state || 'WAITING'} · ` +
+      `proc ${fmt(processing.fps)} FPS · valid ${percent(processing.valid_disparity_ratio)}`;
+    diagnosticJson.textContent = JSON.stringify(status, null, 2);
     const tick = Date.now();
     if (status.camera_a.latest) cameraA.src = `/camera/a.jpg?t=${tick}`;
     if (status.camera_b.latest) cameraB.src = `/camera/b.jpg?t=${tick}`;
+    updateStereo(stereo);
   } catch (error) {
     summary.textContent = stopping
       ? 'Host stopped; JSON diagnostics are being packed in the terminal.'
