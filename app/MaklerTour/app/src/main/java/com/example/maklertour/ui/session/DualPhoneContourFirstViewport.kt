@@ -219,8 +219,8 @@ internal fun DualPhoneContourFirstViewport(
         DualPhoneDepthProfileModeSelector(
             activeProfile = depth.qualityProfile,
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 92.dp),
+                .align(Alignment.BottomEnd)
+                .padding(end = 14.dp, bottom = 176.dp),
         )
     }
 }
