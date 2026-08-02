@@ -307,9 +307,10 @@ double projection_shift(
     const auto matrix_shift = projection_b.at<double>(row, 3);
     if (std::abs(matrix_shift) > kMinimumShift) return matrix_shift;
 
-    const auto focal_length = projection_b.at<double>(row, row);
-    const auto fallback_shift =
-        focal_length * translation_mm[static_cast<std::size_t>(row)];
+    // StereoSGBM only needs the disparity direction here. Some OpenCV builds
+    // return a zero P2 baseline/focal term for this vertical phone geometry,
+    // while the accepted calibrated T remains valid and authoritative.
+    const auto fallback_shift = translation_mm[static_cast<std::size_t>(row)];
     if (!finite(fallback_shift) || std::abs(fallback_shift) <= kMinimumShift) {
         throw std::runtime_error(
             "stereo projection and calibrated T contain no usable baseline shift");

@@ -3,8 +3,10 @@
 #include "protocol.hpp"
 #include "stereo_preview_processing.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <fstream>
@@ -341,11 +343,41 @@ struct StereoPreview::Impl {
                         cached_axis,
                         calibration.translation_mm);
 
-                    // initUndistortRectifyMap expects a 3x3 new camera matrix.
-                    // P1/P2 returned by stereoRectify are 3x4 projection matrices;
-                    // use their calibrated 3x3 left blocks explicitly.
-                    const auto new_k_a = projection_a(cv::Rect(0, 0, 3, 3)).clone();
-                    const auto new_k_b = projection_b(cv::Rect(0, 0, 3, 3)).clone();
+                    const auto projection_usable = [](const cv::Mat& value) {
+                        if (value.rows < 3 || value.cols < 3 ||
+                            value.type() != CV_64F) return false;
+                        const auto fx = value.at<double>(0, 0);
+                        const auto fy = value.at<double>(1, 1);
+                        return std::isfinite(fx) && std::isfinite(fy) &&
+                               std::abs(fx) > 1.0 && std::abs(fy) > 1.0;
+                    };
+
+                    cv::Mat new_k_a;
+                    cv::Mat new_k_b;
+                    if (projection_usable(projection_a) &&
+                        projection_usable(projection_b)) {
+                        // P1/P2 are 3x4; remap needs their 3x3 camera blocks.
+                        new_k_a = projection_a(cv::Rect(0, 0, 3, 3)).clone();
+                        new_k_b = projection_b(cv::Rect(0, 0, 3, 3)).clone();
+                    } else {
+                        // Fedora/OpenCV 4.10 may return unusable P1/P2 for this
+                        // near-vertical phone baseline. R1/R2 are still useful,
+                        // so use one shared runtime K for both rectified views.
+                        const auto focal = std::min({
+                            frame_a.intrinsics.fx,
+                            frame_a.intrinsics.fy,
+                            frame_b.intrinsics.fx,
+                            frame_b.intrinsics.fy,
+                        });
+                        const auto cx = (frame_a.image.cols - 1) * 0.5;
+                        const auto cy = (frame_a.image.rows - 1) * 0.5;
+                        const auto shared_k = (cv::Mat_<double>(3, 3) <<
+                            focal, 0.0, cx,
+                            0.0, focal, cy,
+                            0.0, 0.0, 1.0);
+                        new_k_a = shared_k.clone();
+                        new_k_b = shared_k.clone();
+                    }
                     cv::initUndistortRectifyMap(
                         k_a, d_a, rectification_a, new_k_a,
                         frame_a.image.size(), CV_32FC1, map_a_x, map_a_y);

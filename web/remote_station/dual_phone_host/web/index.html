@@ -17,16 +17,26 @@ h1 { margin: 0 0 6px; font-size: 20px; }
 .block-title { margin: 14px 14px 0; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .block-title h2 { margin: 0; font-size: 16px; }
 .block-title span { font-family: ui-monospace, monospace; font-size: 12px; color: #aaaab7; text-align: right; }
-.grid { display: grid; grid-template-columns: minmax(0,1fr); gap: 12px; padding: 12px; }
+.grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 12px; }
 .camera { position: relative; min-height: 300px; background: #050506; border: 1px solid #33333d; border-radius: 14px; overflow: hidden; }
 .camera img { width: 100%; height: 100%; min-height: 300px; object-fit: contain; display: block; }
+.raw-camera { min-height: 0; aspect-ratio: 9 / 16; }
+.raw-camera img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  transform-origin: center;
+}
 .disparity { margin: 0 12px 12px; min-height: 360px; }
 .disparity img { min-height: 360px; }
 .label { position: absolute; top: 10px; left: 10px; max-width: calc(100% - 40px); padding: 8px 10px; border-radius: 9px; background: rgba(0,0,0,.76); font-family: ui-monospace, monospace; white-space: pre-line; overflow-wrap: anywhere; }
 .ok { color: #72f59a; } .bad { color: #ff7d7d; } .warn { color: #ffd66e; }
 section { margin: 0 12px 12px; padding: 12px; border: 1px solid #33333d; border-radius: 14px; background: #17171d; }
 pre { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
-@media (max-width: 900px) { .block-title { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .block-title { align-items: flex-start; flex-direction: column; } }
 </style>
 </head>
 <body>
@@ -45,8 +55,8 @@ pre { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap;
   <span id="pairStatus">waiting for synchronized frames</span>
 </div>
 <div class="grid">
-  <div class="camera"><img id="cameraA"><div id="labelA" class="label">CAMERA_A · WAITING</div></div>
-  <div class="camera"><img id="cameraB"><div id="labelB" class="label">CAMERA_B · WAITING</div></div>
+  <div class="camera raw-camera"><img id="cameraA"><div id="labelA" class="label">CAMERA_A · WAITING</div></div>
+  <div class="camera raw-camera"><img id="cameraB"><div id="labelB" class="label">CAMERA_B · WAITING</div></div>
 </div>
 
 <div class="block-title">
@@ -121,6 +131,18 @@ function cameraLabel(name, camera) {
     `clock ${fmt(clockRtt)} ms · queue ${camera.pair_queue_depth || 0} · dropped ${camera.pair_frames_dropped || 0}`;
 }
 
+function orientRawImage(element, camera) {
+  const latest = camera.latest || {};
+  const rotation = ((Number(latest.rotation_degrees || 0) % 360) + 360) % 360;
+  const quarterTurn = rotation === 90 || rotation === 270;
+
+  // A 960×540 buffer rotated by 90° exactly fills a 9:16 card.
+  element.style.width = quarterTurn ? '177.7778%' : '100%';
+  element.style.height = 'auto';
+  element.style.transform =
+    `translate(-50%, -50%) rotate(${rotation}deg)`;
+}
+
 function updateStereo(stereo) {
   const calibration = stereo.calibration || {};
   const processing = stereo.processing || {};
@@ -181,6 +203,8 @@ async function refresh() {
     const tick = Date.now();
     if (status.camera_a.latest) cameraA.src = `/camera/a.jpg?t=${tick}`;
     if (status.camera_b.latest) cameraB.src = `/camera/b.jpg?t=${tick}`;
+    orientRawImage(cameraA, status.camera_a);
+    orientRawImage(cameraB, status.camera_b);
     updateStereo(stereo);
   } catch (error) {
     summary.textContent = stopping
