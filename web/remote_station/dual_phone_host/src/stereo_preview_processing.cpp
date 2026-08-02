@@ -267,6 +267,104 @@ cv::Mat translation_vector(const std::array<double, 3>& values) {
     return (cv::Mat_<double>(3, 1) << values[0], values[1], values[2]);
 }
 
+RectificationAxis rectification_axis(const cv::Mat& projection_b) {
+    if (projection_b.rows < 3 || projection_b.cols < 4 ||
+        projection_b.type() != CV_64F) {
+        throw std::runtime_error("stereo projection matrix must be 3x4 CV_64F");
+    }
+    const auto horizontal = std::abs(projection_b.at<double>(0, 3));
+    const auto vertical = std::abs(projection_b.at<double>(1, 3));
+    if (std::max(horizontal, vertical) <= 1e-9) {
+        throw std::runtime_error("stereo projection contains no usable baseline shift");
+    }
+    return vertical > horizontal
+        ? RectificationAxis::Vertical
+        : RectificationAxis::Horizontal;
+}
+
+const char* rectification_axis_name(const RectificationAxis axis) {
+    return axis == RectificationAxis::Vertical ? "VERTICAL" : "HORIZONTAL";
+}
+
+double projection_shift(const cv::Mat& projection_b,
+                        const RectificationAxis axis) {
+    return axis == RectificationAxis::Vertical
+        ? projection_b.at<double>(1, 3)
+        : projection_b.at<double>(0, 3);
+}
+
+cv::Mat orient_for_horizontal_disparity(const cv::Mat& rectified,
+                                        const RectificationAxis axis) {
+    if (axis == RectificationAxis::Horizontal) return rectified;
+    cv::Mat result;
+    cv::rotate(rectified, result, cv::ROTATE_90_COUNTERCLOCKWISE);
+    return result;
+}
+
+double map_valid_fraction(const cv::Mat& map_x,
+                          const cv::Mat& map_y,
+                          const cv::Size source_size) {
+    if (map_x.empty() || map_y.empty() || map_x.size() != map_y.size() ||
+        map_x.type() != CV_32FC1 || map_y.type() != CV_32FC1 ||
+        source_size.width <= 0 || source_size.height <= 0) {
+        return 0.0;
+    }
+    cv::Mat x_low;
+    cv::Mat x_high;
+    cv::Mat y_low;
+    cv::Mat y_high;
+    cv::Mat valid_x;
+    cv::Mat valid_y;
+    cv::Mat valid;
+    cv::compare(map_x, cv::Scalar(0.0), x_low, cv::CMP_GE);
+    cv::compare(
+        map_x,
+        cv::Scalar(static_cast<double>(source_size.width)),
+        x_high,
+        cv::CMP_LT);
+    cv::compare(map_y, cv::Scalar(0.0), y_low, cv::CMP_GE);
+    cv::compare(
+        map_y,
+        cv::Scalar(static_cast<double>(source_size.height)),
+        y_high,
+        cv::CMP_LT);
+    cv::bitwise_and(x_low, x_high, valid_x);
+    cv::bitwise_and(y_low, y_high, valid_y);
+    cv::bitwise_and(valid_x, valid_y, valid);
+    const auto total = static_cast<double>(valid.total());
+    return total > 0.0
+        ? static_cast<double>(cv::countNonZero(valid)) / total
+        : 0.0;
+}
+
+ImageStatistics image_statistics(const cv::Mat& image) {
+    if (image.empty()) return {};
+    cv::Mat gray;
+    if (image.channels() == 1) {
+        gray = image;
+    } else {
+        cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    }
+    cv::Mat nonzero;
+    cv::compare(gray, cv::Scalar(2), nonzero, cv::CMP_GT);
+    const auto total = static_cast<double>(gray.total());
+    return {
+        cv::mean(gray)[0],
+        total > 0.0
+            ? static_cast<double>(cv::countNonZero(nonzero)) / total
+            : 0.0,
+    };
+}
+
+void require_usable_rectified_image(const ImageStatistics& statistics,
+                                    const char* name) {
+    if (statistics.mean_luma < 0.5 || statistics.nonzero_fraction < 0.01) {
+        throw std::runtime_error(
+            std::string(name) +
+            " rectification produced an effectively black image");
+    }
+}
+
 std::vector<std::uint8_t> encode_jpeg(const cv::Mat& image) {
     std::vector<std::uint8_t> output;
     if (!cv::imencode(".jpg", image, output,
@@ -292,14 +390,15 @@ int disparity_range(const int width) {
 
 DisparityOutput make_disparity(const cv::Mat& rectified_a,
                                const cv::Mat& rectified_b,
-                               const double translation_x_mm) {
+                               const double rectified_projection_shift) {
     cv::Mat gray_a;
     cv::Mat gray_b;
     cv::cvtColor(rectified_a, gray_a, cv::COLOR_BGR2GRAY);
     cv::cvtColor(rectified_b, gray_b, cv::COLOR_BGR2GRAY);
 
     const auto num_disparities = disparity_range(rectified_a.cols);
-    const auto min_disparity = translation_x_mm > 0.0 ? -num_disparities : 0;
+    const auto min_disparity =
+        rectified_projection_shift > 0.0 ? -num_disparities : 0;
     constexpr int block_size = 5;
     auto matcher = cv::StereoSGBM::create(
         min_disparity,

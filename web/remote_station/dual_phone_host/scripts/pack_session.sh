@@ -61,7 +61,12 @@ for name in \
   imu_b.jsonl \
   camera_a_hello.json \
   camera_b_hello.json \
-  stereo_calibration.json
+  stereo_calibration.json \
+  raw_a_latest.jpg \
+  raw_b_latest.jpg \
+  rectified_a_latest.jpg \
+  rectified_b_latest.jpg \
+  disparity_latest.jpg
 do
   [[ -f "$SESSION_DIR/$name" ]] && cp -a "$SESSION_DIR/$name" "$PACKAGE_ROOT/"
 done
@@ -86,7 +91,8 @@ fi
 
 (
   cd "$PACKAGE_ROOT"
-  find . -type f -print0 | sort -z | xargs -0 sha256sum > MANIFEST.sha256
+  find . -type f ! -name MANIFEST.sha256 -print0 | \
+    sort -z | xargs -0 sha256sum > MANIFEST.sha256
 )
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"

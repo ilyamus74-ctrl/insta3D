@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -23,27 +24,67 @@ namespace maklertour::dual_phone {
 namespace {
 
 constexpr std::chrono::seconds kFpsWindow{5};
+constexpr double kMinimumMapValidFraction = 0.05;
+
+void write_binary_atomic(const std::filesystem::path& destination,
+                         const std::vector<std::uint8_t>& bytes) {
+    auto temporary = destination;
+    temporary += ".tmp";
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            throw std::runtime_error("cannot write " + temporary.string());
+        }
+        output.write(
+            reinterpret_cast<const char*>(bytes.data()),
+            static_cast<std::streamsize>(bytes.size()));
+        output.flush();
+        if (!output) {
+            throw std::runtime_error("cannot finish " + temporary.string());
+        }
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, destination, error);
+    if (!error) return;
+    std::filesystem::remove(destination, error);
+    error.clear();
+    std::filesystem::rename(temporary, destination, error);
+    if (error) {
+        std::filesystem::remove(temporary);
+        throw std::runtime_error(
+            "cannot publish " + destination.string() + ": " + error.message());
+    }
+}
 
 }  // namespace
 
 using detail::CalibrationProfile;
+using detail::ImageStatistics;
+using detail::RectificationAxis;
 using detail::ResolvedCalibration;
 
 using detail::camera_matrix;
 using detail::distortion;
 using detail::encode_jpeg;
+using detail::image_statistics;
 using detail::make_disparity;
+using detail::map_valid_fraction;
+using detail::orient_for_horizontal_disparity;
 using detail::parse_profile;
 using detail::prepare_frame;
+using detail::projection_shift;
+using detail::rectification_axis;
+using detail::rectification_axis_name;
+using detail::require_usable_rectified_image;
 using detail::resolve_profile;
 using detail::rotation_matrix;
 using detail::translation_vector;
 using detail::with_epipolar_guides;
 
 struct StereoPreview::Impl {
-    explicit Impl(std::filesystem::path session_directory)
-        : session_directory(std::move(session_directory)),
-          diagnostics(this->session_directory / "stereo_preview.jsonl", std::ios::app) {
+    explicit Impl(std::filesystem::path session_path)
+        : session_directory(std::move(session_path)),
+          diagnostics(session_directory / "stereo_preview.jsonl", std::ios::app) {
         if (!diagnostics) throw std::runtime_error("cannot create stereo preview diagnostics");
         worker = std::thread([this] { worker_loop(); });
     }
@@ -133,6 +174,15 @@ struct StereoPreview::Impl {
         disparity_jpeg.clear();
         runtime_width = 0;
         runtime_height = 0;
+        rectification_axis_state = "UNKNOWN";
+        processing_rotation_degrees = 0;
+        rectified_projection_shift = 0.0;
+        map_valid_fraction_a = 0.0;
+        map_valid_fraction_b = 0.0;
+        raw_a_statistics = {};
+        raw_b_statistics = {};
+        rectified_a_statistics = {};
+        rectified_b_statistics = {};
         last_error.clear();
         configuration_revision += 1;
 
@@ -166,6 +216,11 @@ struct StereoPreview::Impl {
             {"maps_ready", maps_ready},
             {"runtime_width", runtime_width},
             {"runtime_height", runtime_height},
+            {"rectification_axis", rectification_axis_state},
+            {"processing_rotation_degrees", processing_rotation_degrees},
+            {"rectified_projection_shift", rectified_projection_shift},
+            {"map_valid_fraction_a", map_valid_fraction_a},
+            {"map_valid_fraction_b", map_valid_fraction_b},
         };
         if (profile) {
             calibration["profile_id"] = profile->profile_id;
@@ -193,12 +248,25 @@ struct StereoPreview::Impl {
                 {"valid_disparity_ratio", valid_disparity_ratio},
                 {"min_disparity", min_disparity},
                 {"num_disparities", num_disparities},
+                {"raw_a_mean_luma", raw_a_statistics.mean_luma},
+                {"raw_b_mean_luma", raw_b_statistics.mean_luma},
+                {"raw_a_nonzero_fraction", raw_a_statistics.nonzero_fraction},
+                {"raw_b_nonzero_fraction", raw_b_statistics.nonzero_fraction},
+                {"rectified_a_mean_luma", rectified_a_statistics.mean_luma},
+                {"rectified_b_mean_luma", rectified_b_statistics.mean_luma},
+                {"rectified_a_nonzero_fraction", rectified_a_statistics.nonzero_fraction},
+                {"rectified_b_nonzero_fraction", rectified_b_statistics.nonzero_fraction},
                 {"last_error", last_error},
             }},
             {"previews", {
                 {"rectified_a_ready", !rectified_a_jpeg.empty()},
                 {"rectified_b_ready", !rectified_b_jpeg.empty()},
                 {"disparity_ready", !disparity_jpeg.empty()},
+                {"raw_a_latest", "raw_a_latest.jpg"},
+                {"raw_b_latest", "raw_b_latest.jpg"},
+                {"rectified_a_latest", "rectified_a_latest.jpg"},
+                {"rectified_b_latest", "rectified_b_latest.jpg"},
+                {"disparity_latest", "disparity_latest.jpg"},
             }},
         };
     }
@@ -216,7 +284,11 @@ struct StereoPreview::Impl {
         cv::Mat map_a_y;
         cv::Mat map_b_x;
         cv::Mat map_b_y;
-        cv::Mat cached_translation;
+        RectificationAxis cached_axis = RectificationAxis::Horizontal;
+        double cached_projection_shift = 0.0;
+        double cached_map_valid_fraction_a = 0.0;
+        double cached_map_valid_fraction_b = 0.0;
+        std::chrono::steady_clock::time_point last_diagnostic_image_write;
 
         while (true) {
             StereoPreviewPair pair;
@@ -238,6 +310,8 @@ struct StereoPreview::Impl {
                 if (frame_a.image.size() != frame_b.image.size()) {
                     throw std::runtime_error("CAMERA_A and CAMERA_B prepared dimensions differ");
                 }
+                const auto current_raw_a_statistics = image_statistics(frame_a.image);
+                const auto current_raw_b_statistics = image_statistics(frame_b.image);
 
                 if (map_revision != calibration.revision || map_size != frame_a.image.size()) {
                     const auto k_a = camera_matrix(frame_a.intrinsics);
@@ -245,7 +319,7 @@ struct StereoPreview::Impl {
                     const auto d_a = distortion(frame_a.intrinsics);
                     const auto d_b = distortion(frame_b.intrinsics);
                     const auto rotation = rotation_matrix(calibration.rotation);
-                    cached_translation = translation_vector(calibration.translation_mm);
+                    const auto translation = translation_vector(calibration.translation_mm);
                     cv::Mat rectification_a;
                     cv::Mat rectification_b;
                     cv::Mat projection_a;
@@ -255,32 +329,90 @@ struct StereoPreview::Impl {
                     cv::Rect roi_b;
                     cv::stereoRectify(
                         k_a, d_a, k_b, d_b, frame_a.image.size(), rotation,
-                        cached_translation, rectification_a, rectification_b,
+                        translation, rectification_a, rectification_b,
                         projection_a, projection_b, q, cv::CALIB_ZERO_DISPARITY,
                         0.0, frame_a.image.size(), &roi_a, &roi_b);
+
+                    cached_axis = rectification_axis(projection_b);
+                    cached_projection_shift = projection_shift(projection_b, cached_axis);
+
+                    // initUndistortRectifyMap expects a 3x3 new camera matrix.
+                    // P1/P2 returned by stereoRectify are 3x4 projection matrices;
+                    // use their calibrated 3x3 left blocks explicitly.
+                    const auto new_k_a = projection_a(cv::Rect(0, 0, 3, 3)).clone();
+                    const auto new_k_b = projection_b(cv::Rect(0, 0, 3, 3)).clone();
                     cv::initUndistortRectifyMap(
-                        k_a, d_a, rectification_a, projection_a,
+                        k_a, d_a, rectification_a, new_k_a,
                         frame_a.image.size(), CV_32FC1, map_a_x, map_a_y);
                     cv::initUndistortRectifyMap(
-                        k_b, d_b, rectification_b, projection_b,
+                        k_b, d_b, rectification_b, new_k_b,
                         frame_b.image.size(), CV_32FC1, map_b_x, map_b_y);
+                    cached_map_valid_fraction_a =
+                        map_valid_fraction(map_a_x, map_a_y, frame_a.image.size());
+                    cached_map_valid_fraction_b =
+                        map_valid_fraction(map_b_x, map_b_y, frame_b.image.size());
+                    if (cached_map_valid_fraction_a < kMinimumMapValidFraction ||
+                        cached_map_valid_fraction_b < kMinimumMapValidFraction) {
+                        throw std::runtime_error(
+                            "rectification maps contain too few in-frame source pixels");
+                    }
                     map_revision = calibration.revision;
                     map_size = frame_a.image.size();
                 }
 
-                cv::Mat rectified_a;
-                cv::Mat rectified_b;
-                cv::remap(frame_a.image, rectified_a, map_a_x, map_a_y,
+                cv::Mat rectified_native_a;
+                cv::Mat rectified_native_b;
+                cv::remap(frame_a.image, rectified_native_a, map_a_x, map_a_y,
                           cv::INTER_LINEAR, cv::BORDER_CONSTANT);
-                cv::remap(frame_b.image, rectified_b, map_b_x, map_b_y,
+                cv::remap(frame_b.image, rectified_native_b, map_b_x, map_b_y,
                           cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+                const auto current_rectified_a_statistics =
+                    image_statistics(rectified_native_a);
+                const auto current_rectified_b_statistics =
+                    image_statistics(rectified_native_b);
+                require_usable_rectified_image(
+                    current_rectified_a_statistics, "CAMERA_A");
+                require_usable_rectified_image(
+                    current_rectified_b_statistics, "CAMERA_B");
+
+                // OpenCV supports vertical stereo, but StereoSGBM searches along x.
+                // Rotate both rectified images identically when P2 says the calibrated
+                // baseline is vertical. Counter-clockwise keeps the P2 disparity sign.
+                auto rectified_a = orient_for_horizontal_disparity(
+                    rectified_native_a, cached_axis);
+                auto rectified_b = orient_for_horizontal_disparity(
+                    rectified_native_b, cached_axis);
+                if (rectified_a.size() != rectified_b.size()) {
+                    throw std::runtime_error("oriented rectified dimensions differ");
+                }
+
                 auto disparity = make_disparity(
                     rectified_a,
                     rectified_b,
-                    cached_translation.at<double>(0, 0));
+                    cached_projection_shift);
                 auto preview_a = encode_jpeg(with_epipolar_guides(rectified_a));
                 auto preview_b = encode_jpeg(with_epipolar_guides(rectified_b));
                 auto preview_disparity = encode_jpeg(disparity.preview);
+
+                const auto preview_finished = std::chrono::steady_clock::now();
+                if (
+                    last_diagnostic_image_write.time_since_epoch().count() == 0 ||
+                    preview_finished - last_diagnostic_image_write >=
+                        std::chrono::seconds{1}
+                ) {
+                    write_binary_atomic(
+                        session_directory / "raw_a_latest.jpg", pair.camera_a.jpeg);
+                    write_binary_atomic(
+                        session_directory / "raw_b_latest.jpg", pair.camera_b.jpeg);
+                    write_binary_atomic(
+                        session_directory / "rectified_a_latest.jpg", preview_a);
+                    write_binary_atomic(
+                        session_directory / "rectified_b_latest.jpg", preview_b);
+                    write_binary_atomic(
+                        session_directory / "disparity_latest.jpg", preview_disparity);
+                    last_diagnostic_image_write = preview_finished;
+                }
+
                 const auto finished = std::chrono::steady_clock::now();
                 const auto duration_ms = std::chrono::duration<double, std::milli>(
                     finished - started).count();
@@ -305,6 +437,17 @@ struct StereoPreview::Impl {
                         maps_ready = true;
                         runtime_width = rectified_a.cols;
                         runtime_height = rectified_a.rows;
+                        rectification_axis_state =
+                            rectification_axis_name(cached_axis);
+                        processing_rotation_degrees =
+                            cached_axis == RectificationAxis::Vertical ? 90 : 0;
+                        rectified_projection_shift = cached_projection_shift;
+                        map_valid_fraction_a = cached_map_valid_fraction_a;
+                        map_valid_fraction_b = cached_map_valid_fraction_b;
+                        raw_a_statistics = current_raw_a_statistics;
+                        raw_b_statistics = current_raw_b_statistics;
+                        rectified_a_statistics = current_rectified_a_statistics;
+                        rectified_b_statistics = current_rectified_b_statistics;
                         last_duration_ms = duration_ms;
                         last_attempt_pair_index = pair.pair_index;
                         last_success_pair_index = pair.pair_index;
@@ -332,6 +475,21 @@ struct StereoPreview::Impl {
                             {"camera_b_sequence", pair.camera_b.sequence},
                             {"pair_delta_ms", pair.delta_ms},
                             {"duration_ms", duration_ms},
+                            {"rectification_axis", rectification_axis_state},
+                            {"processing_rotation_degrees", processing_rotation_degrees},
+                            {"rectified_projection_shift", cached_projection_shift},
+                            {"map_valid_fraction_a", cached_map_valid_fraction_a},
+                            {"map_valid_fraction_b", cached_map_valid_fraction_b},
+                            {"raw_a_mean_luma", current_raw_a_statistics.mean_luma},
+                            {"raw_b_mean_luma", current_raw_b_statistics.mean_luma},
+                            {"rectified_a_mean_luma",
+                             current_rectified_a_statistics.mean_luma},
+                            {"rectified_b_mean_luma",
+                             current_rectified_b_statistics.mean_luma},
+                            {"rectified_a_nonzero_fraction",
+                             current_rectified_a_statistics.nonzero_fraction},
+                            {"rectified_b_nonzero_fraction",
+                             current_rectified_b_statistics.nonzero_fraction},
                             {"valid_disparity_ratio", disparity.valid_ratio},
                             {"min_disparity", disparity.min_disparity},
                             {"num_disparities", disparity.num_disparities},
@@ -397,6 +555,15 @@ struct StereoPreview::Impl {
     bool maps_ready = false;
     int runtime_width = 0;
     int runtime_height = 0;
+    std::string rectification_axis_state = "UNKNOWN";
+    int processing_rotation_degrees = 0;
+    double rectified_projection_shift = 0.0;
+    double map_valid_fraction_a = 0.0;
+    double map_valid_fraction_b = 0.0;
+    ImageStatistics raw_a_statistics;
+    ImageStatistics raw_b_statistics;
+    ImageStatistics rectified_a_statistics;
+    ImageStatistics rectified_b_statistics;
     double processing_fps = 0.0;
     double last_duration_ms = 0.0;
     std::uint64_t last_attempt_pair_index = 0;

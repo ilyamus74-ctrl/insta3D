@@ -53,6 +53,16 @@ struct PreparedFrame {
     int applied_rotation_degrees = 0;
 };
 
+enum class RectificationAxis {
+    Horizontal,
+    Vertical,
+};
+
+struct ImageStatistics {
+    double mean_luma = 0.0;
+    double nonzero_fraction = 0.0;
+};
+
 struct DisparityOutput {
     cv::Mat preview;
     double valid_ratio = 0.0;
@@ -74,11 +84,25 @@ cv::Mat camera_matrix(const Intrinsics& value);
 cv::Mat distortion(const Intrinsics& value);
 cv::Mat rotation_matrix(const std::array<double, 9>& values);
 cv::Mat translation_vector(const std::array<double, 3>& values);
+RectificationAxis rectification_axis(const cv::Mat& projection_b);
+const char* rectification_axis_name(RectificationAxis axis);
+double projection_shift(const cv::Mat& projection_b, RectificationAxis axis);
+cv::Mat orient_for_horizontal_disparity(
+    const cv::Mat& rectified,
+    RectificationAxis axis);
+double map_valid_fraction(
+    const cv::Mat& map_x,
+    const cv::Mat& map_y,
+    cv::Size source_size);
+ImageStatistics image_statistics(const cv::Mat& image);
+void require_usable_rectified_image(
+    const ImageStatistics& statistics,
+    const char* name);
 std::vector<std::uint8_t> encode_jpeg(const cv::Mat& image);
 cv::Mat with_epipolar_guides(const cv::Mat& image);
 DisparityOutput make_disparity(
     const cv::Mat& rectified_a,
     const cv::Mat& rectified_b,
-    double translation_x_mm);
+    double rectified_projection_shift);
 
 }  // namespace maklertour::dual_phone::detail
