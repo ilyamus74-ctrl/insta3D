@@ -5,12 +5,15 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
+#include "stereo_preview.hpp"
 
 namespace maklertour::dual_phone {
 
@@ -63,6 +66,8 @@ public:
     nlohmann::json status_json() const;
     std::vector<nlohmann::json> recent_events() const;
     std::filesystem::path session_directory() const;
+    std::optional<std::vector<std::uint8_t>> stereo_preview_image(
+        StereoPreviewImage kind) const;
 
 private:
     struct MutableCamera {
@@ -95,6 +100,7 @@ private:
     std::ofstream pairs_file_;
     std::ofstream imu_a_file_;
     std::ofstream imu_b_file_;
+    std::unique_ptr<StereoPreview> stereo_preview_;
 };
 
 }  // namespace maklertour::dual_phone
