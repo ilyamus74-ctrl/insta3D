@@ -143,6 +143,20 @@ void HttpDashboard::handle_client(const int client_fd) {
         send_response(client_fd, 200, "image/jpeg", camera.latest->jpeg);
         return;
     }
+    if (path == "/stereo/rectified_a.jpg" ||
+        path == "/stereo/rectified_b.jpg" ||
+        path == "/stereo/disparity.jpg") {
+        StereoPreviewImage kind = StereoPreviewImage::Disparity;
+        if (path == "/stereo/rectified_a.jpg") kind = StereoPreviewImage::RectifiedA;
+        if (path == "/stereo/rectified_b.jpg") kind = StereoPreviewImage::RectifiedB;
+        const auto preview = state_.stereo_preview_image(kind);
+        if (!preview || preview->empty()) {
+            send_text(client_fd, 404, "text/plain", "stereo preview not ready\n");
+            return;
+        }
+        send_response(client_fd, 200, "image/jpeg", *preview);
+        return;
+    }
     send_text(client_fd, 404, "text/plain", "not found\n");
 }
 

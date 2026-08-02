@@ -55,6 +55,17 @@ nlohmann::json frame_metadata(const FrameRecord& frame) {
     return value;
 }
 
+StereoPreviewFrame preview_frame(FrameRecord frame) {
+    StereoPreviewFrame result;
+    result.sequence = frame.sequence;
+    result.pair_timestamp_ns = frame.pair_timestamp_ns;
+    result.width = frame.width;
+    result.height = frame.height;
+    result.rotation_degrees = frame.rotation_degrees;
+    result.jpeg = std::move(frame.jpeg);
+    return result;
+}
+
 }  // namespace
 
 std::string slot_name(const CameraSlot slot) {
@@ -80,12 +91,14 @@ HostState::HostState(std::filesystem::path output_root,
     if (!events_file_ || !pairs_file_ || !imu_a_file_ || !imu_b_file_) {
         throw std::runtime_error("cannot create session log files");
     }
+    stereo_preview_ = std::make_unique<StereoPreview>(session_dir_);
     nlohmann::json session = {
         {"schema_version", 1},
         {"created_at", utc_iso8601_now()},
-        {"mode", "LM02.7B.2_ANDROID_UPLINK_NEAREST_PAIR"},
+        {"mode", "LM02.7B.3_CALIBRATED_RECTIFICATION_PREVIEW"},
         {"camera_roles", {"CAMERA_A", "CAMERA_B"}},
         {"archive_every", archive_every_},
+        {"stereo_processing", "OPENCV_RECTIFY_AND_SGBM_PREVIEW"},
     };
     std::ofstream(session_dir_ / "session.json") << std::setw(2) << session << '\n';
     log_event("INFO", "HOST_STARTED", {{"session_dir", session_dir_.string()}});
@@ -101,17 +114,21 @@ bool HostState::camera_connected(const CameraSlot slot,
     camera.connected = true;
     camera.device_id = device_id;
     camera.remote_address = remote_address;
+    stereo_preview_->set_camera_identity(slot_index(slot), device_id);
 
     const auto hello_path = session_dir_ /
         (slot == CameraSlot::A ? "camera_a_hello.json" : "camera_b_hello.json");
     std::ofstream(hello_path) << std::setw(2) << hello << '\n';
-    if (
-        slot == CameraSlot::A &&
-        hello.contains("calibration_profile") &&
-        hello.at("calibration_profile").is_object()
-    ) {
-        std::ofstream(session_dir_ / "stereo_calibration.json")
-            << std::setw(2) << hello.at("calibration_profile") << '\n';
+    if (slot == CameraSlot::A) {
+        if (hello.contains("calibration_profile") &&
+            hello.at("calibration_profile").is_object()) {
+            const auto& profile = hello.at("calibration_profile");
+            std::ofstream(session_dir_ / "stereo_calibration.json")
+                << std::setw(2) << profile << '\n';
+            stereo_preview_->set_calibration_profile(profile);
+        } else {
+            stereo_preview_->clear_calibration_profile();
+        }
     }
 
     nlohmann::json event = {
@@ -133,6 +150,7 @@ void HostState::camera_disconnected(const CameraSlot slot,
     camera.connected = false;
     camera.pair_frames_dropped += camera.pair_queue.size();
     camera.pair_queue.clear();
+    stereo_preview_->clear_camera_identity(slot_index(slot));
     nlohmann::json event = {
         {"ts", utc_iso8601_now()}, {"level", "WARN"},
         {"event", "CAMERA_DISCONNECTED"}, {"slot", slot_name(slot)},
@@ -234,6 +252,7 @@ nlohmann::json HostState::status_json() const {
             {"dropped_a", cameras_[0].pair_frames_dropped},
             {"dropped_b", cameras_[1].pair_frames_dropped},
         }},
+        {"stereo_preview", stereo_preview_->status_json()},
     };
 }
 
@@ -245,6 +264,11 @@ std::vector<nlohmann::json> HostState::recent_events() const {
 std::filesystem::path HostState::session_directory() const {
     std::scoped_lock lock(mutex_);
     return session_dir_;
+}
+
+std::optional<std::vector<std::uint8_t>> HostState::stereo_preview_image(
+    const StereoPreviewImage kind) const {
+    return stereo_preview_->image(kind);
 }
 
 void HostState::maybe_archive_locked(const CameraSlot slot,
@@ -315,6 +339,13 @@ void HostState::update_pair_locked() {
                 {"delta_ms", last_pair_delta_ms_},
                 {"ready", true},
             });
+
+            StereoPreviewPair preview_pair;
+            preview_pair.pair_index = pair_count_;
+            preview_pair.delta_ms = last_pair_delta_ms_;
+            preview_pair.camera_a = preview_frame(std::move(frame_a));
+            preview_pair.camera_b = preview_frame(std::move(frame_b));
+            stereo_preview_->submit(std::move(preview_pair));
             continue;
         }
 
