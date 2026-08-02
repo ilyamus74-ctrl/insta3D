@@ -30,11 +30,12 @@ std::atomic<int> ingest_server_fd{-1};
 
 struct Options {
     std::string bind = "0.0.0.0";
+    std::string http_bind = "127.0.0.1";
     int ingest_port = 48640;
     int http_port = 48641;
     std::filesystem::path output = "./sessions";
     std::filesystem::path web_root = "./web";
-    std::size_t archive_every = 1;
+    std::size_t archive_every = 0;
 };
 
 void signal_handler(int) {
@@ -58,6 +59,7 @@ Options parse_options(const int argc, char** argv) {
             return argv[index];
         };
         if (arg == "--bind") options.bind = take();
+        else if (arg == "--http-bind") options.http_bind = take();
         else if (arg == "--ingest-port") options.ingest_port = parse_port(take());
         else if (arg == "--http-port") options.http_port = parse_port(take());
         else if (arg == "--output") options.output = take();
@@ -66,6 +68,7 @@ Options parse_options(const int argc, char** argv) {
         else if (arg == "--help") {
             std::cout << "maklertour-dual-phone-host\n"
                       << "  --bind 0.0.0.0\n"
+                      << "  --http-bind 127.0.0.1\n"
                       << "  --ingest-port 48640\n"
                       << "  --http-port 48641\n"
                       << "  --output ./sessions\n"
@@ -90,6 +93,7 @@ void handle_camera(const int fd, mdp::HostState& state) {
     std::optional<mdp::CameraSlot> slot;
     try {
         const auto hello_text = mdp::read_line(fd, mdp::kMaxHelloBytes);
+        const auto server_hello_receive_ns = mdp::monotonic_ns();
         if (hello_text.empty()) throw std::runtime_error("empty hello");
         const auto hello = nlohmann::json::parse(hello_text);
         if (hello.value("type", std::string{}) != "hello" ||
@@ -106,10 +110,16 @@ void handle_camera(const int fd, mdp::HostState& state) {
             return;
         }
         slot = requested_slot;
+        const auto server_hello_send_ns = mdp::monotonic_ns();
         mdp::write_line(fd, nlohmann::json({
-            {"type", "hello_ack"}, {"schema_version", mdp::kProtocolSchema},
-            {"accepted", true}, {"slot", mdp::slot_name(*slot)},
-            {"server_monotonic_ns", mdp::monotonic_ns()},
+            {"type", "hello_ack"},
+            {"schema_version", mdp::kProtocolSchema},
+            {"accepted", true},
+            {"slot", mdp::slot_name(*slot)},
+            {"client_monotonic_ns", hello.value("client_monotonic_ns", 0LL)},
+            {"server_monotonic_ns", server_hello_send_ns},
+            {"server_receive_ns", server_hello_receive_ns},
+            {"server_send_ns", server_hello_send_ns},
         }).dump());
 
         while (running.load()) {
@@ -139,6 +149,16 @@ void handle_camera(const int fd, mdp::HostState& state) {
                 state.accept_frame(*slot, std::move(frame));
             } else if (type == "imu") {
                 state.accept_imu(*slot, message.header);
+            } else if (type == "clock_probe") {
+                const auto server_receive_ns = mdp::monotonic_ns();
+                const auto server_send_ns = mdp::monotonic_ns();
+                mdp::write_message(fd, {
+                    {"type", "clock_probe_ack"},
+                    {"schema_version", mdp::kProtocolSchema},
+                    {"client_send_ns", message.header.value("client_send_ns", 0LL)},
+                    {"server_receive_ns", server_receive_ns},
+                    {"server_send_ns", server_send_ns},
+                }, {});
             } else if (type == "ping") {
                 mdp::write_message(fd, {{"type", "pong"},
                                         {"server_monotonic_ns", mdp::monotonic_ns()}}, {});
@@ -182,7 +202,7 @@ int main(const int argc, char** argv) {
         std::signal(SIGTERM, signal_handler);
 
         mdp::HostState state(options.output, options.archive_every);
-        mdp::HttpDashboard dashboard(state, options.bind, options.http_port,
+        mdp::HttpDashboard dashboard(state, options.http_bind, options.http_port,
                                      options.web_root);
         dashboard.start();
         const int server = create_server(options);
@@ -192,7 +212,8 @@ int main(const int argc, char** argv) {
 
         std::cout << "MaklerTour dual-phone host\n"
                   << "Ingest: " << options.bind << ':' << options.ingest_port << '\n'
-                  << "Dashboard: http://127.0.0.1:" << options.http_port << "/\n"
+                  << "Dashboard: http://" << options.http_bind << ':'
+                  << options.http_port << "/\n"
                   << "Session: " << state.session_directory() << '\n';
 
         while (running.load()) {

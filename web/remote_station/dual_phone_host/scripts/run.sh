@@ -6,6 +6,7 @@ DEFAULT_OUTPUT="$STATE_HOME/maklertour/dual_phone_host/sessions"
 
 exec "$ROOT/build/maklertour-dual-phone-host" \
   --bind "${MAKLER_BIND:-0.0.0.0}" \
+  --http-bind "${MAKLER_HTTP_BIND:-127.0.0.1}" \
   --ingest-port "${MAKLER_INGEST_PORT:-48640}" \
   --http-port "${MAKLER_HTTP_PORT:-48641}" \
   --output "${MAKLER_OUTPUT:-$DEFAULT_OUTPUT}" \

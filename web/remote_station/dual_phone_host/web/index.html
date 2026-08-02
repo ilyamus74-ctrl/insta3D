@@ -31,10 +31,12 @@ pre { max-height: 220px; overflow: auto; font-size: 12px; white-space: pre-wrap;
 const fmt = n => Number(n || 0).toFixed(1);
 function label(name, camera) {
   const latest = camera.latest || {};
+  const clockRtt = Number(latest.clock_rtt_ns || 0) / 1000000;
   return `${name} · ${camera.connected ? 'READY' : 'WAITING'}\n` +
     `${camera.device_id || 'no device'}\n` +
     `${latest.width || 0}×${latest.height || 0} · ${fmt(camera.fps)} FPS\n` +
-    `frame ${latest.sequence ?? '—'} · ${(camera.bytes/1048576).toFixed(1)} MiB`;
+    `frame ${latest.sequence ?? '—'} · ${(camera.bytes/1048576).toFixed(1)} MiB\n` +
+    `clock ${fmt(clockRtt)} ms · queue ${camera.pair_queue_depth || 0} · dropped ${camera.pair_frames_dropped || 0}`;
 }
 async function refresh() {
   try {
@@ -44,7 +46,10 @@ async function refresh() {
     labelA.className = 'label ' + (status.camera_a.connected ? 'ok' : 'bad');
     labelB.className = 'label ' + (status.camera_b.connected ? 'ok' : 'bad');
     const pair = status.pairing;
-    summary.textContent = `A ${fmt(status.camera_a.fps)} FPS · B ${fmt(status.camera_b.fps)} FPS · pair Δ ${fmt(pair.last_delta_ms)} ms · ready ${pair.ready_pairs}/${pair.pairs}`;
+    summary.textContent =
+      `A ${fmt(status.camera_a.fps)} FPS · B ${fmt(status.camera_b.fps)} FPS · ` +
+      `pair Δ ${fmt(pair.last_delta_ms)} ms · ready ${pair.ready_pairs}/${pair.pairs} · ` +
+      `queues ${pair.queue_a}/${pair.queue_b} · dropped ${pair.dropped_a}/${pair.dropped_b}`;
     json.textContent = JSON.stringify(status, null, 2);
     const tick = Date.now();
     if (status.camera_a.latest) cameraA.src = `/camera/a.jpg?t=${tick}`;

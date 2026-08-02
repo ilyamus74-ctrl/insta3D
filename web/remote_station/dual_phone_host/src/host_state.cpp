@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -14,6 +16,7 @@ namespace {
 
 constexpr double kReadyPairDeltaMs = 25.0;
 constexpr std::size_t kEventRingSize = 200;
+constexpr std::size_t kPairQueueCapacity = 12;
 
 std::string session_stamp() {
     auto value = utc_iso8601_now();
@@ -26,7 +29,7 @@ std::size_t slot_index(const CameraSlot slot) {
 }
 
 nlohmann::json frame_metadata(const FrameRecord& frame) {
-    return {
+    nlohmann::json value = {
         {"device_id", frame.device_id},
         {"session_id", frame.session_id},
         {"sequence", frame.sequence},
@@ -40,6 +43,16 @@ nlohmann::json frame_metadata(const FrameRecord& frame) {
         {"payload_bytes", frame.jpeg.size()},
         {"payload_crc32", frame.payload_crc32},
     };
+    for (const auto* key : {
+             "clock_offset_ns",
+             "clock_rtt_ns",
+             "clock_samples",
+             "sender_frames_offered",
+             "sender_frames_replaced_before_send",
+         }) {
+        if (frame.header.contains(key)) value[key] = frame.header.at(key);
+    }
+    return value;
 }
 
 }  // namespace
@@ -70,7 +83,7 @@ HostState::HostState(std::filesystem::path output_root,
     nlohmann::json session = {
         {"schema_version", 1},
         {"created_at", utc_iso8601_now()},
-        {"mode", "LM02.7B.1_CPU_LAPTOP_RECEIVER"},
+        {"mode", "LM02.7B.2_ANDROID_UPLINK_NEAREST_PAIR"},
         {"camera_roles", {"CAMERA_A", "CAMERA_B"}},
         {"archive_every", archive_every_},
     };
@@ -103,7 +116,10 @@ bool HostState::camera_connected(const CameraSlot slot,
 void HostState::camera_disconnected(const CameraSlot slot,
                                     const std::string& reason) {
     std::scoped_lock lock(mutex_);
-    cameras_[slot_index(slot)].connected = false;
+    auto& camera = cameras_[slot_index(slot)];
+    camera.connected = false;
+    camera.pair_frames_dropped += camera.pair_queue.size();
+    camera.pair_queue.clear();
     nlohmann::json event = {
         {"ts", utc_iso8601_now()}, {"level", "WARN"},
         {"event", "CAMERA_DISCONNECTED"}, {"slot", slot_name(slot)},
@@ -123,6 +139,11 @@ void HostState::accept_frame(const CameraSlot slot, FrameRecord frame) {
     camera.last_frame_ns = frame.received_monotonic_ns;
     camera.latest = frame;
     maybe_archive_locked(slot, frame);
+    camera.pair_queue.push_back(std::move(frame));
+    while (camera.pair_queue.size() > kPairQueueCapacity) {
+        camera.pair_queue.pop_front();
+        camera.pair_frames_dropped += 1;
+    }
     update_pair_locked();
 }
 
@@ -178,6 +199,8 @@ nlohmann::json HostState::status_json() const {
             {"connected", camera.connected}, {"device_id", camera.device_id},
             {"remote_address", camera.remote_address}, {"frames", camera.frames},
             {"bytes", camera.bytes}, {"fps", fps},
+            {"pair_queue_depth", camera.pair_queue.size()},
+            {"pair_frames_dropped", camera.pair_frames_dropped},
         };
         if (camera.latest) value["latest"] = frame_metadata(*camera.latest);
         return value;
@@ -193,6 +216,10 @@ nlohmann::json HostState::status_json() const {
             {"ready_pairs", pair_ready_count_},
             {"last_delta_ms", last_pair_delta_ms_},
             {"ready_limit_ms", kReadyPairDeltaMs},
+            {"queue_a", cameras_[0].pair_queue.size()},
+            {"queue_b", cameras_[1].pair_queue.size()},
+            {"dropped_a", cameras_[0].pair_frames_dropped},
+            {"dropped_b", cameras_[1].pair_frames_dropped},
         }},
     };
 }
@@ -223,22 +250,81 @@ void HostState::maybe_archive_locked(const CameraSlot slot,
 }
 
 void HostState::update_pair_locked() {
-    if (!cameras_[0].latest || !cameras_[1].latest) return;
-    const auto& a = *cameras_[0].latest;
-    const auto& b = *cameras_[1].latest;
-    if (a.sequence == last_pair_sequence_a_ && b.sequence == last_pair_sequence_b_) return;
-    last_pair_sequence_a_ = a.sequence;
-    last_pair_sequence_b_ = b.sequence;
-    pair_count_ += 1;
-    last_pair_delta_ms_ = std::abs(static_cast<double>(
-        a.pair_timestamp_ns - b.pair_timestamp_ns)) / 1'000'000.0;
-    const bool ready = last_pair_delta_ms_ <= kReadyPairDeltaMs;
-    if (ready) pair_ready_count_ += 1;
-    append_jsonl_locked(pairs_file_, {
-        {"ts", utc_iso8601_now()}, {"pair_index", pair_count_},
-        {"camera_a_sequence", a.sequence}, {"camera_b_sequence", b.sequence},
-        {"delta_ms", last_pair_delta_ms_}, {"ready", ready},
-    });
+    auto& queue_a = cameras_[0].pair_queue;
+    auto& queue_b = cameras_[1].pair_queue;
+
+    while (!queue_a.empty() && !queue_b.empty()) {
+        std::size_t best_a = 0;
+        std::size_t best_b = 0;
+        std::int64_t best_delta_ns = std::numeric_limits<std::int64_t>::max();
+
+        for (std::size_t index_a = 0; index_a < queue_a.size(); ++index_a) {
+            for (std::size_t index_b = 0; index_b < queue_b.size(); ++index_b) {
+                const auto delta_ns = std::abs(
+                    queue_a[index_a].pair_timestamp_ns -
+                    queue_b[index_b].pair_timestamp_ns);
+                if (delta_ns < best_delta_ns) {
+                    best_delta_ns = delta_ns;
+                    best_a = index_a;
+                    best_b = index_b;
+                }
+            }
+        }
+
+        const auto ready_limit_ns = static_cast<std::int64_t>(
+            kReadyPairDeltaMs * 1'000'000.0);
+        if (best_delta_ns <= ready_limit_ns) {
+            cameras_[0].pair_frames_dropped += best_a;
+            cameras_[1].pair_frames_dropped += best_b;
+            queue_a.erase(
+                queue_a.begin(),
+                queue_a.begin() + static_cast<std::ptrdiff_t>(best_a));
+            queue_b.erase(
+                queue_b.begin(),
+                queue_b.begin() + static_cast<std::ptrdiff_t>(best_b));
+
+            FrameRecord frame_a = std::move(queue_a.front());
+            FrameRecord frame_b = std::move(queue_b.front());
+            queue_a.pop_front();
+            queue_b.pop_front();
+
+            pair_count_ += 1;
+            pair_ready_count_ += 1;
+            last_pair_delta_ms_ =
+                static_cast<double>(best_delta_ns) / 1'000'000.0;
+            append_jsonl_locked(pairs_file_, {
+                {"ts", utc_iso8601_now()},
+                {"pair_index", pair_count_},
+                {"camera_a_sequence", frame_a.sequence},
+                {"camera_b_sequence", frame_b.sequence},
+                {"camera_a_timestamp_ns", frame_a.pair_timestamp_ns},
+                {"camera_b_timestamp_ns", frame_b.pair_timestamp_ns},
+                {"delta_ms", last_pair_delta_ms_},
+                {"ready", true},
+            });
+            continue;
+        }
+
+        const auto oldest_a = queue_a.front().pair_timestamp_ns;
+        const auto oldest_b = queue_b.front().pair_timestamp_ns;
+        if (
+            oldest_a + ready_limit_ns <
+            queue_b.back().pair_timestamp_ns
+        ) {
+            queue_a.pop_front();
+            cameras_[0].pair_frames_dropped += 1;
+            continue;
+        }
+        if (
+            oldest_b + ready_limit_ns <
+            queue_a.back().pair_timestamp_ns
+        ) {
+            queue_b.pop_front();
+            cameras_[1].pair_frames_dropped += 1;
+            continue;
+        }
+        break;
+    }
 }
 
 void HostState::append_jsonl_locked(std::ofstream& stream,

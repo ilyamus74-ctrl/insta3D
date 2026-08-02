@@ -126,6 +126,8 @@ fun DualPhoneControlSettingsCard(
                 Text(error, color = Color.Red, style = MaterialTheme.typography.bodySmall)
             }
 
+            DualPhoneLaptopUplinkCard(settings = settings)
+
             if (settings.role == DualPhoneRole.STANDALONE) {
                 Text(
                     "Select Master or Slave above to start the control channel.",

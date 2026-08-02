@@ -75,6 +75,8 @@ private:
         std::int64_t first_frame_ns = 0;
         std::int64_t last_frame_ns = 0;
         std::optional<FrameRecord> latest;
+        std::deque<FrameRecord> pair_queue;
+        std::uint64_t pair_frames_dropped = 0;
     };
 
     void maybe_archive_locked(CameraSlot slot, const FrameRecord& frame);
@@ -87,8 +89,6 @@ private:
     std::size_t archive_every_;
     std::uint64_t pair_count_ = 0;
     std::uint64_t pair_ready_count_ = 0;
-    std::uint64_t last_pair_sequence_a_ = 0;
-    std::uint64_t last_pair_sequence_b_ = 0;
     double last_pair_delta_ms_ = 0.0;
     std::deque<nlohmann::json> events_;
     std::ofstream events_file_;
