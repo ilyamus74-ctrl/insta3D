@@ -84,9 +84,14 @@ cv::Mat camera_matrix(const Intrinsics& value);
 cv::Mat distortion(const Intrinsics& value);
 cv::Mat rotation_matrix(const std::array<double, 9>& values);
 cv::Mat translation_vector(const std::array<double, 3>& values);
-RectificationAxis rectification_axis(const cv::Mat& projection_b);
+RectificationAxis rectification_axis(
+    const cv::Mat& projection_b,
+    const std::array<double, 3>& translation_mm);
 const char* rectification_axis_name(RectificationAxis axis);
-double projection_shift(const cv::Mat& projection_b, RectificationAxis axis);
+double projection_shift(
+    const cv::Mat& projection_b,
+    RectificationAxis axis,
+    const std::array<double, 3>& translation_mm);
 cv::Mat orient_for_horizontal_disparity(
     const cv::Mat& rectified,
     RectificationAxis axis);

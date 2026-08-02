@@ -82,10 +82,8 @@ void HttpDashboard::run() {
             if (errno == EINTR) continue;
             continue;
         }
-        std::thread([this, client] {
-            try { handle_client(client); } catch (...) {}
-            ::close(client);
-        }).detach();
+        try { handle_client(client); } catch (...) {}
+        ::close(client);
     }
 }
 
@@ -109,10 +107,7 @@ void HttpDashboard::handle_client(const int client_fd) {
         send_text(client_fd, 202, "application/json",
                   R"({"accepted":true,"action":"STOP_AND_PACK_JSON"})");
         const auto callback = shutdown_callback_;
-        std::thread([callback] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(150));
-            if (callback) callback();
-        }).detach();
+        if (callback) callback();
         return;
     }
     if (method != "GET") {

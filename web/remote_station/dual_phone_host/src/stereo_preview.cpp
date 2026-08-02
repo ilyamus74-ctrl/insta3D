@@ -333,8 +333,13 @@ struct StereoPreview::Impl {
                         projection_a, projection_b, q, cv::CALIB_ZERO_DISPARITY,
                         0.0, frame_a.image.size(), &roi_a, &roi_b);
 
-                    cached_axis = rectification_axis(projection_b);
-                    cached_projection_shift = projection_shift(projection_b, cached_axis);
+                    cached_axis = rectification_axis(
+                        projection_b,
+                        calibration.translation_mm);
+                    cached_projection_shift = projection_shift(
+                        projection_b,
+                        cached_axis,
+                        calibration.translation_mm);
 
                     // initUndistortRectifyMap expects a 3x3 new camera matrix.
                     // P1/P2 returned by stereoRectify are 3x4 projection matrices;

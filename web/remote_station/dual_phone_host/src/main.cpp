@@ -19,8 +19,10 @@
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace mdp = maklertour::dual_phone;
 
@@ -236,6 +238,7 @@ int main(const int argc, char** argv) {
                   << options.http_port << "/\n"
                   << "Session: " << state.session_directory() << '\n';
 
+        std::vector<std::thread> camera_threads;
         while (running.load()) {
             sockaddr_in address{};
             socklen_t size = sizeof(address);
@@ -249,11 +252,22 @@ int main(const int argc, char** argv) {
             setsockopt(client, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
             int no_delay = 1;
             setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &no_delay, sizeof(no_delay));
-            std::thread(handle_camera, client, std::ref(state)).detach();
+            timeval receive_timeout{};
+            receive_timeout.tv_sec = 1;
+            setsockopt(
+                client,
+                SOL_SOCKET,
+                SO_RCVTIMEO,
+                &receive_timeout,
+                sizeof(receive_timeout));
+            camera_threads.emplace_back(handle_camera, client, std::ref(state));
         }
         const int open_server = ingest_server_fd.exchange(-1);
         if (open_server >= 0) ::close(open_server);
         dashboard.stop();
+        for (auto& camera_thread : camera_threads) {
+            if (camera_thread.joinable()) camera_thread.join();
+        }
         state.log_event("INFO", "HOST_STOPPED");
         return 0;
     } catch (const std::exception& error) {

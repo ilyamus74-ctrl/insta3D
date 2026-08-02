@@ -267,17 +267,29 @@ cv::Mat translation_vector(const std::array<double, 3>& values) {
     return (cv::Mat_<double>(3, 1) << values[0], values[1], values[2]);
 }
 
-RectificationAxis rectification_axis(const cv::Mat& projection_b) {
+RectificationAxis rectification_axis(
+    const cv::Mat& projection_b,
+    const std::array<double, 3>& translation_mm) {
     if (projection_b.rows < 3 || projection_b.cols < 4 ||
         projection_b.type() != CV_64F) {
         throw std::runtime_error("stereo projection matrix must be 3x4 CV_64F");
     }
+    constexpr double kMinimumShift = 1e-9;
     const auto horizontal = std::abs(projection_b.at<double>(0, 3));
     const auto vertical = std::abs(projection_b.at<double>(1, 3));
-    if (std::max(horizontal, vertical) <= 1e-9) {
-        throw std::runtime_error("stereo projection contains no usable baseline shift");
+    if (std::max(horizontal, vertical) > kMinimumShift) {
+        return vertical > horizontal
+            ? RectificationAxis::Vertical
+            : RectificationAxis::Horizontal;
     }
-    return vertical > horizontal
+
+    const auto translation_x = std::abs(translation_mm[0]);
+    const auto translation_y = std::abs(translation_mm[1]);
+    if (std::max(translation_x, translation_y) <= kMinimumShift) {
+        throw std::runtime_error(
+            "stereo calibration contains no usable X/Y baseline");
+    }
+    return translation_y > translation_x
         ? RectificationAxis::Vertical
         : RectificationAxis::Horizontal;
 }
@@ -286,11 +298,23 @@ const char* rectification_axis_name(const RectificationAxis axis) {
     return axis == RectificationAxis::Vertical ? "VERTICAL" : "HORIZONTAL";
 }
 
-double projection_shift(const cv::Mat& projection_b,
-                        const RectificationAxis axis) {
-    return axis == RectificationAxis::Vertical
-        ? projection_b.at<double>(1, 3)
-        : projection_b.at<double>(0, 3);
+double projection_shift(
+    const cv::Mat& projection_b,
+    const RectificationAxis axis,
+    const std::array<double, 3>& translation_mm) {
+    constexpr double kMinimumShift = 1e-9;
+    const int row = axis == RectificationAxis::Vertical ? 1 : 0;
+    const auto matrix_shift = projection_b.at<double>(row, 3);
+    if (std::abs(matrix_shift) > kMinimumShift) return matrix_shift;
+
+    const auto focal_length = projection_b.at<double>(row, row);
+    const auto fallback_shift =
+        focal_length * translation_mm[static_cast<std::size_t>(row)];
+    if (!finite(fallback_shift) || std::abs(fallback_shift) <= kMinimumShift) {
+        throw std::runtime_error(
+            "stereo projection and calibrated T contain no usable baseline shift");
+    }
+    return fallback_shift;
 }
 
 cv::Mat orient_for_horizontal_disparity(const cv::Mat& rectified,

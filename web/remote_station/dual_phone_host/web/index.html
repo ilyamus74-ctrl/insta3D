@@ -17,7 +17,7 @@ h1 { margin: 0 0 6px; font-size: 20px; }
 .block-title { margin: 14px 14px 0; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .block-title h2 { margin: 0; font-size: 16px; }
 .block-title span { font-family: ui-monospace, monospace; font-size: 12px; color: #aaaab7; text-align: right; }
-.grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 12px; }
+.grid { display: grid; grid-template-columns: minmax(0,1fr); gap: 12px; padding: 12px; }
 .camera { position: relative; min-height: 300px; background: #050506; border: 1px solid #33333d; border-radius: 14px; overflow: hidden; }
 .camera img { width: 100%; height: 100%; min-height: 300px; object-fit: contain; display: block; }
 .disparity { margin: 0 12px 12px; min-height: 360px; }
@@ -26,7 +26,7 @@ h1 { margin: 0 0 6px; font-size: 20px; }
 .ok { color: #72f59a; } .bad { color: #ff7d7d; } .warn { color: #ffd66e; }
 section { margin: 0 12px 12px; padding: 12px; border: 1px solid #33333d; border-radius: 14px; background: #17171d; }
 pre { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
-@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .block-title { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 900px) { .block-title { align-items: flex-start; flex-direction: column; } }
 </style>
 </head>
 <body>
