@@ -24,6 +24,35 @@ cd ~/Документы/Insta3D/web/remote_station/dual_phone_host
 
 Open `http://127.0.0.1:48641/`.
 
+## Runtime data
+
+The default output is outside the Git checkout:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/maklertour/dual_phone_host/sessions
+```
+
+Preview and JSON/JSONL diagnostics are enabled by default. JPEG frame archiving
+is disabled by default:
+
+```bash
+./scripts/run.sh
+```
+
+Enable bounded JPEG recording explicitly:
+
+```bash
+MAKLER_ARCHIVE_EVERY=1 ./scripts/run.sh   # every frame
+MAKLER_ARCHIVE_EVERY=5 ./scripts/run.sh   # every fifth frame
+```
+
+Package one session for diagnostics without adding it to Git:
+
+```bash
+./scripts/pack_session.sh /path/to/session
+./scripts/pack_session.sh /path/to/session --sample-every 25
+```
+
 ## C++ synthetic two-camera test
 
 Run the host, then open two terminals:
@@ -37,7 +66,7 @@ Run the host, then open two terminals:
 ```
 
 The dashboard must show both clients, FPS, sequence numbers and pair delta.
-Session output is created below `sessions/<UTC timestamp>/`.
+Session output is created below the external XDG state directory shown above.
 
 ## Wire protocol
 
