@@ -514,13 +514,51 @@ struct StereoPreview::Impl {
                     throw std::runtime_error("oriented rectified dimensions differ");
                 }
 
+                const auto processing_rotation =
+                    cached_axis == RectificationAxis::Vertical
+                        ? (cached_projection_shift < 0.0 ? -90 : 90)
+                        : 0;
+                const auto normalize_degrees = [](const int value) {
+                    return ((value % 360) + 360) % 360;
+                };
+                const auto rotate_for_display = [](const cv::Mat& source,
+                                                    const int degrees) {
+                    cv::Mat result;
+                    switch (degrees) {
+                        case 0:
+                            return source;
+                        case 90:
+                            cv::rotate(source, result, cv::ROTATE_90_CLOCKWISE);
+                            break;
+                        case 180:
+                            cv::rotate(source, result, cv::ROTATE_180);
+                            break;
+                        case 270:
+                            cv::rotate(source, result,
+                                       cv::ROTATE_90_COUNTERCLOCKWISE);
+                            break;
+                        default:
+                            throw std::runtime_error(
+                                "unsupported rectified display rotation");
+                    }
+                    return result;
+                };
+                const auto display_rotation_a = normalize_degrees(
+                    pair.camera_a.rotation_degrees - processing_rotation);
+                const auto display_rotation_b = normalize_degrees(
+                    pair.camera_b.rotation_degrees - processing_rotation);
+
                 auto disparity = make_disparity(
                     rectified_a,
                     rectified_b,
                     cached_projection_shift);
-                auto preview_a = encode_jpeg(with_epipolar_guides(rectified_a));
-                auto preview_b = encode_jpeg(with_epipolar_guides(rectified_b));
-                auto preview_disparity = encode_jpeg(disparity.preview);
+                auto display_a = rotate_for_display(rectified_a, display_rotation_a);
+                auto display_b = rotate_for_display(rectified_b, display_rotation_b);
+                auto display_disparity = rotate_for_display(
+                    disparity.preview, display_rotation_a);
+                auto preview_a = encode_jpeg(with_epipolar_guides(display_a));
+                auto preview_b = encode_jpeg(with_epipolar_guides(display_b));
+                auto preview_disparity = encode_jpeg(display_disparity);
 
                 const auto preview_finished = std::chrono::steady_clock::now();
                 if (
@@ -563,10 +601,7 @@ struct StereoPreview::Impl {
                         runtime_height = rectified_a.rows;
                         rectification_axis_state =
                             rectification_axis_name(cached_axis);
-                        processing_rotation_degrees =
-                            cached_axis == RectificationAxis::Vertical
-                                ? (cached_projection_shift < 0.0 ? -90 : 90)
-                                : 0;
+                        processing_rotation_degrees = processing_rotation;
                         rectified_projection_shift = cached_projection_shift;
                         map_valid_fraction_a = cached_map_valid_fraction_a;
                         map_valid_fraction_b = cached_map_valid_fraction_b;
@@ -602,7 +637,9 @@ struct StereoPreview::Impl {
                             {"pair_delta_ms", pair.delta_ms},
                             {"duration_ms", duration_ms},
                             {"rectification_axis", rectification_axis_state},
-                            {"processing_rotation_degrees", processing_rotation_degrees},
+                            {"processing_rotation_degrees", processing_rotation},
+                            {"display_rotation_a_degrees", display_rotation_a},
+                            {"display_rotation_b_degrees", display_rotation_b},
                             {"rectified_projection_shift", cached_projection_shift},
                             {"map_valid_fraction_a", cached_map_valid_fraction_a},
                             {"map_valid_fraction_b", cached_map_valid_fraction_b},

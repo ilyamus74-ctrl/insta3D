@@ -170,6 +170,9 @@ bool compatible_aspect(const cv::Size image_size, const Intrinsics& calibration)
 }
 
 Intrinsics scale_intrinsics(const Intrinsics& source, const cv::Size target) {
+    if (target.width <= 0 || target.height <= 0) {
+        throw std::runtime_error("cannot scale intrinsics to an empty image");
+    }
     const auto scale_x = static_cast<double>(target.width) /
                          static_cast<double>(source.width);
     const auto scale_y = static_cast<double>(target.height) /
@@ -181,6 +184,10 @@ Intrinsics scale_intrinsics(const Intrinsics& source, const cv::Size target) {
     result.cx *= scale_x;
     result.fy *= scale_y;
     result.cy *= scale_y;
+    if (!finite(result.fx) || !finite(result.fy) ||
+        result.fx <= 0.0 || result.fy <= 0.0) {
+        throw std::runtime_error("scaled intrinsics contain an invalid focal length");
+    }
     return result;
 }
 
@@ -204,7 +211,13 @@ PreparedFrame prepare_frame(const StereoPreviewFrame& frame,
         return {std::move(decoded), calibration, 0};
     }
     if (compatible_aspect(decoded.size(), calibration)) {
-        return {std::move(decoded), scale_intrinsics(calibration, decoded.size()), 0};
+        // Evaluate size/scaling before moving the cv::Mat. Braced aggregate
+        // initialization is left-to-right, so the former expression moved
+        // decoded first and then observed decoded.size() as 0x0. That silently
+        // zeroed fx/fy/cx/cy and poisoned stereoRectify/P1/P2 on the laptop.
+        const auto decoded_size = decoded.size();
+        auto scaled = scale_intrinsics(calibration, decoded_size);
+        return {std::move(decoded), std::move(scaled), 0};
     }
     throw std::runtime_error(
         std::string(name) + " raw frame aspect/dimensions do not match calibration (frame " +
