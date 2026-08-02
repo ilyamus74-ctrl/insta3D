@@ -94,7 +94,8 @@ double projection_shift(
     const std::array<double, 3>& translation_mm);
 cv::Mat orient_for_horizontal_disparity(
     const cv::Mat& rectified,
-    RectificationAxis axis);
+    RectificationAxis axis,
+    double rectified_projection_shift);
 double map_valid_fraction(
     const cv::Mat& map_x,
     const cv::Mat& map_y,

@@ -26,8 +26,6 @@ namespace maklertour::dual_phone {
 namespace {
 
 constexpr std::chrono::seconds kFpsWindow{5};
-constexpr double kMinimumMapValidFraction = 0.05;
-
 void write_binary_atomic(const std::filesystem::path& destination,
                          const std::vector<std::uint8_t>& bytes) {
     auto temporary = destination;
@@ -56,6 +54,21 @@ void write_binary_atomic(const std::filesystem::path& destination,
         throw std::runtime_error(
             "cannot publish " + destination.string() + ": " + error.message());
     }
+}
+
+nlohmann::json matrix_json(const cv::Mat& matrix) {
+    nlohmann::json rows = nlohmann::json::array();
+    if (matrix.empty()) return rows;
+    cv::Mat converted;
+    matrix.convertTo(converted, CV_64F);
+    for (int row = 0; row < converted.rows; ++row) {
+        nlohmann::json values = nlohmann::json::array();
+        for (int column = 0; column < converted.cols; ++column) {
+            values.push_back(converted.at<double>(row, column));
+        }
+        rows.push_back(std::move(values));
+    }
+    return rows;
 }
 
 }  // namespace
@@ -290,7 +303,8 @@ struct StereoPreview::Impl {
         double cached_projection_shift = 0.0;
         double cached_map_valid_fraction_a = 0.0;
         double cached_map_valid_fraction_b = 0.0;
-        std::chrono::steady_clock::time_point last_diagnostic_image_write;
+        std::chrono::steady_clock::time_point last_raw_image_write;
+        std::chrono::steady_clock::time_point last_processed_image_write;
 
         while (true) {
             StereoPreviewPair pair;
@@ -314,6 +328,19 @@ struct StereoPreview::Impl {
                 }
                 const auto current_raw_a_statistics = image_statistics(frame_a.image);
                 const auto current_raw_b_statistics = image_statistics(frame_b.image);
+
+                // Preserve raw evidence even when rectification/map construction fails.
+                const auto raw_ready = std::chrono::steady_clock::now();
+                if (
+                    last_raw_image_write.time_since_epoch().count() == 0 ||
+                    raw_ready - last_raw_image_write >= std::chrono::seconds{1}
+                ) {
+                    write_binary_atomic(
+                        session_directory / "raw_a_latest.jpg", pair.camera_a.jpeg);
+                    write_binary_atomic(
+                        session_directory / "raw_b_latest.jpg", pair.camera_b.jpeg);
+                    last_raw_image_write = raw_ready;
+                }
 
                 if (map_revision != calibration.revision || map_size != frame_a.image.size()) {
                     const auto k_a = camera_matrix(frame_a.intrinsics);
@@ -343,56 +370,36 @@ struct StereoPreview::Impl {
                         cached_axis,
                         calibration.translation_mm);
 
-                    const auto projection_usable = [](const cv::Mat& value) {
-                        if (value.rows < 3 || value.cols < 3 ||
-                            value.type() != CV_64F) return false;
-                        const auto fx = value.at<double>(0, 0);
-                        const auto fy = value.at<double>(1, 1);
-                        return std::isfinite(fx) && std::isfinite(fy) &&
-                               std::abs(fx) > 1.0 && std::abs(fy) > 1.0;
-                    };
-
-                    cv::Mat new_k_a;
-                    cv::Mat new_k_b;
-                    if (projection_usable(projection_a) &&
-                        projection_usable(projection_b)) {
-                        // P1/P2 are 3x4; remap needs their 3x3 camera blocks.
-                        new_k_a = projection_a(cv::Rect(0, 0, 3, 3)).clone();
-                        new_k_b = projection_b(cv::Rect(0, 0, 3, 3)).clone();
-                    } else {
-                        // Fedora/OpenCV 4.10 may return unusable P1/P2 for this
-                        // near-vertical phone baseline. R1/R2 are still useful,
-                        // so use one shared runtime K for both rectified views.
-                        const auto focal = std::min({
-                            frame_a.intrinsics.fx,
-                            frame_a.intrinsics.fy,
-                            frame_b.intrinsics.fx,
-                            frame_b.intrinsics.fy,
-                        });
-                        const auto cx = (frame_a.image.cols - 1) * 0.5;
-                        const auto cy = (frame_a.image.rows - 1) * 0.5;
-                        const cv::Mat shared_k = (cv::Mat_<double>(3, 3) <<
-                            focal, 0.0, cx,
-                            0.0, focal, cy,
-                            0.0, 0.0, 1.0);
-                        new_k_a = shared_k.clone();
-                        new_k_b = shared_k.clone();
-                    }
+                    // Match the working Android implementation exactly: pass
+                    // the complete 3x4 P1/P2 matrices returned by stereoRectify.
                     cv::initUndistortRectifyMap(
-                        k_a, d_a, rectification_a, new_k_a,
+                        k_a, d_a, rectification_a, projection_a,
                         frame_a.image.size(), CV_32FC1, map_a_x, map_a_y);
                     cv::initUndistortRectifyMap(
-                        k_b, d_b, rectification_b, new_k_b,
+                        k_b, d_b, rectification_b, projection_b,
                         frame_b.image.size(), CV_32FC1, map_b_x, map_b_y);
                     cached_map_valid_fraction_a =
                         map_valid_fraction(map_a_x, map_a_y, frame_a.image.size());
                     cached_map_valid_fraction_b =
                         map_valid_fraction(map_b_x, map_b_y, frame_b.image.size());
-                    if (cached_map_valid_fraction_a < kMinimumMapValidFraction ||
-                        cached_map_valid_fraction_b < kMinimumMapValidFraction) {
-                        throw std::runtime_error(
-                            "rectification maps contain too few in-frame source pixels");
-                    }
+
+                    append_diagnostic({
+                        {"event", "STEREO_RECTIFICATION_MAPS_READY"},
+                        {"pair_index", pair.pair_index},
+                        {"input_width", frame_a.image.cols},
+                        {"input_height", frame_a.image.rows},
+                        {"rectification_axis", rectification_axis_name(cached_axis)},
+                        {"rectified_projection_shift", cached_projection_shift},
+                        {"map_valid_fraction_a", cached_map_valid_fraction_a},
+                        {"map_valid_fraction_b", cached_map_valid_fraction_b},
+                        {"camera_a_rotation_metadata", pair.camera_a.rotation_degrees},
+                        {"camera_b_rotation_metadata", pair.camera_b.rotation_degrees},
+                        {"R1", matrix_json(rectification_a)},
+                        {"R2", matrix_json(rectification_b)},
+                        {"P1", matrix_json(projection_a)},
+                        {"P2", matrix_json(projection_b)},
+                        {"Q", matrix_json(q)},
+                    });
                     map_revision = calibration.revision;
                     map_size = frame_a.image.size();
                 }
@@ -407,18 +414,26 @@ struct StereoPreview::Impl {
                     image_statistics(rectified_native_a);
                 const auto current_rectified_b_statistics =
                     image_statistics(rectified_native_b);
-                require_usable_rectified_image(
-                    current_rectified_a_statistics, "CAMERA_A");
-                require_usable_rectified_image(
-                    current_rectified_b_statistics, "CAMERA_B");
+                try {
+                    require_usable_rectified_image(
+                        current_rectified_a_statistics, "CAMERA_A");
+                    require_usable_rectified_image(
+                        current_rectified_b_statistics, "CAMERA_B");
+                } catch (const std::exception& error) {
+                    throw std::runtime_error(
+                        std::string(error.what()) +
+                        "; map_valid_fraction_a=" +
+                        std::to_string(cached_map_valid_fraction_a) +
+                        "; map_valid_fraction_b=" +
+                        std::to_string(cached_map_valid_fraction_b));
+                }
 
-                // OpenCV supports vertical stereo, but StereoSGBM searches along x.
-                // Rotate both rectified images identically when P2 says the calibrated
-                // baseline is vertical. Counter-clockwise keeps the P2 disparity sign.
+                // OpenCV supports vertical stereo, while StereoSGBM searches along x.
+                // Match Android: P2.y < 0 -> CCW; P2.y > 0 -> CW.
                 auto rectified_a = orient_for_horizontal_disparity(
-                    rectified_native_a, cached_axis);
+                    rectified_native_a, cached_axis, cached_projection_shift);
                 auto rectified_b = orient_for_horizontal_disparity(
-                    rectified_native_b, cached_axis);
+                    rectified_native_b, cached_axis, cached_projection_shift);
                 if (rectified_a.size() != rectified_b.size()) {
                     throw std::runtime_error("oriented rectified dimensions differ");
                 }
@@ -433,21 +448,17 @@ struct StereoPreview::Impl {
 
                 const auto preview_finished = std::chrono::steady_clock::now();
                 if (
-                    last_diagnostic_image_write.time_since_epoch().count() == 0 ||
-                    preview_finished - last_diagnostic_image_write >=
+                    last_processed_image_write.time_since_epoch().count() == 0 ||
+                    preview_finished - last_processed_image_write >=
                         std::chrono::seconds{1}
                 ) {
-                    write_binary_atomic(
-                        session_directory / "raw_a_latest.jpg", pair.camera_a.jpeg);
-                    write_binary_atomic(
-                        session_directory / "raw_b_latest.jpg", pair.camera_b.jpeg);
                     write_binary_atomic(
                         session_directory / "rectified_a_latest.jpg", preview_a);
                     write_binary_atomic(
                         session_directory / "rectified_b_latest.jpg", preview_b);
                     write_binary_atomic(
                         session_directory / "disparity_latest.jpg", preview_disparity);
-                    last_diagnostic_image_write = preview_finished;
+                    last_processed_image_write = preview_finished;
                 }
 
                 const auto finished = std::chrono::steady_clock::now();
@@ -477,7 +488,9 @@ struct StereoPreview::Impl {
                         rectification_axis_state =
                             rectification_axis_name(cached_axis);
                         processing_rotation_degrees =
-                            cached_axis == RectificationAxis::Vertical ? 90 : 0;
+                            cached_axis == RectificationAxis::Vertical
+                                ? (cached_projection_shift < 0.0 ? -90 : 90)
+                                : 0;
                         rectified_projection_shift = cached_projection_shift;
                         map_valid_fraction_a = cached_map_valid_fraction_a;
                         map_valid_fraction_b = cached_map_valid_fraction_b;

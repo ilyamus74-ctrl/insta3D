@@ -161,27 +161,6 @@ ResolvedCalibration resolve_profile(const CalibrationProfile& profile,
         "connected CAMERA_A/CAMERA_B device IDs do not match calibration profile");
 }
 
-int normalized_rotation(const int value) {
-    int result = value % 360;
-    if (result < 0) result += 360;
-    if (result != 0 && result != 90 && result != 180 && result != 270) {
-        throw std::runtime_error("frame rotation must be 0, 90, 180 or 270 degrees");
-    }
-    return result;
-}
-
-cv::Mat rotate_frame(const cv::Mat& source, const int degrees) {
-    cv::Mat result;
-    switch (degrees) {
-        case 0: return source;
-        case 90: cv::rotate(source, result, cv::ROTATE_90_CLOCKWISE); break;
-        case 180: cv::rotate(source, result, cv::ROTATE_180); break;
-        case 270: cv::rotate(source, result, cv::ROTATE_90_COUNTERCLOCKWISE); break;
-        default: throw std::runtime_error("unsupported frame rotation");
-    }
-    return result;
-}
-
 bool compatible_aspect(const cv::Size image_size, const Intrinsics& calibration) {
     const auto image_ratio = static_cast<double>(image_size.width) /
                              static_cast<double>(image_size.height);
@@ -216,30 +195,22 @@ PreparedFrame prepare_frame(const StereoPreviewFrame& frame,
         throw std::runtime_error(std::string(name) + " JPEG dimensions differ from header");
     }
 
-    const auto degrees = normalized_rotation(frame.rotation_degrees);
-    auto rotated = rotate_frame(decoded, degrees);
-    const auto exact_rotated = rotated.cols == calibration.width &&
-                               rotated.rows == calibration.height;
+    // Match the working Android MASTER/SLAVE pipeline: CameraX rotation is
+    // display metadata only. Stereo calibration and stereoRectify operate on
+    // the unrotated sensor/JPEG landscape pixels.
     const auto exact_raw = decoded.cols == calibration.width &&
                            decoded.rows == calibration.height;
-
-    if (exact_rotated) {
-        return {std::move(rotated), calibration, degrees};
-    }
     if (exact_raw) {
         return {std::move(decoded), calibration, 0};
-    }
-    if (compatible_aspect(rotated.size(), calibration)) {
-        return {std::move(rotated), scale_intrinsics(calibration, rotated.size()), degrees};
     }
     if (compatible_aspect(decoded.size(), calibration)) {
         return {std::move(decoded), scale_intrinsics(calibration, decoded.size()), 0};
     }
     throw std::runtime_error(
-        std::string(name) + " frame aspect/dimensions do not match calibration (frame " +
+        std::string(name) + " raw frame aspect/dimensions do not match calibration (frame " +
         std::to_string(decoded.cols) + "x" + std::to_string(decoded.rows) +
-        ", rotation " + std::to_string(degrees) + ", calibration " +
-        std::to_string(calibration.width) + "x" +
+        ", rotation metadata " + std::to_string(frame.rotation_degrees) +
+        ", calibration " + std::to_string(calibration.width) + "x" +
         std::to_string(calibration.height) + ")");
 }
 
@@ -318,11 +289,16 @@ double projection_shift(
     return fallback_shift;
 }
 
-cv::Mat orient_for_horizontal_disparity(const cv::Mat& rectified,
-                                        const RectificationAxis axis) {
+cv::Mat orient_for_horizontal_disparity(
+    const cv::Mat& rectified,
+    const RectificationAxis axis,
+    const double rectified_projection_shift) {
     if (axis == RectificationAxis::Horizontal) return rectified;
     cv::Mat result;
-    cv::rotate(rectified, result, cv::ROTATE_90_COUNTERCLOCKWISE);
+    const auto rotation = rectified_projection_shift < 0.0
+        ? cv::ROTATE_90_COUNTERCLOCKWISE
+        : cv::ROTATE_90_CLOCKWISE;
+    cv::rotate(rectified, result, rotation);
     return result;
 }
 
