@@ -34,6 +34,7 @@ internal class DualPhoneClockSyncController(
     private val rounds = ArrayDeque<DualPhoneClockSyncRound>()
     private val probeSequence = AtomicLong(1L)
     private var consecutiveNonReadyRounds = 0
+    private var consecutiveIncompleteRounds = 0
     private var job: Job? = null
     private var datagramSocket: DatagramSocket? = null
 
@@ -43,7 +44,7 @@ internal class DualPhoneClockSyncController(
         val current = snapshot
         val updatedAt = current.updatedAtElapsedNs ?: return null
         val ageNs = SystemClock.elapsedRealtimeNanos() - updatedAt
-        if (!current.captureSchedulingAllowed || ageNs > MAX_MODEL_AGE_NS) {
+        if (!current.captureSchedulingAllowed || ageNs > MAX_HOLDOVER_AGE_NS) {
             return null
         }
         return model?.masterToSlaveNs(masterElapsedNs)
@@ -84,7 +85,9 @@ internal class DualPhoneClockSyncController(
                         samples = samples,
                         totalProbes = probeCount,
                     )
+                    val incompleteRound = round == null
                     if (round != null) {
+                        consecutiveIncompleteRounds = 0
                         rounds.addLast(round)
                         while (rounds.size > MAX_HISTORY_ROUNDS) {
                             rounds.removeFirst()
@@ -126,16 +129,33 @@ internal class DualPhoneClockSyncController(
                             }
                         }
                     } else {
+                        consecutiveIncompleteRounds += 1
                         Log.w(
                             TAG,
                             "DP03_CLOCK_ROUND incomplete total=$probeCount " +
-                                "responses=${samples.size}",
+                                "responses=${samples.size} " +
+                                "watchdog=$consecutiveIncompleteRounds",
                         )
                         val previous = snapshot
                         val nowNs = SystemClock.elapsedRealtimeNanos()
                         val modelAgeNs = previous.updatedAtElapsedNs?.let {
                             nowNs - it
                         } ?: Long.MAX_VALUE
+                        val watchdogReconnect =
+                            consecutiveIncompleteRounds >= WATCHDOG_RECONNECT_ROUNDS
+                        if (watchdogReconnect) {
+                            runCatching {
+                                socket.disconnect()
+                                socket.connect(InetSocketAddress(address, port))
+                            }.onFailure { error ->
+                                Log.w(
+                                    TAG,
+                                    "Clock watchdog UDP reconnect failed",
+                                    error,
+                                )
+                            }
+                            consecutiveIncompleteRounds = 0
+                        }
                         val next = when {
                             model == null -> previous.copy(
                                 quality = DualPhoneClockSyncQuality.POOR,
@@ -143,24 +163,36 @@ internal class DualPhoneClockSyncController(
                                 acceptedSamples = samples.size,
                                 totalSamples = probeCount,
                                 updatedAtElapsedNs = nowNs,
-                                message = "Too few UDP clock responses; retrying",
+                                message = "Too few UDP clock responses; watchdog retrying",
                             )
-                            modelAgeNs > MAX_MODEL_AGE_NS -> previous.copy(
-                                quality = DualPhoneClockSyncQuality.POOR,
-                                ready = false,
-                                message = "Clock model is stale; waiting for UDP responses",
+                            modelAgeNs <= MAX_HOLDOVER_AGE_NS -> previous.copy(
+                                ready = previous.offsetNs != null,
+                                acceptedSamples = samples.size,
+                                totalSamples = probeCount,
+                                message = if (watchdogReconnect) {
+                                    "Clock holdover active; UDP socket refreshed"
+                                } else {
+                                    "Clock holdover active; watchdog fast resync"
+                                },
                             )
                             else -> previous.copy(
-                                message = "Clock sync round incomplete; keeping previous model",
+                                quality = DualPhoneClockSyncQuality.POOR,
+                                ready = false,
+                                acceptedSamples = samples.size,
+                                totalSamples = probeCount,
+                                message = "Clock holdover expired; watchdog resyncing",
                             )
                         }
                         publish(next)
+                        runCatching {
+                            onStatusForSlave(statusPayload(next))
+                        }
                     }
                     delay(
-                        if (model == null) {
-                            INITIAL_RETRY_INTERVAL_MS
-                        } else {
-                            PERIODIC_SYNC_INTERVAL_MS
+                        when {
+                            incompleteRound -> RECOVERY_RETRY_INTERVAL_MS
+                            model == null -> INITIAL_RETRY_INTERVAL_MS
+                            else -> PERIODIC_SYNC_INTERVAL_MS
                         },
                     )
                 }
@@ -280,6 +312,7 @@ internal class DualPhoneClockSyncController(
         closeSocket()
         rounds.clear()
         consecutiveNonReadyRounds = 0
+        consecutiveIncompleteRounds = 0
         model = null
         publish(DualPhoneClockSyncSnapshot())
     }
@@ -450,8 +483,11 @@ internal class DualPhoneClockSyncController(
         private const val SLAVE_RECEIVE_TIMEOUT_MS = 1_000
         private const val PROBE_INTERVAL_MS = 60L
         private const val INITIAL_RETRY_INTERVAL_MS = 1_000L
+        private const val RECOVERY_RETRY_INTERVAL_MS = 750L
         private const val PERIODIC_SYNC_INTERVAL_MS = 10_000L
         private const val MAX_MODEL_AGE_NS = 30_000_000_000L
+        private const val MAX_HOLDOVER_AGE_NS = 300_000_000_000L
+        private const val WATCHDOG_RECONNECT_ROUNDS = 3
         private const val MAX_HISTORY_ROUNDS = 12
         private const val MAX_PACKET_BYTES = 2_048
     }

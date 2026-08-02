@@ -48,9 +48,11 @@ class DualPhoneDepthPerformanceController(context: Context) {
     private var warmupRemaining = INITIAL_WARMUP_SAMPLES
     private var slowWindows = 0
     private var fastWindows = 0
+    private var observedSelectionMode = DualPhoneDepthProfileSelection.current()
 
     @Synchronized
     fun snapshot(): DualPhoneDepthPerformanceSnapshot {
+        val selectionMode = syncSelectionMode()
         val thermal = thermalState()
         val thermalFloor = when (thermal) {
             DualPhoneDepthThermalState.UNSUPPORTED,
@@ -59,7 +61,14 @@ class DualPhoneDepthPerformanceController(context: Context) {
             DualPhoneDepthThermalState.HOT -> 4
             DualPhoneDepthThermalState.CRITICAL -> 5
         }
-        val level = maxOf(thermalFloor, adaptiveLevel)
+        val requestedLevel = when (selectionMode) {
+            DualPhoneDepthProfileMode.AUTO -> adaptiveLevel
+            DualPhoneDepthProfileMode.MANUAL_ULTRA_960 -> 0
+            DualPhoneDepthProfileMode.MANUAL_HIGH_640 -> 1
+            DualPhoneDepthProfileMode.MANUAL_QUALITY_480 -> 2
+            DualPhoneDepthProfileMode.MANUAL_BALANCED_320 -> 3
+        }
+        val level = maxOf(thermalFloor, requestedLevel)
         return DualPhoneDepthPerformanceSnapshot(
             thermalState = thermal,
             profile = PROFILES[level],
@@ -78,6 +87,8 @@ class DualPhoneDepthPerformanceController(context: Context) {
         while (processingDurationsMs.size > MAX_PROCESSING_SAMPLES) {
             processingDurationsMs.removeFirst()
         }
+        val selectionMode = syncSelectionMode()
+        if (selectionMode != DualPhoneDepthProfileMode.AUTO) return
         if (processingDurationsMs.size < MIN_SAMPLES_FOR_DECISION) return
 
         val p95 = percentile(0.95) ?: return
@@ -133,6 +144,16 @@ class DualPhoneDepthPerformanceController(context: Context) {
         warmupRemaining = warmupSamples
         slowWindows = 0
         fastWindows = 0
+    }
+
+    private fun syncSelectionMode(): DualPhoneDepthProfileMode {
+        val selected = DualPhoneDepthProfileSelection.current()
+        if (selected != observedSelectionMode) {
+            observedSelectionMode = selected
+            adaptiveLevel = 0
+            resetDecisionWindow(INITIAL_WARMUP_SAMPLES)
+        }
+        return selected
     }
 
     private fun thermalState(): DualPhoneDepthThermalState {

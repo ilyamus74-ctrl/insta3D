@@ -152,7 +152,7 @@ internal fun DualPhoneContourFirstViewport(
                     )
                 }
                 denseBitmap?.let { bitmap ->
-                    paint.alpha = densePaintAlpha(mode, freshness)
+                    paint.alpha = densePaintAlpha(mode, freshness, depth)
                     drawContourCenterCrop(
                         canvas = canvas,
                         bitmap = bitmap,
@@ -163,7 +163,7 @@ internal fun DualPhoneContourFirstViewport(
                     )
                 }
                 strictBitmap?.let { bitmap ->
-                    paint.alpha = strictPaintAlpha(mode, freshness)
+                    paint.alpha = strictPaintAlpha(mode, freshness, depth)
                     drawContourCenterCrop(
                         canvas = canvas,
                         bitmap = bitmap,
@@ -215,13 +215,32 @@ internal fun DualPhoneContourFirstViewport(
                     .padding(top = 58.dp, end = 12.dp),
             )
         }
+
+        DualPhoneDepthProfileModeSelector(
+            activeProfile = depth.qualityProfile,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 92.dp),
+        )
     }
 }
 
 private fun densePaintAlpha(
     mode: DualPhoneOperatorOverlayMode,
     freshness: ContourDepthFreshness,
+    depth: DualPhoneLiveDepthSnapshot,
 ): Int {
+    if (
+        !com.example.maklertour.data.dualphone.DualPhoneDepthProfileSelection
+            .overlayMatchesActiveMap(
+                activeProfileName = depth.qualityProfile,
+                workWidth = depth.workWidth,
+                workHeight = depth.workHeight,
+                thermalState = depth.thermalState,
+            )
+    ) {
+        return 0
+    }
     val liveAlpha = when (mode) {
         DualPhoneOperatorOverlayMode.OUTLINE -> 0
         DualPhoneOperatorOverlayMode.ASSIST -> 86
@@ -238,7 +257,19 @@ private fun densePaintAlpha(
 private fun strictPaintAlpha(
     mode: DualPhoneOperatorOverlayMode,
     freshness: ContourDepthFreshness,
+    depth: DualPhoneLiveDepthSnapshot,
 ): Int {
+    if (
+        !com.example.maklertour.data.dualphone.DualPhoneDepthProfileSelection
+            .overlayMatchesActiveMap(
+                activeProfileName = depth.qualityProfile,
+                workWidth = depth.workWidth,
+                workHeight = depth.workHeight,
+                thermalState = depth.thermalState,
+            )
+    ) {
+        return 0
+    }
     val liveAlpha = when (mode) {
         DualPhoneOperatorOverlayMode.OUTLINE -> 0
         DualPhoneOperatorOverlayMode.ASSIST -> 72
