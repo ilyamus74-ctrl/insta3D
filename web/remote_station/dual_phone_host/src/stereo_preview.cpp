@@ -362,16 +362,91 @@ struct StereoPreview::Impl {
                         projection_a, projection_b, q, cv::CALIB_ZERO_DISPARITY,
                         0.0, frame_a.image.size(), &roi_a, &roi_b);
 
+                    const auto projection_usable = [](const cv::Mat& value) {
+                        if (value.rows != 3 || value.cols != 4 ||
+                            value.type() != CV_64F) {
+                            return false;
+                        }
+                        for (int row = 0; row < value.rows; ++row) {
+                            for (int column = 0; column < value.cols; ++column) {
+                                if (!std::isfinite(value.at<double>(row, column))) {
+                                    return false;
+                                }
+                            }
+                        }
+                        return std::abs(value.at<double>(0, 0)) > 1.0 &&
+                               std::abs(value.at<double>(1, 1)) > 1.0;
+                    };
+
                     cached_axis = rectification_axis(
                         projection_b,
                         calibration.translation_mm);
+                    bool projection_fallback_used = false;
+
+                    // Fedora OpenCV 4.10 may return finite R1/R2 but NaN
+                    // focal/principal-point values in P1/P2/Q for this
+                    // near-vertical stereo rig. Keep the valid rectification
+                    // rotations and synthesize a finite common camera model.
+                    if (!projection_usable(projection_a) ||
+                        !projection_usable(projection_b)) {
+                        projection_fallback_used = true;
+                        const auto focal = std::min({
+                            frame_a.intrinsics.fx,
+                            frame_a.intrinsics.fy,
+                            frame_b.intrinsics.fx,
+                            frame_b.intrinsics.fy,
+                        });
+                        const auto cx =
+                            (static_cast<double>(frame_a.image.cols) - 1.0) * 0.5;
+                        const auto cy =
+                            (static_cast<double>(frame_a.image.rows) - 1.0) * 0.5;
+                        const cv::Mat common_k = (cv::Mat_<double>(3, 3) <<
+                            focal, 0.0, cx,
+                            0.0, focal, cy,
+                            0.0, 0.0, 1.0);
+
+                        projection_a = cv::Mat::zeros(3, 4, CV_64F);
+                        projection_b = cv::Mat::zeros(3, 4, CV_64F);
+                        common_k.copyTo(projection_a(cv::Rect(0, 0, 3, 3)));
+                        common_k.copyTo(projection_b(cv::Rect(0, 0, 3, 3)));
+
+                        const int axis_row =
+                            cached_axis == RectificationAxis::Vertical ? 1 : 0;
+                        const auto dominant_translation =
+                            calibration.translation_mm[
+                                static_cast<std::size_t>(axis_row)];
+                        auto baseline_mm = calibration.measured_baseline_mm;
+                        if (!std::isfinite(baseline_mm) || baseline_mm <= 0.0) {
+                            baseline_mm = std::sqrt(
+                                calibration.translation_mm[0] *
+                                    calibration.translation_mm[0] +
+                                calibration.translation_mm[1] *
+                                    calibration.translation_mm[1] +
+                                calibration.translation_mm[2] *
+                                    calibration.translation_mm[2]);
+                        }
+                        const auto signed_baseline_mm =
+                            std::copysign(baseline_mm, dominant_translation);
+                        projection_b.at<double>(axis_row, 3) =
+                            focal * signed_baseline_mm;
+
+                        q = cv::Mat::zeros(4, 4, CV_64F);
+                        q.at<double>(0, 0) = 1.0;
+                        q.at<double>(1, 1) = 1.0;
+                        q.at<double>(0, 3) = -cx;
+                        q.at<double>(1, 3) = -cy;
+                        q.at<double>(2, 3) = focal;
+                        q.at<double>(3, 2) = -1.0 / signed_baseline_mm;
+                    }
+
                     cached_projection_shift = projection_shift(
                         projection_b,
                         cached_axis,
                         calibration.translation_mm);
 
-                    // Match the working Android implementation exactly: pass
-                    // the complete 3x4 P1/P2 matrices returned by stereoRectify.
+                    // Pass complete 3x4 effective P1/P2 matrices, matching the
+                    // Android path. They are either native OpenCV output or the
+                    // finite common-camera fallback above.
                     cv::initUndistortRectifyMap(
                         k_a, d_a, rectification_a, projection_a,
                         frame_a.image.size(), CV_32FC1, map_a_x, map_a_y);
@@ -394,6 +469,7 @@ struct StereoPreview::Impl {
                         {"map_valid_fraction_b", cached_map_valid_fraction_b},
                         {"camera_a_rotation_metadata", pair.camera_a.rotation_degrees},
                         {"camera_b_rotation_metadata", pair.camera_b.rotation_degrees},
+                        {"projection_fallback_used", projection_fallback_used},
                         {"R1", matrix_json(rectification_a)},
                         {"R2", matrix_json(rectification_b)},
                         {"P1", matrix_json(projection_a)},
