@@ -1,0 +1,10 @@
+# CMake/Ninja output
+/build/
+
+# Runtime capture data. Never commit camera frames or diagnostic sessions.
+/sessions/
+/archives/
+
+# Locally packed diagnostics
+*.tar.zst
+*.tar.gz
