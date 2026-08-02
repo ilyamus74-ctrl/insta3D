@@ -371,7 +371,7 @@ struct StereoPreview::Impl {
                         });
                         const auto cx = (frame_a.image.cols - 1) * 0.5;
                         const auto cy = (frame_a.image.rows - 1) * 0.5;
-                        const auto shared_k = (cv::Mat_<double>(3, 3) <<
+                        const cv::Mat shared_k = (cv::Mat_<double>(3, 3) <<
                             focal, 0.0, cx,
                             0.0, focal, cy,
                             0.0, 0.0, 1.0);
