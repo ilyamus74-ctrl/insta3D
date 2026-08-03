@@ -52,7 +52,7 @@ constexpr double kMinimumKeyframeTranslationM = 0.06;
 constexpr double kMaximumVisualYawStepDeg = 35.0;
 constexpr double kMaximumGyroYawStepDeg = 45.0;
 constexpr double kMaximumYawDisagreementDeg = 14.0;
-constexpr double kTripodTranslationLimitM = 0.20;
+constexpr double kMaximumSafePnpTranslationM = 0.08;
 constexpr double kGyroStillThresholdRadS = 0.10;
 constexpr double kGyroMaximumDtSeconds = 0.15;
 constexpr std::uint32_t kMinimumMultiviewKeyframes = 2;
@@ -807,7 +807,7 @@ struct AccumulatedMapRuntime::Impl {
         return {
             {"state", state},
             {"ready", ready},
-            {"tracking_mode", "GYRO_ASSISTED_RECONNECT_SAFE"},
+            {"tracking_mode", "LOCAL_STEREO_VALIDATION_SAFE_TRIPOD"},
             {"recommended_profile", "HIGH_640"},
             {"source_profile", source_profile},
             {"segment_id", segment_id},
@@ -1031,9 +1031,14 @@ struct AccumulatedMapRuntime::Impl {
         }
 
         const bool rotation_available = decision.used_gyro || decision.used_visual;
-        const bool tripod_motion = rotation_available &&
-            (!decision.visual.pnp_valid ||
-             decision.visual.translation_m <= kTripodTranslationLimitM);
+        const bool pnp_translation_safe = decision.visual.pnp_valid &&
+            std::isfinite(decision.visual.translation_m) &&
+            decision.visual.translation_m <= kMaximumSafePnpTranslationM;
+
+        // Deliberately tripod-safe: a valid gyro/homography rotation is never
+        // replaced by an unconstrained PnP translation. PnP remains
+        // diagnostic until pivot offset and moving-rig modes are calibrated.
+        const bool tripod_motion = rotation_available;
         if (tripod_motion) {
             decision.rotation_only = true;
             decision.world_from_camera = reference.world_from_camera *
@@ -1041,7 +1046,10 @@ struct AccumulatedMapRuntime::Impl {
             decision.translation_m = 0.0;
             decision.rotation_deg = std::abs(decision.fused_yaw_step_deg);
             decision.valid = true;
-        } else if (decision.visual.pnp_valid) {
+            if (decision.visual.pnp_valid && !pnp_translation_safe) {
+                decision.method += "_PNP_TRANSLATION_REJECTED";
+            }
+        } else if (pnp_translation_safe) {
             decision.world_from_camera = decision.visual.pnp_world_from_camera;
             decision.translation_m = decision.visual.translation_m;
             decision.rotation_deg = std::abs(signed_yaw_delta_deg(
@@ -1051,6 +1059,10 @@ struct AccumulatedMapRuntime::Impl {
             decision.method = "PNP_DEPTH";
             decision.used_visual = true;
             decision.valid = true;
+        } else if (decision.visual.pnp_valid) {
+            decision.method = "PNP_TRANSLATION_REJECTED";
+            decision.rejection_reason = "PNP_TRANSLATION_UNSAFE_FOR_TRIPOD";
+            return decision;
         }
 
         if (!decision.valid) {
@@ -1108,6 +1120,10 @@ struct AccumulatedMapRuntime::Impl {
                         {"matches", decision.visual.matches},
                         {"homography_inliers", decision.visual.homography_inliers},
                         {"pnp_inliers", decision.visual.pnp_inliers},
+                        {"pnp_translation_m", decision.visual.translation_m},
+                        {"pnp_translation_safe_for_tripod",
+                         decision.visual.pnp_valid &&
+                             decision.visual.translation_m <= kMaximumSafePnpTranslationM},
                         {"translation_m", decision.translation_m},
                         {"accepted", decision.valid && decision.keyframe},
                         {"reason", decision.rejection_reason},

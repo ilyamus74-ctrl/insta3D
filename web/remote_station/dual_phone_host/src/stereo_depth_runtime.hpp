@@ -71,6 +71,8 @@ public:
         const cv::Mat& rectified_b,
         bool vertical_rectification,
         double rectified_focal_px,
+        double rectified_principal_x_px,
+        double rectified_principal_y_px,
         double baseline_mm,
         const StereoDepthBudget& budget);
 

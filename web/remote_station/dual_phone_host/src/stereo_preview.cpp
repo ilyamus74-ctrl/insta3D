@@ -413,6 +413,8 @@ struct StereoPreview::Impl {
         RectificationAxis cached_axis = RectificationAxis::Horizontal;
         double cached_projection_shift = 0.0;
         double cached_rectified_focal_px = 0.0;
+        double cached_rectified_principal_x_px = 0.0;
+        double cached_rectified_principal_y_px = 0.0;
         double cached_map_valid_fraction_a = 0.0;
         double cached_map_valid_fraction_b = 0.0;
         std::chrono::steady_clock::time_point last_raw_image_write;
@@ -565,6 +567,28 @@ struct StereoPreview::Impl {
                         throw std::runtime_error("rectified focal length is unavailable");
                     }
 
+                    const double native_cx = projection_a.at<double>(0, 2);
+                    const double native_cy = projection_a.at<double>(1, 2);
+                    if (cached_axis == RectificationAxis::Horizontal) {
+                        cached_rectified_principal_x_px = native_cx;
+                        cached_rectified_principal_y_px = native_cy;
+                    } else if (cached_projection_shift < 0.0) {
+                        // CCW: x' = y, y' = width - 1 - x.
+                        cached_rectified_principal_x_px = native_cy;
+                        cached_rectified_principal_y_px =
+                            static_cast<double>(frame_a.image.cols - 1) - native_cx;
+                    } else {
+                        // CW: x' = height - 1 - y, y' = x.
+                        cached_rectified_principal_x_px =
+                            static_cast<double>(frame_a.image.rows - 1) - native_cy;
+                        cached_rectified_principal_y_px = native_cx;
+                    }
+                    if (!std::isfinite(cached_rectified_principal_x_px) ||
+                        !std::isfinite(cached_rectified_principal_y_px)) {
+                        throw std::runtime_error(
+                            "oriented rectified principal point is unavailable");
+                    }
+
                     // Pass complete 3x4 effective P1/P2 matrices, matching the
                     // Android path. They are either native OpenCV output or the
                     // finite common-camera fallback above.
@@ -591,6 +615,9 @@ struct StereoPreview::Impl {
                         {"camera_a_rotation_metadata", pair.camera_a.rotation_degrees},
                         {"camera_b_rotation_metadata", pair.camera_b.rotation_degrees},
                         {"projection_fallback_used", projection_fallback_used},
+                        {"oriented_rectified_focal_px", cached_rectified_focal_px},
+                        {"oriented_principal_x_px", cached_rectified_principal_x_px},
+                        {"oriented_principal_y_px", cached_rectified_principal_y_px},
                         {"R1", matrix_json(rectification_a)},
                         {"R2", matrix_json(rectification_b)},
                         {"P1", matrix_json(projection_a)},
@@ -652,6 +679,8 @@ struct StereoPreview::Impl {
                     rectified_b,
                     cached_axis == RectificationAxis::Vertical,
                     cached_rectified_focal_px,
+                    cached_rectified_principal_x_px,
+                    cached_rectified_principal_y_px,
                     calibration.measured_baseline_mm,
                     *depth_budget);
 
@@ -749,6 +778,8 @@ struct StereoPreview::Impl {
                             {"texture_accepted_percent", depth.texture_accepted_percent},
                             {"morphology_accepted_percent", depth.morphology_accepted_percent},
                             {"focal_px", depth.focal_px},
+                            {"principal_x_px", depth.principal_x_px},
+                            {"principal_y_px", depth.principal_y_px},
                             {"baseline_mm", depth.baseline_mm},
                             {"valid_disparity_ratio", depth.filtered_valid_ratio},
                             {"min_disparity", depth.min_disparity},

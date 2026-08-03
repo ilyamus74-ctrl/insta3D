@@ -54,6 +54,14 @@ if [[ -x "$FUSION_TOOL" && -d "$SESSION_DIR/keyframes" ]]; then
   fi
 fi
 
+LOCAL_STEREO_TOOL="$SCRIPT_DIR/../tools/analyze_local_stereo_geometry.py"
+if [[ -x "$LOCAL_STEREO_TOOL" && -d "$SESSION_DIR/keyframes" ]]; then
+  echo "[LOCAL-STEREO] Validating local clouds, world transforms and tripod pose..."
+  if ! python3 "$LOCAL_STEREO_TOOL" "$SESSION_DIR" >"$SESSION_DIR/local_stereo_validation_console.json"; then
+    echo "[LOCAL-STEREO] Warning: validation failed; diagnostics archive will still be created." >&2
+  fi
+fi
+
 mkdir -p "$OUTPUT_DIR"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -87,6 +95,9 @@ for name in \
   room_fusion_status.json \
   room_fusion_diagnostics.json \
   room_fusion_console.json \
+  local_stereo_validation.json \
+  local_stereo_validation.txt \
+  local_stereo_validation_console.json \
   accumulated_diagnostics.json \
   accumulated_diagnostics.txt \
   camera_trajectory.json \

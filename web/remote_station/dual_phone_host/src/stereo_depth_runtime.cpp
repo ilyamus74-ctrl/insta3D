@@ -469,6 +469,8 @@ StereoDepthResult StereoDepthRuntime::process(
     const cv::Mat& rectified_b,
     const bool vertical_rectification,
     const double rectified_focal_px,
+    const double rectified_principal_x_px,
+    const double rectified_principal_y_px,
     const double baseline_mm,
     const StereoDepthBudget& budget) {
     const auto started = std::chrono::steady_clock::now();
@@ -480,6 +482,10 @@ StereoDepthResult StereoDepthRuntime::process(
         !std::isfinite(baseline_mm) || baseline_mm <= 0.0) {
         throw std::runtime_error("metric depth requires finite focal length and baseline");
     }
+    if (!std::isfinite(rectified_principal_x_px) ||
+        !std::isfinite(rectified_principal_y_px)) {
+        throw std::runtime_error("metric depth requires finite rectified principal point");
+    }
     const auto& profile = profile_by_name(budget.profile_name);
     bool upscaled = false;
     const auto work_size = fit_size(
@@ -490,9 +496,17 @@ StereoDepthResult StereoDepthRuntime::process(
                upscaled ? cv::INTER_CUBIC : cv::INTER_AREA);
     cv::resize(rectified_b, work_b, work_size, 0.0, 0.0,
                upscaled ? cv::INTER_CUBIC : cv::INTER_AREA);
-    const double focal_px = rectified_focal_px *
-        static_cast<double>(work_a.cols) /
+    const double scale_x = static_cast<double>(work_a.cols) /
         static_cast<double>(rectified_a.cols);
+    const double scale_y = static_cast<double>(work_a.rows) /
+        static_cast<double>(rectified_a.rows);
+    const double focal_px = rectified_focal_px * scale_x;
+    // Scale pixel centres, not only integer coordinates. This preserves an
+    // off-centre P1 principal point through portrait rotation and resize.
+    const double principal_x_px =
+        (rectified_principal_x_px + 0.5) * scale_x - 0.5;
+    const double principal_y_px =
+        (rectified_principal_y_px + 0.5) * scale_y - 0.5;
 
     if (impl_->engine_revision != budget.revision) {
         impl_->clear_temporal();
@@ -652,10 +666,8 @@ StereoDepthResult StereoDepthRuntime::process(
     result.num_disparities = num_disparities;
     result.focal_px = focal_px;
     result.baseline_mm = baseline_mm;
-    result.principal_x_px =
-        (static_cast<double>(result.work_width) - 1.0) * 0.5;
-    result.principal_y_px =
-        (static_cast<double>(result.work_height) - 1.0) * 0.5;
+    result.principal_x_px = principal_x_px;
+    result.principal_y_px = principal_y_px;
     result.processing_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - started).count();
 
