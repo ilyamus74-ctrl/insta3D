@@ -1,5 +1,5 @@
 #include "accumulated_map_runtime.hpp"
-#include "apriltag_anchor_runtime.hpp"
+#include "stereo_apriltag_runtime.hpp"
 
 #include <algorithm>
 #include <array>
@@ -833,6 +833,13 @@ struct AccumulatedMapRuntime::Impl {
         return true;
     }
 
+    void submit_apriltag_pair(
+        StereoPreviewPair pair,
+        ResolvedCalibration calibration) {
+        apriltag_anchors.submit(
+            std::move(pair), std::move(calibration));
+    }
+
     void reset() {
         {
             std::scoped_lock lock(mutex);
@@ -855,7 +862,7 @@ struct AccumulatedMapRuntime::Impl {
         return {
             {"state", state},
             {"ready", ready},
-            {"tracking_mode", "AUTO_MOTION_RECOVERY_BUFFER_APRILTAG_ANCHORS"},
+            {"tracking_mode", "AUTO_MOTION_RECOVERY_BUFFER_STEREO_APRILTAG_ANCHORS"},
             {"apriltag_anchor", apriltag_anchors.status_json()},
             {"motion_mode", motion_mode_name(motion_mode)},
             {"motion_rotation_votes", rotation_motion_votes},
@@ -1329,11 +1336,12 @@ struct AccumulatedMapRuntime::Impl {
                 const bool first = registration_keyframes.empty();
                 PoseDecision decision;
                 cv::Matx44d pose = cv::Matx44d::eye();
-                AprilTagAnchorResult apriltag_result;
+                StereoAprilTagAnchorResult apriltag_result;
                 if (first) {
-                    apriltag_result = apriltag_anchors.process(
-                        job.pair_index, job.colour, job.focal_px,
-                        job.principal_x_px, job.principal_y_px, pose);
+                    apriltag_result = apriltag_anchors.evaluate(
+                        job.pair_index,
+                        std::optional<cv::Matx44d>(pose),
+                        true);
                 } else {
                     decision = decide_pose_with_retries(current, job);
                     const std::optional<cv::Matx44d> preliminary_pose =
@@ -1341,11 +1349,14 @@ struct AccumulatedMapRuntime::Impl {
                             ? std::optional<cv::Matx44d>(
                                   decision.world_from_camera)
                             : std::nullopt;
-                    apriltag_result = apriltag_anchors.process(
-                        job.pair_index, job.colour, job.focal_px,
-                        job.principal_x_px, job.principal_y_px,
-                        preliminary_pose);
-                    if (apriltag_result.anchor_pose_valid) {
+                    const bool preliminary_translation_trusted =
+                        decision.valid && !decision.rotation_only &&
+                        decision.visual.pnp_valid;
+                    apriltag_result = apriltag_anchors.evaluate(
+                        job.pair_index, preliminary_pose,
+                        preliminary_translation_trusted);
+                    if (apriltag_result.anchor_pose_valid &&
+                        apriltag_result.live_correction_allowed) {
                         const cv::Matx44d reference_pose =
                             !tracking_buffer.empty()
                                 ? tracking_buffer.back().world_from_camera
@@ -1371,8 +1382,8 @@ struct AccumulatedMapRuntime::Impl {
                             ? "TRACKING_APRILTAG"
                             : "TRACKING_STATIONARY";
                         decision.method = apriltag_result.relocalized
-                            ? "APRILTAG_RELOCALIZED"
-                            : "APRILTAG_ANCHORED";
+                            ? "APRILTAG_STEREO_RELOCALIZED"
+                            : "APRILTAG_STEREO_ANCHORED";
                         decision.recovered =
                             decision.recovered ||
                             apriltag_result.relocalized;
@@ -1386,7 +1397,9 @@ struct AccumulatedMapRuntime::Impl {
                         }
                     } else if (!features_usable && !decision.valid) {
                         decision.rejection_reason =
-                            "NO_ORB_FEATURES_AND_NO_APRILTAG_ANCHOR";
+                            apriltag_result.constraint_only
+                                ? "APRILTAG_CONSTRAINT_REJECTED_LIVE"
+                                : "NO_ORB_FEATURES_AND_NO_STEREO_APRILTAG_ANCHOR";
                     }
                     commit_motion_mode(decision.motion_evidence);
                     append_pose_validation({
@@ -1408,10 +1421,20 @@ struct AccumulatedMapRuntime::Impl {
                         {"apriltag_ids", apriltag_result.ids},
                         {"apriltag_anchor_pose_valid",
                          apriltag_result.anchor_pose_valid},
+                        {"apriltag_live_correction_allowed",
+                         apriltag_result.live_correction_allowed},
+                        {"apriltag_constraint_only",
+                         apriltag_result.constraint_only},
+                        {"apriltag_stereo_verified",
+                         apriltag_result.stereo_verified},
+                        {"apriltag_pose_source",
+                         apriltag_result.pose_source},
                         {"apriltag_relocalized",
                          apriltag_result.relocalized},
                         {"apriltag_mapped_tags_used",
                          apriltag_result.mapped_tags_used},
+                        {"apriltag_stereo_tags_used",
+                         apriltag_result.stereo_tags_used},
                         {"apriltag_position_correction_m",
                          apriltag_result.position_correction_m},
                         {"apriltag_yaw_correction_deg",
@@ -1660,7 +1683,7 @@ struct AccumulatedMapRuntime::Impl {
     std::optional<MapJob> pending;
     std::ofstream diagnostics;
     std::ofstream pose_validation;
-    AprilTagAnchorRuntime apriltag_anchors;
+    StereoAprilTagRuntime apriltag_anchors;
     std::thread worker;
     std::uint64_t generation = 1;
     std::chrono::steady_clock::time_point last_accepted_submission;
@@ -1748,6 +1771,13 @@ bool AccumulatedMapRuntime::submit(const std::uint64_t pair_index,
                                    std::string source_profile,
                                    const StereoDepthResult& depth) {
     return impl_->submit(pair_index, std::move(source_profile), depth);
+}
+
+void AccumulatedMapRuntime::submit_apriltag_pair(
+    StereoPreviewPair pair,
+    ResolvedCalibration calibration) {
+    impl_->submit_apriltag_pair(
+        std::move(pair), std::move(calibration));
 }
 
 void AccumulatedMapRuntime::accept_imu(const nlohmann::json& sample) {

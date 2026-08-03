@@ -195,7 +195,9 @@ struct StereoPreview::Impl {
 
     void submit(StereoPreviewPair value) {
         StereoPreviewPair live_pair;
+        StereoPreviewPair apriltag_pair;
         ResolvedCalibration live_calibration;
+        ResolvedCalibration apriltag_calibration;
         {
             std::scoped_lock lock(mutex);
             submitted += 1;
@@ -204,10 +206,15 @@ struct StereoPreview::Impl {
                 return;
             }
             live_pair = value;
+            apriltag_pair = value;
             live_calibration = *resolved;
+            apriltag_calibration = *resolved;
             if (pending) queue_replaced += 1;
             pending = std::move(value);
         }
+        accumulated_map.submit_apriltag_pair(
+            std::move(apriltag_pair),
+            std::move(apriltag_calibration));
         live_runtime.submit(
             std::move(live_pair),
             std::move(live_calibration));

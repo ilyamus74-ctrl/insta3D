@@ -581,7 +581,7 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
     companion object {
         private const val CAPTURE_TARGET_WIDTH = 1_280
         private const val CAPTURE_TARGET_HEIGHT = 720
-        private const val TARGET_FPS = 10L
+        private const val TARGET_FPS = 20L
         private const val FRAME_INTERVAL_NS = 1_000_000_000L / TARGET_FPS
         private const val JPEG_QUALITY = 65
     }
