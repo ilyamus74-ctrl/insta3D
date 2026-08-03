@@ -45,6 +45,15 @@ done
 [[ -d "$SESSION_DIR" ]] || { echo "session directory not found: $SESSION_DIR" >&2; exit 1; }
 [[ "$SAMPLE_EVERY" =~ ^[0-9]+$ ]] || { echo "--sample-every must be an integer >= 0" >&2; exit 2; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FUSION_TOOL="$SCRIPT_DIR/../tools/fuse_room_geometry.py"
+if [[ -x "$FUSION_TOOL" && -d "$SESSION_DIR/keyframes" ]]; then
+  echo "[FUSION] Filtering local stereo clouds and fusing room planes..."
+  if ! python3 "$FUSION_TOOL" "$SESSION_DIR" >"$SESSION_DIR/room_fusion_console.json"; then
+    echo "[FUSION] Warning: robust room fusion failed; diagnostics archive will still be created." >&2
+  fi
+fi
+
 mkdir -p "$OUTPUT_DIR"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -70,6 +79,14 @@ for name in \
   point_cloud_accumulated_confirmed.ply \
   point_cloud_accumulated_strict.ply \
   point_cloud_accumulated_keyframe_colors.ply \
+  point_cloud_accumulated_filtered_raw.ply \
+  point_cloud_accumulated_filtered.ply \
+  room_planes_accumulated.json \
+  room_edges_accumulated.json \
+  room_skeleton_accumulated.ply \
+  room_fusion_status.json \
+  room_fusion_diagnostics.json \
+  room_fusion_console.json \
   accumulated_diagnostics.json \
   accumulated_diagnostics.txt \
   camera_trajectory.json \
