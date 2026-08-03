@@ -59,6 +59,12 @@ for name in \
   stereo_preview_status.json \
   live_preview.jsonl \
   live_preview_status.json \
+  room_geometry.jsonl \
+  room_geometry_status.json \
+  point_cloud_latest.ply \
+  room_skeleton_latest.ply \
+  room_planes_latest.json \
+  room_edges_latest.json \
   imu_a.jsonl \
   imu_b.jsonl \
   camera_a_hello.json \

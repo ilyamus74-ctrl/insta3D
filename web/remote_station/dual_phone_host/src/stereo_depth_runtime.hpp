@@ -31,6 +31,8 @@ struct StereoDepthResult {
     cv::Mat filtered_depth_preview;
     cv::Mat strict_depth_preview;
     cv::Mat confidence_preview;
+    cv::Mat geometry_disparity;
+    cv::Mat geometry_mask;
     int work_width = 0;
     int work_height = 0;
     bool source_upscaled = false;
@@ -50,6 +52,8 @@ struct StereoDepthResult {
     int num_disparities = 0;
     double focal_px = 0.0;
     double baseline_mm = 0.0;
+    double principal_x_px = 0.0;
+    double principal_y_px = 0.0;
     double processing_ms = 0.0;
 };
 

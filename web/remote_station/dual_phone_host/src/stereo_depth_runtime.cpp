@@ -623,6 +623,8 @@ StereoDepthResult StereoDepthRuntime::process(
     result.strict_depth_preview = metric_heatmap(
         stable_disparity, stable_mask, focal_px, baseline_mm);
     result.confidence_preview = std::move(confidence);
+    result.geometry_disparity = std::move(dense_disparity);
+    result.geometry_mask = std::move(dense_closed);
     result.work_width = result.work_a.cols;
     result.work_height = result.work_a.rows;
     result.source_upscaled = upscaled;
@@ -650,6 +652,10 @@ StereoDepthResult StereoDepthRuntime::process(
     result.num_disparities = num_disparities;
     result.focal_px = focal_px;
     result.baseline_mm = baseline_mm;
+    result.principal_x_px =
+        (static_cast<double>(result.work_width) - 1.0) * 0.5;
+    result.principal_y_px =
+        (static_cast<double>(result.work_height) - 1.0) * 0.5;
     result.processing_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - started).count();
 

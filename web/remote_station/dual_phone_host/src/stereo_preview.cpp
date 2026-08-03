@@ -2,6 +2,7 @@
 
 #include "live_preview_runtime.hpp"
 #include "protocol.hpp"
+#include "room_geometry_runtime.hpp"
 #include "stereo_depth_runtime.hpp"
 #include "stereo_preview_processing.hpp"
 
@@ -80,6 +81,7 @@ using detail::ImageStatistics;
 using detail::LivePreviewRuntime;
 using detail::RectificationAxis;
 using detail::ResolvedCalibration;
+using detail::RoomGeometryRuntime;
 using detail::StereoDepthRuntime;
 
 using detail::camera_matrix;
@@ -104,7 +106,8 @@ struct StereoPreview::Impl {
     explicit Impl(std::filesystem::path session_path)
         : session_directory(std::move(session_path)),
           diagnostics(session_directory / "stereo_preview.jsonl", std::ios::app),
-          live_runtime(session_directory) {
+          live_runtime(session_directory),
+          room_geometry(session_directory) {
         if (!diagnostics) throw std::runtime_error("cannot create stereo preview diagnostics");
         worker = std::thread([this] { worker_loop(); });
     }
@@ -243,6 +246,7 @@ struct StereoPreview::Impl {
         last_error.clear();
         configuration_revision += 1;
         depth_runtime.reset_geometry();
+        room_geometry.reset();
 
         if (!profile) {
             calibration_state = profile_error.empty() ? "WAITING_FOR_CALIBRATION" : "ERROR";
@@ -294,6 +298,7 @@ struct StereoPreview::Impl {
             {"calibration", std::move(calibration)},
             {"depth", depth_runtime.status_json()},
             {"live_preview", live},
+            {"room_geometry", room_geometry.status_json()},
             {"processing", {
                 {"submitted_pairs", submitted},
                 {"processed_pairs", processed},
@@ -716,6 +721,10 @@ struct StereoPreview::Impl {
                 }
                 append_diagnostic(std::move(diagnostic));
                 if (stale) continue;
+                room_geometry.submit(
+                    pair.pair_index,
+                    depth_budget->profile_name,
+                    depth);
             } catch (const std::exception& error) {
                 nlohmann::json diagnostic;
                 {
@@ -747,6 +756,7 @@ struct StereoPreview::Impl {
     bool stopping = false;
     std::ofstream diagnostics;
     LivePreviewRuntime live_runtime;
+    RoomGeometryRuntime room_geometry;
     std::thread worker;
     std::array<std::string, 2> device_ids;
     std::optional<CalibrationProfile> profile;
