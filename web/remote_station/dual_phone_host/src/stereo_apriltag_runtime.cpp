@@ -41,6 +41,10 @@ constexpr int kMaximumKitId = 30;
 constexpr std::chrono::milliseconds kTargetInterval{50};
 constexpr std::size_t kTemporalTrackLength = 20;
 constexpr std::uint64_t kMaximumMeasurementAgePairs = 40;
+constexpr std::uint64_t kStereoWindowRequiredHits = 5;
+constexpr std::uint64_t kGraphMinimumConsistentObservations = 3;
+constexpr double kGraphTranslationGateM = 0.30;
+constexpr double kGraphRotationGateDeg = 15.0;
 constexpr double kMaximumMonoReprojectionErrorPx = 3.0;
 constexpr double kMinimumTagDistanceM = 0.20;
 constexpr double kMaximumTagDistanceM = 8.0;
@@ -333,15 +337,20 @@ struct TagMeasurement {
     std::uint64_t pair_index = 0;
     cv::Matx44d camera_a_from_tag = cv::Matx44d::eye();
     std::string pose_source = "NONE";
+    std::string stereo_rejection_reason = "NONE";
     bool camera_a_seen = false;
     bool camera_b_seen = false;
     bool stereo_geometry_valid = false;
     bool temporally_stable = false;
+    bool stereo_consensus_valid = false;
     std::uint64_t stable_frames = 0;
+    std::uint64_t stereo_window_hits = 0;
+    std::uint64_t stereo_window_size = 0;
     double reprojection_error_px = 0.0;
     double distance_m = 0.0;
     double measured_side_m = 0.0;
     double side_error_ratio = 0.0;
+    double stereo_shape_spread_ratio = 0.0;
     double stereo_corner_residual_m = 0.0;
     double perimeter_a_px = 0.0;
     double perimeter_b_px = 0.0;
@@ -350,7 +359,27 @@ struct TagMeasurement {
 struct TagTrack {
     std::deque<TagMeasurement> history;
     std::uint64_t stable_frames = 0;
-    std::uint64_t stereo_stable_frames = 0;
+};
+
+struct TagGraphNode {
+    int id = -1;
+    std::uint64_t observations = 0;
+    std::uint64_t stereo_observations = 0;
+    std::uint64_t first_pair_index = 0;
+    std::uint64_t last_pair_index = 0;
+};
+
+struct TagGraphEdge {
+    int first_id = -1;
+    int second_id = -1;
+    cv::Matx44d first_from_second = cv::Matx44d::eye();
+    std::uint64_t observations = 0;
+    std::uint64_t consistent_observations = 0;
+    std::uint64_t rejected_observations = 0;
+    std::uint64_t first_pair_index = 0;
+    std::uint64_t last_pair_index = 0;
+    double translation_residual_sum_m = 0.0;
+    double rotation_residual_sum_deg = 0.0;
 };
 
 enum class LandmarkState {
@@ -373,6 +402,7 @@ const char* landmark_state_name(const LandmarkState state) {
 struct Landmark {
     int id = -1;
     LandmarkState state = LandmarkState::Candidate;
+    std::string mapping_source = "DIRECT_POSE";
     cv::Matx44d world_from_tag = cv::Matx44d::eye();
     cv::Matx44d last_independent_camera_pose = cv::Matx44d::eye();
     bool has_last_independent_camera_pose = false;
@@ -407,9 +437,11 @@ struct RobustPose {
 
 struct StereoBuildResult {
     bool valid = false;
+    std::string rejection_reason = "NONE";
     cv::Matx44d camera_a_from_tag = cv::Matx44d::eye();
     double measured_side_m = 0.0;
     double side_error_ratio = 0.0;
+    double shape_spread_ratio = 0.0;
     double corner_residual_m = 0.0;
 };
 
@@ -534,7 +566,10 @@ StereoBuildResult build_stereo_pose(
     cv::Mat homogeneous;
     cv::triangulatePoints(
         projection_a, projection_b, points_a, points_b, homogeneous);
-    if (homogeneous.rows != 4 || homogeneous.cols != 4) return result;
+    if (homogeneous.rows != 4 || homogeneous.cols != 4) {
+        result.rejection_reason = "TRIANGULATION_FAILED";
+        return result;
+    }
     cv::Mat homogeneous64;
     homogeneous.convertTo(homogeneous64, CV_64F);
 
@@ -552,7 +587,10 @@ StereoBuildResult build_stereo_pose(
     };
     for (int index = 0; index < 4; ++index) {
         const double w = homogeneous64.at<double>(3, index);
-        if (!std::isfinite(w) || std::abs(w) < 1e-12) return result;
+        if (!std::isfinite(w) || std::abs(w) < 1e-12) {
+            result.rejection_reason = "HOMOGENEOUS_INVALID";
+            return result;
+        }
         points[static_cast<std::size_t>(index)] = {
             homogeneous64.at<double>(0, index) / w,
             homogeneous64.at<double>(1, index) / w,
@@ -561,6 +599,7 @@ StereoBuildResult build_stereo_pose(
         const auto point_b = rotation_b_from_a *
             points[static_cast<std::size_t>(index)] + translation_b_from_a;
         if (points[static_cast<std::size_t>(index)][2] <= 0.10 || point_b[2] <= 0.10) {
+            result.rejection_reason = "NEGATIVE_DEPTH";
             return result;
         }
     }
@@ -576,7 +615,10 @@ StereoBuildResult build_stereo_pose(
     };
     const double mean_side =
         (sides[0] + sides[1] + sides[2] + sides[3]) * 0.25;
-    if (!std::isfinite(mean_side) || mean_side <= 0.0) return result;
+    if (!std::isfinite(mean_side) || mean_side <= 0.0) {
+        result.rejection_reason = "SIDE_SIZE_INVALID";
+        return result;
+    }
     double maximum_side_deviation = 0.0;
     for (const double side : sides) {
         maximum_side_deviation = std::max(
@@ -584,8 +626,15 @@ StereoBuildResult build_stereo_pose(
     }
     const double side_error_ratio = std::abs(mean_side - kTagSizeM) / kTagSizeM;
     const double shape_spread_ratio = maximum_side_deviation / mean_side;
-    if (side_error_ratio > kMaximumStereoSideErrorRatio ||
-        shape_spread_ratio > kMaximumStereoShapeSpreadRatio) {
+    result.measured_side_m = mean_side;
+    result.side_error_ratio = side_error_ratio;
+    result.shape_spread_ratio = shape_spread_ratio;
+    if (side_error_ratio > kMaximumStereoSideErrorRatio) {
+        result.rejection_reason = "SIDE_SIZE_OUT_OF_RANGE";
+        return result;
+    }
+    if (shape_spread_ratio > kMaximumStereoShapeSpreadRatio) {
+        result.rejection_reason = "SIDE_SHAPE_INCONSISTENT";
         return result;
     }
 
@@ -597,18 +646,31 @@ StereoBuildResult build_stereo_pose(
     const cv::Vec3d bottom_center = (points[2] + points[3]) * 0.5;
     const auto x_optional = normalized(right_center - left_center);
     const auto y_seed_optional = normalized(top_center - bottom_center);
-    if (!x_optional || !y_seed_optional) return result;
+    if (!x_optional || !y_seed_optional) {
+        result.rejection_reason = "AXIS_DEGENERATE";
+        return result;
+    }
     const auto z_optional = normalized(x_optional->cross(*y_seed_optional));
-    if (!z_optional) return result;
+    if (!z_optional) {
+        result.rejection_reason = "AXIS_DEGENERATE";
+        return result;
+    }
     const auto y_optional = normalized(z_optional->cross(*x_optional));
-    if (!y_optional) return result;
+    if (!y_optional) {
+        result.rejection_reason = "AXIS_DEGENERATE";
+        return result;
+    }
 
     double residual_sum = 0.0;
     for (const auto& point : points) {
         residual_sum += std::abs((point - center).dot(*z_optional));
     }
     const double corner_residual = residual_sum * 0.25;
-    if (corner_residual > kMaximumStereoCornerResidualM) return result;
+    result.corner_residual_m = corner_residual;
+    if (corner_residual > kMaximumStereoCornerResidualM) {
+        result.rejection_reason = "CORNER_NON_PLANAR";
+        return result;
+    }
 
     const cv::Matx33d rotation_camera_from_tag(
         (*x_optional)[0], (*y_optional)[0], (*z_optional)[0],
@@ -616,9 +678,7 @@ StereoBuildResult build_stereo_pose(
         (*x_optional)[2], (*y_optional)[2], (*z_optional)[2]);
     result.camera_a_from_tag = cv_to_project_transform(
         matx44_from_rt(rotation_camera_from_tag, center));
-    result.measured_side_m = mean_side;
-    result.side_error_ratio = side_error_ratio;
-    result.corner_residual_m = corner_residual;
+    result.rejection_reason = "NONE";
     result.valid = true;
     return result;
 }
@@ -815,7 +875,7 @@ struct StereoAprilTagRuntime::Impl {
                 (iterator->second.state != LandmarkState::Mapped &&
                  iterator->second.state != LandmarkState::Anchor) ||
                 !measurement.stereo_geometry_valid ||
-                measurement.stable_frames < kStereoVerifiedFrames) {
+                !measurement.stereo_consensus_valid) {
                 continue;
             }
             const auto world_from_camera =
@@ -899,6 +959,133 @@ struct StereoAprilTagRuntime::Impl {
         return result;
     }
 
+    void update_tag_graph_locked(
+        const std::vector<TagMeasurement>& measurements,
+        const std::uint64_t pair_index) {
+        std::vector<const TagMeasurement*> eligible;
+        for (const auto& measurement : measurements) {
+            auto& node = graph_nodes[measurement.id];
+            if (node.observations == 0) {
+                node.id = measurement.id;
+                node.first_pair_index = pair_index;
+            }
+            ++node.observations;
+            if (measurement.stereo_geometry_valid) {
+                ++node.stereo_observations;
+            }
+            node.last_pair_index = pair_index;
+            if (!measurement.stereo_geometry_valid ||
+                !measurement.stereo_consensus_valid) {
+                continue;
+            }
+            eligible.push_back(&measurement);
+        }
+        for (std::size_t first_index = 0; first_index < eligible.size(); ++first_index) {
+            for (std::size_t second_index = first_index + 1;
+                 second_index < eligible.size(); ++second_index) {
+                const auto& first_measurement = *eligible[first_index];
+                const auto& second_measurement = *eligible[second_index];
+                const int first_id = std::min(
+                    first_measurement.id, second_measurement.id);
+                const int second_id = std::max(
+                    first_measurement.id, second_measurement.id);
+                const auto& first_pose = first_measurement.id == first_id
+                    ? first_measurement.camera_a_from_tag
+                    : second_measurement.camera_a_from_tag;
+                const auto& second_pose = second_measurement.id == second_id
+                    ? second_measurement.camera_a_from_tag
+                    : first_measurement.camera_a_from_tag;
+                const cv::Matx44d observed_first_from_second =
+                    rigid_inverse(first_pose) * second_pose;
+                auto [iterator, inserted] = tag_graph_edges.try_emplace(
+                    std::make_pair(first_id, second_id));
+                auto& edge = iterator->second;
+                if (inserted) {
+                    edge.first_id = first_id;
+                    edge.second_id = second_id;
+                    edge.first_from_second = observed_first_from_second;
+                    edge.observations = 1;
+                    edge.consistent_observations = 1;
+                    edge.first_pair_index = pair_index;
+                    edge.last_pair_index = pair_index;
+                    continue;
+                }
+                ++edge.observations;
+                edge.last_pair_index = pair_index;
+                const double translation_residual = translation_delta_m(
+                    edge.first_from_second, observed_first_from_second);
+                const double rotation_residual = rotation_delta_deg(
+                    edge.first_from_second, observed_first_from_second);
+                edge.translation_residual_sum_m += translation_residual;
+                edge.rotation_residual_sum_deg += rotation_residual;
+                if (translation_residual <= kGraphTranslationGateM &&
+                    rotation_residual <= kGraphRotationGateDeg) {
+                    ++edge.consistent_observations;
+                    const double weight = 1.0 /
+                        static_cast<double>(std::min<std::uint64_t>(
+                            20, edge.consistent_observations));
+                    edge.first_from_second = blend_pose(
+                        edge.first_from_second,
+                        observed_first_from_second,
+                        weight);
+                } else {
+                    ++edge.rejected_observations;
+                }
+            }
+        }
+    }
+
+    void propagate_landmarks_from_graph_locked() {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (const auto& [key, edge] : tag_graph_edges) {
+                static_cast<void>(key);
+                if (edge.consistent_observations <
+                    kGraphMinimumConsistentObservations) {
+                    continue;
+                }
+                const auto first = landmarks.find(edge.first_id);
+                const auto second = landmarks.find(edge.second_id);
+                if (first != landmarks.end() && second == landmarks.end()) {
+                    Landmark landmark;
+                    landmark.id = edge.second_id;
+                    landmark.state = LandmarkState::StereoVerified;
+                    landmark.mapping_source = "TAG_GRAPH_PROPAGATED";
+                    landmark.world_from_tag =
+                        first->second.world_from_tag * edge.first_from_second;
+                    landmark.observations = edge.observations;
+                    landmark.stereo_observations = edge.observations;
+                    landmark.consistent_observations =
+                        edge.consistent_observations;
+                    landmark.independent_views = 1;
+                    landmark.first_pair_index = edge.first_pair_index;
+                    landmark.last_pair_index = edge.last_pair_index;
+                    landmarks.emplace(landmark.id, std::move(landmark));
+                    changed = true;
+                } else if (first == landmarks.end() &&
+                           second != landmarks.end()) {
+                    Landmark landmark;
+                    landmark.id = edge.first_id;
+                    landmark.state = LandmarkState::StereoVerified;
+                    landmark.mapping_source = "TAG_GRAPH_PROPAGATED";
+                    landmark.world_from_tag =
+                        second->second.world_from_tag *
+                        rigid_inverse(edge.first_from_second);
+                    landmark.observations = edge.observations;
+                    landmark.stereo_observations = edge.observations;
+                    landmark.consistent_observations =
+                        edge.consistent_observations;
+                    landmark.independent_views = 1;
+                    landmark.first_pair_index = edge.first_pair_index;
+                    landmark.last_pair_index = edge.last_pair_index;
+                    landmarks.emplace(landmark.id, std::move(landmark));
+                    changed = true;
+                }
+            }
+        }
+    }
+
     void update_landmarks_locked(
         const std::vector<TagMeasurement>& measurements,
         const cv::Matx44d& world_from_camera,
@@ -908,7 +1095,7 @@ struct StereoAprilTagRuntime::Impl {
         for (const auto& measurement : measurements) {
             if (excluded_ids.contains(measurement.id)) continue;
             if (!measurement.stereo_geometry_valid ||
-                measurement.stable_frames < kStereoVerifiedFrames) {
+                !measurement.stereo_consensus_valid) {
                 continue;
             }
             const auto observed_world_from_tag =
@@ -917,6 +1104,7 @@ struct StereoAprilTagRuntime::Impl {
             auto& landmark = iterator->second;
             if (inserted) {
                 landmark.id = measurement.id;
+                landmark.mapping_source = "DIRECT_POSE";
                 landmark.world_from_tag = observed_world_from_tag;
                 landmark.first_pair_index = pair_index;
                 landmark.last_pair_index = pair_index;
@@ -928,7 +1116,7 @@ struct StereoAprilTagRuntime::Impl {
                 landmark.has_last_independent_camera_pose = pose_independent;
                 landmark.reprojection_error_sum_px =
                     measurement.reprojection_error_px;
-                if (measurement.stable_frames >= kStereoVerifiedFrames) {
+                if (measurement.stereo_consensus_valid) {
                     landmark.state = LandmarkState::StereoVerified;
                 }
                 continue;
@@ -1001,24 +1189,45 @@ struct StereoAprilTagRuntime::Impl {
         const std::string& relation) const {
         const auto first = landmarks.find(first_id);
         const auto second = landmarks.find(second_id);
-        if (first == landmarks.end() || second == landmarks.end()) {
-            return {
-                {"first_id", first_id},
-                {"second_id", second_id},
-                {"relation", relation},
-                {"available", false},
+        cv::Vec3d first_normal;
+        cv::Vec3d second_normal;
+        std::string source = "WORLD_MAP";
+        if (first != landmarks.end() && second != landmarks.end()) {
+            first_normal = {
+                first->second.world_from_tag(0, 2),
+                first->second.world_from_tag(1, 2),
+                first->second.world_from_tag(2, 2),
             };
+            second_normal = {
+                second->second.world_from_tag(0, 2),
+                second->second.world_from_tag(1, 2),
+                second->second.world_from_tag(2, 2),
+            };
+        } else {
+            const int low = std::min(first_id, second_id);
+            const int high = std::max(first_id, second_id);
+            const auto edge = tag_graph_edges.find(std::make_pair(low, high));
+            if (edge == tag_graph_edges.end() ||
+                edge->second.consistent_observations <
+                    kGraphMinimumConsistentObservations) {
+                return {
+                    {"first_id", first_id},
+                    {"second_id", second_id},
+                    {"relation", relation},
+                    {"available", false},
+                };
+            }
+            const cv::Matx44d first_from_second = first_id == low
+                ? edge->second.first_from_second
+                : rigid_inverse(edge->second.first_from_second);
+            first_normal = {0.0, 0.0, 1.0};
+            second_normal = {
+                first_from_second(0, 2),
+                first_from_second(1, 2),
+                first_from_second(2, 2),
+            };
+            source = "TAG_GRAPH_DIRECT";
         }
-        const cv::Vec3d first_normal{
-            first->second.world_from_tag(0, 2),
-            first->second.world_from_tag(1, 2),
-            first->second.world_from_tag(2, 2),
-        };
-        const cv::Vec3d second_normal{
-            second->second.world_from_tag(0, 2),
-            second->second.world_from_tag(1, 2),
-            second->second.world_from_tag(2, 2),
-        };
         const auto first_unit = normalized(first_normal);
         const auto second_unit = normalized(second_normal);
         if (!first_unit || !second_unit) {
@@ -1038,6 +1247,7 @@ struct StereoAprilTagRuntime::Impl {
             {"second_id", second_id},
             {"relation", relation},
             {"available", true},
+            {"source", source},
             {"undirected_normal_angle_deg", angle},
             {"expected_angle_deg", expected_angle_deg},
             {"absolute_error_deg", std::abs(angle - expected_angle_deg)},
@@ -1055,6 +1265,63 @@ struct StereoAprilTagRuntime::Impl {
         };
     }
 
+    nlohmann::json tag_graph_json_locked() const {
+        nlohmann::json nodes = nlohmann::json::array();
+        for (const auto& [id, node] : graph_nodes) {
+            const auto track = tracks.find(id);
+            std::uint64_t window_hits = 0;
+            std::uint64_t window_size = 0;
+            bool consensus = false;
+            if (track != tracks.end() && !track->second.history.empty()) {
+                const auto& latest = track->second.history.back();
+                window_hits = latest.stereo_window_hits;
+                window_size = latest.stereo_window_size;
+                consensus = latest.stereo_consensus_valid;
+            }
+            nodes.push_back({
+                {"id", id},
+                {"state", landmarks.contains(id)
+                    ? "WORLD_MAPPED" : "UNANCHORED_COMPONENT"},
+                {"observations", node.observations},
+                {"stereo_observations", node.stereo_observations},
+                {"stereo_window_hits", window_hits},
+                {"stereo_window_size", window_size},
+                {"stereo_consensus_valid", consensus},
+                {"first_pair_index", node.first_pair_index},
+                {"last_pair_index", node.last_pair_index},
+            });
+        }
+        nlohmann::json edges = nlohmann::json::array();
+        for (const auto& [key, edge] : tag_graph_edges) {
+            static_cast<void>(key);
+            const double count = static_cast<double>(
+                std::max<std::uint64_t>(1, edge.observations));
+            edges.push_back({
+                {"first_id", edge.first_id},
+                {"second_id", edge.second_id},
+                {"state", edge.consistent_observations >=
+                    kGraphMinimumConsistentObservations
+                        ? "CONFIRMED" : "CANDIDATE"},
+                {"first_from_second", pose_json(edge.first_from_second)},
+                {"observations", edge.observations},
+                {"consistent_observations", edge.consistent_observations},
+                {"rejected_observations", edge.rejected_observations},
+                {"mean_translation_residual_m",
+                    edge.translation_residual_sum_m / count},
+                {"mean_rotation_residual_deg",
+                    edge.rotation_residual_sum_deg / count},
+                {"first_pair_index", edge.first_pair_index},
+                {"last_pair_index", edge.last_pair_index},
+            });
+        }
+        return {
+            {"schema_version", 1},
+            {"mode", "DISTRIBUTED_STEREO_APRILTAG_GRAPH"},
+            {"nodes", std::move(nodes)},
+            {"edges", std::move(edges)},
+        };
+    }
+
     nlohmann::json map_json_locked() const {
         nlohmann::json tags = nlohmann::json::array();
         for (const auto& [id, landmark] : landmarks) {
@@ -1063,6 +1330,7 @@ struct StereoAprilTagRuntime::Impl {
             tags.push_back({
                 {"id", id},
                 {"state", landmark_state_name(landmark.state)},
+                {"mapping_source", landmark.mapping_source},
                 {"world_from_tag", pose_json(landmark.world_from_tag)},
                 {"position_m", nlohmann::json::array({
                     landmark.world_from_tag(0, 3),
@@ -1091,8 +1359,47 @@ struct StereoAprilTagRuntime::Impl {
             {"tag_size_m", kTagSizeM},
             {"coordinate_system", "X_right_Y_up_Z_forward_meters"},
             {"origin", "initial_CAMERA_A_pose"},
+            {"tag_graph_file", "apriltag_tag_graph.json"},
             {"tags", std::move(tags)},
         };
+    }
+
+    double observed_elapsed_seconds_locked() const {
+        if (first_pair_timestamp_ns <= 0 ||
+            last_pair_timestamp_ns <= first_pair_timestamp_ns) {
+            return 0.0;
+        }
+        return static_cast<double>(
+            last_pair_timestamp_ns - first_pair_timestamp_ns) /
+            1'000'000'000.0;
+    }
+
+    double observed_strict_pair_fps_locked() const {
+        const double seconds = observed_elapsed_seconds_locked();
+        return seconds > 0.0
+            ? static_cast<double>(processed_pairs) / seconds : 0.0;
+    }
+
+    double observed_camera_a_fps_locked() const {
+        const double seconds = observed_elapsed_seconds_locked();
+        return seconds > 0.0 && last_camera_a_sequence >= first_camera_a_sequence
+            ? static_cast<double>(
+                last_camera_a_sequence - first_camera_a_sequence) / seconds
+            : 0.0;
+    }
+
+    double observed_camera_b_fps_locked() const {
+        const double seconds = observed_elapsed_seconds_locked();
+        return seconds > 0.0 && last_camera_b_sequence >= first_camera_b_sequence
+            ? static_cast<double>(
+                last_camera_b_sequence - first_camera_b_sequence) / seconds
+            : 0.0;
+    }
+
+    double observed_stereo_success_fps_locked() const {
+        const double seconds = observed_elapsed_seconds_locked();
+        return seconds > 0.0
+            ? static_cast<double>(pairs_with_stereo_tag) / seconds : 0.0;
     }
 
     nlohmann::json status_json_locked() const {
@@ -1100,6 +1407,14 @@ struct StereoAprilTagRuntime::Impl {
         std::uint64_t stereo_verified = 0;
         std::uint64_t mapped = 0;
         std::uint64_t anchors = 0;
+        std::uint64_t window_verified = 0;
+        for (const auto& [id, track] : tracks) {
+            static_cast<void>(id);
+            if (!track.history.empty() &&
+                track.history.back().stereo_consensus_valid) {
+                ++window_verified;
+            }
+        }
         for (const auto& [id, landmark] : landmarks) {
             static_cast<void>(id);
             if (landmark.state == LandmarkState::Candidate) ++candidates;
@@ -1125,6 +1440,10 @@ struct StereoAprilTagRuntime::Impl {
             {"decoded_detections_b", decoded_detections_b},
             {"stereo_measurements", stereo_measurements},
             {"mono_fallback_measurements", mono_fallback_measurements},
+            {"stereo_rejection_reasons", stereo_rejection_reasons},
+            {"window_verified_tags", window_verified},
+            {"tag_graph_nodes", graph_nodes.size()},
+            {"tag_graph_edges", tag_graph_edges.size()},
             {"rejected_stereo_geometry", rejected_stereo_geometry},
             {"rejected_quad_candidates_a", rejected_quad_candidates_a},
             {"rejected_quad_candidates_b", rejected_quad_candidates_b},
@@ -1147,6 +1466,12 @@ struct StereoAprilTagRuntime::Impl {
             {"relations_file", "apriltag_relations.json"},
             {"observations_file", "apriltag_stereo_observations.jsonl"},
             {"constraints_file", "apriltag_constraints.jsonl"},
+            {"tag_graph_file", "apriltag_tag_graph.json"},
+            {"strict_pair_fps", observed_strict_pair_fps_locked()},
+            {"camera_a_sequence_fps", observed_camera_a_fps_locked()},
+            {"camera_b_sequence_fps", observed_camera_b_fps_locked()},
+            {"stereo_success_fps", observed_stereo_success_fps_locked()},
+            {"fps_scope", "STRICT_PAIRS_ONLY"},
             {"preview_a_file", "apriltag_latest_a.jpg"},
             {"preview_b_file", "apriltag_latest_b.jpg"},
             {"last_error", last_error},
@@ -1160,6 +1485,8 @@ struct StereoAprilTagRuntime::Impl {
                           tag_map_ply(landmarks));
         write_text_atomic(session_directory / "apriltag_relations.json",
                           relations_json_locked().dump(2) + "\n");
+        write_text_atomic(session_directory / "apriltag_tag_graph.json",
+                          tag_graph_json_locked().dump(2) + "\n");
         write_text_atomic(session_directory / "apriltag_status.json",
                           status_json_locked().dump(2) + "\n");
     }
@@ -1193,7 +1520,7 @@ struct StereoAprilTagRuntime::Impl {
         constraints.flush();
     }
 
-    void update_track_locked(TagMeasurement measurement) {
+    void update_track_locked(TagMeasurement& measurement) {
         auto& track = tracks[measurement.id];
         bool stable = true;
         if (!track.history.empty()) {
@@ -1207,25 +1534,25 @@ struct StereoAprilTagRuntime::Impl {
                          measurement.camera_a_from_tag) <=
                          kMaximumTemporalRotationStepDeg;
         }
-        if (stable) {
-            ++track.stable_frames;
-        } else {
-            track.stable_frames = 1;
-            track.stereo_stable_frames = 0;
-        }
-        if (measurement.stereo_geometry_valid && stable) {
-            ++track.stereo_stable_frames;
-        } else if (!measurement.stereo_geometry_valid) {
-            track.stereo_stable_frames = 0;
-        }
+        track.stable_frames = stable ? track.stable_frames + 1 : 1;
         measurement.temporally_stable = stable;
-        measurement.stable_frames = measurement.stereo_geometry_valid
-            ? track.stereo_stable_frames
-            : track.stable_frames;
-        track.history.push_back(std::move(measurement));
+        track.history.push_back(measurement);
         while (track.history.size() > kTemporalTrackLength) {
             track.history.pop_front();
         }
+        std::uint64_t stereo_hits = 0;
+        for (const auto& entry : track.history) {
+            if (entry.stereo_geometry_valid && entry.temporally_stable) {
+                ++stereo_hits;
+            }
+        }
+        measurement.stereo_window_hits = stereo_hits;
+        measurement.stereo_window_size = track.history.size();
+        measurement.stereo_consensus_valid =
+            stereo_hits >= kStereoWindowRequiredHits;
+        measurement.stable_frames = measurement.stereo_geometry_valid
+            ? stereo_hits : track.stable_frames;
+        track.history.back() = measurement;
     }
 
     std::optional<cv::Matx44d> previous_measurement_pose_locked(
@@ -1322,17 +1649,20 @@ struct StereoAprilTagRuntime::Impl {
                         const auto stereo = build_stereo_pose(
                             *detection_a, *detection_b,
                             frame_a, frame_b, job.calibration);
+                        measurement.stereo_rejection_reason =
+                            stereo.rejection_reason;
+                        measurement.measured_side_m = stereo.measured_side_m;
+                        measurement.side_error_ratio = stereo.side_error_ratio;
+                        measurement.stereo_shape_spread_ratio =
+                            stereo.shape_spread_ratio;
+                        measurement.stereo_corner_residual_m =
+                            stereo.corner_residual_m;
                         if (stereo.valid) {
                             measurement.camera_a_from_tag =
                                 stereo.camera_a_from_tag;
                             measurement.pose_source = "STEREO_4_CORNERS";
                             measurement.stereo_geometry_valid = true;
-                            measurement.measured_side_m =
-                                stereo.measured_side_m;
-                            measurement.side_error_ratio =
-                                stereo.side_error_ratio;
-                            measurement.stereo_corner_residual_m =
-                                stereo.corner_residual_m;
+
                             const double error_a = detection_a->candidates.empty()
                                 ? 0.0
                                 : detection_a->candidates.front()
@@ -1403,9 +1733,30 @@ struct StereoAprilTagRuntime::Impl {
                     for (auto& measurement : measurements) {
                         any_stereo = any_stereo ||
                             measurement.stereo_geometry_valid;
-                        update_track_locked(std::move(measurement));
+                        if (!measurement.stereo_geometry_valid &&
+                            measurement.camera_a_seen &&
+                            measurement.camera_b_seen &&
+                            measurement.stereo_rejection_reason != "NONE") {
+                            ++stereo_rejection_reasons[
+                                measurement.stereo_rejection_reason];
+                        }
+                        update_track_locked(measurement);
                     }
+                    update_tag_graph_locked(
+                        measurements, job.pair.pair_index);
+                    propagate_landmarks_from_graph_locked();
                     if (any_stereo) ++pairs_with_stereo_tag;
+                    const std::int64_t pair_timestamp_ns =
+                        job.pair.camera_a.pair_timestamp_ns / 2 +
+                        job.pair.camera_b.pair_timestamp_ns / 2;
+                    if (first_pair_timestamp_ns == 0) {
+                        first_pair_timestamp_ns = pair_timestamp_ns;
+                        first_camera_a_sequence = job.pair.camera_a.sequence;
+                        first_camera_b_sequence = job.pair.camera_b.sequence;
+                    }
+                    last_pair_timestamp_ns = pair_timestamp_ns;
+                    last_camera_a_sequence = job.pair.camera_a.sequence;
+                    last_camera_b_sequence = job.pair.camera_b.sequence;
                     decoded_detections_a += detections_a.size();
                     decoded_detections_b += detections_b.size();
                     rejected_quad_candidates_a +=
@@ -1428,12 +1779,22 @@ struct StereoAprilTagRuntime::Impl {
                             {"camera_b_seen", latest->camera_b_seen},
                             {"stereo_geometry_valid",
                              latest->stereo_geometry_valid},
+                            {"stereo_rejection_reason",
+                             latest->stereo_rejection_reason},
                             {"temporally_stable",
                              latest->temporally_stable},
+                            {"stereo_consensus_valid",
+                             latest->stereo_consensus_valid},
                             {"stable_frames", latest->stable_frames},
+                            {"stereo_window_hits",
+                             latest->stereo_window_hits},
+                            {"stereo_window_size",
+                             latest->stereo_window_size},
                             {"distance_m", latest->distance_m},
                             {"measured_side_m", latest->measured_side_m},
                             {"side_error_ratio", latest->side_error_ratio},
+                            {"stereo_shape_spread_ratio",
+                             latest->stereo_shape_spread_ratio},
                             {"stereo_corner_residual_m",
                              latest->stereo_corner_residual_m},
                             {"reprojection_error_px",
@@ -1491,7 +1852,7 @@ struct StereoAprilTagRuntime::Impl {
             result.ids.push_back(measurement.id);
             result.stereo_verified = result.stereo_verified ||
                 (measurement.stereo_geometry_valid &&
-                 measurement.stable_frames >= kStereoVerifiedFrames);
+                 measurement.stereo_consensus_valid);
         }
 
         const auto pose_candidates =
@@ -1553,6 +1914,7 @@ struct StereoAprilTagRuntime::Impl {
                 measurements, *preliminary_world_from_camera, true,
                 pair_index, {});
         }
+        propagate_landmarks_from_graph_locked();
 
         if (result.anchor_pose_valid) ++anchor_pose_frames;
         if (result.live_correction_allowed) ++live_corrections;
@@ -1576,6 +1938,9 @@ struct StereoAprilTagRuntime::Impl {
         std::scoped_lock lock(state_mutex);
         tracks.clear();
         landmarks.clear();
+        graph_nodes.clear();
+        tag_graph_edges.clear();
+        stereo_rejection_reasons.clear();
         processed_pairs = 0;
         pairs_with_any_tag = 0;
         pairs_with_stereo_tag = 0;
@@ -1590,6 +1955,12 @@ struct StereoAprilTagRuntime::Impl {
         live_corrections = 0;
         constraint_only_frames = 0;
         relocalizations = 0;
+        first_pair_timestamp_ns = 0;
+        last_pair_timestamp_ns = 0;
+        first_camera_a_sequence = 0;
+        last_camera_a_sequence = 0;
+        first_camera_b_sequence = 0;
+        last_camera_b_sequence = 0;
         last_pair_index = 0;
         last_detected_ids.clear();
         last_pose_source = "NONE";
@@ -1601,6 +1972,7 @@ struct StereoAprilTagRuntime::Impl {
                  "apriltag_map.json",
                  "apriltag_map.ply",
                  "apriltag_relations.json",
+                 "apriltag_tag_graph.json",
                  "apriltag_status.json",
                  "apriltag_latest_a.jpg",
                  "apriltag_latest_b.jpg",
@@ -1634,6 +2006,9 @@ struct StereoAprilTagRuntime::Impl {
 
     std::map<int, TagTrack> tracks;
     std::map<int, Landmark> landmarks;
+    std::map<int, TagGraphNode> graph_nodes;
+    std::map<std::pair<int, int>, TagGraphEdge> tag_graph_edges;
+    std::map<std::string, std::uint64_t> stereo_rejection_reasons;
 
     std::atomic<std::uint64_t> submitted_pairs{0};
     std::atomic<std::uint64_t> rate_limited_pairs{0};
@@ -1652,6 +2027,12 @@ struct StereoAprilTagRuntime::Impl {
     std::uint64_t live_corrections = 0;
     std::uint64_t constraint_only_frames = 0;
     std::uint64_t relocalizations = 0;
+    std::int64_t first_pair_timestamp_ns = 0;
+    std::int64_t last_pair_timestamp_ns = 0;
+    std::uint64_t first_camera_a_sequence = 0;
+    std::uint64_t last_camera_a_sequence = 0;
+    std::uint64_t first_camera_b_sequence = 0;
+    std::uint64_t last_camera_b_sequence = 0;
     std::uint64_t last_pair_index = 0;
     std::vector<int> last_detected_ids;
     std::string last_pose_source = "NONE";

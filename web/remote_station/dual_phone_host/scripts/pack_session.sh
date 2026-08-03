@@ -87,6 +87,7 @@ for name in \
   apriltag_map.json \
   apriltag_map.ply \
   apriltag_relations.json \
+  apriltag_tag_graph.json \
   apriltag_status.json \
   apriltag_latest.jpg \
   apriltag_latest_a.jpg \
