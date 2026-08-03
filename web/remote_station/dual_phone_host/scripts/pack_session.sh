@@ -64,6 +64,11 @@ for name in \
   accumulated_map.jsonl \
   accumulated_map_status.json \
   point_cloud_accumulated.ply \
+  point_cloud_accumulated_confirmed.ply \
+  point_cloud_accumulated_strict.ply \
+  point_cloud_accumulated_keyframe_colors.ply \
+  accumulated_diagnostics.json \
+  accumulated_diagnostics.txt \
   camera_trajectory.json \
   camera_trajectory.ply \
   point_cloud_latest.ply \
