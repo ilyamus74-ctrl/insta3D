@@ -639,6 +639,11 @@ StereoDepthResult StereoDepthRuntime::process(
     result.confidence_preview = std::move(confidence);
     result.geometry_disparity = std::move(dense_disparity);
     result.geometry_mask = std::move(dense_closed);
+    // Preserve the actual TEMPORAL STRICT geometry as a second, diagnostic
+    // stream. Dense geometry remains authoritative for tracking and the
+    // existing accumulated cloud.
+    result.strict_geometry_disparity = stable_disparity.clone();
+    result.strict_geometry_mask = stable_mask.clone();
     result.work_width = result.work_a.cols;
     result.work_height = result.work_a.rows;
     result.source_upscaled = upscaled;

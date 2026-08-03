@@ -95,6 +95,8 @@ for name in \
   point_cloud_accumulated.ply \
   point_cloud_accumulated_raw.ply \
   point_cloud_accumulated_multiview.ply \
+  point_cloud_accumulated_temporal_strict_raw.ply \
+  point_cloud_accumulated_temporal_strict_multiview.ply \
   point_cloud_accumulated_confirmed.ply \
   point_cloud_accumulated_strict.ply \
   point_cloud_accumulated_keyframe_colors.ply \

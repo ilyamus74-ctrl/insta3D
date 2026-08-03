@@ -81,6 +81,8 @@ struct MapJob {
     cv::Mat colour;
     cv::Mat disparity;
     cv::Mat mask;
+    cv::Mat strict_disparity;
+    cv::Mat strict_mask;
     double focal_px = 0.0;
     double baseline_mm = 0.0;
     double principal_x_px = 0.0;
@@ -816,6 +818,11 @@ struct AccumulatedMapRuntime::Impl {
         job.colour = depth.work_a.clone();
         job.disparity = depth.geometry_disparity.clone();
         job.mask = depth.geometry_mask.clone();
+        if (!depth.strict_geometry_disparity.empty() &&
+            !depth.strict_geometry_mask.empty()) {
+            job.strict_disparity = depth.strict_geometry_disparity.clone();
+            job.strict_mask = depth.strict_geometry_mask.clone();
+        }
         job.focal_px = depth.focal_px;
         job.baseline_mm = depth.baseline_mm;
         job.principal_x_px = depth.principal_x_px;
@@ -880,6 +887,9 @@ struct AccumulatedMapRuntime::Impl {
             {"trajectory_samples", trajectory_samples},
             {"accumulated_points_raw", accumulated_points_raw},
             {"accumulated_points_multiview", accumulated_points_multiview},
+            {"temporal_strict_points_raw", temporal_strict_points_raw},
+            {"temporal_strict_points_multiview",
+             temporal_strict_points_multiview},
             {"voxel_size_m", kVoxelMeters},
             {"tracking_method", last_method},
             {"last_pair_index", last_pair_index},
@@ -921,6 +931,10 @@ struct AccumulatedMapRuntime::Impl {
             {"coordinate_system", "X_right_Y_up_Z_forward_meters"},
             {"point_cloud_file", "point_cloud_accumulated_raw.ply"},
             {"multiview_point_cloud_file", "point_cloud_accumulated_multiview.ply"},
+            {"temporal_strict_point_cloud_file",
+             "point_cloud_accumulated_temporal_strict_raw.ply"},
+            {"temporal_strict_multiview_point_cloud_file",
+             "point_cloud_accumulated_temporal_strict_multiview.ply"},
             {"trajectory_file", "camera_trajectory.json"},
             {"last_error", last_error},
         };
@@ -950,6 +964,7 @@ struct AccumulatedMapRuntime::Impl {
         tracking_buffer.clear();
         trajectory.clear();
         voxels.clear();
+        temporal_strict_voxels.clear();
         apriltag_anchors.reset();
         next_keyframe_id = 1;
         worker_accumulated_yaw_deg = 0.0;
@@ -973,6 +988,8 @@ struct AccumulatedMapRuntime::Impl {
                  "point_cloud_accumulated.ply",
                  "point_cloud_accumulated_raw.ply",
                  "point_cloud_accumulated_multiview.ply",
+                 "point_cloud_accumulated_temporal_strict_raw.ply",
+                 "point_cloud_accumulated_temporal_strict_multiview.ply",
                  "camera_trajectory.json",
                  "camera_trajectory.ply",
              }) {
@@ -981,9 +998,12 @@ struct AccumulatedMapRuntime::Impl {
         }
     }
 
-    void merge_keyframe(const MapJob& job,
-                        const cv::Matx44d& world_from_camera,
-                        const std::uint64_t keyframe_id) {
+    void merge_keyframe(
+        const MapJob& job,
+        const cv::Matx44d& world_from_camera,
+        const std::uint64_t keyframe_id,
+        std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash>&
+            target_voxels) {
         const int stride = job.disparity.total() > 1000000 ? 3 : 2;
         std::unordered_set<VoxelKey, VoxelKeyHash> observed_this_keyframe;
         for (int row = 0; row < job.disparity.rows; row += stride) {
@@ -1010,10 +1030,11 @@ struct AccumulatedMapRuntime::Impl {
                     static_cast<int>(std::floor(world[1] / kVoxelMeters)),
                     static_cast<int>(std::floor(world[2] / kVoxelMeters)),
                 };
-                auto iterator = voxels.find(key);
-                if (iterator == voxels.end()) {
-                    if (voxels.size() >= kMaximumVoxels) continue;
-                    iterator = voxels.emplace(key, VoxelAccumulator{}).first;
+                auto iterator = target_voxels.find(key);
+                if (iterator == target_voxels.end()) {
+                    if (target_voxels.size() >= kMaximumVoxels) continue;
+                    iterator = target_voxels.emplace(
+                        key, VoxelAccumulator{}).first;
                 }
                 auto& voxel = iterator->second;
                 voxel.position_sum += world;
@@ -1050,6 +1071,20 @@ struct AccumulatedMapRuntime::Impl {
         write_text_atomic(session_directory / "point_cloud_accumulated_raw.ply", raw);
         write_text_atomic(session_directory / "point_cloud_accumulated.ply", raw);
         write_text_atomic(session_directory / "point_cloud_accumulated_multiview.ply", multiview);
+        if (!temporal_strict_voxels.empty()) {
+            write_text_atomic(
+                session_directory /
+                    "point_cloud_accumulated_temporal_strict_raw.ply",
+                cloud_ply(
+                    temporal_strict_voxels, 1,
+                    "TEMPORAL STRICT raw accumulated metric cloud"));
+            write_text_atomic(
+                session_directory /
+                    "point_cloud_accumulated_temporal_strict_multiview.ply",
+                cloud_ply(
+                    temporal_strict_voxels, kMinimumMultiviewKeyframes,
+                    "TEMPORAL STRICT multi-keyframe overlap cloud"));
+        }
         write_text_atomic(session_directory / "camera_trajectory.json",
                           trajectory_json(trajectory).dump(2) + "\n");
         write_text_atomic(session_directory / "camera_trajectory.ply",
@@ -1516,7 +1551,7 @@ struct AccumulatedMapRuntime::Impl {
                 }
 
                 const std::uint64_t keyframe_id = next_keyframe_id++;
-                merge_keyframe(job, pose, keyframe_id);
+                merge_keyframe(job, pose, keyframe_id, voxels);
                 write_text_atomic(
                     session_directory / "keyframes" /
                         ("keyframe_" + std::to_string(keyframe_id) + "_local.ply"),
@@ -1525,6 +1560,28 @@ struct AccumulatedMapRuntime::Impl {
                     session_directory / "keyframes" /
                         ("keyframe_" + std::to_string(keyframe_id) + "_world.ply"),
                     local_keyframe_ply(job, true, pose, keyframe_id));
+
+                if (!job.strict_disparity.empty() &&
+                    !job.strict_mask.empty()) {
+                    MapJob strict_job = job;
+                    strict_job.disparity = job.strict_disparity;
+                    strict_job.mask = job.strict_mask;
+                    merge_keyframe(
+                        strict_job, pose, keyframe_id,
+                        temporal_strict_voxels);
+                    write_text_atomic(
+                        session_directory / "keyframes" /
+                            ("keyframe_" + std::to_string(keyframe_id) +
+                             "_local_temporal_strict.ply"),
+                        local_keyframe_ply(
+                            strict_job, false, pose, keyframe_id));
+                    write_text_atomic(
+                        session_directory / "keyframes" /
+                            ("keyframe_" + std::to_string(keyframe_id) +
+                             "_world_temporal_strict.ply"),
+                        local_keyframe_ply(
+                            strict_job, true, pose, keyframe_id));
+                }
 
                 Keyframe keyframe;
                 keyframe.id = keyframe_id;
@@ -1588,6 +1645,14 @@ struct AccumulatedMapRuntime::Impl {
                         ++multiview_count;
                     }
                 }
+                std::size_t temporal_strict_multiview_count = 0;
+                for (const auto& [key, voxel] : temporal_strict_voxels) {
+                    static_cast<void>(key);
+                    if (voxel.keyframe_observations >=
+                        kMinimumMultiviewKeyframes) {
+                        ++temporal_strict_multiview_count;
+                    }
+                }
                 const double duration = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - started).count();
                 nlohmann::json diagnostic;
@@ -1603,6 +1668,10 @@ struct AccumulatedMapRuntime::Impl {
                     trajectory_samples = trajectory.size();
                     accumulated_points_raw = voxels.size();
                     accumulated_points_multiview = multiview_count;
+                    temporal_strict_points_raw =
+                        temporal_strict_voxels.size();
+                    temporal_strict_points_multiview =
+                        temporal_strict_multiview_count;
                     last_method = keyframe_method;
                     last_matches = first ? 0 : decision.visual.matches;
                     last_inliers = inliers;
@@ -1645,6 +1714,17 @@ struct AccumulatedMapRuntime::Impl {
                         {"accumulated_yaw_deg", accumulated_yaw_deg},
                         {"accumulated_points_raw", accumulated_points_raw},
                         {"accumulated_points_multiview", accumulated_points_multiview},
+                        {"temporal_strict_points_raw",
+                         temporal_strict_points_raw},
+                        {"temporal_strict_points_multiview",
+                         temporal_strict_points_multiview},
+                        {"temporal_strict_overlap_fraction",
+                         temporal_strict_points_raw > 0
+                             ? static_cast<double>(
+                                   temporal_strict_points_multiview) /
+                                   static_cast<double>(
+                                       temporal_strict_points_raw)
+                             : 0.0},
                         {"processing_ms", last_processing_ms},
                     };
                 }
@@ -1693,6 +1773,8 @@ struct AccumulatedMapRuntime::Impl {
     std::deque<Keyframe> tracking_buffer;
     std::vector<TrajectorySample> trajectory;
     std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash> voxels;
+    std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash>
+        temporal_strict_voxels;
     std::uint64_t next_keyframe_id = 1;
     double worker_accumulated_yaw_deg = 0.0;
 
@@ -1726,6 +1808,8 @@ struct AccumulatedMapRuntime::Impl {
     std::uint64_t trajectory_samples = 0;
     std::uint64_t accumulated_points_raw = 0;
     std::uint64_t accumulated_points_multiview = 0;
+    std::uint64_t temporal_strict_points_raw = 0;
+    std::uint64_t temporal_strict_points_multiview = 0;
     std::string last_method = "NONE";
     int last_matches = 0;
     int last_inliers = 0;
