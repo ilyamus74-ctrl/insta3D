@@ -266,7 +266,7 @@ void left_right_mask(const cv::Mat& left,
 
 struct StereoDepthRuntime::Impl {
     mutable std::mutex mutex;
-    std::string selected_mode = "AUTO";
+    std::string selected_mode = "HIGH_640";
     int adaptive_level = 0;
     int warmup_remaining = kInitialWarmupSamples;
     int slow_windows = 0;
@@ -275,7 +275,7 @@ struct StereoDepthRuntime::Impl {
     std::deque<double> durations_ms;
     std::chrono::steady_clock::time_point last_started;
     std::uint64_t budget_skipped = 0;
-    std::string active_profile = "ULTRA_960";
+    std::string active_profile = "HIGH_640";
     double processing_p50_ms = 0.0;
     double processing_p95_ms = 0.0;
     double last_processing_ms = 0.0;

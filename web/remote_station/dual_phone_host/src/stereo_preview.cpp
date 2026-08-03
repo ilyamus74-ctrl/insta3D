@@ -1,7 +1,7 @@
 #include "stereo_preview.hpp"
 
+#include "live_preview_runtime.hpp"
 #include "protocol.hpp"
-#include "operator_preview_state.hpp"
 #include "stereo_depth_runtime.hpp"
 #include "stereo_preview_processing.hpp"
 
@@ -73,28 +73,11 @@ nlohmann::json matrix_json(const cv::Mat& matrix) {
     return rows;
 }
 
-const cv::Mat& operator_preview_source(
-    const detail::StereoDepthResult& depth,
-    const OperatorPreviewMode mode) {
-    switch (mode) {
-        case OperatorPreviewMode::Disparity:
-            return depth.disparity_preview;
-        case OperatorPreviewMode::DepthRaw:
-            return depth.raw_depth_preview;
-        case OperatorPreviewMode::DepthFiltered:
-            return depth.filtered_depth_preview;
-        case OperatorPreviewMode::DepthStrict:
-            return depth.strict_depth_preview;
-        case OperatorPreviewMode::Confidence:
-            return depth.confidence_preview;
-    }
-    return depth.filtered_depth_preview;
-}
-
 }  // namespace
 
 using detail::CalibrationProfile;
 using detail::ImageStatistics;
+using detail::LivePreviewRuntime;
 using detail::RectificationAxis;
 using detail::ResolvedCalibration;
 using detail::StereoDepthRuntime;
@@ -120,7 +103,8 @@ using detail::with_epipolar_guides;
 struct StereoPreview::Impl {
     explicit Impl(std::filesystem::path session_path)
         : session_directory(std::move(session_path)),
-          diagnostics(session_directory / "stereo_preview.jsonl", std::ios::app) {
+          diagnostics(session_directory / "stereo_preview.jsonl", std::ios::app),
+          live_runtime(session_directory) {
         if (!diagnostics) throw std::runtime_error("cannot create stereo preview diagnostics");
         worker = std::thread([this] { worker_loop(); });
     }
@@ -179,6 +163,8 @@ struct StereoPreview::Impl {
     }
 
     void submit(StereoPreviewPair value) {
+        StereoPreviewPair live_pair;
+        ResolvedCalibration live_calibration;
         {
             std::scoped_lock lock(mutex);
             submitted += 1;
@@ -186,9 +172,14 @@ struct StereoPreview::Impl {
                 skipped_not_ready += 1;
                 return;
             }
+            live_pair = value;
+            live_calibration = *resolved;
             if (pending) queue_replaced += 1;
             pending = std::move(value);
         }
+        live_runtime.submit(
+            std::move(live_pair),
+            std::move(live_calibration));
         condition.notify_one();
     }
 
@@ -198,10 +189,13 @@ struct StereoPreview::Impl {
     }
 
     std::optional<std::vector<std::uint8_t>> image(const StereoPreviewImage kind) const {
+        if (kind == StereoPreviewImage::Selected) {
+            return live_runtime.image();
+        }
         std::scoped_lock lock(mutex);
         const std::vector<std::uint8_t>* source = nullptr;
         switch (kind) {
-            case StereoPreviewImage::Selected: source = &selected_preview_jpeg; break;
+            case StereoPreviewImage::Selected: return std::nullopt;
             case StereoPreviewImage::RectifiedA: source = &rectified_a_jpeg; break;
             case StereoPreviewImage::RectifiedB: source = &rectified_b_jpeg; break;
             case StereoPreviewImage::Disparity: source = &disparity_jpeg; break;
@@ -215,6 +209,7 @@ struct StereoPreview::Impl {
     }
 
     void resolve_locked() {
+        live_runtime.reset();
         pending.reset();
         resolved.reset();
         maps_ready = false;
@@ -266,6 +261,7 @@ struct StereoPreview::Impl {
     }
 
     nlohmann::json status_json_locked() const {
+        const auto live = live_runtime.status_json();
         nlohmann::json calibration = {
             {"state", calibration_state},
             {"error", calibration_error},
@@ -292,6 +288,7 @@ struct StereoPreview::Impl {
             {"schema_version", 1},
             {"calibration", std::move(calibration)},
             {"depth", depth_runtime.status_json()},
+            {"live_preview", live},
             {"processing", {
                 {"submitted_pairs", submitted},
                 {"processed_pairs", processed},
@@ -325,12 +322,14 @@ struct StereoPreview::Impl {
                 {"depth_filtered_ready", !depth_filtered_jpeg.empty()},
                 {"depth_strict_ready", !depth_strict_jpeg.empty()},
                 {"confidence_ready", !confidence_jpeg.empty()},
-                {"selected_mode",
-                 operator_preview_mode_name(current_operator_preview_mode())},
-                {"selected_ready", !selected_preview_jpeg.empty()},
-                {"selected_sequence", selected_preview_sequence},
-                {"selected_pair_index", selected_preview_pair_index},
-                {"selected_interval_ms", selected_preview_interval_ms},
+                {"selected_mode", live.value(
+                    "selected_mode", std::string("DEPTH_FILTERED"))},
+                {"selected_ready", live.value("ready", false)},
+                {"selected_sequence", live.value(
+                    "sequence", std::uint64_t{0})},
+                {"selected_pair_index", live.value(
+                    "pair_index", std::uint64_t{0})},
+                {"selected_interval_ms", 200},
                 {"selected_latest", "selected_preview_latest.jpg"},
                 {"raw_a_latest", "raw_a_latest.jpg"},
                 {"raw_b_latest", "raw_b_latest.jpg"},
@@ -590,28 +589,6 @@ struct StereoPreview::Impl {
                 const auto normalize_degrees = [](const int value) {
                     return ((value % 360) + 360) % 360;
                 };
-                const auto rotate_for_display = [](const cv::Mat& source,
-                                                    const int degrees) {
-                    cv::Mat result;
-                    switch (degrees) {
-                        case 0:
-                            return source;
-                        case 90:
-                            cv::rotate(source, result, cv::ROTATE_90_CLOCKWISE);
-                            break;
-                        case 180:
-                            cv::rotate(source, result, cv::ROTATE_180);
-                            break;
-                        case 270:
-                            cv::rotate(source, result,
-                                       cv::ROTATE_90_COUNTERCLOCKWISE);
-                            break;
-                        default:
-                            throw std::runtime_error(
-                                "unsupported rectified display rotation");
-                    }
-                    return result;
-                };
                 const auto display_rotation_a = normalize_degrees(
                     pair.camera_a.rotation_degrees - processing_rotation);
                 const auto display_rotation_b = normalize_degrees(
@@ -624,15 +601,6 @@ struct StereoPreview::Impl {
                     cached_rectified_focal_px,
                     calibration.measured_baseline_mm,
                     *depth_budget);
-
-                const auto preview_mode = current_operator_preview_mode();
-                auto display_selected = rotate_for_display(
-                    operator_preview_source(depth, preview_mode),
-                    display_rotation_a);
-                auto preview_selected = encode_jpeg(display_selected);
-                write_binary_atomic(
-                    session_directory / "selected_preview_latest.jpg",
-                    preview_selected);
 
                 const auto finished = std::chrono::steady_clock::now();
                 const auto duration_ms = std::chrono::duration<double, std::milli>(
@@ -651,35 +619,6 @@ struct StereoPreview::Impl {
                             {"profile_id", calibration.profile_id},
                         };
                     } else {
-                        if (preview_mode == current_operator_preview_mode()) {
-                            selected_preview_jpeg = std::move(preview_selected);
-                            selected_preview_sequence += 1;
-                            selected_preview_pair_index = pair.pair_index;
-                            selected_preview_interval_ms =
-                                depth_budget->min_processing_interval_ms;
-                            disparity_jpeg.clear();
-                            depth_raw_jpeg.clear();
-                            depth_filtered_jpeg.clear();
-                            depth_strict_jpeg.clear();
-                            confidence_jpeg.clear();
-                            switch (preview_mode) {
-                                case OperatorPreviewMode::Disparity:
-                                    disparity_jpeg = selected_preview_jpeg;
-                                    break;
-                                case OperatorPreviewMode::DepthRaw:
-                                    depth_raw_jpeg = selected_preview_jpeg;
-                                    break;
-                                case OperatorPreviewMode::DepthFiltered:
-                                    depth_filtered_jpeg = selected_preview_jpeg;
-                                    break;
-                                case OperatorPreviewMode::DepthStrict:
-                                    depth_strict_jpeg = selected_preview_jpeg;
-                                    break;
-                                case OperatorPreviewMode::Confidence:
-                                    confidence_jpeg = selected_preview_jpeg;
-                                    break;
-                            }
-                        }
                         processed += 1;
                         maps_ready = true;
                         runtime_width = depth.work_width;
@@ -739,8 +678,6 @@ struct StereoPreview::Impl {
                             {"rectified_b_nonzero_fraction",
                              current_rectified_b_statistics.nonzero_fraction},
                             {"selection_mode", depth_budget->selection_mode},
-                            {"operator_preview_mode",
-                             operator_preview_mode_name(preview_mode)},
                             {"quality_profile", depth_budget->profile_name},
                             {"target_depth_fps", depth_budget->target_depth_fps},
                             {"work_width", depth.work_width},
@@ -804,6 +741,7 @@ struct StereoPreview::Impl {
     std::condition_variable condition;
     bool stopping = false;
     std::ofstream diagnostics;
+    LivePreviewRuntime live_runtime;
     std::thread worker;
     std::array<std::string, 2> device_ids;
     std::optional<CalibrationProfile> profile;
@@ -891,6 +829,10 @@ nlohmann::json StereoPreview::depth_profiles_json() const {
 
 nlohmann::json StereoPreview::status_json() const {
     return impl_->status_json();
+}
+
+nlohmann::json StereoPreview::live_status_json() const {
+    return impl_->live_runtime.status_json();
 }
 
 std::optional<std::vector<std::uint8_t>> StereoPreview::image(

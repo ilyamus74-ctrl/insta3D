@@ -271,6 +271,10 @@ std::optional<std::vector<std::uint8_t>> HostState::stereo_preview_image(
     return stereo_preview_->image(kind);
 }
 
+nlohmann::json HostState::live_preview_json() const {
+    return stereo_preview_->live_status_json();
+}
+
 nlohmann::json HostState::select_depth_profile(const std::string& mode) {
     return stereo_preview_->select_depth_profile(mode);
 }

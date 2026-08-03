@@ -56,6 +56,7 @@ public:
     nlohmann::json select_depth_profile(const std::string& mode);
     nlohmann::json depth_profiles_json() const;
     nlohmann::json status_json() const;
+    nlohmann::json live_status_json() const;
     std::optional<std::vector<std::uint8_t>> image(StereoPreviewImage kind) const;
 
 private:

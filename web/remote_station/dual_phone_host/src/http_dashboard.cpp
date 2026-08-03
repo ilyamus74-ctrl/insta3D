@@ -159,6 +159,11 @@ void HttpDashboard::handle_client(const int client_fd) {
         send_text(client_fd, 200, "application/json", state_.status_json().dump());
         return;
     }
+    if (path == "/api/live-preview") {
+        send_text(client_fd, 200, "application/json",
+                  state_.live_preview_json().dump());
+        return;
+    }
     if (path == "/api/depth/profiles") {
         send_text(client_fd, 200, "application/json",
                   state_.depth_profiles_json().dump());

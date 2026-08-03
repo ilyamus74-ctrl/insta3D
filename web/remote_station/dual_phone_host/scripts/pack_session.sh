@@ -57,6 +57,8 @@ for name in \
   pairs.jsonl \
   stereo_preview.jsonl \
   stereo_preview_status.json \
+  live_preview.jsonl \
+  live_preview_status.json \
   imu_a.jsonl \
   imu_b.jsonl \
   camera_a_hello.json \
