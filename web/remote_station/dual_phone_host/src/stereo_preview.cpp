@@ -1,6 +1,7 @@
 #include "stereo_preview.hpp"
 
 #include "protocol.hpp"
+#include "operator_preview_state.hpp"
 #include "stereo_depth_runtime.hpp"
 #include "stereo_preview_processing.hpp"
 
@@ -70,6 +71,24 @@ nlohmann::json matrix_json(const cv::Mat& matrix) {
         rows.push_back(std::move(values));
     }
     return rows;
+}
+
+const cv::Mat& operator_preview_source(
+    const detail::StereoDepthResult& depth,
+    const OperatorPreviewMode mode) {
+    switch (mode) {
+        case OperatorPreviewMode::Disparity:
+            return depth.disparity_preview;
+        case OperatorPreviewMode::DepthRaw:
+            return depth.raw_depth_preview;
+        case OperatorPreviewMode::DepthFiltered:
+            return depth.filtered_depth_preview;
+        case OperatorPreviewMode::DepthStrict:
+            return depth.strict_depth_preview;
+        case OperatorPreviewMode::Confidence:
+            return depth.confidence_preview;
+    }
+    return depth.filtered_depth_preview;
 }
 
 }  // namespace
@@ -182,6 +201,7 @@ struct StereoPreview::Impl {
         std::scoped_lock lock(mutex);
         const std::vector<std::uint8_t>* source = nullptr;
         switch (kind) {
+            case StereoPreviewImage::Selected: source = &selected_preview_jpeg; break;
             case StereoPreviewImage::RectifiedA: source = &rectified_a_jpeg; break;
             case StereoPreviewImage::RectifiedB: source = &rectified_b_jpeg; break;
             case StereoPreviewImage::Disparity: source = &disparity_jpeg; break;
@@ -205,6 +225,10 @@ struct StereoPreview::Impl {
         depth_filtered_jpeg.clear();
         depth_strict_jpeg.clear();
         confidence_jpeg.clear();
+        selected_preview_jpeg.clear();
+        selected_preview_sequence = 0;
+        selected_preview_pair_index = 0;
+        selected_preview_interval_ms = 0;
         runtime_width = 0;
         runtime_height = 0;
         rectification_axis_state = "UNKNOWN";
@@ -301,6 +325,13 @@ struct StereoPreview::Impl {
                 {"depth_filtered_ready", !depth_filtered_jpeg.empty()},
                 {"depth_strict_ready", !depth_strict_jpeg.empty()},
                 {"confidence_ready", !confidence_jpeg.empty()},
+                {"selected_mode",
+                 operator_preview_mode_name(current_operator_preview_mode())},
+                {"selected_ready", !selected_preview_jpeg.empty()},
+                {"selected_sequence", selected_preview_sequence},
+                {"selected_pair_index", selected_preview_pair_index},
+                {"selected_interval_ms", selected_preview_interval_ms},
+                {"selected_latest", "selected_preview_latest.jpg"},
                 {"raw_a_latest", "raw_a_latest.jpg"},
                 {"raw_b_latest", "raw_b_latest.jpg"},
                 {"rectified_a_latest", "rectified_a_latest.jpg"},
@@ -333,7 +364,6 @@ struct StereoPreview::Impl {
         double cached_map_valid_fraction_a = 0.0;
         double cached_map_valid_fraction_b = 0.0;
         std::chrono::steady_clock::time_point last_raw_image_write;
-        std::chrono::steady_clock::time_point last_processed_image_write;
 
         while (true) {
             StereoPreviewPair pair;
@@ -595,54 +625,14 @@ struct StereoPreview::Impl {
                     calibration.measured_baseline_mm,
                     *depth_budget);
 
-                const auto preview_finished = std::chrono::steady_clock::now();
-                const bool publish_preview_images =
-                    last_processed_image_write.time_since_epoch().count() == 0 ||
-                    preview_finished - last_processed_image_write >=
-                        std::chrono::seconds{1};
-                std::vector<std::uint8_t> preview_a;
-                std::vector<std::uint8_t> preview_b;
-                std::vector<std::uint8_t> preview_disparity;
-                std::vector<std::uint8_t> preview_depth_raw;
-                std::vector<std::uint8_t> preview_depth_filtered;
-                std::vector<std::uint8_t> preview_depth_strict;
-                std::vector<std::uint8_t> preview_confidence;
-                if (publish_preview_images) {
-                    auto display_a = rotate_for_display(depth.work_a, display_rotation_a);
-                    auto display_b = rotate_for_display(depth.work_b, display_rotation_b);
-                    auto display_disparity = rotate_for_display(
-                        depth.disparity_preview, display_rotation_a);
-                    auto display_depth_raw = rotate_for_display(
-                        depth.raw_depth_preview, display_rotation_a);
-                    auto display_depth_filtered = rotate_for_display(
-                        depth.filtered_depth_preview, display_rotation_a);
-                    auto display_depth_strict = rotate_for_display(
-                        depth.strict_depth_preview, display_rotation_a);
-                    auto display_confidence = rotate_for_display(
-                        depth.confidence_preview, display_rotation_a);
-                    preview_a = encode_jpeg(with_epipolar_guides(display_a));
-                    preview_b = encode_jpeg(with_epipolar_guides(display_b));
-                    preview_disparity = encode_jpeg(display_disparity);
-                    preview_depth_raw = encode_jpeg(display_depth_raw);
-                    preview_depth_filtered = encode_jpeg(display_depth_filtered);
-                    preview_depth_strict = encode_jpeg(display_depth_strict);
-                    preview_confidence = encode_jpeg(display_confidence);
-                    write_binary_atomic(
-                        session_directory / "rectified_a_latest.jpg", preview_a);
-                    write_binary_atomic(
-                        session_directory / "rectified_b_latest.jpg", preview_b);
-                    write_binary_atomic(
-                        session_directory / "disparity_latest.jpg", preview_disparity);
-                    write_binary_atomic(
-                        session_directory / "depth_raw_latest.jpg", preview_depth_raw);
-                    write_binary_atomic(
-                        session_directory / "depth_filtered_latest.jpg", preview_depth_filtered);
-                    write_binary_atomic(
-                        session_directory / "depth_strict_latest.jpg", preview_depth_strict);
-                    write_binary_atomic(
-                        session_directory / "confidence_latest.jpg", preview_confidence);
-                    last_processed_image_write = preview_finished;
-                }
+                const auto preview_mode = current_operator_preview_mode();
+                auto display_selected = rotate_for_display(
+                    operator_preview_source(depth, preview_mode),
+                    display_rotation_a);
+                auto preview_selected = encode_jpeg(display_selected);
+                write_binary_atomic(
+                    session_directory / "selected_preview_latest.jpg",
+                    preview_selected);
 
                 const auto finished = std::chrono::steady_clock::now();
                 const auto duration_ms = std::chrono::duration<double, std::milli>(
@@ -661,14 +651,34 @@ struct StereoPreview::Impl {
                             {"profile_id", calibration.profile_id},
                         };
                     } else {
-                        if (publish_preview_images) {
-                            rectified_a_jpeg = std::move(preview_a);
-                            rectified_b_jpeg = std::move(preview_b);
-                            disparity_jpeg = std::move(preview_disparity);
-                            depth_raw_jpeg = std::move(preview_depth_raw);
-                            depth_filtered_jpeg = std::move(preview_depth_filtered);
-                            depth_strict_jpeg = std::move(preview_depth_strict);
-                            confidence_jpeg = std::move(preview_confidence);
+                        if (preview_mode == current_operator_preview_mode()) {
+                            selected_preview_jpeg = std::move(preview_selected);
+                            selected_preview_sequence += 1;
+                            selected_preview_pair_index = pair.pair_index;
+                            selected_preview_interval_ms =
+                                depth_budget->min_processing_interval_ms;
+                            disparity_jpeg.clear();
+                            depth_raw_jpeg.clear();
+                            depth_filtered_jpeg.clear();
+                            depth_strict_jpeg.clear();
+                            confidence_jpeg.clear();
+                            switch (preview_mode) {
+                                case OperatorPreviewMode::Disparity:
+                                    disparity_jpeg = selected_preview_jpeg;
+                                    break;
+                                case OperatorPreviewMode::DepthRaw:
+                                    depth_raw_jpeg = selected_preview_jpeg;
+                                    break;
+                                case OperatorPreviewMode::DepthFiltered:
+                                    depth_filtered_jpeg = selected_preview_jpeg;
+                                    break;
+                                case OperatorPreviewMode::DepthStrict:
+                                    depth_strict_jpeg = selected_preview_jpeg;
+                                    break;
+                                case OperatorPreviewMode::Confidence:
+                                    confidence_jpeg = selected_preview_jpeg;
+                                    break;
+                            }
                         }
                         processed += 1;
                         maps_ready = true;
@@ -729,6 +739,8 @@ struct StereoPreview::Impl {
                             {"rectified_b_nonzero_fraction",
                              current_rectified_b_statistics.nonzero_fraction},
                             {"selection_mode", depth_budget->selection_mode},
+                            {"operator_preview_mode",
+                             operator_preview_mode_name(preview_mode)},
                             {"quality_profile", depth_budget->profile_name},
                             {"target_depth_fps", depth_budget->target_depth_fps},
                             {"work_width", depth.work_width},
@@ -808,6 +820,10 @@ struct StereoPreview::Impl {
     std::vector<std::uint8_t> depth_filtered_jpeg;
     std::vector<std::uint8_t> depth_strict_jpeg;
     std::vector<std::uint8_t> confidence_jpeg;
+    std::vector<std::uint8_t> selected_preview_jpeg;
+    std::uint64_t selected_preview_sequence = 0;
+    std::uint64_t selected_preview_pair_index = 0;
+    int selected_preview_interval_ms = 0;
     StereoDepthRuntime depth_runtime;
     std::uint64_t submitted = 0;
     std::uint64_t processed = 0;

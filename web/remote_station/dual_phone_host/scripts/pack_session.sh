@@ -70,7 +70,8 @@ for name in \
   depth_raw_latest.jpg \
   depth_filtered_latest.jpg \
   depth_strict_latest.jpg \
-  confidence_latest.jpg
+  confidence_latest.jpg \
+  selected_preview_latest.jpg
 do
   [[ -f "$SESSION_DIR/$name" ]] && cp -a "$SESSION_DIR/$name" "$PACKAGE_ROOT/"
 done

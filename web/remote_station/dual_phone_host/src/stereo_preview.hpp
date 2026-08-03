@@ -29,6 +29,7 @@ struct StereoPreviewPair {
 };
 
 enum class StereoPreviewImage {
+    Selected,
     RectifiedA,
     RectifiedB,
     Disparity,

@@ -1,5 +1,6 @@
 #include "http_dashboard.hpp"
 
+#include "operator_preview_state.hpp"
 #include "protocol.hpp"
 
 #include <arpa/inet.h>
@@ -112,6 +113,25 @@ void HttpDashboard::handle_client(const int client_fd) {
         if (callback) callback();
         return;
     }
+    constexpr std::string_view preview_prefix = "/api/depth/preview/";
+    if (method == "POST" && path.rfind(preview_prefix, 0) == 0) {
+        const auto mode = path.substr(preview_prefix.size());
+        try {
+            const auto selected = select_operator_preview_mode(mode);
+            const auto selected_name = operator_preview_mode_name(selected);
+            state_.log_event("INFO", "OPERATOR_PREVIEW_SELECTED",
+                             {{"requested_mode", mode},
+                              {"selected_mode", selected_name}});
+            send_text(client_fd, 200, "application/json",
+                      nlohmann::json({
+                          {"selected_mode", selected_name},
+                      }).dump());
+        } catch (const std::exception& error) {
+            send_text(client_fd, 400, "application/json",
+                      nlohmann::json({{"error", error.what()}}).dump());
+        }
+        return;
+    }
     constexpr std::string_view profile_prefix = "/api/depth/profile/";
     if (method == "POST" && path.rfind(profile_prefix, 0) == 0) {
         const auto mode = path.substr(profile_prefix.size());
@@ -159,7 +179,8 @@ void HttpDashboard::handle_client(const int client_fd) {
         send_response(client_fd, 200, "image/jpeg", camera.latest->jpeg);
         return;
     }
-    if (path == "/stereo/rectified_a.jpg" ||
+    if (path == "/stereo/selected.jpg" ||
+        path == "/stereo/rectified_a.jpg" ||
         path == "/stereo/rectified_b.jpg" ||
         path == "/stereo/disparity.jpg" ||
         path == "/stereo/depth_raw.jpg" ||
@@ -167,6 +188,7 @@ void HttpDashboard::handle_client(const int client_fd) {
         path == "/stereo/depth_strict.jpg" ||
         path == "/stereo/confidence.jpg") {
         StereoPreviewImage kind = StereoPreviewImage::Disparity;
+        if (path == "/stereo/selected.jpg") kind = StereoPreviewImage::Selected;
         if (path == "/stereo/rectified_a.jpg") kind = StereoPreviewImage::RectifiedA;
         if (path == "/stereo/rectified_b.jpg") kind = StereoPreviewImage::RectifiedB;
         if (path == "/stereo/depth_raw.jpg") kind = StereoPreviewImage::DepthRaw;
