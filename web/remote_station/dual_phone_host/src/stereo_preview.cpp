@@ -130,6 +130,9 @@ struct StereoPreview::Impl {
     void set_camera_identity(const std::size_t slot_index, std::string device_id) {
         if (slot_index >= device_ids.size()) throw std::out_of_range("camera slot index");
         std::scoped_lock lock(mutex);
+        if (device_ids[slot_index] == device_id) {
+            return;
+        }
         device_ids[slot_index] = std::move(device_id);
         resolve_locked();
     }
@@ -141,13 +144,29 @@ struct StereoPreview::Impl {
         resolve_locked();
     }
 
+    void accept_imu(const std::size_t slot_index, const nlohmann::json& sample) {
+        if (slot_index == 0) accumulated_map.accept_imu(sample);
+    }
+
+    void notify_camera_event(
+        const std::size_t slot_index,
+        const std::string& event,
+        const std::string& device_id) {
+        accumulated_map.notify_camera_event(slot_index, event, device_id);
+    }
+
     void set_calibration_profile(const nlohmann::json& value) {
         std::scoped_lock lock(mutex);
+        if (profile_source && *profile_source == value && profile) {
+            return;
+        }
         try {
             profile = parse_profile(value);
+            profile_source = value;
             profile_error.clear();
         } catch (const std::exception& error) {
             profile.reset();
+            profile_source.reset();
             profile_error = error.what();
         }
         resolve_locked();
@@ -156,6 +175,7 @@ struct StereoPreview::Impl {
     void clear_calibration_profile() {
         std::scoped_lock lock(mutex);
         profile.reset();
+        profile_source.reset();
         profile_error.clear();
         resolve_locked();
     }
@@ -788,6 +808,7 @@ struct StereoPreview::Impl {
     std::thread worker;
     std::array<std::string, 2> device_ids;
     std::optional<CalibrationProfile> profile;
+    std::optional<nlohmann::json> profile_source;
     std::optional<ResolvedCalibration> resolved;
     std::string profile_error;
     std::string calibration_state = "WAITING_FOR_CALIBRATION";
@@ -850,6 +871,18 @@ void StereoPreview::set_camera_identity(const std::size_t slot_index,
 
 void StereoPreview::clear_camera_identity(const std::size_t slot_index) {
     impl_->clear_camera_identity(slot_index);
+}
+
+void StereoPreview::accept_imu(
+    const std::size_t slot_index,
+    const nlohmann::json& sample) {
+    impl_->accept_imu(slot_index, sample);
+}
+
+void StereoPreview::notify_camera_event(
+    const std::size_t slot_index, const std::string& event,
+    const std::string& device_id) {
+    impl_->notify_camera_event(slot_index, event, device_id);
 }
 
 void StereoPreview::set_calibration_profile(const nlohmann::json& profile) {

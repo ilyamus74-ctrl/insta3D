@@ -50,6 +50,11 @@ public:
 
     void set_camera_identity(std::size_t slot_index, std::string device_id);
     void clear_camera_identity(std::size_t slot_index);
+    void accept_imu(std::size_t slot_index, const nlohmann::json& sample);
+    void notify_camera_event(
+        std::size_t slot_index,
+        const std::string& event,
+        const std::string& device_id);
     void set_calibration_profile(const nlohmann::json& profile);
     void clear_calibration_profile();
     void submit(StereoPreviewPair pair);

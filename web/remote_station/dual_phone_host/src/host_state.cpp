@@ -123,6 +123,10 @@ bool HostState::camera_connected(const CameraSlot slot,
     camera.device_id = device_id;
     camera.remote_address = remote_address;
     stereo_preview_->set_camera_identity(slot_index(slot), device_id);
+    stereo_preview_->notify_camera_event(
+        slot_index(slot),
+        "CONNECTED",
+        device_id);
 
     const auto hello_path = session_dir_ /
         (slot == CameraSlot::A ? "camera_a_hello.json" : "camera_b_hello.json");
@@ -158,7 +162,10 @@ void HostState::camera_disconnected(const CameraSlot slot,
     camera.connected = false;
     camera.pair_frames_dropped += camera.pair_queue.size();
     camera.pair_queue.clear();
-    stereo_preview_->clear_camera_identity(slot_index(slot));
+    stereo_preview_->notify_camera_event(
+        slot_index(slot),
+        "DISCONNECTED",
+        camera.device_id);
     nlohmann::json event = {
         {"ts", utc_iso8601_now()}, {"level", "WARN"},
         {"event", "CAMERA_DISCONNECTED"}, {"slot", slot_name(slot)},
@@ -192,6 +199,7 @@ void HostState::accept_imu(const CameraSlot slot, const nlohmann::json& sample) 
     value["received_at"] = utc_iso8601_now();
     value["slot"] = slot_name(slot);
     append_jsonl_locked(slot == CameraSlot::A ? imu_a_file_ : imu_b_file_, value);
+    stereo_preview_->accept_imu(slot_index(slot), value);
 }
 
 void HostState::log_event(const std::string& level, const std::string& event,

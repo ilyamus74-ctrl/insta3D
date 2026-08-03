@@ -2,6 +2,7 @@
 
 #include "stereo_depth_runtime.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -23,6 +24,11 @@ public:
         std::uint64_t pair_index,
         std::string source_profile,
         const StereoDepthResult& depth);
+    void accept_imu(const nlohmann::json& sample);
+    void notify_camera_event(
+        std::size_t slot_index,
+        const std::string& event,
+        const std::string& device_id);
     void reset();
     nlohmann::json status_json() const;
 

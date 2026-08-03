@@ -63,7 +63,10 @@ for name in \
   room_geometry_status.json \
   accumulated_map.jsonl \
   accumulated_map_status.json \
+  pose_validation.jsonl \
   point_cloud_accumulated.ply \
+  point_cloud_accumulated_raw.ply \
+  point_cloud_accumulated_multiview.ply \
   point_cloud_accumulated_confirmed.ply \
   point_cloud_accumulated_strict.ply \
   point_cloud_accumulated_keyframe_colors.ply \
@@ -93,6 +96,11 @@ for name in \
 do
   [[ -f "$SESSION_DIR/$name" ]] && cp -a "$SESSION_DIR/$name" "$PACKAGE_ROOT/"
 done
+
+if [[ -d "$SESSION_DIR/keyframes" ]]; then
+  mkdir -p "$PACKAGE_ROOT/keyframes"
+  cp -a "$SESSION_DIR/keyframes/." "$PACKAGE_ROOT/keyframes/"
+fi
 
 if (( SAMPLE_EVERY > 0 )); then
   for camera in camera_a camera_b; do
