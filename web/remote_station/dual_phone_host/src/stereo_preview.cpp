@@ -594,32 +594,39 @@ struct StereoPreview::Impl {
                     cached_rectified_focal_px,
                     calibration.measured_baseline_mm,
                     *depth_budget);
-                auto display_a = rotate_for_display(depth.work_a, display_rotation_a);
-                auto display_b = rotate_for_display(depth.work_b, display_rotation_b);
-                auto display_disparity = rotate_for_display(
-                    depth.disparity_preview, display_rotation_a);
-                auto display_depth_raw = rotate_for_display(
-                    depth.raw_depth_preview, display_rotation_a);
-                auto display_depth_filtered = rotate_for_display(
-                    depth.filtered_depth_preview, display_rotation_a);
-                auto display_depth_strict = rotate_for_display(
-                    depth.strict_depth_preview, display_rotation_a);
-                auto display_confidence = rotate_for_display(
-                    depth.confidence_preview, display_rotation_a);
-                auto preview_a = encode_jpeg(with_epipolar_guides(display_a));
-                auto preview_b = encode_jpeg(with_epipolar_guides(display_b));
-                auto preview_disparity = encode_jpeg(display_disparity);
-                auto preview_depth_raw = encode_jpeg(display_depth_raw);
-                auto preview_depth_filtered = encode_jpeg(display_depth_filtered);
-                auto preview_depth_strict = encode_jpeg(display_depth_strict);
-                auto preview_confidence = encode_jpeg(display_confidence);
 
                 const auto preview_finished = std::chrono::steady_clock::now();
-                if (
+                const bool publish_preview_images =
                     last_processed_image_write.time_since_epoch().count() == 0 ||
                     preview_finished - last_processed_image_write >=
-                        std::chrono::seconds{1}
-                ) {
+                        std::chrono::seconds{1};
+                std::vector<std::uint8_t> preview_a;
+                std::vector<std::uint8_t> preview_b;
+                std::vector<std::uint8_t> preview_disparity;
+                std::vector<std::uint8_t> preview_depth_raw;
+                std::vector<std::uint8_t> preview_depth_filtered;
+                std::vector<std::uint8_t> preview_depth_strict;
+                std::vector<std::uint8_t> preview_confidence;
+                if (publish_preview_images) {
+                    auto display_a = rotate_for_display(depth.work_a, display_rotation_a);
+                    auto display_b = rotate_for_display(depth.work_b, display_rotation_b);
+                    auto display_disparity = rotate_for_display(
+                        depth.disparity_preview, display_rotation_a);
+                    auto display_depth_raw = rotate_for_display(
+                        depth.raw_depth_preview, display_rotation_a);
+                    auto display_depth_filtered = rotate_for_display(
+                        depth.filtered_depth_preview, display_rotation_a);
+                    auto display_depth_strict = rotate_for_display(
+                        depth.strict_depth_preview, display_rotation_a);
+                    auto display_confidence = rotate_for_display(
+                        depth.confidence_preview, display_rotation_a);
+                    preview_a = encode_jpeg(with_epipolar_guides(display_a));
+                    preview_b = encode_jpeg(with_epipolar_guides(display_b));
+                    preview_disparity = encode_jpeg(display_disparity);
+                    preview_depth_raw = encode_jpeg(display_depth_raw);
+                    preview_depth_filtered = encode_jpeg(display_depth_filtered);
+                    preview_depth_strict = encode_jpeg(display_depth_strict);
+                    preview_confidence = encode_jpeg(display_confidence);
                     write_binary_atomic(
                         session_directory / "rectified_a_latest.jpg", preview_a);
                     write_binary_atomic(
@@ -654,13 +661,15 @@ struct StereoPreview::Impl {
                             {"profile_id", calibration.profile_id},
                         };
                     } else {
-                        rectified_a_jpeg = std::move(preview_a);
-                        rectified_b_jpeg = std::move(preview_b);
-                        disparity_jpeg = std::move(preview_disparity);
-                        depth_raw_jpeg = std::move(preview_depth_raw);
-                        depth_filtered_jpeg = std::move(preview_depth_filtered);
-                        depth_strict_jpeg = std::move(preview_depth_strict);
-                        confidence_jpeg = std::move(preview_confidence);
+                        if (publish_preview_images) {
+                            rectified_a_jpeg = std::move(preview_a);
+                            rectified_b_jpeg = std::move(preview_b);
+                            disparity_jpeg = std::move(preview_disparity);
+                            depth_raw_jpeg = std::move(preview_depth_raw);
+                            depth_filtered_jpeg = std::move(preview_depth_filtered);
+                            depth_strict_jpeg = std::move(preview_depth_strict);
+                            confidence_jpeg = std::move(preview_confidence);
+                        }
                         processed += 1;
                         maps_ready = true;
                         runtime_width = depth.work_width;

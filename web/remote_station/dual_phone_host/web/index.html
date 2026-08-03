@@ -7,7 +7,7 @@
 <style>
 :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
 body { margin: 0; background: #101014; color: #f5f5f7; }
-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 18px; background: rgba(17,17,23,.94); border-bottom: 1px solid #33333d; }
+header { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 18px; background: #111117; border-bottom: 1px solid #33333d; }
 .header-copy { min-width: 0; }
 h1 { margin: 0 0 6px; font-size: 20px; }
 #summary { font-family: ui-monospace, monospace; font-size: 13px; color: #c9c9d3; }
@@ -70,8 +70,8 @@ pre { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap;
   <span id="pairStatus">waiting for synchronized frames</span>
 </div>
 <div class="grid">
-  <div class="camera raw-camera"><img id="cameraA"><div id="labelA" class="label">CAMERA_A · WAITING</div></div>
-  <div class="camera raw-camera"><img id="cameraB"><div id="labelB" class="label">CAMERA_B · WAITING</div></div>
+  <div class="camera raw-camera"><img id="cameraA" decoding="async"><div id="labelA" class="label">CAMERA_A · WAITING</div></div>
+  <div class="camera raw-camera"><img id="cameraB" decoding="async"><div id="labelB" class="label">CAMERA_B · WAITING</div></div>
 </div>
 
 <div class="block-title">
@@ -79,11 +79,11 @@ pre { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap;
   <span id="calibrationStatus">waiting for calibration profile</span>
 </div>
 <div class="grid">
-  <div class="camera"><img id="rectifiedA"><div id="rectifiedLabelA" class="label warn">RECTIFIED_A · WAITING</div></div>
-  <div class="camera"><img id="rectifiedB"><div id="rectifiedLabelB" class="label warn">RECTIFIED_B · WAITING</div></div>
+  <div class="camera"><img id="rectifiedA" loading="lazy" decoding="async"><div id="rectifiedLabelA" class="label warn">RECTIFIED_A · WAITING</div></div>
+  <div class="camera"><img id="rectifiedB" loading="lazy" decoding="async"><div id="rectifiedLabelB" class="label warn">RECTIFIED_B · WAITING</div></div>
 </div>
 <div class="camera disparity">
-  <img id="disparity">
+  <img id="disparity" loading="lazy" decoding="async">
   <div id="disparityLabel" class="label warn">STEREOSGBM · WAITING</div>
 </div>
 
@@ -92,10 +92,10 @@ pre { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap;
   <span id="depthStatus">AUTO profile waiting</span>
 </div>
 <div class="grid">
-  <div class="camera"><img id="depthRaw"><div id="depthRawLabel" class="label warn">RAW METRIC · WAITING</div></div>
-  <div class="camera"><img id="depthFiltered"><div id="depthFilteredLabel" class="label warn">FILTERED · WAITING</div></div>
-  <div class="camera"><img id="depthStrict"><div id="depthStrictLabel" class="label warn">TEMPORAL STRICT · WAITING</div></div>
-  <div class="camera"><img id="confidence"><div id="confidenceLabel" class="label warn">CONFIDENCE · WAITING</div></div>
+  <div class="camera"><img id="depthRaw" loading="lazy" decoding="async"><div id="depthRawLabel" class="label warn">RAW METRIC · WAITING</div></div>
+  <div class="camera"><img id="depthFiltered" loading="lazy" decoding="async"><div id="depthFilteredLabel" class="label warn">FILTERED · WAITING</div></div>
+  <div class="camera"><img id="depthStrict" loading="lazy" decoding="async"><div id="depthStrictLabel" class="label warn">TEMPORAL STRICT · WAITING</div></div>
+  <div class="camera"><img id="confidence" loading="lazy" decoding="async"><div id="confidenceLabel" class="label warn">CONFIDENCE · WAITING</div></div>
 </div>
 
 <section><strong>Diagnostic JSON</strong><pre id="json"></pre></section>
@@ -129,6 +129,10 @@ const confidenceLabel = document.getElementById('confidenceLabel');
 const diagnosticJson = document.getElementById('json');
 let stopping = false;
 let lastStereoPair = -1;
+let lastStereoImageRefreshAt = 0;
+let lastRawASequence = -1;
+let lastRawBSequence = -1;
+let refreshInFlight = false;
 
 async function stopAndPack() {
   if (stopping) return;
@@ -240,8 +244,9 @@ function updateStereo(stereo) {
   }
 
   const pairIndex = Number(processing.last_success_pair_index || 0);
-  if (pairIndex > 0 && pairIndex !== lastStereoPair) {
-    const tick = Date.now();
+  const tick = Date.now();
+  if (pairIndex > 0 && pairIndex !== lastStereoPair &&
+      tick - lastStereoImageRefreshAt >= 1000) {
     if (previews.rectified_a_ready) rectifiedA.src = `/stereo/rectified_a.jpg?t=${tick}`;
     if (previews.rectified_b_ready) rectifiedB.src = `/stereo/rectified_b.jpg?t=${tick}`;
     if (previews.disparity_ready) disparity.src = `/stereo/disparity.jpg?t=${tick}`;
@@ -250,10 +255,13 @@ function updateStereo(stereo) {
     if (previews.depth_strict_ready) depthStrict.src = `/stereo/depth_strict.jpg?t=${tick}`;
     if (previews.confidence_ready) confidence.src = `/stereo/confidence.jpg?t=${tick}`;
     lastStereoPair = pairIndex;
+    lastStereoImageRefreshAt = tick;
   }
 }
 
 async function refresh() {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
   try {
     const response = await fetch('/api/status', {cache:'no-store'});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -277,8 +285,16 @@ async function refresh() {
       `stable ${percent(depth.stable_coverage_ratio)}`;
     diagnosticJson.textContent = JSON.stringify(status, null, 2);
     const tick = Date.now();
-    if (status.camera_a.latest) cameraA.src = `/camera/a.jpg?t=${tick}`;
-    if (status.camera_b.latest) cameraB.src = `/camera/b.jpg?t=${tick}`;
+    const sequenceA = Number(status.camera_a.latest?.sequence ?? -1);
+    const sequenceB = Number(status.camera_b.latest?.sequence ?? -1);
+    if (sequenceA >= 0 && sequenceA !== lastRawASequence) {
+      cameraA.src = `/camera/a.jpg?t=${tick}`;
+      lastRawASequence = sequenceA;
+    }
+    if (sequenceB >= 0 && sequenceB !== lastRawBSequence) {
+      cameraB.src = `/camera/b.jpg?t=${tick}`;
+      lastRawBSequence = sequenceB;
+    }
     orientRawImage(cameraA, status.camera_a);
     orientRawImage(cameraB, status.camera_b);
     updateStereo(stereo);
@@ -286,9 +302,11 @@ async function refresh() {
     summary.textContent = stopping
       ? 'Host stopped; JSON diagnostics are being packed in the terminal.'
       : `dashboard error: ${error}`;
+  } finally {
+    refreshInFlight = false;
   }
 }
-setInterval(refresh, 250); refresh();
+setInterval(refresh, 500); refresh();
 </script>
 </body>
 </html>

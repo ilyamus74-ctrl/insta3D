@@ -404,17 +404,27 @@ struct StereoDepthRuntime::Impl {
             auto* stable_row = stable.ptr<float>(row);
             auto* mask_row = mask.ptr<std::uint8_t>(row);
             for (int column = 0; column < current.cols; ++column) {
-                int count = 0;
+                std::size_t count = 0;
                 for (const auto& frame : temporal_disparities) {
                     const float value = frame.at<float>(row, column);
-                    if (value > static_cast<float>(kMinimumDisparity)) {
-                        values[static_cast<std::size_t>(count++)] = value;
+                    if (value <= static_cast<float>(kMinimumDisparity)) continue;
+                    if (count >= values.size()) break;
+
+                    // The history is bounded to five frames. Keep valid values
+                    // ordered during insertion. This avoids GCC 14 expanding
+                    // std::sort through its 16-element small-range path and
+                    // reporting false -Warray-bounds warnings for this array.
+                    std::size_t insertion = count;
+                    while (insertion > 0 && values[insertion - 1] > value) {
+                        values[insertion] = values[insertion - 1];
+                        --insertion;
                     }
+                    values[insertion] = value;
+                    ++count;
                 }
-                if (count < required || count == 0) continue;
-                std::sort(values.begin(), values.begin() + count);
-                const float median = values[static_cast<std::size_t>(count / 2)];
-                const float spread = values[static_cast<std::size_t>(count - 1)] - values[0];
+                if (count < static_cast<std::size_t>(required) || count == 0) continue;
+                const float median = values[count / 2];
+                const float spread = values[count - 1] - values[0];
                 const float allowed = std::max(1.5F, median * 0.10F);
                 if (mode == "RESET" || spread <= allowed) {
                     stable_row[column] = median;
@@ -631,8 +641,10 @@ StereoDepthResult StereoDepthRuntime::process(
             static_cast<double>(consistent_count)
         : 0.0;
     result.morphology_accepted_percent = dense_texture_count > 0
-        ? 100.0 * static_cast<double>(dense_closed_count) /
-            static_cast<double>(dense_texture_count)
+        ? std::min(
+            100.0,
+            100.0 * static_cast<double>(dense_closed_count) /
+                static_cast<double>(dense_texture_count))
         : 0.0;
     result.min_disparity = 0;
     result.num_disparities = num_disparities;
