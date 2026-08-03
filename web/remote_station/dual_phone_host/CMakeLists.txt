@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
 find_package(nlohmann_json 3.10 REQUIRED)
-find_package(OpenCV 4 REQUIRED COMPONENTS core imgcodecs imgproc calib3d features2d)
+find_package(OpenCV 4.7 REQUIRED COMPONENTS core imgcodecs imgproc calib3d features2d aruco)
 
 add_executable(maklertour-dual-phone-host
     src/main.cpp
@@ -17,6 +17,7 @@ add_executable(maklertour-dual-phone-host
     src/operator_preview_state.cpp
     src/live_preview_runtime.cpp
     src/accumulated_map_runtime_gyro.cpp
+    src/apriltag_anchor_runtime.cpp
     src/room_geometry_runtime.cpp
     src/stereo_preview.cpp
     src/stereo_preview_processing.cpp

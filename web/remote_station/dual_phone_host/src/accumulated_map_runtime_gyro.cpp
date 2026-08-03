@@ -1,4 +1,5 @@
 #include "accumulated_map_runtime.hpp"
+#include "apriltag_anchor_runtime.hpp"
 
 #include <algorithm>
 #include <array>
@@ -651,7 +652,8 @@ struct AccumulatedMapRuntime::Impl {
     explicit Impl(std::filesystem::path path)
         : session_directory(std::move(path)),
           diagnostics(session_directory / "accumulated_map.jsonl", std::ios::app),
-          pose_validation(session_directory / "pose_validation.jsonl", std::ios::app) {
+          pose_validation(session_directory / "pose_validation.jsonl", std::ios::app),
+          apriltag_anchors(session_directory) {
         if (!diagnostics || !pose_validation) {
             throw std::runtime_error("cannot create accumulated map diagnostics");
         }
@@ -853,7 +855,8 @@ struct AccumulatedMapRuntime::Impl {
         return {
             {"state", state},
             {"ready", ready},
-            {"tracking_mode", "AUTO_MOTION_RECOVERY_BUFFER"},
+            {"tracking_mode", "AUTO_MOTION_RECOVERY_BUFFER_APRILTAG_ANCHORS"},
+            {"apriltag_anchor", apriltag_anchors.status_json()},
             {"motion_mode", motion_mode_name(motion_mode)},
             {"motion_rotation_votes", rotation_motion_votes},
             {"motion_walk_votes", walk_motion_votes},
@@ -940,6 +943,7 @@ struct AccumulatedMapRuntime::Impl {
         tracking_buffer.clear();
         trajectory.clear();
         voxels.clear();
+        apriltag_anchors.reset();
         next_keyframe_id = 1;
         worker_accumulated_yaw_deg = 0.0;
         gyro_to_camera_sign = 1.0;
@@ -1318,15 +1322,72 @@ struct AccumulatedMapRuntime::Impl {
             const auto started = std::chrono::steady_clock::now();
             try {
                 const auto current = make_tracking_frame(job);
-                if (current.keypoints.size() < static_cast<std::size_t>(kMinimumFeatures) ||
-                    current.descriptors.empty()) {
-                    throw std::runtime_error("insufficient ORB features for registration");
-                }
+                const bool features_usable =
+                    current.keypoints.size() >=
+                        static_cast<std::size_t>(kMinimumFeatures) &&
+                    !current.descriptors.empty();
                 const bool first = registration_keyframes.empty();
                 PoseDecision decision;
                 cv::Matx44d pose = cv::Matx44d::eye();
-                if (!first) {
+                AprilTagAnchorResult apriltag_result;
+                if (first) {
+                    apriltag_result = apriltag_anchors.process(
+                        job.pair_index, job.colour, job.focal_px,
+                        job.principal_x_px, job.principal_y_px, pose);
+                } else {
                     decision = decide_pose_with_retries(current, job);
+                    const std::optional<cv::Matx44d> preliminary_pose =
+                        decision.valid
+                            ? std::optional<cv::Matx44d>(
+                                  decision.world_from_camera)
+                            : std::nullopt;
+                    apriltag_result = apriltag_anchors.process(
+                        job.pair_index, job.colour, job.focal_px,
+                        job.principal_x_px, job.principal_y_px,
+                        preliminary_pose);
+                    if (apriltag_result.anchor_pose_valid) {
+                        const cv::Matx44d reference_pose =
+                            !tracking_buffer.empty()
+                                ? tracking_buffer.back().world_from_camera
+                                : registration_keyframes.back()
+                                      .world_from_camera;
+                        decision.world_from_camera =
+                            apriltag_result.world_from_camera;
+                        decision.translation_m = translation_delta_m(
+                            reference_pose, decision.world_from_camera);
+                        decision.fused_yaw_step_deg = signed_yaw_delta_deg(
+                            reference_pose, decision.world_from_camera);
+                        decision.rotation_deg =
+                            std::abs(decision.fused_yaw_step_deg);
+                        decision.rotation_only = false;
+                        decision.used_visual = true;
+                        decision.valid = true;
+                        decision.keyframe = apriltag_result.relocalized ||
+                            decision.translation_m >=
+                                kMinimumKeyframeTranslationM ||
+                            std::abs(decision.fused_yaw_step_deg) >=
+                                kMinimumKeyframeYawDeg;
+                        decision.state = decision.keyframe
+                            ? "TRACKING_APRILTAG"
+                            : "TRACKING_STATIONARY";
+                        decision.method = apriltag_result.relocalized
+                            ? "APRILTAG_RELOCALIZED"
+                            : "APRILTAG_ANCHORED";
+                        decision.recovered =
+                            decision.recovered ||
+                            apriltag_result.relocalized;
+                        decision.rejection_reason.clear();
+                        if (decision.reference_pair_index == 0) {
+                            decision.reference_pair_index =
+                                !tracking_buffer.empty()
+                                    ? tracking_buffer.back().pair_index
+                                    : registration_keyframes.back()
+                                          .pair_index;
+                        }
+                    } else if (!features_usable && !decision.valid) {
+                        decision.rejection_reason =
+                            "NO_ORB_FEATURES_AND_NO_APRILTAG_ANCHOR";
+                    }
                     commit_motion_mode(decision.motion_evidence);
                     append_pose_validation({
                         {"pair_index", job.pair_index},
@@ -1343,6 +1404,20 @@ struct AccumulatedMapRuntime::Impl {
                         {"method", decision.method},
                         {"recovered", decision.recovered},
                         {"recovery_attempts", decision.recovery_attempts},
+                        {"features_usable", features_usable},
+                        {"apriltag_ids", apriltag_result.ids},
+                        {"apriltag_anchor_pose_valid",
+                         apriltag_result.anchor_pose_valid},
+                        {"apriltag_relocalized",
+                         apriltag_result.relocalized},
+                        {"apriltag_mapped_tags_used",
+                         apriltag_result.mapped_tags_used},
+                        {"apriltag_position_correction_m",
+                         apriltag_result.position_correction_m},
+                        {"apriltag_yaw_correction_deg",
+                         apriltag_result.yaw_correction_deg},
+                        {"apriltag_confidence",
+                         apriltag_result.confidence},
                         {"matches", decision.visual.matches},
                         {"homography_inliers", decision.visual.homography_inliers},
                         {"pnp_inliers", decision.visual.pnp_inliers},
@@ -1585,6 +1660,7 @@ struct AccumulatedMapRuntime::Impl {
     std::optional<MapJob> pending;
     std::ofstream diagnostics;
     std::ofstream pose_validation;
+    AprilTagAnchorRuntime apriltag_anchors;
     std::thread worker;
     std::uint64_t generation = 1;
     std::chrono::steady_clock::time_point last_accepted_submission;

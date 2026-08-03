@@ -81,6 +81,12 @@ for name in \
   accumulated_map.jsonl \
   accumulated_map_status.json \
   pose_validation.jsonl \
+  apriltag_observations.jsonl \
+  apriltag_constraints.jsonl \
+  apriltag_map.json \
+  apriltag_map.ply \
+  apriltag_status.json \
+  apriltag_latest.jpg \
   point_cloud_accumulated.ply \
   point_cloud_accumulated_raw.ply \
   point_cloud_accumulated_multiview.ply \
