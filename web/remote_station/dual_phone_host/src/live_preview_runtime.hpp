@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -21,6 +22,7 @@ public:
     LivePreviewRuntime& operator=(const LivePreviewRuntime&) = delete;
 
     void submit(StereoPreviewPair pair, ResolvedCalibration calibration);
+    nlohmann::json select_profile(std::string mode);
     void reset();
 
     nlohmann::json status_json() const;

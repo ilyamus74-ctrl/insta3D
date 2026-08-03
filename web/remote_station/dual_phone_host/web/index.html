@@ -118,12 +118,16 @@ const diagnostics = document.getElementById('diagnostics');
 const diagnosticJson = document.getElementById('json');
 let stopping = false;
 let lastSelectedSequence = -1;
+let wantedSelectedSequence = -1;
 let selectedImageLoading = false;
+let selectedLoadToken = 0;
+let selectedLoadTimer = null;
 let lastRawASequence = -1;
 let lastRawBSequence = -1;
 let refreshInFlight = false;
 let liveRefreshInFlight = false;
 let latestLiveStatus = {};
+let latestStereoStatus = {};
 
 async function stopAndPack() {
   if (stopping) return;
@@ -150,6 +154,8 @@ depthProfile.addEventListener('change', async () => {
   try {
     const response = await fetch(`/api/depth/profile/${depthProfile.value}`, {method: 'POST'});
     if (!response.ok) throw new Error(await response.text());
+    const result = await response.json();
+    if (result.live_preview) latestLiveStatus = result.live_preview;
   } catch (error) {
     summary.textContent = `depth profile change failed: ${error}`;
   } finally {
@@ -158,8 +164,7 @@ depthProfile.addEventListener('change', async () => {
 });
 previewMode.addEventListener('change', async () => {
   previewMode.disabled = true;
-  selectedImageLoading = false;
-  lastSelectedSequence = -1;
+  resetSelectedPreviewLoader();
   try {
     const response = await fetch(
       `/api/depth/preview/${previewMode.value}`,
@@ -222,20 +227,58 @@ function selectedMetrics(mode, depth, processing) {
   }
 }
 
-function requestSelectedPreview(sequence) {
-  if (sequence <= lastSelectedSequence || selectedImageLoading) return;
+function resetSelectedPreviewLoader() {
+  selectedLoadToken += 1;
+  selectedImageLoading = false;
+  wantedSelectedSequence = -1;
+  lastSelectedSequence = -1;
+  if (selectedLoadTimer !== null) {
+    window.clearTimeout(selectedLoadTimer);
+    selectedLoadTimer = null;
+  }
+}
+
+function pumpSelectedPreview() {
+  if (selectedImageLoading ||
+      wantedSelectedSequence <= lastSelectedSequence) return;
+
+  const sequence = wantedSelectedSequence;
+  const token = ++selectedLoadToken;
+  const loader = new Image();
   selectedImageLoading = true;
-  selectedPreview.onload = () => {
-    lastSelectedSequence = sequence;
+
+  const finish = success => {
+    if (token !== selectedLoadToken) return;
+    if (selectedLoadTimer !== null) {
+      window.clearTimeout(selectedLoadTimer);
+      selectedLoadTimer = null;
+    }
+    if (success) {
+      selectedPreview.src = loader.src;
+      lastSelectedSequence = sequence;
+    }
     selectedImageLoading = false;
+    if (wantedSelectedSequence > lastSelectedSequence) {
+      window.setTimeout(pumpSelectedPreview, success ? 0 : 120);
+    }
   };
-  selectedPreview.onerror = () => {
-    selectedImageLoading = false;
-  };
-  selectedPreview.src = `/stereo/selected.jpg?v=${sequence}`;
+
+  loader.decoding = 'async';
+  loader.onload = () => finish(true);
+  loader.onerror = () => finish(false);
+  selectedLoadTimer = window.setTimeout(() => finish(false), 1200);
+  loader.src =
+    `/stereo/selected.jpg?v=${sequence}&heartbeat=${Date.now()}`;
+}
+
+function requestSelectedPreview(sequence) {
+  if (!Number.isFinite(sequence) || sequence <= 0) return;
+  wantedSelectedSequence = Math.max(wantedSelectedSequence, sequence);
+  pumpSelectedPreview();
 }
 
 function updateStereo(stereo) {
+  latestStereoStatus = stereo || {};
   const calibration = stereo.calibration || {};
   const processing = stereo.processing || {};
   const previews = stereo.previews || {};
@@ -260,8 +303,18 @@ function updateStereo(stereo) {
   const liveWork = live.work_width && live.work_height
     ? `${live.work_width}×${live.work_height}`
     : 'pending';
+  const liveAge = live.publish_age_ms == null
+    ? '—'
+    : `${Number(live.publish_age_ms).toFixed(0)} ms`;
+  const sourceAge = live.source_age_ms == null
+    ? '—'
+    : `${Number(live.source_age_ms).toFixed(0)} ms`;
+  const liveInput = live.input_replayed ? 'REPLAY' : 'FRESH';
   depthStatus.textContent =
-    `LIVE ${liveWork} · ${fmt(live.actual_fps)} FPS · ${fmt(live.compute_ms)} ms · ` +
+    `LIVE ${live.resolution_policy || 'MATCH_PROFILE'} ` +
+    `${live.active_profile || live.requested_profile || 'HIGH_640'} · ` +
+    `${liveWork} · ${fmt(live.actual_fps)} FPS · ${fmt(live.compute_ms)} ms · ` +
+    `${liveInput} · age ${liveAge} · source ${sourceAge} · ` +
     `GEOMETRY ${depth.selection_mode || 'HIGH_640'} → ${depth.active_profile || 'WAITING'} · ${work} · ` +
     `${fmt(depth.target_depth_fps)} target FPS · p95 ${fmt(depth.processing_p95_ms)} ms · ` +
     `load ${fmt(depth.processing_utilization_percent)}%${upscale}`;
@@ -269,7 +322,8 @@ function updateStereo(stereo) {
     depthProfile.value = depth.selection_mode || 'AUTO';
   }
 
-  const selectedMode = previews.selected_mode || 'DEPTH_FILTERED';
+  const selectedMode =
+    live.selected_mode || previews.selected_mode || 'DEPTH_FILTERED';
   if (previewMode.value !== selectedMode && !previewMode.disabled) {
     previewMode.value = selectedMode;
   }
@@ -280,20 +334,29 @@ function updateStereo(stereo) {
     DEPTH_STRICT: 'TEMPORAL STRICT',
     CONFIDENCE: 'CONFIDENCE',
   }[selectedMode] || selectedMode;
-  const errorLine = processing.last_error ? `\n${processing.last_error}` : '';
+  const selectedReady = live.ready !== undefined
+    ? Boolean(live.ready)
+    : Boolean(previews.selected_ready);
+  const sequence = Number(
+    live.sequence || previews.selected_sequence || 0);
+  const errorLine = (live.last_error || processing.last_error)
+    ? `\n${live.last_error || processing.last_error}`
+    : '';
   const liveMetrics = live.ready
     ? `live ${fmt(live.actual_fps)} FPS · ${fmt(live.compute_ms)} ms · ` +
       `valid ${percent(live.valid_ratio)} · median ` +
-      `${live.median_depth_m == null ? '—' : Number(live.median_depth_m).toFixed(2) + ' m'}`
+      `${live.median_depth_m == null ? '—' : Number(live.median_depth_m).toFixed(2) + ' m'}\n` +
+      `seq ${sequence} · pair ${live.pair_index || '—'} · ` +
+      `${live.input_replayed ? 'replayed source' : 'fresh source'} · ` +
+      `age ${live.publish_age_ms == null ? '—' : Number(live.publish_age_ms).toFixed(0) + ' ms'}`
     : selectedMetrics(selectedMode, depth, processing);
   selectedLabel.textContent =
-    `${title} · ${previews.selected_ready ? 'READY' : 'WAITING'}\n` +
+    `${title} · ${selectedReady ? 'READY' : 'WAITING'}\n` +
     `${liveMetrics}${errorLine}`;
   selectedLabel.className =
-    `label ${previews.selected_ready ? 'ok' : (processing.last_error ? 'bad' : 'warn')}`;
+    `label ${selectedReady ? 'ok' : ((live.last_error || processing.last_error) ? 'bad' : 'warn')}`;
 
-  const sequence = Number(previews.selected_sequence || 0);
-  if (previews.selected_ready && sequence > 0) {
+  if (selectedReady && sequence > 0) {
     requestSelectedPreview(sequence);
   }
 }
@@ -309,6 +372,12 @@ async function refreshLivePreview() {
     const sequence = Number(live.sequence || 0);
     if (live.ready && sequence > 0) {
       requestSelectedPreview(sequence);
+    }
+    if (Object.keys(latestStereoStatus).length > 0) {
+      updateStereo({
+        ...latestStereoStatus,
+        live_preview: latestLiveStatus,
+      });
     }
   } catch (error) {
     if (!stopping) {

@@ -6,12 +6,15 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -23,17 +26,69 @@ namespace maklertour::dual_phone::detail {
 
 namespace {
 
-constexpr std::chrono::milliseconds kLiveInterval{200};
 constexpr std::chrono::seconds kFpsWindow{5};
-constexpr int kLivePortraitWidth = 360;
-constexpr int kLivePortraitHeight = 640;
 constexpr double kMinimumDisparity = 0.5;
 constexpr double kNearMeters = 0.5;
 constexpr double kFarMeters = 8.0;
 
+struct LiveProfileSpec {
+    const char* name;
+    int portrait_width;
+    int portrait_height;
+    int interval_ms;
+};
+
+constexpr std::array<LiveProfileSpec, 5> kLiveProfiles{{
+    {"FHD_1920", 1080, 1920, 1000},
+    {"ULTRA_960", 540, 960, 400},
+    {"HIGH_640", 360, 640, 200},
+    {"QUALITY_480", 270, 480, 200},
+    {"BALANCED_320", 180, 320, 200},
+}};
+
+std::string canonical_profile_mode(std::string value) {
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](const unsigned char ch) {
+            return static_cast<char>(std::toupper(ch));
+        });
+    if (value == "FHD" || value == "1920" || value == "1920X1080") {
+        value = "FHD_1920";
+    }
+    if (value == "960") value = "ULTRA_960";
+    if (value == "640") value = "HIGH_640";
+    if (value == "480") value = "QUALITY_480";
+    if (value == "320") value = "BALANCED_320";
+    if (value == "THROTTLED_320") value = "BALANCED_320";
+    if (value == "AUTO") return value;
+    for (const auto& profile : kLiveProfiles) {
+        if (value == profile.name) return value;
+    }
+    throw std::runtime_error(
+        "live preview profile must be AUTO, FHD_1920, ULTRA_960, "
+        "HIGH_640, QUALITY_480 or BALANCED_320");
+}
+
+const LiveProfileSpec& live_profile_spec(const std::string& requested_mode) {
+    const auto resolved_mode =
+        requested_mode == "AUTO" ? std::string("HIGH_640") : requested_mode;
+    for (const auto& profile : kLiveProfiles) {
+        if (resolved_mode == profile.name) return profile;
+    }
+    throw std::runtime_error("live preview profile is unavailable");
+}
+
+std::int64_t unix_time_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
 struct PendingLivePair {
     StereoPreviewPair pair;
     ResolvedCalibration calibration;
+    std::int64_t received_unix_ms = 0;
 };
 
 struct MetricStop {
@@ -250,29 +305,56 @@ struct LivePreviewRuntime::Impl {
             pending = PendingLivePair{
                 std::move(pair),
                 std::move(calibration),
+                unix_time_ms(),
             };
         }
         condition.notify_one();
     }
 
+    nlohmann::json select_profile(std::string raw_mode) {
+        const auto requested = canonical_profile_mode(std::move(raw_mode));
+        {
+            std::scoped_lock lock(mutex);
+            if (requested_profile_mode != requested) {
+                requested_profile_mode = requested;
+                profile_revision += 1;
+                ready = false;
+                work_width = 0;
+                work_height = 0;
+                actual_fps = 0.0;
+                success_times.clear();
+                last_error.clear();
+            }
+        }
+        condition.notify_all();
+        return status_json();
+    }
+
     void reset() {
-        std::scoped_lock lock(mutex);
-        pending.reset();
-        selected_jpeg.clear();
-        ready = false;
-        sequence = 0;
-        pair_index = 0;
-        work_width = 0;
-        work_height = 0;
-        actual_fps = 0.0;
-        valid_ratio = 0.0;
-        median_depth_m.reset();
-        last_compute_ms = 0.0;
-        last_encode_ms = 0.0;
-        last_total_ms = 0.0;
-        last_error.clear();
-        success_times.clear();
-        reset_revision += 1;
+        {
+            std::scoped_lock lock(mutex);
+            pending.reset();
+            selected_jpeg.clear();
+            ready = false;
+            pair_index = 0;
+            work_width = 0;
+            work_height = 0;
+            actual_fps = 0.0;
+            valid_ratio = 0.0;
+            median_depth_m.reset();
+            last_compute_ms = 0.0;
+            last_encode_ms = 0.0;
+            last_total_ms = 0.0;
+            last_publish_unix_ms = 0;
+            last_source_unix_ms = 0;
+            last_source_sequence_a = 0;
+            last_source_sequence_b = 0;
+            input_replayed = false;
+            last_error.clear();
+            success_times.clear();
+            reset_revision += 1;
+        }
+        condition.notify_all();
     }
 
     std::optional<std::vector<std::uint8_t>> image() const {
@@ -283,14 +365,26 @@ struct LivePreviewRuntime::Impl {
 
     nlohmann::json status_json() const {
         std::scoped_lock lock(mutex);
+        const auto& profile = live_profile_spec(requested_profile_mode);
+        const auto now_ms = unix_time_ms();
         nlohmann::json result = {
             {"state", ready ? "READY" : (last_error.empty() ? "WAITING" : "ERROR")},
             {"ready", ready},
             {"selected_mode",
              operator_preview_mode_name(current_operator_preview_mode())},
             {"sequence", sequence},
+            {"heartbeat_sequence",
+             static_cast<std::uint64_t>(std::max<std::int64_t>(0, now_ms) / 200)},
             {"pair_index", pair_index},
-            {"target_fps", 5.0},
+            {"resolution_policy", "MATCH_PROFILE"},
+            {"requested_profile", requested_profile_mode},
+            {"active_profile", profile.name},
+            {"profile_revision", profile_revision},
+            {"target_fps",
+             1000.0 / static_cast<double>(profile.interval_ms)},
+            {"target_interval_ms", profile.interval_ms},
+            {"profile_width", profile.portrait_width},
+            {"profile_height", profile.portrait_height},
             {"actual_fps", actual_fps},
             {"work_width", work_width},
             {"work_height", work_height},
@@ -298,6 +392,12 @@ struct LivePreviewRuntime::Impl {
             {"jpeg_encode_ms", last_encode_ms},
             {"total_ms", last_total_ms},
             {"valid_ratio", valid_ratio},
+            {"input_replayed", input_replayed},
+            {"fresh_input_frames", fresh_input_frames},
+            {"replayed_input_frames", replayed_input_frames},
+            {"stale_profile_results", stale_profile_results},
+            {"last_source_sequence_a", last_source_sequence_a},
+            {"last_source_sequence_b", last_source_sequence_b},
             {"submitted_pairs", submitted_pairs},
             {"processed_pairs", processed_pairs},
             {"failed_pairs", failed_pairs},
@@ -305,6 +405,14 @@ struct LivePreviewRuntime::Impl {
             {"reset_revision", reset_revision},
             {"last_error", last_error},
         };
+        result["publish_age_ms"] = last_publish_unix_ms > 0
+            ? nlohmann::json(std::max<std::int64_t>(
+                  0, now_ms - last_publish_unix_ms))
+            : nlohmann::json(nullptr);
+        result["source_age_ms"] = last_source_unix_ms > 0
+            ? nlohmann::json(std::max<std::int64_t>(
+                  0, now_ms - last_source_unix_ms))
+            : nlohmann::json(nullptr);
         result["median_depth_m"] = median_depth_m
             ? nlohmann::json(*median_depth_m)
             : nlohmann::json(nullptr);
@@ -330,26 +438,78 @@ struct LivePreviewRuntime::Impl {
         double cached_focal_px = 0.0;
         auto last_started = std::chrono::steady_clock::time_point{};
         auto last_disk_write = std::chrono::steady_clock::time_point{};
+        std::optional<PendingLivePair> last_job;
+        std::uint64_t observed_profile_revision = 0;
+        std::uint64_t observed_reset_revision = 0;
 
         while (true) {
             PendingLivePair job;
+            LiveProfileSpec live_profile{"HIGH_640", 360, 640, 200};
+            std::uint64_t job_profile_revision = 0;
+            bool replayed_input_for_job = false;
             {
                 std::unique_lock lock(mutex);
-                condition.wait(lock, [this] {
-                    return stopping || pending.has_value();
-                });
+                if (observed_reset_revision != reset_revision) {
+                    last_job.reset();
+                    map_revision = 0;
+                    map_size = {};
+                    last_started = {};
+                    observed_reset_revision = reset_revision;
+                }
+                if (!pending && !last_job) {
+                    condition.wait(lock, [this] {
+                        return stopping || pending.has_value();
+                    });
+                }
                 if (stopping) break;
 
-                if (last_started.time_since_epoch().count() != 0) {
-                    const auto due = last_started + kLiveInterval;
-                    condition.wait_until(lock, due, [this] {
-                        return stopping;
-                    });
-                    if (stopping) break;
+                if (observed_profile_revision != profile_revision) {
+                    last_started = {};
+                    observed_profile_revision = profile_revision;
                 }
-                if (!pending) continue;
-                job = std::move(*pending);
-                pending.reset();
+                live_profile = live_profile_spec(requested_profile_mode);
+
+                if (last_started.time_since_epoch().count() != 0) {
+                    const auto due = last_started +
+                        std::chrono::milliseconds(live_profile.interval_ms);
+                    condition.wait_until(
+                        lock,
+                        due,
+                        [this, observed_profile_revision, observed_reset_revision] {
+                            return stopping ||
+                                   profile_revision != observed_profile_revision ||
+                                   reset_revision != observed_reset_revision;
+                        });
+                    if (stopping) break;
+                    if (observed_reset_revision != reset_revision) {
+                        last_job.reset();
+                        map_revision = 0;
+                        map_size = {};
+                        last_started = {};
+                        observed_reset_revision = reset_revision;
+                        continue;
+                    }
+                    if (observed_profile_revision != profile_revision) {
+                        last_started = {};
+                        observed_profile_revision = profile_revision;
+                        live_profile = live_profile_spec(requested_profile_mode);
+                    }
+                }
+
+                if (pending) {
+                    last_job = std::move(*pending);
+                    pending.reset();
+                    replayed_input_for_job = false;
+                    fresh_input_frames += 1;
+                } else if (last_job) {
+                    replayed_input_for_job = true;
+                    replayed_input_frames += 1;
+                } else {
+                    continue;
+                }
+                job = *last_job;
+                live_profile = live_profile_spec(requested_profile_mode);
+                job_profile_revision = profile_revision;
             }
 
             last_started = std::chrono::steady_clock::now();
@@ -525,10 +685,21 @@ struct LivePreviewRuntime::Impl {
                         "live oriented dimensions differ");
                 }
 
-                cv::Size work_size{kLivePortraitWidth, kLivePortraitHeight};
+                cv::Size work_size{
+                    live_profile.portrait_width,
+                    live_profile.portrait_height,
+                };
                 if (oriented_a.cols > oriented_a.rows) {
-                    work_size = {kLivePortraitHeight, kLivePortraitWidth};
+                    work_size = {
+                        live_profile.portrait_height,
+                        live_profile.portrait_width,
+                    };
                 }
+                const bool source_upscaled =
+                    work_size.width > oriented_a.cols ||
+                    work_size.height > oriented_a.rows;
+                const int resize_interpolation =
+                    source_upscaled ? cv::INTER_CUBIC : cv::INTER_AREA;
                 cv::Mat work_a;
                 cv::Mat work_b;
                 cv::resize(
@@ -537,14 +708,14 @@ struct LivePreviewRuntime::Impl {
                     work_size,
                     0.0,
                     0.0,
-                    cv::INTER_AREA);
+                    resize_interpolation);
                 cv::resize(
                     oriented_b,
                     work_b,
                     work_size,
                     0.0,
                     0.0,
-                    cv::INTER_AREA);
+                    resize_interpolation);
 
                 const double focal_px =
                     cached_focal_px *
@@ -738,8 +909,40 @@ struct LivePreviewRuntime::Impl {
                 const int display_rotation = normalize_degrees(
                     job.pair.camera_a.rotation_degrees -
                     processing_rotation);
-                const auto display =
+                auto display =
                     rotate_for_display(*selected, display_rotation);
+                const auto heartbeat_tick =
+                    static_cast<std::uint64_t>(
+                        std::max<std::int64_t>(0, unix_time_ms()) / 200);
+                const bool heartbeat_phase = (heartbeat_tick % 2U) != 0U;
+                const auto heartbeat_colour = replayed_input_for_job
+                    ? (heartbeat_phase
+                        ? cv::Scalar(0, 165, 255)
+                        : cv::Scalar(0, 255, 255))
+                    : (heartbeat_phase
+                        ? cv::Scalar(0, 255, 0)
+                        : cv::Scalar(255, 255, 0));
+                cv::circle(
+                    display,
+                    {
+                        std::max(8, display.cols - 12),
+                        std::max(8, display.rows - 12),
+                    },
+                    5,
+                    heartbeat_colour,
+                    cv::FILLED,
+                    cv::LINE_AA);
+                cv::putText(
+                    display,
+                    std::string(replayed_input_for_job ? "REPLAY #" : "LIVE #") +
+                        std::to_string(job.pair.pair_index) + " @" +
+                        std::to_string(heartbeat_tick % 1000U),
+                    {10, std::max(18, display.rows - 10)},
+                    cv::FONT_HERSHEY_SIMPLEX,
+                    0.42,
+                    cv::Scalar(255, 255, 255),
+                    1,
+                    cv::LINE_AA);
 
                 const auto encode_started =
                     std::chrono::steady_clock::now();
@@ -771,59 +974,91 @@ struct LivePreviewRuntime::Impl {
                     job.calibration.measured_baseline_mm);
 
                 nlohmann::json diagnostic;
+                bool stale_profile_result = false;
                 {
                     std::scoped_lock lock(mutex);
-                    selected_jpeg = std::move(jpeg);
-                    ready = true;
-                    sequence += 1;
-                    pair_index = job.pair.pair_index;
-                    work_width = display.cols;
-                    work_height = display.rows;
-                    valid_ratio = ratio;
-                    median_depth_m = median;
-                    last_compute_ms = compute_ms;
-                    last_encode_ms = encode_ms;
-                    last_total_ms = total_ms;
-                    last_error.clear();
-                    processed_pairs += 1;
-                    success_times.push_back(finished);
-                    while (!success_times.empty() &&
-                           finished - success_times.front() > kFpsWindow) {
-                        success_times.pop_front();
+                    if (job_profile_revision != profile_revision) {
+                        stale_profile_results += 1;
+                        stale_profile_result = true;
+                        diagnostic = {
+                            {"event", "LIVE_PREVIEW_STALE_PROFILE_DISCARDED"},
+                            {"pair_index", job.pair.pair_index},
+                            {"job_profile_revision", job_profile_revision},
+                            {"current_profile_revision", profile_revision},
+                        };
+                    } else {
+                        selected_jpeg = std::move(jpeg);
+                        ready = true;
+                        sequence += 1;
+                        pair_index = job.pair.pair_index;
+                        work_width = display.cols;
+                        work_height = display.rows;
+                        valid_ratio = ratio;
+                        median_depth_m = median;
+                        last_compute_ms = compute_ms;
+                        last_encode_ms = encode_ms;
+                        last_total_ms = total_ms;
+                        last_publish_unix_ms = unix_time_ms();
+                        last_source_unix_ms = job.received_unix_ms;
+                        last_source_sequence_a = job.pair.camera_a.sequence;
+                        last_source_sequence_b = job.pair.camera_b.sequence;
+                        input_replayed = replayed_input_for_job;
+                        last_error.clear();
+                        processed_pairs += 1;
+                        success_times.push_back(finished);
+                        while (!success_times.empty() &&
+                               finished - success_times.front() > kFpsWindow) {
+                            success_times.pop_front();
+                        }
+                        if (success_times.size() >= 2) {
+                            const double seconds =
+                                std::chrono::duration<double>(
+                                    success_times.back() -
+                                    success_times.front()).count();
+                            actual_fps = seconds > 0.0
+                                ? static_cast<double>(
+                                      success_times.size() - 1) / seconds
+                                : 0.0;
+                        }
+                        diagnostic = {
+                            {"event", "LIVE_PREVIEW_READY"},
+                            {"pair_index", pair_index},
+                            {"sequence", sequence},
+                            {"selected_mode",
+                             operator_preview_mode_name(mode)},
+                            {"resolution_policy", "MATCH_PROFILE"},
+                            {"requested_profile", requested_profile_mode},
+                            {"active_profile", live_profile.name},
+                            {"profile_revision", profile_revision},
+                            {"target_fps",
+                             1000.0 /
+                                 static_cast<double>(live_profile.interval_ms)},
+                            {"actual_fps", actual_fps},
+                            {"work_width", work_width},
+                            {"work_height", work_height},
+                            {"source_upscaled", source_upscaled},
+                            {"input_replayed", replayed_input_for_job},
+                            {"source_age_ms",
+                             std::max<std::int64_t>(
+                                 0, last_publish_unix_ms -
+                                        job.received_unix_ms)},
+                            {"source_sequence_a", last_source_sequence_a},
+                            {"source_sequence_b", last_source_sequence_b},
+                            {"compute_ms", compute_ms},
+                            {"jpeg_encode_ms", encode_ms},
+                            {"total_ms", total_ms},
+                            {"valid_ratio", ratio},
+                            {"median_depth_m",
+                             median
+                                 ? nlohmann::json(*median)
+                                 : nlohmann::json(nullptr)},
+                            {"geometry_calibration_revision",
+                             job.calibration.revision},
+                        };
                     }
-                    if (success_times.size() >= 2) {
-                        const double seconds =
-                            std::chrono::duration<double>(
-                                success_times.back() -
-                                success_times.front()).count();
-                        actual_fps = seconds > 0.0
-                            ? static_cast<double>(
-                                  success_times.size() - 1) / seconds
-                            : 0.0;
-                    }
-                    diagnostic = {
-                        {"event", "LIVE_PREVIEW_READY"},
-                        {"pair_index", pair_index},
-                        {"sequence", sequence},
-                        {"selected_mode",
-                         operator_preview_mode_name(mode)},
-                        {"target_fps", 5.0},
-                        {"actual_fps", actual_fps},
-                        {"work_width", work_width},
-                        {"work_height", work_height},
-                        {"compute_ms", compute_ms},
-                        {"jpeg_encode_ms", encode_ms},
-                        {"total_ms", total_ms},
-                        {"valid_ratio", ratio},
-                        {"median_depth_m",
-                         median
-                             ? nlohmann::json(*median)
-                             : nlohmann::json(nullptr)},
-                        {"geometry_calibration_revision",
-                         job.calibration.revision},
-                    };
                 }
                 append_diagnostic(std::move(diagnostic));
+                if (stale_profile_result) continue;
             } catch (const std::exception& error) {
                 nlohmann::json diagnostic;
                 {
@@ -866,11 +1101,21 @@ struct LivePreviewRuntime::Impl {
     double last_compute_ms = 0.0;
     double last_encode_ms = 0.0;
     double last_total_ms = 0.0;
+    std::int64_t last_publish_unix_ms = 0;
+    std::int64_t last_source_unix_ms = 0;
+    std::uint64_t last_source_sequence_a = 0;
+    std::uint64_t last_source_sequence_b = 0;
+    bool input_replayed = false;
+    std::string requested_profile_mode = "HIGH_640";
     std::string last_error;
     std::uint64_t submitted_pairs = 0;
     std::uint64_t processed_pairs = 0;
     std::uint64_t failed_pairs = 0;
     std::uint64_t dropped_pending_pairs = 0;
+    std::uint64_t fresh_input_frames = 0;
+    std::uint64_t replayed_input_frames = 0;
+    std::uint64_t stale_profile_results = 0;
+    std::uint64_t profile_revision = 1;
     std::uint64_t reset_revision = 0;
     std::deque<std::chrono::steady_clock::time_point> success_times;
 };
@@ -885,6 +1130,10 @@ void LivePreviewRuntime::submit(
     StereoPreviewPair pair,
     ResolvedCalibration calibration) {
     impl_->submit(std::move(pair), std::move(calibration));
+}
+
+nlohmann::json LivePreviewRuntime::select_profile(std::string mode) {
+    return impl_->select_profile(std::move(mode));
 }
 
 void LivePreviewRuntime::reset() {

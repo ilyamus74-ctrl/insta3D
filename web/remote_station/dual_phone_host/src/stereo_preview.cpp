@@ -155,7 +155,12 @@ struct StereoPreview::Impl {
     }
 
     nlohmann::json select_depth_profile(const std::string& mode) {
-        return depth_runtime.select_mode(mode);
+        auto result = depth_runtime.select_mode(mode);
+        const auto selected_mode = result.value(
+            "selection_mode",
+            std::string("HIGH_640"));
+        result["live_preview"] = live_runtime.select_profile(selected_mode);
+        return result;
     }
 
     nlohmann::json depth_profiles_json() const {
