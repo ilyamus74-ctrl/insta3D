@@ -173,6 +173,8 @@ struct PoseDecision {
     double fused_yaw_step_deg = 0.0;
     double translation_m = 0.0;
     double rotation_deg = 0.0;
+    double translation_from_last_keyframe_m = 0.0;
+    double yaw_from_last_keyframe_deg = 0.0;
     MotionMode motion_evidence = MotionMode::Unknown;
     std::uint64_t reference_keyframe_id = 0;
     std::uint64_t reference_pair_index = 0;
@@ -1342,6 +1344,36 @@ struct AccumulatedMapRuntime::Impl {
         return best;
     }
 
+    void apply_cumulative_keyframe_gate(PoseDecision& decision) const {
+        if (!decision.valid || registration_keyframes.empty() ||
+            decision.method == "AUTO_WALK_GYRO_COAST") {
+            return;
+        }
+        const auto& last_keyframe_pose =
+            registration_keyframes.back().world_from_camera;
+        decision.translation_from_last_keyframe_m = translation_delta_m(
+            last_keyframe_pose, decision.world_from_camera);
+        decision.yaw_from_last_keyframe_deg = signed_yaw_delta_deg(
+            last_keyframe_pose, decision.world_from_camera);
+        const bool forced_relocalization =
+            decision.method.find("RELOCALIZED") != std::string::npos;
+        decision.keyframe =
+            forced_relocalization ||
+            decision.translation_from_last_keyframe_m >=
+                kMinimumKeyframeTranslationM ||
+            std::abs(decision.yaw_from_last_keyframe_deg) >=
+                kMinimumKeyframeYawDeg;
+        if (!decision.keyframe) {
+            decision.state = "TRACKING_STATIONARY";
+        } else if (decision.method.find("APRILTAG") != std::string::npos) {
+            decision.state = "TRACKING_APRILTAG";
+        } else {
+            decision.state = decision.rotation_only
+                ? "TRACKING_ROTATION"
+                : "TRACKING_WALK";
+        }
+    }
+
     void worker_loop() {
         while (true) {
             MapJob job;
@@ -1436,6 +1468,7 @@ struct AccumulatedMapRuntime::Impl {
                                 ? "APRILTAG_CONSTRAINT_REJECTED_LIVE"
                                 : "NO_ORB_FEATURES_AND_NO_STEREO_APRILTAG_ANCHOR";
                     }
+                    apply_cumulative_keyframe_gate(decision);
                     commit_motion_mode(decision.motion_evidence);
                     append_pose_validation({
                         {"pair_index", job.pair_index},
@@ -1446,6 +1479,10 @@ struct AccumulatedMapRuntime::Impl {
                         {"gyro_yaw_step_deg", decision.gyro_yaw_step_deg},
                         {"visual_yaw_step_deg", decision.visual_yaw_step_deg},
                         {"fused_yaw_step_deg", decision.fused_yaw_step_deg},
+                        {"translation_from_last_keyframe_m",
+                         decision.translation_from_last_keyframe_m},
+                        {"yaw_from_last_keyframe_deg",
+                         decision.yaw_from_last_keyframe_deg},
                         {"motion_mode", motion_mode_name(motion_mode_snapshot())},
                         {"motion_evidence", motion_mode_name(decision.motion_evidence)},
                         {"accelerometer_motion_mps2", job.acceleration_motion_mps2},
@@ -1599,7 +1636,9 @@ struct AccumulatedMapRuntime::Impl {
 
                 const double gyro_step = first ? 0.0 : decision.gyro_yaw_step_deg;
                 const double visual_step = first ? 0.0 : decision.visual_yaw_step_deg;
-                const double fused_step = first ? 0.0 : decision.fused_yaw_step_deg;
+                const double fused_step = first
+                    ? 0.0
+                    : decision.yaw_from_last_keyframe_deg;
                 if (!first) worker_accumulated_yaw_deg += fused_step;
                 const bool resumed = job.segment_resume;
                 const std::string keyframe_state = first
@@ -1623,7 +1662,9 @@ struct AccumulatedMapRuntime::Impl {
                     visual_step,
                     fused_step,
                     worker_accumulated_yaw_deg,
-                    first ? 0.0 : decision.translation_m,
+                    first
+                        ? 0.0
+                        : decision.translation_from_last_keyframe_m,
                     first ? 0 : decision.visual.matches,
                     inliers,
                     inlier_ratio,
@@ -1680,7 +1721,9 @@ struct AccumulatedMapRuntime::Impl {
                     last_visual_yaw_step_deg = visual_step;
                     last_fused_yaw_step_deg = fused_step;
                     accumulated_yaw_deg = worker_accumulated_yaw_deg;
-                    last_translation_m = first ? 0.0 : decision.translation_m;
+                    last_translation_m = first
+                        ? 0.0
+                        : decision.translation_from_last_keyframe_m;
                     last_processing_ms = duration;
                     last_rejection_reason.clear();
                     last_error.clear();
