@@ -61,6 +61,11 @@ for name in \
   live_preview_status.json \
   room_geometry.jsonl \
   room_geometry_status.json \
+  accumulated_map.jsonl \
+  accumulated_map_status.json \
+  point_cloud_accumulated.ply \
+  camera_trajectory.json \
+  camera_trajectory.ply \
   point_cloud_latest.ply \
   room_skeleton_latest.ply \
   room_planes_latest.json \

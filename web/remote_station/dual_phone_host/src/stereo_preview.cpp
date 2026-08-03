@@ -1,5 +1,6 @@
 #include "stereo_preview.hpp"
 
+#include "accumulated_map_runtime.hpp"
 #include "live_preview_runtime.hpp"
 #include "protocol.hpp"
 #include "room_geometry_runtime.hpp"
@@ -76,6 +77,7 @@ nlohmann::json matrix_json(const cv::Mat& matrix) {
 
 }  // namespace
 
+using detail::AccumulatedMapRuntime;
 using detail::CalibrationProfile;
 using detail::ImageStatistics;
 using detail::LivePreviewRuntime;
@@ -107,7 +109,8 @@ struct StereoPreview::Impl {
         : session_directory(std::move(session_path)),
           diagnostics(session_directory / "stereo_preview.jsonl", std::ios::app),
           live_runtime(session_directory),
-          room_geometry(session_directory) {
+          room_geometry(session_directory),
+          accumulated_map(session_directory) {
         if (!diagnostics) throw std::runtime_error("cannot create stereo preview diagnostics");
         worker = std::thread([this] { worker_loop(); });
     }
@@ -263,6 +266,7 @@ struct StereoPreview::Impl {
         configuration_revision += 1;
         depth_runtime.reset_geometry();
         room_geometry.reset();
+        accumulated_map.reset();
 
         if (!profile) {
             calibration_state = profile_error.empty() ? "WAITING_FOR_CALIBRATION" : "ERROR";
@@ -315,6 +319,7 @@ struct StereoPreview::Impl {
             {"depth", depth_runtime.status_json()},
             {"live_preview", live},
             {"room_geometry", room_geometry.status_json()},
+            {"accumulated_map", accumulated_map.status_json()},
             {"processing", {
                 {"submitted_pairs", submitted},
                 {"processed_pairs", processed},
@@ -743,6 +748,10 @@ struct StereoPreview::Impl {
                     pair.pair_index,
                     depth_budget->profile_name,
                     depth);
+                accumulated_map.submit(
+                    pair.pair_index,
+                    depth_budget->profile_name,
+                    depth);
             } catch (const std::exception& error) {
                 nlohmann::json diagnostic;
                 {
@@ -775,6 +784,7 @@ struct StereoPreview::Impl {
     std::ofstream diagnostics;
     LivePreviewRuntime live_runtime;
     RoomGeometryRuntime room_geometry;
+    AccumulatedMapRuntime accumulated_map;
     std::thread worker;
     std::array<std::string, 2> device_ids;
     std::optional<CalibrationProfile> profile;
