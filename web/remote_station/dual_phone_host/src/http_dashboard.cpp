@@ -10,6 +10,7 @@
 #include <iterator>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -27,6 +28,7 @@ std::string status_text(const int status) {
     switch (status) {
         case 200: return "OK";
         case 202: return "Accepted";
+        case 400: return "Bad Request";
         case 404: return "Not Found";
         default: return "Error";
     }
@@ -110,6 +112,20 @@ void HttpDashboard::handle_client(const int client_fd) {
         if (callback) callback();
         return;
     }
+    constexpr std::string_view profile_prefix = "/api/depth/profile/";
+    if (method == "POST" && path.rfind(profile_prefix, 0) == 0) {
+        const auto mode = path.substr(profile_prefix.size());
+        try {
+            const auto result = state_.select_depth_profile(mode);
+            state_.log_event("INFO", "DEPTH_PROFILE_SELECTED",
+                             {{"requested_mode", mode}, {"result", result}});
+            send_text(client_fd, 200, "application/json", result.dump());
+        } catch (const std::exception& error) {
+            send_text(client_fd, 400, "application/json",
+                      nlohmann::json({{"error", error.what()}}).dump());
+        }
+        return;
+    }
     if (method != "GET") {
         send_text(client_fd, 404, "text/plain", "GET only\n");
         return;
@@ -121,6 +137,11 @@ void HttpDashboard::handle_client(const int client_fd) {
     }
     if (path == "/api/status") {
         send_text(client_fd, 200, "application/json", state_.status_json().dump());
+        return;
+    }
+    if (path == "/api/depth/profiles") {
+        send_text(client_fd, 200, "application/json",
+                  state_.depth_profiles_json().dump());
         return;
     }
     if (path == "/api/events") {
@@ -140,10 +161,20 @@ void HttpDashboard::handle_client(const int client_fd) {
     }
     if (path == "/stereo/rectified_a.jpg" ||
         path == "/stereo/rectified_b.jpg" ||
-        path == "/stereo/disparity.jpg") {
+        path == "/stereo/disparity.jpg" ||
+        path == "/stereo/depth_raw.jpg" ||
+        path == "/stereo/depth_filtered.jpg" ||
+        path == "/stereo/depth_strict.jpg" ||
+        path == "/stereo/confidence.jpg") {
         StereoPreviewImage kind = StereoPreviewImage::Disparity;
         if (path == "/stereo/rectified_a.jpg") kind = StereoPreviewImage::RectifiedA;
         if (path == "/stereo/rectified_b.jpg") kind = StereoPreviewImage::RectifiedB;
+        if (path == "/stereo/depth_raw.jpg") kind = StereoPreviewImage::DepthRaw;
+        if (path == "/stereo/depth_filtered.jpg") {
+            kind = StereoPreviewImage::DepthFiltered;
+        }
+        if (path == "/stereo/depth_strict.jpg") kind = StereoPreviewImage::DepthStrict;
+        if (path == "/stereo/confidence.jpg") kind = StereoPreviewImage::Confidence;
         const auto preview = state_.stereo_preview_image(kind);
         if (!preview || preview->empty()) {
             send_text(client_fd, 404, "text/plain", "stereo preview not ready\n");

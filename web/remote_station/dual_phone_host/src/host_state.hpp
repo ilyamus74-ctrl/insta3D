@@ -68,6 +68,8 @@ public:
     std::filesystem::path session_directory() const;
     std::optional<std::vector<std::uint8_t>> stereo_preview_image(
         StereoPreviewImage kind) const;
+    nlohmann::json select_depth_profile(const std::string& mode);
+    nlohmann::json depth_profiles_json() const;
 
 private:
     struct MutableCamera {

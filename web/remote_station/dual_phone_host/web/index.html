@@ -11,6 +11,9 @@ header { position: sticky; top: 0; z-index: 2; display: flex; align-items: cente
 .header-copy { min-width: 0; }
 h1 { margin: 0 0 6px; font-size: 20px; }
 #summary { font-family: ui-monospace, monospace; font-size: 13px; color: #c9c9d3; }
+.header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.profile-control { display: flex; align-items: center; gap: 7px; font-family: ui-monospace, monospace; font-size: 12px; color: #c9c9d3; }
+#depthProfile { border: 1px solid #4a4a58; border-radius: 9px; padding: 8px 9px; background: #1d1d25; color: #f5f5f7; }
 #stopButton { flex: 0 0 auto; border: 1px solid #6d5361; border-radius: 10px; padding: 9px 12px; background: #2a1820; color: #ffdbe8; cursor: pointer; font-weight: 650; }
 #stopButton:hover { background: #3a202b; }
 #stopButton:disabled { cursor: wait; opacity: .65; }
@@ -45,9 +48,21 @@ pre { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap;
     <h1>MaklerTour · CPU Laptop Stereo Host</h1>
     <div id="summary">waiting for host…</div>
   </div>
-  <button id="stopButton" type="button" title="F8 or Alt+S">
-    Stop + pack JSON · F8
-  </button>
+  <div class="header-actions">
+    <label class="profile-control">DEPTH
+      <select id="depthProfile">
+        <option value="AUTO">AUTO</option>
+        <option value="FHD_1920">FHD 1920 · load test</option>
+        <option value="ULTRA_960">ULTRA 960</option>
+        <option value="HIGH_640">HIGH 640</option>
+        <option value="QUALITY_480">QUALITY 480</option>
+        <option value="BALANCED_320">BALANCED 320</option>
+      </select>
+    </label>
+    <button id="stopButton" type="button" title="F8 or Alt+S">
+      Stop + pack JSON · F8
+    </button>
+  </div>
 </header>
 
 <div class="block-title">
@@ -72,11 +87,23 @@ pre { max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap;
   <div id="disparityLabel" class="label warn">STEREOSGBM · WAITING</div>
 </div>
 
+<div class="block-title">
+  <h2>Metric depth and confidence</h2>
+  <span id="depthStatus">AUTO profile waiting</span>
+</div>
+<div class="grid">
+  <div class="camera"><img id="depthRaw"><div id="depthRawLabel" class="label warn">RAW METRIC · WAITING</div></div>
+  <div class="camera"><img id="depthFiltered"><div id="depthFilteredLabel" class="label warn">FILTERED · WAITING</div></div>
+  <div class="camera"><img id="depthStrict"><div id="depthStrictLabel" class="label warn">TEMPORAL STRICT · WAITING</div></div>
+  <div class="camera"><img id="confidence"><div id="confidenceLabel" class="label warn">CONFIDENCE · WAITING</div></div>
+</div>
+
 <section><strong>Diagnostic JSON</strong><pre id="json"></pre></section>
 <script>
 const fmt = n => Number(n || 0).toFixed(1);
 const percent = n => `${(Number(n || 0) * 100).toFixed(1)}%`;
 const stopButton = document.getElementById('stopButton');
+const depthProfile = document.getElementById('depthProfile');
 const summary = document.getElementById('summary');
 const pairStatus = document.getElementById('pairStatus');
 const calibrationStatus = document.getElementById('calibrationStatus');
@@ -90,6 +117,15 @@ const rectifiedLabelA = document.getElementById('rectifiedLabelA');
 const rectifiedLabelB = document.getElementById('rectifiedLabelB');
 const disparity = document.getElementById('disparity');
 const disparityLabel = document.getElementById('disparityLabel');
+const depthStatus = document.getElementById('depthStatus');
+const depthRaw = document.getElementById('depthRaw');
+const depthFiltered = document.getElementById('depthFiltered');
+const depthStrict = document.getElementById('depthStrict');
+const confidence = document.getElementById('confidence');
+const depthRawLabel = document.getElementById('depthRawLabel');
+const depthFilteredLabel = document.getElementById('depthFilteredLabel');
+const depthStrictLabel = document.getElementById('depthStrictLabel');
+const confidenceLabel = document.getElementById('confidenceLabel');
 const diagnosticJson = document.getElementById('json');
 let stopping = false;
 let lastStereoPair = -1;
@@ -114,6 +150,17 @@ async function stopAndPack() {
 }
 
 stopButton.addEventListener('click', stopAndPack);
+depthProfile.addEventListener('change', async () => {
+  depthProfile.disabled = true;
+  try {
+    const response = await fetch(`/api/depth/profile/${depthProfile.value}`, {method: 'POST'});
+    if (!response.ok) throw new Error(await response.text());
+  } catch (error) {
+    summary.textContent = `depth profile change failed: ${error}`;
+  } finally {
+    depthProfile.disabled = false;
+  }
+});
 window.addEventListener('keydown', event => {
   if (event.key === 'F8' || (event.altKey && event.key.toLowerCase() === 's')) {
     event.preventDefault();
@@ -147,6 +194,7 @@ function updateStereo(stereo) {
   const calibration = stereo.calibration || {};
   const processing = stereo.processing || {};
   const previews = stereo.previews || {};
+  const depth = stereo.depth || {};
   const ready = calibration.state === 'READY';
   const profile = calibration.profile_id || 'no profile';
   const order = calibration.roles_reversed ? 'runtime order reversed' : 'profile order';
@@ -169,12 +217,38 @@ function updateStereo(stereo) {
   rectifiedLabelB.className = `label ${previews.rectified_b_ready ? 'ok' : (processing.last_error ? 'bad' : 'warn')}`;
   disparityLabel.className = `label ${previews.disparity_ready ? 'ok' : (processing.last_error ? 'bad' : 'warn')}`;
 
+  const work = depth.work_width && depth.work_height
+    ? `${depth.work_width}×${depth.work_height}`
+    : 'pending';
+  const metricReady = previews.depth_strict_ready;
+  const median = depth.median_depth_m == null ? '—' : `${Number(depth.median_depth_m).toFixed(2)} m`;
+  const jitter = depth.depth_jitter_m == null ? '—' : `${Number(depth.depth_jitter_m).toFixed(2)} m`;
+  const upscale = depth.source_upscaled ? ' · UPSCALED SOURCE' : '';
+  depthStatus.textContent =
+    `${depth.selection_mode || 'AUTO'} → ${depth.active_profile || 'WAITING'} · ${work} · ` +
+    `${fmt(depth.target_depth_fps)} target FPS · p95 ${fmt(depth.processing_p95_ms)} ms · ` +
+    `load ${fmt(depth.processing_utilization_percent)}%${upscale}`;
+  if (depthProfile.value !== depth.selection_mode && !depthProfile.disabled) {
+    depthProfile.value = depth.selection_mode || 'AUTO';
+  }
+  depthRawLabel.textContent = `RAW METRIC · ${previews.depth_raw_ready ? 'READY' : 'WAITING'}\nvalid ${percent(depth.raw_valid_ratio)} · median ${median}`;
+  depthFilteredLabel.textContent = `FILTERED · ${previews.depth_filtered_ready ? 'READY' : 'WAITING'}\nvalid ${percent(depth.dense_coverage_ratio)} · LR ${fmt(depth.left_right_accepted_percent)}%`;
+  depthStrictLabel.textContent = `TEMPORAL STRICT · ${metricReady ? 'READY' : 'WAITING'}\nstable ${percent(depth.stable_coverage_ratio)} · jitter ${jitter}`;
+  confidenceLabel.textContent = `CONFIDENCE · ${previews.confidence_ready ? 'READY' : 'WAITING'}\nhigh ${percent(depth.high_confidence_ratio)} · ${depth.temporal_mode || 'WAITING'} · motion ${fmt(depth.motion_score_percent)}%`;
+  for (const label of [depthRawLabel, depthFilteredLabel, depthStrictLabel, confidenceLabel]) {
+    label.className = `label ${metricReady ? 'ok' : (processing.last_error ? 'bad' : 'warn')}`;
+  }
+
   const pairIndex = Number(processing.last_success_pair_index || 0);
   if (pairIndex > 0 && pairIndex !== lastStereoPair) {
     const tick = Date.now();
     if (previews.rectified_a_ready) rectifiedA.src = `/stereo/rectified_a.jpg?t=${tick}`;
     if (previews.rectified_b_ready) rectifiedB.src = `/stereo/rectified_b.jpg?t=${tick}`;
     if (previews.disparity_ready) disparity.src = `/stereo/disparity.jpg?t=${tick}`;
+    if (previews.depth_raw_ready) depthRaw.src = `/stereo/depth_raw.jpg?t=${tick}`;
+    if (previews.depth_filtered_ready) depthFiltered.src = `/stereo/depth_filtered.jpg?t=${tick}`;
+    if (previews.depth_strict_ready) depthStrict.src = `/stereo/depth_strict.jpg?t=${tick}`;
+    if (previews.confidence_ready) confidence.src = `/stereo/confidence.jpg?t=${tick}`;
     lastStereoPair = pairIndex;
   }
 }
@@ -192,13 +266,15 @@ async function refresh() {
     const stereo = status.stereo_preview || {};
     const processing = stereo.processing || {};
     const calibration = stereo.calibration || {};
+    const depth = stereo.depth || {};
     pairStatus.textContent =
       `Δ ${fmt(pair.last_delta_ms)} ms · ready ${pair.ready_pairs}/${pair.pairs} · ` +
       `queues ${pair.queue_a}/${pair.queue_b} · dropped ${pair.dropped_a}/${pair.dropped_b}`;
     summary.textContent =
       `A ${fmt(status.camera_a.fps)} FPS · B ${fmt(status.camera_b.fps)} FPS · ` +
       `pair Δ ${fmt(pair.last_delta_ms)} ms · rectification ${calibration.state || 'WAITING'} · ` +
-      `proc ${fmt(processing.fps)} FPS · valid ${percent(processing.valid_disparity_ratio)}`;
+      `${depth.active_profile || 'DEPTH WAITING'} · proc ${fmt(processing.fps)} FPS · ` +
+      `stable ${percent(depth.stable_coverage_ratio)}`;
     diagnosticJson.textContent = JSON.stringify(status, null, 2);
     const tick = Date.now();
     if (status.camera_a.latest) cameraA.src = `/camera/a.jpg?t=${tick}`;

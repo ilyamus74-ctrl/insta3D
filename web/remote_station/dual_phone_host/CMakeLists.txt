@@ -16,6 +16,7 @@ add_executable(maklertour-dual-phone-host
     src/http_dashboard.cpp
     src/stereo_preview.cpp
     src/stereo_preview_processing.cpp
+    src/stereo_depth_runtime.cpp
 )
 
 add_executable(maklertour-dual-phone-synthetic-client

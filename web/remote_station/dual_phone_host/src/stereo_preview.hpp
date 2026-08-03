@@ -32,6 +32,10 @@ enum class StereoPreviewImage {
     RectifiedA,
     RectifiedB,
     Disparity,
+    DepthRaw,
+    DepthFiltered,
+    DepthStrict,
+    Confidence,
 };
 
 class StereoPreview {
@@ -48,6 +52,8 @@ public:
     void clear_calibration_profile();
     void submit(StereoPreviewPair pair);
 
+    nlohmann::json select_depth_profile(const std::string& mode);
+    nlohmann::json depth_profiles_json() const;
     nlohmann::json status_json() const;
     std::optional<std::vector<std::uint8_t>> image(StereoPreviewImage kind) const;
 

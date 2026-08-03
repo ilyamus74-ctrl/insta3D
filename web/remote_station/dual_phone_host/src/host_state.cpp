@@ -95,10 +95,10 @@ HostState::HostState(std::filesystem::path output_root,
     nlohmann::json session = {
         {"schema_version", 1},
         {"created_at", utc_iso8601_now()},
-        {"mode", "LM02.7B.3_CALIBRATED_RECTIFICATION_PREVIEW"},
+        {"mode", "LM02.7B.4_METRIC_DEPTH_CPU_PROFILES"},
         {"camera_roles", {"CAMERA_A", "CAMERA_B"}},
         {"archive_every", archive_every_},
-        {"stereo_processing", "OPENCV_RECTIFY_AND_SGBM_PREVIEW"},
+        {"stereo_processing", "OPENCV_RECTIFY_FILTERED_METRIC_DEPTH"},
     };
     std::ofstream(session_dir_ / "session.json") << std::setw(2) << session << '\n';
     log_event("INFO", "HOST_STARTED", {{"session_dir", session_dir_.string()}});
@@ -269,6 +269,14 @@ std::filesystem::path HostState::session_directory() const {
 std::optional<std::vector<std::uint8_t>> HostState::stereo_preview_image(
     const StereoPreviewImage kind) const {
     return stereo_preview_->image(kind);
+}
+
+nlohmann::json HostState::select_depth_profile(const std::string& mode) {
+    return stereo_preview_->select_depth_profile(mode);
+}
+
+nlohmann::json HostState::depth_profiles_json() const {
+    return stereo_preview_->depth_profiles_json();
 }
 
 void HostState::maybe_archive_locked(const CameraSlot slot,

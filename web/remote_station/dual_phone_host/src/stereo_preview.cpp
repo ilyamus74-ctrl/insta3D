@@ -1,6 +1,7 @@
 #include "stereo_preview.hpp"
 
 #include "protocol.hpp"
+#include "stereo_depth_runtime.hpp"
 #include "stereo_preview_processing.hpp"
 
 #include <algorithm>
@@ -77,6 +78,7 @@ using detail::CalibrationProfile;
 using detail::ImageStatistics;
 using detail::RectificationAxis;
 using detail::ResolvedCalibration;
+using detail::StereoDepthRuntime;
 
 using detail::camera_matrix;
 using detail::distortion;
@@ -149,6 +151,14 @@ struct StereoPreview::Impl {
         resolve_locked();
     }
 
+    nlohmann::json select_depth_profile(const std::string& mode) {
+        return depth_runtime.select_mode(mode);
+    }
+
+    nlohmann::json depth_profiles_json() const {
+        return depth_runtime.profiles_json();
+    }
+
     void submit(StereoPreviewPair value) {
         {
             std::scoped_lock lock(mutex);
@@ -175,6 +185,10 @@ struct StereoPreview::Impl {
             case StereoPreviewImage::RectifiedA: source = &rectified_a_jpeg; break;
             case StereoPreviewImage::RectifiedB: source = &rectified_b_jpeg; break;
             case StereoPreviewImage::Disparity: source = &disparity_jpeg; break;
+            case StereoPreviewImage::DepthRaw: source = &depth_raw_jpeg; break;
+            case StereoPreviewImage::DepthFiltered: source = &depth_filtered_jpeg; break;
+            case StereoPreviewImage::DepthStrict: source = &depth_strict_jpeg; break;
+            case StereoPreviewImage::Confidence: source = &confidence_jpeg; break;
         }
         if (source->empty()) return std::nullopt;
         return *source;
@@ -187,6 +201,10 @@ struct StereoPreview::Impl {
         rectified_a_jpeg.clear();
         rectified_b_jpeg.clear();
         disparity_jpeg.clear();
+        depth_raw_jpeg.clear();
+        depth_filtered_jpeg.clear();
+        depth_strict_jpeg.clear();
+        confidence_jpeg.clear();
         runtime_width = 0;
         runtime_height = 0;
         rectification_axis_state = "UNKNOWN";
@@ -200,6 +218,7 @@ struct StereoPreview::Impl {
         rectified_b_statistics = {};
         last_error.clear();
         configuration_revision += 1;
+        depth_runtime.reset_geometry();
 
         if (!profile) {
             calibration_state = profile_error.empty() ? "WAITING_FOR_CALIBRATION" : "ERROR";
@@ -248,6 +267,7 @@ struct StereoPreview::Impl {
         return {
             {"schema_version", 1},
             {"calibration", std::move(calibration)},
+            {"depth", depth_runtime.status_json()},
             {"processing", {
                 {"submitted_pairs", submitted},
                 {"processed_pairs", processed},
@@ -277,11 +297,19 @@ struct StereoPreview::Impl {
                 {"rectified_a_ready", !rectified_a_jpeg.empty()},
                 {"rectified_b_ready", !rectified_b_jpeg.empty()},
                 {"disparity_ready", !disparity_jpeg.empty()},
+                {"depth_raw_ready", !depth_raw_jpeg.empty()},
+                {"depth_filtered_ready", !depth_filtered_jpeg.empty()},
+                {"depth_strict_ready", !depth_strict_jpeg.empty()},
+                {"confidence_ready", !confidence_jpeg.empty()},
                 {"raw_a_latest", "raw_a_latest.jpg"},
                 {"raw_b_latest", "raw_b_latest.jpg"},
                 {"rectified_a_latest", "rectified_a_latest.jpg"},
                 {"rectified_b_latest", "rectified_b_latest.jpg"},
                 {"disparity_latest", "disparity_latest.jpg"},
+                {"depth_raw_latest", "depth_raw_latest.jpg"},
+                {"depth_filtered_latest", "depth_filtered_latest.jpg"},
+                {"depth_strict_latest", "depth_strict_latest.jpg"},
+                {"confidence_latest", "confidence_latest.jpg"},
             }},
         };
     }
@@ -301,6 +329,7 @@ struct StereoPreview::Impl {
         cv::Mat map_b_y;
         RectificationAxis cached_axis = RectificationAxis::Horizontal;
         double cached_projection_shift = 0.0;
+        double cached_rectified_focal_px = 0.0;
         double cached_map_valid_fraction_a = 0.0;
         double cached_map_valid_fraction_b = 0.0;
         std::chrono::steady_clock::time_point last_raw_image_write;
@@ -319,6 +348,8 @@ struct StereoPreview::Impl {
                 calibration = *resolved;
             }
 
+            const auto depth_budget = depth_runtime.acquire_budget();
+            if (!depth_budget) continue;
             const auto started = std::chrono::steady_clock::now();
             try {
                 auto frame_a = prepare_frame(pair.camera_a, calibration.camera_a, "CAMERA_A");
@@ -443,6 +474,14 @@ struct StereoPreview::Impl {
                         projection_b,
                         cached_axis,
                         calibration.translation_mm);
+                    cached_rectified_focal_px = std::abs(
+                        cached_axis == RectificationAxis::Vertical
+                            ? projection_a.at<double>(1, 1)
+                            : projection_a.at<double>(0, 0));
+                    if (!std::isfinite(cached_rectified_focal_px) ||
+                        cached_rectified_focal_px <= 1.0) {
+                        throw std::runtime_error("rectified focal length is unavailable");
+                    }
 
                     // Pass complete 3x4 effective P1/P2 matrices, matching the
                     // Android path. They are either native OpenCV output or the
@@ -548,17 +587,32 @@ struct StereoPreview::Impl {
                 const auto display_rotation_b = normalize_degrees(
                     pair.camera_b.rotation_degrees - processing_rotation);
 
-                auto disparity = make_disparity(
+                auto depth = depth_runtime.process(
                     rectified_a,
                     rectified_b,
-                    cached_projection_shift);
-                auto display_a = rotate_for_display(rectified_a, display_rotation_a);
-                auto display_b = rotate_for_display(rectified_b, display_rotation_b);
+                    cached_axis == RectificationAxis::Vertical,
+                    cached_rectified_focal_px,
+                    calibration.measured_baseline_mm,
+                    *depth_budget);
+                auto display_a = rotate_for_display(depth.work_a, display_rotation_a);
+                auto display_b = rotate_for_display(depth.work_b, display_rotation_b);
                 auto display_disparity = rotate_for_display(
-                    disparity.preview, display_rotation_a);
+                    depth.disparity_preview, display_rotation_a);
+                auto display_depth_raw = rotate_for_display(
+                    depth.raw_depth_preview, display_rotation_a);
+                auto display_depth_filtered = rotate_for_display(
+                    depth.filtered_depth_preview, display_rotation_a);
+                auto display_depth_strict = rotate_for_display(
+                    depth.strict_depth_preview, display_rotation_a);
+                auto display_confidence = rotate_for_display(
+                    depth.confidence_preview, display_rotation_a);
                 auto preview_a = encode_jpeg(with_epipolar_guides(display_a));
                 auto preview_b = encode_jpeg(with_epipolar_guides(display_b));
                 auto preview_disparity = encode_jpeg(display_disparity);
+                auto preview_depth_raw = encode_jpeg(display_depth_raw);
+                auto preview_depth_filtered = encode_jpeg(display_depth_filtered);
+                auto preview_depth_strict = encode_jpeg(display_depth_strict);
+                auto preview_confidence = encode_jpeg(display_confidence);
 
                 const auto preview_finished = std::chrono::steady_clock::now();
                 if (
@@ -572,6 +626,14 @@ struct StereoPreview::Impl {
                         session_directory / "rectified_b_latest.jpg", preview_b);
                     write_binary_atomic(
                         session_directory / "disparity_latest.jpg", preview_disparity);
+                    write_binary_atomic(
+                        session_directory / "depth_raw_latest.jpg", preview_depth_raw);
+                    write_binary_atomic(
+                        session_directory / "depth_filtered_latest.jpg", preview_depth_filtered);
+                    write_binary_atomic(
+                        session_directory / "depth_strict_latest.jpg", preview_depth_strict);
+                    write_binary_atomic(
+                        session_directory / "confidence_latest.jpg", preview_confidence);
                     last_processed_image_write = preview_finished;
                 }
 
@@ -595,10 +657,14 @@ struct StereoPreview::Impl {
                         rectified_a_jpeg = std::move(preview_a);
                         rectified_b_jpeg = std::move(preview_b);
                         disparity_jpeg = std::move(preview_disparity);
+                        depth_raw_jpeg = std::move(preview_depth_raw);
+                        depth_filtered_jpeg = std::move(preview_depth_filtered);
+                        depth_strict_jpeg = std::move(preview_depth_strict);
+                        confidence_jpeg = std::move(preview_confidence);
                         processed += 1;
                         maps_ready = true;
-                        runtime_width = rectified_a.cols;
-                        runtime_height = rectified_a.rows;
+                        runtime_width = depth.work_width;
+                        runtime_height = depth.work_height;
                         rectification_axis_state =
                             rectification_axis_name(cached_axis);
                         processing_rotation_degrees = processing_rotation;
@@ -613,9 +679,9 @@ struct StereoPreview::Impl {
                         last_attempt_pair_index = pair.pair_index;
                         last_success_pair_index = pair.pair_index;
                         last_pair_delta_ms = pair.delta_ms;
-                        valid_disparity_ratio = disparity.valid_ratio;
-                        min_disparity = disparity.min_disparity;
-                        num_disparities = disparity.num_disparities;
+                        valid_disparity_ratio = depth.filtered_valid_ratio;
+                        min_disparity = depth.min_disparity;
+                        num_disparities = depth.num_disparities;
                         last_error.clear();
                         success_times.push_back(finished);
                         while (!success_times.empty() &&
@@ -653,11 +719,31 @@ struct StereoPreview::Impl {
                              current_rectified_a_statistics.nonzero_fraction},
                             {"rectified_b_nonzero_fraction",
                              current_rectified_b_statistics.nonzero_fraction},
-                            {"valid_disparity_ratio", disparity.valid_ratio},
-                            {"min_disparity", disparity.min_disparity},
-                            {"num_disparities", disparity.num_disparities},
-                            {"width", rectified_a.cols},
-                            {"height", rectified_a.rows},
+                            {"selection_mode", depth_budget->selection_mode},
+                            {"quality_profile", depth_budget->profile_name},
+                            {"target_depth_fps", depth_budget->target_depth_fps},
+                            {"work_width", depth.work_width},
+                            {"work_height", depth.work_height},
+                            {"source_upscaled", depth.source_upscaled},
+                            {"raw_valid_ratio", depth.raw_valid_ratio},
+                            {"filtered_valid_ratio", depth.filtered_valid_ratio},
+                            {"dense_coverage_ratio", depth.dense_coverage_ratio},
+                            {"stable_coverage_ratio", depth.stable_coverage_ratio},
+                            {"high_confidence_ratio", depth.high_confidence_ratio},
+                            {"median_depth_m", depth.median_depth_m ? nlohmann::json(*depth.median_depth_m) : nlohmann::json(nullptr)},
+                            {"depth_jitter_m", depth.depth_jitter_m ? nlohmann::json(*depth.depth_jitter_m) : nlohmann::json(nullptr)},
+                            {"motion_score_percent", depth.motion_score_percent},
+                            {"temporal_mode", depth.temporal_mode},
+                            {"left_right_accepted_percent", depth.left_right_accepted_percent},
+                            {"texture_accepted_percent", depth.texture_accepted_percent},
+                            {"morphology_accepted_percent", depth.morphology_accepted_percent},
+                            {"focal_px", depth.focal_px},
+                            {"baseline_mm", depth.baseline_mm},
+                            {"valid_disparity_ratio", depth.filtered_valid_ratio},
+                            {"min_disparity", depth.min_disparity},
+                            {"num_disparities", depth.num_disparities},
+                            {"width", depth.work_width},
+                            {"height", depth.work_height},
                             {"camera_a_rotation_applied", frame_a.applied_rotation_degrees},
                             {"camera_b_rotation_applied", frame_b.applied_rotation_degrees},
                             {"roles_reversed", calibration.roles_reversed},
@@ -709,6 +795,11 @@ struct StereoPreview::Impl {
     std::vector<std::uint8_t> rectified_a_jpeg;
     std::vector<std::uint8_t> rectified_b_jpeg;
     std::vector<std::uint8_t> disparity_jpeg;
+    std::vector<std::uint8_t> depth_raw_jpeg;
+    std::vector<std::uint8_t> depth_filtered_jpeg;
+    std::vector<std::uint8_t> depth_strict_jpeg;
+    std::vector<std::uint8_t> confidence_jpeg;
+    StereoDepthRuntime depth_runtime;
     std::uint64_t submitted = 0;
     std::uint64_t processed = 0;
     std::uint64_t failed = 0;
@@ -763,6 +854,14 @@ void StereoPreview::clear_calibration_profile() {
 
 void StereoPreview::submit(StereoPreviewPair pair) {
     impl_->submit(std::move(pair));
+}
+
+nlohmann::json StereoPreview::select_depth_profile(const std::string& mode) {
+    return impl_->select_depth_profile(mode);
+}
+
+nlohmann::json StereoPreview::depth_profiles_json() const {
+    return impl_->depth_profiles_json();
 }
 
 nlohmann::json StereoPreview::status_json() const {

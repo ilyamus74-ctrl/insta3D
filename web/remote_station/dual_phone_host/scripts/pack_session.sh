@@ -66,7 +66,11 @@ for name in \
   raw_b_latest.jpg \
   rectified_a_latest.jpg \
   rectified_b_latest.jpg \
-  disparity_latest.jpg
+  disparity_latest.jpg \
+  depth_raw_latest.jpg \
+  depth_filtered_latest.jpg \
+  depth_strict_latest.jpg \
+  confidence_latest.jpg
 do
   [[ -f "$SESSION_DIR/$name" ]] && cp -a "$SESSION_DIR/$name" "$PACKAGE_ROOT/"
 done
