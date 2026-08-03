@@ -19,7 +19,7 @@ public:
     RoomGeometryRuntime(const RoomGeometryRuntime&) = delete;
     RoomGeometryRuntime& operator=(const RoomGeometryRuntime&) = delete;
 
-    void submit(
+    bool submit(
         std::uint64_t pair_index,
         std::string source_profile,
         const StereoDepthResult& depth);

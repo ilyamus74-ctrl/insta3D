@@ -309,7 +309,9 @@ function updateStereo(stereo) {
   const sourceAge = live.source_age_ms == null
     ? '—'
     : `${Number(live.source_age_ms).toFixed(0)} ms`;
-  const liveInput = live.input_replayed ? 'REPLAY' : 'FRESH';
+  const liveInput = live.input_replayed
+    ? 'REPLAY'
+    : (live.input_sync_mode || 'STRICT');
   depthStatus.textContent =
     `LIVE ${live.resolution_policy || 'MATCH_PROFILE'} ` +
     `${live.active_profile || live.requested_profile || 'HIGH_640'} · ` +
@@ -347,7 +349,8 @@ function updateStereo(stereo) {
       `valid ${percent(live.valid_ratio)} · median ` +
       `${live.median_depth_m == null ? '—' : Number(live.median_depth_m).toFixed(2) + ' m'}\n` +
       `seq ${sequence} · pair ${live.pair_index || '—'} · ` +
-      `${live.input_replayed ? 'replayed source' : 'fresh source'} · ` +
+      `${live.input_replayed ? 'REPLAY' : (live.input_sync_mode || 'STRICT')} · ` +
+      `Δ ${fmt(live.last_pair_delta_ms)} ms · ` +
       `age ${live.publish_age_ms == null ? '—' : Number(live.publish_age_ms).toFixed(0) + ' ms'}`
     : selectedMetrics(selectedMode, depth, processing);
   selectedLabel.textContent =
@@ -405,7 +408,8 @@ async function refresh() {
     const calibration = stereo.calibration || {};
     const depth = stereo.depth || {};
     pairStatus.textContent =
-      `Δ ${fmt(pair.last_delta_ms)} ms · ready ${pair.ready_pairs}/${pair.pairs} · ` +
+      `${pair.last_mode || 'WAITING'} · Δ ${fmt(pair.last_delta_ms)} ms · ` +
+      `strict ${pair.ready_pairs}/${pair.pairs} · relaxed ${pair.relaxed_pairs || 0} · ` +
       `queues ${pair.queue_a}/${pair.queue_b} · dropped ${pair.dropped_a}/${pair.dropped_b}`;
     summary.textContent =
       `A ${fmt(status.camera_a.fps)} FPS · B ${fmt(status.camera_b.fps)} FPS · ` +

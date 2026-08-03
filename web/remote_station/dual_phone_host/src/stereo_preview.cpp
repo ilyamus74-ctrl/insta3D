@@ -191,6 +191,22 @@ struct StereoPreview::Impl {
         condition.notify_one();
     }
 
+    void submit_live_only(StereoPreviewPair value) {
+        ResolvedCalibration live_calibration;
+        {
+            std::scoped_lock lock(mutex);
+            if (!resolved) {
+                live_only_skipped_not_ready += 1;
+                return;
+            }
+            live_calibration = *resolved;
+            live_only_submitted += 1;
+        }
+        live_runtime.submit(
+            std::move(value),
+            std::move(live_calibration));
+    }
+
     nlohmann::json status_json() const {
         std::scoped_lock lock(mutex);
         return status_json_locked();
@@ -304,6 +320,8 @@ struct StereoPreview::Impl {
                 {"processed_pairs", processed},
                 {"failed_pairs", failed},
                 {"skipped_not_ready", skipped_not_ready},
+                {"live_only_submitted", live_only_submitted},
+                {"live_only_skipped_not_ready", live_only_skipped_not_ready},
                 {"queue_replaced", queue_replaced},
                 {"stale_results_discarded", stale_results_discarded},
                 {"fps", processing_fps},
@@ -782,6 +800,8 @@ struct StereoPreview::Impl {
     std::uint64_t processed = 0;
     std::uint64_t failed = 0;
     std::uint64_t skipped_not_ready = 0;
+    std::uint64_t live_only_submitted = 0;
+    std::uint64_t live_only_skipped_not_ready = 0;
     std::uint64_t queue_replaced = 0;
     std::uint64_t stale_results_discarded = 0;
     bool maps_ready = false;
@@ -832,6 +852,10 @@ void StereoPreview::clear_calibration_profile() {
 
 void StereoPreview::submit(StereoPreviewPair pair) {
     impl_->submit(std::move(pair));
+}
+
+void StereoPreview::submit_live_only(StereoPreviewPair pair) {
+    impl_->submit_live_only(std::move(pair));
 }
 
 nlohmann::json StereoPreview::select_depth_profile(const std::string& mode) {

@@ -350,6 +350,8 @@ struct LivePreviewRuntime::Impl {
             last_source_sequence_a = 0;
             last_source_sequence_b = 0;
             input_replayed = false;
+            input_sync_mode = "WAITING";
+            last_pair_delta_ms = 0.0;
             last_error.clear();
             success_times.clear();
             reset_revision += 1;
@@ -393,6 +395,8 @@ struct LivePreviewRuntime::Impl {
             {"total_ms", last_total_ms},
             {"valid_ratio", valid_ratio},
             {"input_replayed", input_replayed},
+            {"input_sync_mode", input_sync_mode},
+            {"last_pair_delta_ms", last_pair_delta_ms},
             {"fresh_input_frames", fresh_input_frames},
             {"replayed_input_frames", replayed_input_frames},
             {"stale_profile_results", stale_profile_results},
@@ -932,10 +936,15 @@ struct LivePreviewRuntime::Impl {
                     heartbeat_colour,
                     cv::FILLED,
                     cv::LINE_AA);
+                const std::string live_source_label = replayed_input_for_job
+                    ? "REPLAY"
+                    : job.pair.sync_mode;
                 cv::putText(
                     display,
-                    std::string(replayed_input_for_job ? "REPLAY #" : "LIVE #") +
-                        std::to_string(job.pair.pair_index) + " @" +
+                    live_source_label + " #" +
+                        std::to_string(job.pair.pair_index) + " d=" +
+                        std::to_string(static_cast<int>(std::lround(
+                            job.pair.delta_ms))) + "ms @" +
                         std::to_string(heartbeat_tick % 1000U),
                     {10, std::max(18, display.rows - 10)},
                     cv::FONT_HERSHEY_SIMPLEX,
@@ -1003,6 +1012,8 @@ struct LivePreviewRuntime::Impl {
                         last_source_sequence_a = job.pair.camera_a.sequence;
                         last_source_sequence_b = job.pair.camera_b.sequence;
                         input_replayed = replayed_input_for_job;
+                        input_sync_mode = job.pair.sync_mode;
+                        last_pair_delta_ms = job.pair.delta_ms;
                         last_error.clear();
                         processed_pairs += 1;
                         success_times.push_back(finished);
@@ -1038,6 +1049,8 @@ struct LivePreviewRuntime::Impl {
                             {"work_height", work_height},
                             {"source_upscaled", source_upscaled},
                             {"input_replayed", replayed_input_for_job},
+                            {"input_sync_mode", job.pair.sync_mode},
+                            {"pair_delta_ms", job.pair.delta_ms},
                             {"source_age_ms",
                              std::max<std::int64_t>(
                                  0, last_publish_unix_ms -
@@ -1106,6 +1119,8 @@ struct LivePreviewRuntime::Impl {
     std::uint64_t last_source_sequence_a = 0;
     std::uint64_t last_source_sequence_b = 0;
     bool input_replayed = false;
+    std::string input_sync_mode = "WAITING";
+    double last_pair_delta_ms = 0.0;
     std::string requested_profile_mode = "HIGH_640";
     std::string last_error;
     std::uint64_t submitted_pairs = 0;

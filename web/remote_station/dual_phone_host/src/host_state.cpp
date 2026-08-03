@@ -3,6 +3,7 @@
 #include "protocol.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
@@ -15,8 +16,15 @@ namespace maklertour::dual_phone {
 namespace {
 
 constexpr double kReadyPairDeltaMs = 25.0;
+constexpr double kRelaxedPairDeltaMs = 60.0;
+constexpr double kRelaxedPairGraceMs = 250.0;
 constexpr std::size_t kEventRingSize = 200;
 constexpr std::size_t kPairQueueCapacity = 12;
+
+std::int64_t steady_now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 std::string session_stamp() {
     auto value = utc_iso8601_now();
@@ -245,8 +253,12 @@ nlohmann::json HostState::status_json() const {
         {"pairing", {
             {"pairs", pair_count_},
             {"ready_pairs", pair_ready_count_},
+            {"relaxed_pairs", pair_relaxed_count_},
             {"last_delta_ms", last_pair_delta_ms_},
+            {"last_mode", last_pair_mode_},
             {"ready_limit_ms", kReadyPairDeltaMs},
+            {"relaxed_limit_ms", kRelaxedPairDeltaMs},
+            {"relaxed_grace_ms", kRelaxedPairGraceMs},
             {"queue_a", cameras_[0].pair_queue.size()},
             {"queue_b", cameras_[1].pair_queue.size()},
             {"dropped_a", cameras_[0].pair_frames_dropped},
@@ -301,6 +313,12 @@ void HostState::maybe_archive_locked(const CameraSlot slot,
 void HostState::update_pair_locked() {
     auto& queue_a = cameras_[0].pair_queue;
     auto& queue_b = cameras_[1].pair_queue;
+    const auto strict_limit_ns = static_cast<std::int64_t>(
+        kReadyPairDeltaMs * 1'000'000.0);
+    const auto relaxed_limit_ns = static_cast<std::int64_t>(
+        kRelaxedPairDeltaMs * 1'000'000.0);
+    const auto relaxed_grace_ns = static_cast<std::int64_t>(
+        kRelaxedPairGraceMs * 1'000'000.0);
 
     while (!queue_a.empty() && !queue_b.empty()) {
         std::size_t best_a = 0;
@@ -320,9 +338,24 @@ void HostState::update_pair_locked() {
             }
         }
 
-        const auto ready_limit_ns = static_cast<std::int64_t>(
-            kReadyPairDeltaMs * 1'000'000.0);
-        if (best_delta_ns <= ready_limit_ns) {
+        const bool strict_ready = best_delta_ns <= strict_limit_ns;
+        bool relaxed_ready = false;
+        if (!strict_ready && best_delta_ns <= relaxed_limit_ns) {
+            const auto now_ns = steady_now_ns();
+            const auto candidate_ready_ns = std::max(
+                queue_a[best_a].received_monotonic_ns,
+                queue_b[best_b].received_monotonic_ns);
+            const auto reference_ns = last_strict_pair_monotonic_ns_ > 0
+                ? last_strict_pair_monotonic_ns_
+                : candidate_ready_ns;
+            relaxed_ready = reference_ns > 0 &&
+                now_ns - reference_ns >= relaxed_grace_ns;
+            if (!relaxed_ready) {
+                break;
+            }
+        }
+
+        if (strict_ready || relaxed_ready) {
             cameras_[0].pair_frames_dropped += best_a;
             cameras_[1].pair_frames_dropped += best_b;
             queue_a.erase(
@@ -338,9 +371,15 @@ void HostState::update_pair_locked() {
             queue_b.pop_front();
 
             pair_count_ += 1;
-            pair_ready_count_ += 1;
             last_pair_delta_ms_ =
                 static_cast<double>(best_delta_ns) / 1'000'000.0;
+            last_pair_mode_ = strict_ready ? "STRICT" : "RELAXED";
+            if (strict_ready) {
+                pair_ready_count_ += 1;
+                last_strict_pair_monotonic_ns_ = steady_now_ns();
+            } else {
+                pair_relaxed_count_ += 1;
+            }
             append_jsonl_locked(pairs_file_, {
                 {"ts", utc_iso8601_now()},
                 {"pair_index", pair_count_},
@@ -349,22 +388,29 @@ void HostState::update_pair_locked() {
                 {"camera_a_timestamp_ns", frame_a.pair_timestamp_ns},
                 {"camera_b_timestamp_ns", frame_b.pair_timestamp_ns},
                 {"delta_ms", last_pair_delta_ms_},
-                {"ready", true},
+                {"sync_mode", last_pair_mode_},
+                {"ready", strict_ready},
+                {"live_only", !strict_ready},
             });
 
             StereoPreviewPair preview_pair;
             preview_pair.pair_index = pair_count_;
             preview_pair.delta_ms = last_pair_delta_ms_;
+            preview_pair.sync_mode = last_pair_mode_;
             preview_pair.camera_a = preview_frame(std::move(frame_a));
             preview_pair.camera_b = preview_frame(std::move(frame_b));
-            stereo_preview_->submit(std::move(preview_pair));
+            if (strict_ready) {
+                stereo_preview_->submit(std::move(preview_pair));
+            } else {
+                stereo_preview_->submit_live_only(std::move(preview_pair));
+            }
             continue;
         }
 
         const auto oldest_a = queue_a.front().pair_timestamp_ns;
         const auto oldest_b = queue_b.front().pair_timestamp_ns;
         if (
-            oldest_a + ready_limit_ns <
+            oldest_a + relaxed_limit_ns <
             queue_b.back().pair_timestamp_ns
         ) {
             queue_a.pop_front();
@@ -372,7 +418,7 @@ void HostState::update_pair_locked() {
             continue;
         }
         if (
-            oldest_b + ready_limit_ns <
+            oldest_b + relaxed_limit_ns <
             queue_a.back().pair_timestamp_ns
         ) {
             queue_b.pop_front();

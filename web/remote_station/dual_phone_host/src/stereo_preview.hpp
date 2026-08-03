@@ -24,6 +24,7 @@ struct StereoPreviewFrame {
 struct StereoPreviewPair {
     std::uint64_t pair_index = 0;
     double delta_ms = 0.0;
+    std::string sync_mode = "STRICT";
     StereoPreviewFrame camera_a;
     StereoPreviewFrame camera_b;
 };
@@ -52,6 +53,7 @@ public:
     void set_calibration_profile(const nlohmann::json& profile);
     void clear_calibration_profile();
     void submit(StereoPreviewPair pair);
+    void submit_live_only(StereoPreviewPair pair);
 
     nlohmann::json select_depth_profile(const std::string& mode);
     nlohmann::json depth_profiles_json() const;

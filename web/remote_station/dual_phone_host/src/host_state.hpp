@@ -97,7 +97,10 @@ private:
     std::size_t archive_every_;
     std::uint64_t pair_count_ = 0;
     std::uint64_t pair_ready_count_ = 0;
+    std::uint64_t pair_relaxed_count_ = 0;
+    std::int64_t last_strict_pair_monotonic_ns_ = 0;
     double last_pair_delta_ms_ = 0.0;
+    std::string last_pair_mode_ = "WAITING";
     std::deque<nlohmann::json> events_;
     std::ofstream events_file_;
     std::ofstream pairs_file_;

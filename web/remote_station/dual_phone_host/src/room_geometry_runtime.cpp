@@ -27,7 +27,7 @@ namespace maklertour::dual_phone::detail {
 
 namespace {
 
-constexpr std::chrono::milliseconds kMinimumGeometryInterval{1000};
+constexpr std::chrono::milliseconds kMinimumGeometryInterval{2000};
 constexpr double kNearMeters = 0.45;
 constexpr double kFarMeters = 8.0;
 constexpr double kVoxelMeters = 0.04;
@@ -596,20 +596,33 @@ struct RoomGeometryRuntime::Impl {
         write_status_file();
     }
 
-    void submit(const std::uint64_t pair_index,
-                std::string source_profile,
+    bool submit(const std::uint64_t new_pair_index,
+                std::string new_source_profile,
                 const StereoDepthResult& depth) {
         if (depth.geometry_disparity.empty() || depth.geometry_mask.empty() ||
             depth.work_a.empty()) {
-            return;
+            return false;
         }
+        const auto now = std::chrono::steady_clock::now();
         GeometryJob job;
         {
             std::scoped_lock lock(mutex);
             ++submitted_frames;
+            if (pending) {
+                ++rejected_busy_frames;
+                return false;
+            }
+            if (last_accepted_submit.time_since_epoch().count() != 0 &&
+                now - last_accepted_submit < kMinimumGeometryInterval) {
+                ++rejected_interval_frames;
+                return false;
+            }
+            last_accepted_submit = now;
+            ++accepted_frames;
             job.generation = generation;
-            job.pair_index = pair_index;
-            job.source_profile = std::move(source_profile);
+            job.pair_index = new_pair_index;
+            job.source_profile = std::move(new_source_profile);
+            // Clone only after backpressure accepts this job.
             job.colour = depth.work_a.clone();
             job.disparity = depth.geometry_disparity.clone();
             job.mask = depth.geometry_mask.clone();
@@ -617,16 +630,17 @@ struct RoomGeometryRuntime::Impl {
             job.baseline_mm = depth.baseline_mm;
             job.principal_x_px = depth.principal_x_px;
             job.principal_y_px = depth.principal_y_px;
-            if (pending) ++dropped_pending_frames;
             pending = std::move(job);
         }
         condition.notify_one();
+        return true;
     }
 
     void reset() {
         std::scoped_lock lock(mutex);
         ++generation;
         pending.reset();
+        last_accepted_submit = {};
         ready = false;
         source_profile = "WAITING";
         pair_index = 0;
@@ -656,9 +670,13 @@ struct RoomGeometryRuntime::Impl {
             {"edge_count", edge_count},
             {"processing_ms", processing_ms},
             {"submitted_frames", submitted_frames},
+            {"accepted_frames", accepted_frames},
             {"processed_frames", processed_frames},
             {"failed_frames", failed_frames},
+            {"rejected_busy_frames", rejected_busy_frames},
+            {"rejected_interval_frames", rejected_interval_frames},
             {"dropped_pending_frames", dropped_pending_frames},
+            {"minimum_interval_ms", kMinimumGeometryInterval.count()},
             {"generation", generation},
             {"coordinate_system", "X_right_Y_up_Z_forward_meters"},
             {"point_cloud_file", "point_cloud_latest.ply"},
@@ -824,9 +842,13 @@ struct RoomGeometryRuntime::Impl {
     double processing_ms = 0.0;
     std::string last_error;
     std::uint64_t submitted_frames = 0;
+    std::uint64_t accepted_frames = 0;
     std::uint64_t processed_frames = 0;
     std::uint64_t failed_frames = 0;
+    std::uint64_t rejected_busy_frames = 0;
+    std::uint64_t rejected_interval_frames = 0;
     std::uint64_t dropped_pending_frames = 0;
+    std::chrono::steady_clock::time_point last_accepted_submit;
 };
 
 RoomGeometryRuntime::RoomGeometryRuntime(
@@ -835,11 +857,14 @@ RoomGeometryRuntime::RoomGeometryRuntime(
 
 RoomGeometryRuntime::~RoomGeometryRuntime() = default;
 
-void RoomGeometryRuntime::submit(
-    const std::uint64_t pair_index,
-    std::string source_profile,
+bool RoomGeometryRuntime::submit(
+    const std::uint64_t new_pair_index,
+    std::string new_source_profile,
     const StereoDepthResult& depth) {
-    impl_->submit(pair_index, std::move(source_profile), depth);
+    return impl_->submit(
+        new_pair_index,
+        std::move(new_source_profile),
+        depth);
 }
 
 void RoomGeometryRuntime::reset() {
