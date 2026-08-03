@@ -32,27 +32,37 @@ namespace maklertour::dual_phone::detail {
 
 namespace {
 
-constexpr std::chrono::milliseconds kMinimumSubmissionInterval{300};
+constexpr std::chrono::milliseconds kMinimumSubmissionInterval{180};
 constexpr std::chrono::milliseconds kMinimumPublishInterval{1000};
 constexpr double kNearMeters = 0.45;
 constexpr double kFarMeters = 8.0;
 constexpr double kVoxelMeters = 0.03;
 constexpr std::size_t kMaximumVoxels = 500000;
-constexpr std::size_t kMaximumRegistrationKeyframes = 32;
+constexpr std::size_t kMaximumRegistrationKeyframes = 64;
+constexpr std::size_t kMaximumTrackingBufferFrames = 24;
+constexpr std::size_t kMaximumRecoveryAttempts = 12;
 constexpr int kOrbFeatures = 1900;
 constexpr int kMinimumFeatures = 70;
 constexpr int kMinimumMatches = 28;
 constexpr int kMinimumPnPPoints = 20;
 constexpr int kMinimumPnPInliers = 16;
+constexpr int kMinimumWalkPnPInliers = 24;
 constexpr double kMinimumPnPInlierRatio = 0.30;
+constexpr double kMinimumWalkPnPInlierRatio = 0.40;
 constexpr double kMaximumPnPRmsePx = 4.0;
 constexpr double kMaximumSparseDepthMedianM = 0.65;
+constexpr double kMaximumWalkSparseDepthMedianM = 0.35;
 constexpr double kMinimumKeyframeYawDeg = 3.0;
 constexpr double kMinimumKeyframeTranslationM = 0.06;
 constexpr double kMaximumVisualYawStepDeg = 35.0;
-constexpr double kMaximumGyroYawStepDeg = 45.0;
+constexpr double kMaximumGyroYawStepDeg = 60.0;
+constexpr double kMaximumRecoveryGyroStepDeg = 175.0;
 constexpr double kMaximumYawDisagreementDeg = 14.0;
-constexpr double kMaximumSafePnpTranslationM = 0.08;
+constexpr double kMaximumWalkTranslationStepM = 0.65;
+constexpr double kMinimumWalkTranslationStepM = 0.035;
+constexpr double kTripodPivotRadiusM = 0.12;
+constexpr double kMinimumAccelerationMotionMps2 = 0.18;
+constexpr int kMotionVotesToSwitch = 3;
 constexpr double kGyroStillThresholdRadS = 0.10;
 constexpr double kGyroMaximumDtSeconds = 0.15;
 constexpr std::uint32_t kMinimumMultiviewKeyframes = 2;
@@ -77,6 +87,8 @@ struct MapJob {
     bool gyro_valid = false;
     double gyro_yaw_raw_deg = 0.0;
     std::uint64_t gyro_samples = 0;
+    bool accelerometer_valid = false;
+    double acceleration_motion_mps2 = 0.0;
     bool segment_resume = false;
 };
 
@@ -127,12 +139,28 @@ struct VisualEstimate {
     cv::Matx44d pnp_world_from_camera = cv::Matx44d::eye();
 };
 
+enum class MotionMode {
+    Unknown,
+    Rotation,
+    Walk,
+};
+
+const char* motion_mode_name(const MotionMode mode) {
+    switch (mode) {
+        case MotionMode::Rotation: return "AUTO_ROTATION";
+        case MotionMode::Walk: return "AUTO_WALK";
+        case MotionMode::Unknown: return "AUTO_UNKNOWN";
+    }
+    return "AUTO_UNKNOWN";
+}
+
 struct PoseDecision {
     bool valid = false;
     bool keyframe = false;
     bool rotation_only = false;
     bool used_gyro = false;
     bool used_visual = false;
+    bool recovered = false;
     std::string state = "LOST";
     std::string method = "NONE";
     std::string rejection_reason;
@@ -142,6 +170,10 @@ struct PoseDecision {
     double fused_yaw_step_deg = 0.0;
     double translation_m = 0.0;
     double rotation_deg = 0.0;
+    MotionMode motion_evidence = MotionMode::Unknown;
+    std::uint64_t reference_keyframe_id = 0;
+    std::uint64_t reference_pair_index = 0;
+    int recovery_attempts = 0;
     VisualEstimate visual;
 };
 
@@ -660,19 +692,26 @@ struct AccumulatedMapRuntime::Impl {
                 return;
             }
             int axis = 1;
+            std::optional<double> acceleration_delta_mps2;
             if (sample.contains("accelerometer_mps2") &&
                 sample.at("accelerometer_mps2").is_array() &&
                 sample.at("accelerometer_mps2").size() == 3) {
                 const auto& acceleration = sample.at("accelerometer_mps2");
                 double largest = 0.0;
+                double norm_squared = 0.0;
                 for (int index = 0; index < 3; ++index) {
-                    const double value = std::abs(
-                        acceleration.at(static_cast<std::size_t>(index))
-                            .get<double>());
+                    const double component =
+                        acceleration.at(static_cast<std::size_t>(index)).get<double>();
+                    const double value = std::abs(component);
+                    norm_squared += component * component;
                     if (value > largest) {
                         largest = value;
                         axis = index;
                     }
+                }
+                const double magnitude = std::sqrt(norm_squared);
+                if (std::isfinite(magnitude)) {
+                    acceleration_delta_mps2 = std::abs(magnitude - 9.80665);
                 }
             }
             const double rate =
@@ -689,6 +728,11 @@ struct AccumulatedMapRuntime::Impl {
                 imu_session_id = session;
                 last_imu_timestamp_ns = 0;
                 ++imu_session_changes;
+            }
+            if (acceleration_delta_mps2) {
+                acceleration_motion_mps2 = acceleration_motion_mps2 * 0.85 +
+                    *acceleration_delta_mps2 * 0.15;
+                accelerometer_valid = true;
             }
             if (last_imu_timestamp_ns > 0) {
                 const double dt = static_cast<double>(
@@ -777,6 +821,8 @@ struct AccumulatedMapRuntime::Impl {
         job.gyro_valid = imu_ready;
         job.gyro_yaw_raw_deg = gyro_yaw_raw_deg;
         job.gyro_samples = imu_samples;
+        job.accelerometer_valid = accelerometer_valid;
+        job.acceleration_motion_mps2 = acceleration_motion_mps2;
         job.segment_resume = segment_resume_pending;
         pending = std::move(job);
         last_accepted_submission = now;
@@ -807,7 +853,15 @@ struct AccumulatedMapRuntime::Impl {
         return {
             {"state", state},
             {"ready", ready},
-            {"tracking_mode", "LOCAL_STEREO_VALIDATION_SAFE_TRIPOD"},
+            {"tracking_mode", "AUTO_MOTION_RECOVERY_BUFFER"},
+            {"motion_mode", motion_mode_name(motion_mode)},
+            {"motion_rotation_votes", rotation_motion_votes},
+            {"motion_walk_votes", walk_motion_votes},
+            {"tracking_buffer_frames", tracking_buffer_frames},
+            {"recovery_attempts", recovery_attempts_total},
+            {"recovery_successes", recovery_successes},
+            {"last_recovery_reference_pair", last_recovery_reference_pair},
+            {"coasting_frames", coasting_frames},
             {"recommended_profile", "HIGH_640"},
             {"source_profile", source_profile},
             {"segment_id", segment_id},
@@ -829,6 +883,8 @@ struct AccumulatedMapRuntime::Impl {
             {"gyro_session_changes", imu_session_changes},
             {"gyro_bias_rad_s", gyro_bias_rad_s},
             {"gyro_yaw_raw_deg", gyro_yaw_raw_deg},
+            {"accelerometer_valid", accelerometer_valid},
+            {"acceleration_motion_mps2", acceleration_motion_mps2},
             {"gyro_to_camera_sign", gyro_to_camera_sign},
             {"gyro_sign_locked", gyro_sign_locked},
             {"gyro_yaw_step_deg", last_gyro_yaw_step_deg},
@@ -881,12 +937,21 @@ struct AccumulatedMapRuntime::Impl {
 
     void clear_worker_state() {
         registration_keyframes.clear();
+        tracking_buffer.clear();
         trajectory.clear();
         voxels.clear();
         next_keyframe_id = 1;
         worker_accumulated_yaw_deg = 0.0;
         gyro_to_camera_sign = 1.0;
         gyro_sign_locked = false;
+        {
+            std::scoped_lock lock(mutex);
+            motion_mode = MotionMode::Unknown;
+            rotation_motion_votes = 0;
+            walk_motion_votes = 0;
+            tracking_buffer_frames = 0;
+            last_recovery_reference_pair = 0;
+        }
         segment_id = 1;
         segment_resume_pending = false;
         last_publish = {};
@@ -981,19 +1046,104 @@ struct AccumulatedMapRuntime::Impl {
         last_publish = now;
     }
 
+    MotionMode motion_mode_snapshot() const {
+        std::scoped_lock lock(mutex);
+        return motion_mode;
+    }
+
+    static double tripod_translation_limit(const double yaw_deg) {
+        const double chord = 2.0 * kTripodPivotRadiusM *
+            std::sin(std::abs(yaw_deg) * std::numbers::pi / 360.0);
+        return std::max(0.04, chord * 1.8);
+    }
+
+    static bool walk_translation_safe(const VisualEstimate& visual) {
+        return visual.pnp_valid && std::isfinite(visual.translation_m) &&
+            visual.translation_m >= kMinimumWalkTranslationStepM &&
+            visual.translation_m <= kMaximumWalkTranslationStepM &&
+            visual.pnp_inliers >= kMinimumWalkPnPInliers &&
+            visual.pnp_inlier_ratio >= kMinimumWalkPnPInlierRatio &&
+            (!std::isfinite(visual.sparse_depth_median_m) ||
+             visual.sparse_depth_median_m <= kMaximumWalkSparseDepthMedianM);
+    }
+
+    static MotionMode classify_motion_evidence(const PoseDecision& decision,
+                                                const MapJob& job) {
+        const bool rotation_available = decision.used_gyro || decision.used_visual;
+        const bool walk_safe = walk_translation_safe(decision.visual);
+        const double pivot_limit = tripod_translation_limit(
+            decision.fused_yaw_step_deg);
+        const bool inertial_walk = job.accelerometer_valid &&
+            job.acceleration_motion_mps2 >= kMinimumAccelerationMotionMps2;
+        if (walk_safe &&
+            (inertial_walk || decision.visual.translation_m > pivot_limit * 1.6)) {
+            return MotionMode::Walk;
+        }
+        if (rotation_available &&
+            (!walk_safe || decision.visual.translation_m <= pivot_limit)) {
+            return MotionMode::Rotation;
+        }
+        return walk_safe ? MotionMode::Walk : MotionMode::Unknown;
+    }
+
+    void commit_motion_mode(const MotionMode evidence) {
+        std::scoped_lock lock(mutex);
+        if (evidence == MotionMode::Walk) {
+            walk_motion_votes = std::min(8, walk_motion_votes + 1);
+            rotation_motion_votes = std::max(0, rotation_motion_votes - 1);
+        } else if (evidence == MotionMode::Rotation) {
+            rotation_motion_votes = std::min(8, rotation_motion_votes + 1);
+            walk_motion_votes = std::max(0, walk_motion_votes - 1);
+        } else {
+            rotation_motion_votes = std::max(0, rotation_motion_votes - 1);
+            walk_motion_votes = std::max(0, walk_motion_votes - 1);
+        }
+        if (walk_motion_votes >= kMotionVotesToSwitch &&
+            walk_motion_votes > rotation_motion_votes) {
+            motion_mode = MotionMode::Walk;
+        } else if (rotation_motion_votes >= kMotionVotesToSwitch &&
+                   rotation_motion_votes > walk_motion_votes) {
+            motion_mode = MotionMode::Rotation;
+        }
+    }
+
+    void push_tracking_reference(const TrackingFrame& frame,
+                                 const cv::Matx44d& world_from_camera,
+                                 const MapJob& job,
+                                 const std::uint64_t keyframe_id) {
+        Keyframe reference;
+        reference.id = keyframe_id;
+        reference.pair_index = job.pair_index;
+        reference.segment_id = job.segment_id;
+        reference.frame = frame;
+        reference.world_from_camera = world_from_camera;
+        reference.gyro_valid = job.gyro_valid;
+        reference.gyro_yaw_raw_deg = job.gyro_yaw_raw_deg;
+        tracking_buffer.push_back(std::move(reference));
+        while (tracking_buffer.size() > kMaximumTrackingBufferFrames) {
+            tracking_buffer.pop_front();
+        }
+        std::scoped_lock lock(mutex);
+        tracking_buffer_frames = tracking_buffer.size();
+    }
+
     PoseDecision decide_pose(const Keyframe& reference,
                              const TrackingFrame& current,
-                             const MapJob& job) {
+                             const MapJob& job,
+                             const bool recovery_attempt) {
         PoseDecision decision;
+        decision.reference_keyframe_id = reference.id;
+        decision.reference_pair_index = reference.pair_index;
         decision.visual = estimate_visual(reference, current);
         decision.visual_yaw_step_deg = decision.visual.homography_valid
             ? decision.visual.visual_yaw_deg : 0.0;
         const bool gyro_pair_valid = job.gyro_valid && reference.gyro_valid;
         double gyro_step = gyro_pair_valid
-            ? job.gyro_yaw_raw_deg - reference.gyro_yaw_raw_deg : 0.0;
+            ? std::remainder(job.gyro_yaw_raw_deg - reference.gyro_yaw_raw_deg, 360.0)
+            : 0.0;
         if (gyro_pair_valid && decision.visual.homography_valid && !gyro_sign_locked &&
-            std::abs(gyro_step) >= 1.5 &&
-            std::abs(decision.visual_yaw_step_deg) >= 1.5) {
+            std::abs(gyro_step) >= 0.5 &&
+            std::abs(decision.visual_yaw_step_deg) >= 0.5) {
             const double same_error = std::abs(gyro_step - decision.visual_yaw_step_deg);
             const double flipped_error = std::abs(-gyro_step - decision.visual_yaw_step_deg);
             gyro_to_camera_sign = flipped_error < same_error ? -1.0 : 1.0;
@@ -1001,8 +1151,10 @@ struct AccumulatedMapRuntime::Impl {
         }
         gyro_step *= gyro_to_camera_sign;
         decision.gyro_yaw_step_deg = gyro_step;
+        const double maximum_gyro_step = recovery_attempt
+            ? kMaximumRecoveryGyroStepDeg : kMaximumGyroYawStepDeg;
         const bool gyro_valid = gyro_pair_valid && std::isfinite(gyro_step) &&
-            std::abs(gyro_step) <= kMaximumGyroYawStepDeg;
+            std::abs(gyro_step) <= maximum_gyro_step;
         const bool visual_valid = decision.visual.homography_valid;
 
         if (gyro_valid && visual_valid) {
@@ -1018,12 +1170,11 @@ struct AccumulatedMapRuntime::Impl {
                 decision.used_gyro = true;
                 decision.method = "GYRO_PRIOR_VISUAL_DISAGREE";
             }
-        } else if (gyro_valid && gyro_sign_locked) {
+        } else if (gyro_valid) {
             decision.fused_yaw_step_deg = gyro_step;
             decision.used_gyro = true;
-            decision.method = "GYRO_ONLY_ROTATION";
-        } else if (gyro_valid) {
-            decision.method = "GYRO_WAITING_FOR_VISUAL_SIGN";
+            decision.method = gyro_sign_locked
+                ? "GYRO_ONLY_ROTATION" : "GYRO_PROVISIONAL_ROTATION";
         } else if (visual_valid) {
             decision.fused_yaw_step_deg = decision.visual_yaw_step_deg;
             decision.used_visual = true;
@@ -1031,50 +1182,118 @@ struct AccumulatedMapRuntime::Impl {
         }
 
         const bool rotation_available = decision.used_gyro || decision.used_visual;
-        const bool pnp_translation_safe = decision.visual.pnp_valid &&
-            std::isfinite(decision.visual.translation_m) &&
-            decision.visual.translation_m <= kMaximumSafePnpTranslationM;
+        decision.motion_evidence = classify_motion_evidence(decision, job);
+        const auto active_mode = motion_mode_snapshot();
+        const bool walk_safe = walk_translation_safe(decision.visual);
+        const bool walk_candidate = walk_safe &&
+            (decision.motion_evidence == MotionMode::Walk ||
+             active_mode == MotionMode::Walk);
 
-        // Deliberately tripod-safe: a valid gyro/homography rotation is never
-        // replaced by an unconstrained PnP translation. PnP remains
-        // diagnostic until pivot offset and moving-rig modes are calibrated.
-        const bool tripod_motion = rotation_available;
-        if (tripod_motion) {
-            decision.rotation_only = true;
-            decision.world_from_camera = reference.world_from_camera *
-                yaw_rotation_deg(decision.fused_yaw_step_deg);
-            decision.translation_m = 0.0;
-            decision.rotation_deg = std::abs(decision.fused_yaw_step_deg);
-            decision.valid = true;
-            if (decision.visual.pnp_valid && !pnp_translation_safe) {
-                decision.method += "_PNP_TRANSLATION_REJECTED";
-            }
-        } else if (pnp_translation_safe) {
+        if (walk_candidate) {
             decision.world_from_camera = decision.visual.pnp_world_from_camera;
             decision.translation_m = decision.visual.translation_m;
             decision.rotation_deg = std::abs(signed_yaw_delta_deg(
                 reference.world_from_camera, decision.world_from_camera));
             decision.fused_yaw_step_deg = signed_yaw_delta_deg(
                 reference.world_from_camera, decision.world_from_camera);
-            decision.method = "PNP_DEPTH";
+            decision.method = "AUTO_WALK_PNP_DEPTH";
             decision.used_visual = true;
             decision.valid = true;
-        } else if (decision.visual.pnp_valid) {
-            decision.method = "PNP_TRANSLATION_REJECTED";
-            decision.rejection_reason = "PNP_TRANSLATION_UNSAFE_FOR_TRIPOD";
-            return decision;
+        } else if (rotation_available) {
+            decision.rotation_only = true;
+            decision.world_from_camera = reference.world_from_camera *
+                yaw_rotation_deg(decision.fused_yaw_step_deg);
+            decision.translation_m = 0.0;
+            decision.rotation_deg = std::abs(decision.fused_yaw_step_deg);
+            decision.valid = true;
+            if (active_mode == MotionMode::Walk && !walk_safe) {
+                decision.method = "AUTO_WALK_GYRO_COAST";
+            } else {
+                decision.method = "AUTO_ROTATION_" + decision.method;
+            }
+        } else if (walk_safe) {
+            decision.world_from_camera = decision.visual.pnp_world_from_camera;
+            decision.translation_m = decision.visual.translation_m;
+            decision.rotation_deg = std::abs(signed_yaw_delta_deg(
+                reference.world_from_camera, decision.world_from_camera));
+            decision.fused_yaw_step_deg = signed_yaw_delta_deg(
+                reference.world_from_camera, decision.world_from_camera);
+            decision.method = "AUTO_WALK_PNP_DEPTH";
+            decision.used_visual = true;
+            decision.valid = true;
         }
 
         if (!decision.valid) {
-            decision.rejection_reason = "NO_GYRO_OR_VISUAL_POSE";
+            decision.rejection_reason = "NO_SAFE_AUTO_MOTION_POSE";
+            return decision;
+        }
+        if (decision.method == "AUTO_WALK_GYRO_COAST") {
+            decision.keyframe = false;
+            decision.state = "TRACKING_COASTING";
             return decision;
         }
         decision.keyframe = decision.translation_m >= kMinimumKeyframeTranslationM ||
             std::abs(decision.fused_yaw_step_deg) >= kMinimumKeyframeYawDeg;
         decision.state = decision.keyframe
-            ? (decision.rotation_only ? "TRACKING_ROTATION" : "TRACKING")
+            ? (decision.rotation_only ? "TRACKING_ROTATION" : "TRACKING_WALK")
             : "TRACKING_STATIONARY";
         return decision;
+    }
+
+    static double decision_score(const PoseDecision& decision) {
+        if (!decision.valid) return -std::numeric_limits<double>::infinity();
+        const int inliers = std::max(
+            decision.visual.homography_inliers, decision.visual.pnp_inliers);
+        const double ratio = std::max(
+            decision.visual.homography_inlier_ratio,
+            decision.visual.pnp_inlier_ratio);
+        double score = static_cast<double>(inliers) + ratio * 100.0;
+        if (decision.visual.pnp_valid) score += 20.0;
+        if (decision.used_gyro && decision.used_visual) score += 10.0;
+        score -= decision.translation_m * 8.0;
+        return score;
+    }
+
+    PoseDecision decide_pose_with_retries(const TrackingFrame& current,
+                                          const MapJob& job) {
+        PoseDecision best;
+        std::unordered_set<std::uint64_t> attempted_pairs;
+        int attempts = 0;
+        auto consider = [&](const Keyframe& reference,
+                                  const bool recovery_attempt,
+                                  PoseDecision& selected) mutable {
+            if (!attempted_pairs.insert(reference.pair_index).second) return;
+            auto candidate = decide_pose(reference, current, job, recovery_attempt);
+            if (recovery_attempt) ++attempts;
+            if (attempted_pairs.size() == 1 ||
+                decision_score(candidate) > decision_score(selected)) {
+                selected = std::move(candidate);
+            }
+        };
+
+        if (!tracking_buffer.empty()) {
+            consider(tracking_buffer.back(), false, best);
+        } else if (!registration_keyframes.empty()) {
+            consider(registration_keyframes.back(), false, best);
+        }
+        if (!best.valid) {
+            for (auto iterator = tracking_buffer.rbegin();
+                 iterator != tracking_buffer.rend() &&
+                 attempts < static_cast<int>(kMaximumRecoveryAttempts); ++iterator) {
+                consider(*iterator, true, best);
+            }
+            for (auto iterator = registration_keyframes.rbegin();
+                 iterator != registration_keyframes.rend() &&
+                 attempts < static_cast<int>(kMaximumRecoveryAttempts); ++iterator) {
+                consider(*iterator, true, best);
+            }
+        }
+        best.recovery_attempts = attempts;
+        if (best.valid && attempts > 0) {
+            best.recovered = true;
+            best.method = "RECOVERED_" + best.method;
+        }
+        return best;
     }
 
     void worker_loop() {
@@ -1107,23 +1326,27 @@ struct AccumulatedMapRuntime::Impl {
                 PoseDecision decision;
                 cv::Matx44d pose = cv::Matx44d::eye();
                 if (!first) {
-                    decision = decide_pose(registration_keyframes.back(), current, job);
+                    decision = decide_pose_with_retries(current, job);
+                    commit_motion_mode(decision.motion_evidence);
                     append_pose_validation({
                         {"pair_index", job.pair_index},
                         {"segment_id", job.segment_id},
-                        {"reference_keyframe_id", registration_keyframes.back().id},
+                        {"reference_keyframe_id", decision.reference_keyframe_id},
+                        {"reference_pair_index", decision.reference_pair_index},
                         {"gyro_valid", job.gyro_valid},
                         {"gyro_yaw_step_deg", decision.gyro_yaw_step_deg},
                         {"visual_yaw_step_deg", decision.visual_yaw_step_deg},
                         {"fused_yaw_step_deg", decision.fused_yaw_step_deg},
+                        {"motion_mode", motion_mode_name(motion_mode_snapshot())},
+                        {"motion_evidence", motion_mode_name(decision.motion_evidence)},
+                        {"accelerometer_motion_mps2", job.acceleration_motion_mps2},
                         {"method", decision.method},
+                        {"recovered", decision.recovered},
+                        {"recovery_attempts", decision.recovery_attempts},
                         {"matches", decision.visual.matches},
                         {"homography_inliers", decision.visual.homography_inliers},
                         {"pnp_inliers", decision.visual.pnp_inliers},
                         {"pnp_translation_m", decision.visual.translation_m},
-                        {"pnp_translation_safe_for_tripod",
-                         decision.visual.pnp_valid &&
-                             decision.visual.translation_m <= kMaximumSafePnpTranslationM},
                         {"translation_m", decision.translation_m},
                         {"accepted", decision.valid && decision.keyframe},
                         {"reason", decision.rejection_reason},
@@ -1135,7 +1358,9 @@ struct AccumulatedMapRuntime::Impl {
                             std::scoped_lock lock(mutex);
                             ++processed_frames;
                             ++lost_frames;
-                            state = "LOST";
+                            recovery_attempts_total +=
+                                static_cast<std::uint64_t>(decision.recovery_attempts);
+                            state = "LOST_RETRY_BUFFER_EXHAUSTED";
                             source_profile = job.source_profile;
                             last_pair_index = job.pair_index;
                             last_method = decision.method;
@@ -1147,16 +1372,31 @@ struct AccumulatedMapRuntime::Impl {
                     }
                     pose = decision.world_from_camera;
                     if (!decision.keyframe) {
+                        push_tracking_reference(
+                            current, pose, job, decision.reference_keyframe_id);
                         const double duration = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - started).count();
                         {
                             std::scoped_lock lock(mutex);
                             ++processed_frames;
-                            ++stationary_frames;
-                            state = "TRACKING_STATIONARY";
+                            if (decision.state == "TRACKING_COASTING") {
+                                ++coasting_frames;
+                            } else {
+                                ++stationary_frames;
+                            }
+                            recovery_attempts_total +=
+                                static_cast<std::uint64_t>(decision.recovery_attempts);
+                            if (decision.recovered) {
+                                ++recovery_successes;
+                                last_recovery_reference_pair =
+                                    decision.reference_pair_index;
+                            }
+                            state = decision.state;
                             ready = !trajectory.empty();
                             source_profile = job.source_profile;
                             last_pair_index = job.pair_index;
+                            last_reference_keyframe_id =
+                                decision.reference_keyframe_id;
                             last_method = decision.method;
                             last_matches = decision.visual.matches;
                             last_inliers = std::max(
@@ -1200,6 +1440,7 @@ struct AccumulatedMapRuntime::Impl {
                 while (registration_keyframes.size() > kMaximumRegistrationKeyframes) {
                     registration_keyframes.pop_front();
                 }
+                push_tracking_reference(current, pose, job, keyframe_id);
 
                 const double gyro_step = first ? 0.0 : decision.gyro_yaw_step_deg;
                 const double visual_step = first ? 0.0 : decision.visual_yaw_step_deg;
@@ -1258,8 +1499,8 @@ struct AccumulatedMapRuntime::Impl {
                     state = keyframe_state;
                     source_profile = job.source_profile;
                     last_pair_index = job.pair_index;
-                    last_reference_keyframe_id = first ? 0 : registration_keyframes[
-                        registration_keyframes.size() - 2].id;
+                    last_reference_keyframe_id = first ? 0 :
+                        decision.reference_keyframe_id;
                     keyframe_count = trajectory.size();
                     trajectory_samples = trajectory.size();
                     accumulated_points_raw = voxels.size();
@@ -1277,8 +1518,17 @@ struct AccumulatedMapRuntime::Impl {
                     last_rejection_reason.clear();
                     last_error.clear();
                     ++processed_frames;
-                    if (!first && decision.method == "GYRO_ONLY_ROTATION") ++gyro_only_keyframes;
-                    if (!first && decision.method == "GYRO_VISUAL_FUSED") ++gyro_visual_keyframes;
+                    recovery_attempts_total +=
+                        static_cast<std::uint64_t>(decision.recovery_attempts);
+                    if (!first && decision.recovered) {
+                        ++recovery_successes;
+                        last_recovery_reference_pair =
+                            decision.reference_pair_index;
+                    }
+                    if (!first && decision.method.find("GYRO_ONLY_ROTATION") !=
+                            std::string::npos) ++gyro_only_keyframes;
+                    if (!first && decision.method.find("GYRO_VISUAL_FUSED") !=
+                            std::string::npos) ++gyro_visual_keyframes;
                     if (resumed) ++segment_resume_keyframes;
                     diagnostic = {
                         {"event", "ACCUMULATED_MAP_KEYFRAME"},
@@ -1287,6 +1537,10 @@ struct AccumulatedMapRuntime::Impl {
                         {"keyframe_id", keyframe_id},
                         {"segment_id", job.segment_id},
                         {"method", last_method},
+                        {"motion_mode", motion_mode_name(motion_mode)},
+                        {"recovered", decision.recovered},
+                        {"recovery_attempts", decision.recovery_attempts},
+                        {"reference_pair_index", decision.reference_pair_index},
                         {"gyro_yaw_step_deg", gyro_step},
                         {"visual_yaw_step_deg", visual_step},
                         {"fused_yaw_step_deg", fused_step},
@@ -1337,6 +1591,7 @@ struct AccumulatedMapRuntime::Impl {
     std::chrono::steady_clock::time_point last_publish;
 
     std::deque<Keyframe> registration_keyframes;
+    std::deque<Keyframe> tracking_buffer;
     std::vector<TrajectorySample> trajectory;
     std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash> voxels;
     std::uint64_t next_keyframe_id = 1;
@@ -1355,6 +1610,8 @@ struct AccumulatedMapRuntime::Impl {
     double last_gyro_rate_rad_s = 0.0;
     double gyro_bias_rad_s = 0.0;
     double gyro_yaw_raw_deg = 0.0;
+    bool accelerometer_valid = false;
+    double acceleration_motion_mps2 = 0.0;
     double gyro_to_camera_sign = 1.0;
     bool gyro_sign_locked = false;
     std::uint64_t imu_samples = 0;
@@ -1382,6 +1639,14 @@ struct AccumulatedMapRuntime::Impl {
     double last_processing_ms = 0.0;
     std::string last_rejection_reason;
     std::string last_error;
+    MotionMode motion_mode = MotionMode::Unknown;
+    int rotation_motion_votes = 0;
+    int walk_motion_votes = 0;
+    std::size_t tracking_buffer_frames = 0;
+    std::uint64_t recovery_attempts_total = 0;
+    std::uint64_t recovery_successes = 0;
+    std::uint64_t last_recovery_reference_pair = 0;
+    std::uint64_t coasting_frames = 0;
 
     std::uint64_t submitted_frames = 0;
     std::uint64_t accepted_frames = 0;
