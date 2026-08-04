@@ -203,7 +203,7 @@ def choose_seed_pair(
     hypotheses: Sequence[dict[str, Any]],
     maximum_seed_orthogonality_error_deg: float,
 ) -> dict[str, Any] | None:
-    ranked: list[tuple[float, dict[str, Any]]] = []
+    ranked: list[tuple[int, float, dict[str, Any], str]] = []
     for hypothesis in hypotheses:
         if hypothesis.get("type") != "WALL_WALL":
             continue
@@ -215,18 +215,29 @@ def choose_seed_pair(
         second = candidates_by_id.get(int(hypothesis["plane_b"]))
         if first is None or second is None:
             continue
-        if first.get("support_tier") == "SINGLE_VIEW_CANDIDATE":
-            continue
-        if second.get("support_tier") == "SINGLE_VIEW_CANDIDATE":
-            continue
+
+        first_single = first.get("support_tier") == "SINGLE_VIEW_CANDIDATE"
+        second_single = second.get("support_tier") == "SINGLE_VIEW_CANDIDATE"
         shared = len(hypothesis.get("shared_keyframe_ids", []))
-        minimum_support = min(
-            int(first.get("keyframe_count", 0)),
-            int(second.get("keyframe_count", 0)),
-        )
+        combined_keyframes = int(hypothesis.get("combined_keyframe_count", 0))
         confirmed_count = sum(
             candidate.get("support_tier") == "CONFIRMED"
             for candidate in (first, second)
+        )
+
+        direct_multiview = not first_single and not second_single
+        bootstrap_fragment = (
+            confirmed_count >= 1
+            and shared >= 1
+            and combined_keyframes >= 3
+            and first_single != second_single
+        )
+        if not direct_multiview and not bootstrap_fragment:
+            continue
+
+        minimum_support = min(
+            int(first.get("keyframe_count", 0)),
+            int(second.get("keyframe_count", 0)),
         )
         score = (
             float(hypothesis.get("score", 0.0))
@@ -236,12 +247,25 @@ def choose_seed_pair(
         )
         if shared == 0:
             score -= 0.20
-        ranked.append((score, hypothesis))
+
+        if direct_multiview:
+            mode_priority = 1
+            selection_mode = "DIRECT_MULTIVIEW"
+        else:
+            # The single-view plane only initializes the second Manhattan axis.
+            # Actual wall promotion still happens later and still requires the
+            # merged cluster to have multiview and shared-keyframe support.
+            mode_priority = 0
+            selection_mode = "CONFIRMED_WALL_FRAGMENT_BOOTSTRAP"
+            score -= 0.05
+        ranked.append((mode_priority, score, hypothesis, selection_mode))
+
     if not ranked:
         return None
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    result = dict(ranked[0][1])
-    result["seed_selection_score"] = ranked[0][0]
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    result = dict(ranked[0][2])
+    result["seed_selection_score"] = ranked[0][1]
+    result["seed_selection_mode"] = ranked[0][3]
     return result
 
 
