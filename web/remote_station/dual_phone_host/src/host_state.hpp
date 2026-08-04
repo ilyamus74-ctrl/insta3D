@@ -69,6 +69,7 @@ public:
     std::optional<std::vector<std::uint8_t>> stereo_preview_image(
         StereoPreviewImage kind) const;
     nlohmann::json live_preview_json() const;
+    nlohmann::json depth_probe(double normalized_x, double normalized_y) const;
     nlohmann::json select_depth_profile(const std::string& mode);
     nlohmann::json depth_profiles_json() const;
 
@@ -88,6 +89,11 @@ private:
     };
 
     void maybe_archive_locked(CameraSlot slot, const FrameRecord& frame);
+    void archive_colmap_pair_locked(
+        std::uint64_t pair_index,
+        const FrameRecord& frame_a,
+        const FrameRecord& frame_b,
+        double delta_ms);
     void update_pair_locked();
     void append_jsonl_locked(std::ofstream& stream, const nlohmann::json& value);
 
@@ -95,9 +101,12 @@ private:
     std::array<MutableCamera, 2> cameras_;
     std::filesystem::path session_dir_;
     std::size_t archive_every_;
+    std::size_t colmap_pair_stride_ = 3;
     std::uint64_t pair_count_ = 0;
     std::uint64_t pair_ready_count_ = 0;
     std::uint64_t pair_relaxed_count_ = 0;
+    std::uint64_t colmap_archived_pairs_ = 0;
+    std::uint64_t colmap_archive_errors_ = 0;
     std::int64_t last_strict_pair_monotonic_ns_ = 0;
     double last_pair_delta_ms_ = 0.0;
     std::string last_pair_mode_ = "WAITING";
@@ -106,6 +115,7 @@ private:
     std::ofstream pairs_file_;
     std::ofstream imu_a_file_;
     std::ofstream imu_b_file_;
+    std::ofstream colmap_pairs_file_;
     std::unique_ptr<StereoPreview> stereo_preview_;
 };
 

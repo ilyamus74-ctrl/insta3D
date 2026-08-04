@@ -955,6 +955,12 @@ nlohmann::json StereoPreview::live_status_json() const {
     return impl_->live_runtime.status_json();
 }
 
+nlohmann::json StereoPreview::depth_probe(
+    const double normalized_x,
+    const double normalized_y) const {
+    return impl_->live_runtime.depth_probe(normalized_x, normalized_y);
+}
+
 std::optional<std::vector<std::uint8_t>> StereoPreview::image(
     const StereoPreviewImage kind) const {
     return impl_->image(kind);

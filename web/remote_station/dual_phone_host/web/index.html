@@ -33,8 +33,11 @@ h1 { margin: 0 0 6px; font-size: 20px; }
   min-height: 0;
   transform-origin: center;
 }
-.selected-preview { margin: 12px auto; width: min(900px, calc(100% - 24px)); min-height: 420px; aspect-ratio: 9 / 16; }
+.selected-preview { margin: 12px auto; width: min(900px, calc(100% - 24px)); min-height: 420px; aspect-ratio: 9 / 16; cursor: crosshair; }
 .selected-preview img { min-height: 420px; }
+.depth-probe { position: absolute; z-index: 4; display: none; min-width: 145px; max-width: 230px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.28); border-radius: 9px; background: rgba(0,0,0,.88); color: #f5f5f7; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.35; white-space: pre-line; pointer-events: none; box-shadow: 0 8px 28px rgba(0,0,0,.35); }
+.depth-probe.visible { display: block; }
+.depth-probe.invalid { color: #ffd66e; }
 .label { position: absolute; top: 10px; left: 10px; max-width: calc(100% - 40px); padding: 8px 10px; border-radius: 9px; background: rgba(0,0,0,.76); font-family: ui-monospace, monospace; white-space: pre-line; overflow-wrap: anywhere; }
 .ok { color: #72f59a; } .bad { color: #ff7d7d; } .warn { color: #ffd66e; }
 details { margin: 12px; padding: 12px; border: 1px solid #33333d; border-radius: 14px; background: #17171d; }
@@ -88,8 +91,9 @@ pre { max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap;
   <h2>Live depth preview</h2>
   <span id="depthStatus">AUTO profile waiting</span>
 </div>
-<div class="camera selected-preview">
+<div id="selectedPreviewCard" class="camera selected-preview">
   <img id="selectedPreview" decoding="async">
+  <div id="depthProbe" class="depth-probe">move cursor over valid depth</div>
   <div id="selectedLabel" class="label warn">FILTERED · WAITING</div>
 </div>
 
@@ -112,7 +116,9 @@ const labelB = document.getElementById('labelB');
 const cameraA = document.getElementById('cameraA');
 const cameraB = document.getElementById('cameraB');
 const depthStatus = document.getElementById('depthStatus');
+const selectedPreviewCard = document.getElementById('selectedPreviewCard');
 const selectedPreview = document.getElementById('selectedPreview');
+const depthProbe = document.getElementById('depthProbe');
 const selectedLabel = document.getElementById('selectedLabel');
 const diagnostics = document.getElementById('diagnostics');
 const diagnosticJson = document.getElementById('json');
@@ -122,6 +128,8 @@ let wantedSelectedSequence = -1;
 let selectedImageLoading = false;
 let selectedLoadToken = 0;
 let selectedLoadTimer = null;
+let depthProbeTimer = null;
+let depthProbeRequest = 0;
 let lastRawASequence = -1;
 let lastRawBSequence = -1;
 let refreshInFlight = false;
@@ -232,6 +240,7 @@ function resetSelectedPreviewLoader() {
   selectedImageLoading = false;
   wantedSelectedSequence = -1;
   lastSelectedSequence = -1;
+  hideDepthProbe();
   if (selectedLoadTimer !== null) {
     window.clearTimeout(selectedLoadTimer);
     selectedLoadTimer = null;
@@ -256,6 +265,7 @@ function pumpSelectedPreview() {
     if (success) {
       selectedPreview.src = loader.src;
       lastSelectedSequence = sequence;
+      hideDepthProbe();
     }
     selectedImageLoading = false;
     if (wantedSelectedSequence > lastSelectedSequence) {
@@ -276,6 +286,101 @@ function requestSelectedPreview(sequence) {
   wantedSelectedSequence = Math.max(wantedSelectedSequence, sequence);
   pumpSelectedPreview();
 }
+
+function hideDepthProbe() {
+  depthProbeRequest += 1;
+  if (depthProbeTimer !== null) {
+    window.clearTimeout(depthProbeTimer);
+    depthProbeTimer = null;
+  }
+  depthProbe.className = 'depth-probe';
+}
+
+function selectedPreviewPoint(event) {
+  if (!selectedPreview.naturalWidth || !selectedPreview.naturalHeight) return null;
+  const imageBounds = selectedPreview.getBoundingClientRect();
+  const cardBounds = selectedPreviewCard.getBoundingClientRect();
+  const scale = Math.min(
+    imageBounds.width / selectedPreview.naturalWidth,
+    imageBounds.height / selectedPreview.naturalHeight
+  );
+  const renderedWidth = selectedPreview.naturalWidth * scale;
+  const renderedHeight = selectedPreview.naturalHeight * scale;
+  const left = imageBounds.left + (imageBounds.width - renderedWidth) * 0.5;
+  const top = imageBounds.top + (imageBounds.height - renderedHeight) * 0.5;
+  if (event.clientX < left || event.clientX > left + renderedWidth ||
+      event.clientY < top || event.clientY > top + renderedHeight) return null;
+  return {
+    x: Math.max(0, Math.min(1, (event.clientX - left) / renderedWidth)),
+    y: Math.max(0, Math.min(1, (event.clientY - top) / renderedHeight)),
+    cardX: event.clientX - cardBounds.left,
+    cardY: event.clientY - cardBounds.top,
+  };
+}
+
+async function requestDepthProbe(point) {
+  const request = ++depthProbeRequest;
+  const sequence = lastSelectedSequence;
+  if (sequence <= 0) return;
+  const left = Math.max(6, Math.min(
+    selectedPreviewCard.clientWidth - 180, point.cardX + 14));
+  const top = Math.max(6, Math.min(
+    selectedPreviewCard.clientHeight - 90, point.cardY + 14));
+  depthProbe.style.left = `${left}px`;
+  depthProbe.style.top = `${top}px`;
+  depthProbe.className = 'depth-probe visible';
+  depthProbe.textContent = 'measuring…';
+  try {
+    const response = await fetch(
+      `/api/depth/probe?x=${point.x.toFixed(6)}&y=${point.y.toFixed(6)}`,
+      {cache: 'no-store'}
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    if (request !== depthProbeRequest ||
+        Number(result.sequence) !== sequence ||
+        sequence !== lastSelectedSequence) return;
+    if (!result.valid) {
+      depthProbe.className = 'depth-probe visible invalid';
+      depthProbe.textContent =
+        `NO VALID DEPTH
+${result.reason || 'invalid pixel'}
+` +
+        `px ${result.source_x_px ?? '—'},${result.source_y_px ?? '—'} · n ${result.sample_count || 0}`;
+      return;
+    }
+    depthProbe.className = 'depth-probe visible';
+    depthProbe.textContent =
+      `${Number(result.distance_m).toFixed(3)} m
+` +
+      `${Number(result.minimum_m).toFixed(3)}–${Number(result.maximum_m).toFixed(3)} m ` +
+      `(Δ ${Number(result.spread_m).toFixed(3)})
+` +
+      `${result.selected_mode} · n ${result.sample_count} · ` +
+      `px ${result.source_x_px},${result.source_y_px}`;
+  } catch (error) {
+    if (request !== depthProbeRequest) return;
+    depthProbe.className = 'depth-probe visible invalid';
+    depthProbe.textContent = `probe failed
+${error}`;
+  }
+}
+
+function scheduleDepthProbe(event) {
+  const point = selectedPreviewPoint(event);
+  if (!point) {
+    hideDepthProbe();
+    return;
+  }
+  if (depthProbeTimer !== null) window.clearTimeout(depthProbeTimer);
+  depthProbeTimer = window.setTimeout(() => {
+    depthProbeTimer = null;
+    requestDepthProbe(point);
+  }, 75);
+}
+
+selectedPreview.addEventListener('mousemove', scheduleDepthProbe);
+selectedPreview.addEventListener('mouseleave', hideDepthProbe);
 
 function updateStereo(stereo) {
   latestStereoStatus = stereo || {};

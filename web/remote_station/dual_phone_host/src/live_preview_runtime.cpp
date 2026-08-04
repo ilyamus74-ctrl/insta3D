@@ -335,6 +335,14 @@ struct LivePreviewRuntime::Impl {
             std::scoped_lock lock(mutex);
             pending.reset();
             selected_jpeg.clear();
+            probe_disparity.release();
+            probe_mask.release();
+            probe_focal_px = 0.0;
+            probe_baseline_mm = 0.0;
+            probe_display_rotation_degrees = 0;
+            probe_sequence = 0;
+            probe_pair_index = 0;
+            probe_selected_mode = "WAITING";
             ready = false;
             pair_index = 0;
             work_width = 0;
@@ -363,6 +371,122 @@ struct LivePreviewRuntime::Impl {
         std::scoped_lock lock(mutex);
         if (selected_jpeg.empty()) return std::nullopt;
         return selected_jpeg;
+    }
+
+    nlohmann::json depth_probe(
+        const double normalized_x,
+        const double normalized_y) const {
+        std::scoped_lock lock(mutex);
+        nlohmann::json result = {
+            {"schema_version", 1},
+            {"valid", false},
+            {"sequence", probe_sequence},
+            {"pair_index", probe_pair_index},
+            {"selected_mode", probe_selected_mode},
+            {"normalized_x", normalized_x},
+            {"normalized_y", normalized_y},
+        };
+        if (!ready || probe_disparity.empty() || probe_mask.empty() ||
+            probe_disparity.type() != CV_32F || probe_mask.type() != CV_8U ||
+            probe_disparity.size() != probe_mask.size()) {
+            result["reason"] = "DEPTH_PROBE_NOT_READY";
+            return result;
+        }
+        if (!std::isfinite(normalized_x) || !std::isfinite(normalized_y) ||
+            normalized_x < 0.0 || normalized_x > 1.0 ||
+            normalized_y < 0.0 || normalized_y > 1.0) {
+            result["reason"] = "NORMALIZED_COORDINATE_OUT_OF_RANGE";
+            return result;
+        }
+
+        const int rotation = normalize_degrees(
+            probe_display_rotation_degrees);
+        const int source_width = probe_disparity.cols;
+        const int source_height = probe_disparity.rows;
+        const int display_width =
+            rotation == 90 || rotation == 270 ? source_height : source_width;
+        const int display_height =
+            rotation == 90 || rotation == 270 ? source_width : source_height;
+        const int display_x = std::clamp(
+            static_cast<int>(std::lround(
+                normalized_x * static_cast<double>(display_width - 1))),
+            0, display_width - 1);
+        const int display_y = std::clamp(
+            static_cast<int>(std::lround(
+                normalized_y * static_cast<double>(display_height - 1))),
+            0, display_height - 1);
+
+        int source_x = display_x;
+        int source_y = display_y;
+        switch (rotation) {
+            case 90:
+                source_x = display_y;
+                source_y = source_height - 1 - display_x;
+                break;
+            case 180:
+                source_x = source_width - 1 - display_x;
+                source_y = source_height - 1 - display_y;
+                break;
+            case 270:
+                source_x = source_width - 1 - display_y;
+                source_y = display_x;
+                break;
+            default:
+                break;
+        }
+        source_x = std::clamp(source_x, 0, source_width - 1);
+        source_y = std::clamp(source_y, 0, source_height - 1);
+
+        constexpr int kDepthProbeRadiusPixels = 2;
+        std::vector<double> depths;
+        depths.reserve((kDepthProbeRadiusPixels * 2 + 1) *
+                       (kDepthProbeRadiusPixels * 2 + 1));
+        for (int y = std::max(0, source_y - kDepthProbeRadiusPixels);
+             y <= std::min(source_height - 1,
+                           source_y + kDepthProbeRadiusPixels);
+             ++y) {
+            const auto* disparity_row = probe_disparity.ptr<float>(y);
+            const auto* mask_row = probe_mask.ptr<std::uint8_t>(y);
+            for (int x = std::max(0, source_x - kDepthProbeRadiusPixels);
+                 x <= std::min(source_width - 1,
+                               source_x + kDepthProbeRadiusPixels);
+                 ++x) {
+                if (mask_row[x] == 0) continue;
+                const double disparity = disparity_row[x];
+                if (!std::isfinite(disparity) ||
+                    disparity <= kMinimumDisparity) continue;
+                const double meters =
+                    probe_focal_px * probe_baseline_mm /
+                    disparity / 1000.0;
+                if (std::isfinite(meters) && meters >= 0.2 && meters <= 20.0) {
+                    depths.push_back(meters);
+                }
+            }
+        }
+        result["display_x_px"] = display_x;
+        result["display_y_px"] = display_y;
+        result["source_x_px"] = source_x;
+        result["source_y_px"] = source_y;
+        result["source_width"] = source_width;
+        result["source_height"] = source_height;
+        result["sample_count"] = depths.size();
+        if (depths.empty()) {
+            result["reason"] = "NO_VALID_DEPTH_IN_5X5_WINDOW";
+            return result;
+        }
+        std::sort(depths.begin(), depths.end());
+        const double minimum = depths.front();
+        const double maximum = depths.back();
+        const double median = depths[depths.size() / 2];
+        result["valid"] = true;
+        result["reason"] = "NONE";
+        result["distance_m"] = median;
+        result["minimum_m"] = minimum;
+        result["maximum_m"] = maximum;
+        result["spread_m"] = maximum - minimum;
+        result["focal_px"] = probe_focal_px;
+        result["baseline_mm"] = probe_baseline_mm;
+        return result;
     }
 
     nlohmann::json status_json() const {
@@ -394,6 +518,8 @@ struct LivePreviewRuntime::Impl {
             {"jpeg_encode_ms", last_encode_ms},
             {"total_ms", last_total_ms},
             {"valid_ratio", valid_ratio},
+            {"depth_probe_ready", !probe_disparity.empty()},
+            {"depth_probe_sequence", probe_sequence},
             {"input_replayed", input_replayed},
             {"input_sync_mode", input_sync_mode},
             {"last_pair_delta_ms", last_pair_delta_ms},
@@ -881,14 +1007,17 @@ struct LivePreviewRuntime::Impl {
                 const auto mode = current_operator_preview_mode();
                 const cv::Mat* selected = &filtered_depth;
                 const cv::Mat* selected_mask = &dense_mask;
+                const cv::Mat* probe_disparity_source = &spatial;
                 switch (mode) {
                     case OperatorPreviewMode::Disparity:
                         selected = &disparity_colour;
                         selected_mask = &raw_mask;
+                        probe_disparity_source = &disparity;
                         break;
                     case OperatorPreviewMode::DepthRaw:
                         selected = &raw_depth;
                         selected_mask = &raw_mask;
+                        probe_disparity_source = &disparity;
                         break;
                     case OperatorPreviewMode::DepthFiltered:
                         selected = &filtered_depth;
@@ -997,9 +1126,19 @@ struct LivePreviewRuntime::Impl {
                         };
                     } else {
                         selected_jpeg = std::move(jpeg);
+                        probe_disparity = probe_disparity_source->clone();
+                        probe_mask = selected_mask->clone();
+                        probe_focal_px = focal_px;
+                        probe_baseline_mm =
+                            job.calibration.measured_baseline_mm;
+                        probe_display_rotation_degrees = display_rotation;
+                        probe_selected_mode =
+                            operator_preview_mode_name(mode);
                         ready = true;
                         sequence += 1;
+                        probe_sequence = sequence;
                         pair_index = job.pair.pair_index;
+                        probe_pair_index = pair_index;
                         work_width = display.cols;
                         work_height = display.rows;
                         valid_ratio = ratio;
@@ -1103,6 +1242,14 @@ struct LivePreviewRuntime::Impl {
     std::ofstream diagnostics;
     std::thread worker;
     std::vector<std::uint8_t> selected_jpeg;
+    cv::Mat probe_disparity;
+    cv::Mat probe_mask;
+    double probe_focal_px = 0.0;
+    double probe_baseline_mm = 0.0;
+    int probe_display_rotation_degrees = 0;
+    std::uint64_t probe_sequence = 0;
+    std::uint64_t probe_pair_index = 0;
+    std::string probe_selected_mode = "WAITING";
     bool ready = false;
     std::uint64_t sequence = 0;
     std::uint64_t pair_index = 0;
@@ -1157,6 +1304,12 @@ void LivePreviewRuntime::reset() {
 
 nlohmann::json LivePreviewRuntime::status_json() const {
     return impl_->status_json();
+}
+
+nlohmann::json LivePreviewRuntime::depth_probe(
+    const double normalized_x,
+    const double normalized_y) const {
+    return impl_->depth_probe(normalized_x, normalized_y);
 }
 
 std::optional<std::vector<std::uint8_t>>

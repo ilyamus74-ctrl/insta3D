@@ -26,6 +26,7 @@ public:
     void reset();
 
     nlohmann::json status_json() const;
+    nlohmann::json depth_probe(double normalized_x, double normalized_y) const;
     std::optional<std::vector<std::uint8_t>> image() const;
 
 private:

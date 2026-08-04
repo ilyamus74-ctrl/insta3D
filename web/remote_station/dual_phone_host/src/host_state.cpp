@@ -20,6 +20,22 @@ constexpr double kRelaxedPairDeltaMs = 60.0;
 constexpr double kRelaxedPairGraceMs = 250.0;
 constexpr std::size_t kEventRingSize = 200;
 constexpr std::size_t kPairQueueCapacity = 12;
+constexpr std::size_t kDefaultColmapPairStride = 3;
+constexpr std::size_t kMaximumColmapPairStride = 60;
+
+std::size_t colmap_pair_stride_from_environment() {
+    const char* raw = std::getenv("MAKLER_COLMAP_PAIR_STRIDE");
+    if (raw == nullptr || *raw == '\0') return kDefaultColmapPairStride;
+    try {
+        std::size_t consumed = 0;
+        const auto value = std::stoull(raw, &consumed);
+        if (consumed != std::string(raw).size()) return kDefaultColmapPairStride;
+        return static_cast<std::size_t>(std::min<unsigned long long>(
+            value, kMaximumColmapPairStride));
+    } catch (...) {
+        return kDefaultColmapPairStride;
+    }
+}
 
 std::int64_t steady_now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -88,24 +104,34 @@ CameraSlot parse_slot(const std::string& value) {
 
 HostState::HostState(std::filesystem::path output_root,
                      const std::size_t archive_every)
-    : archive_every_(archive_every) {
+    : archive_every_(archive_every),
+      colmap_pair_stride_(colmap_pair_stride_from_environment()) {
     session_dir_ = std::move(output_root) / session_stamp();
     std::filesystem::create_directories(session_dir_ / "camera_a");
     std::filesystem::create_directories(session_dir_ / "camera_b");
+    std::filesystem::create_directories(
+        session_dir_ / "colmap_frames" / "CAMERA_A");
+    std::filesystem::create_directories(
+        session_dir_ / "colmap_frames" / "CAMERA_B");
     events_file_.open(session_dir_ / "events.jsonl", std::ios::app);
     pairs_file_.open(session_dir_ / "pairs.jsonl", std::ios::app);
     imu_a_file_.open(session_dir_ / "imu_a.jsonl", std::ios::app);
     imu_b_file_.open(session_dir_ / "imu_b.jsonl", std::ios::app);
-    if (!events_file_ || !pairs_file_ || !imu_a_file_ || !imu_b_file_) {
+    colmap_pairs_file_.open(
+        session_dir_ / "colmap_pairs.jsonl", std::ios::app);
+    if (!events_file_ || !pairs_file_ || !imu_a_file_ || !imu_b_file_ ||
+        !colmap_pairs_file_) {
         throw std::runtime_error("cannot create session log files");
     }
     stereo_preview_ = std::make_unique<StereoPreview>(session_dir_);
     nlohmann::json session = {
         {"schema_version", 1},
         {"created_at", utc_iso8601_now()},
-        {"mode", "LM02.7B.4_METRIC_DEPTH_CPU_PROFILES"},
+        {"mode", "LM02.7B.5.3.1_OFFLINE_COLMAP_RIG"},
         {"camera_roles", {"CAMERA_A", "CAMERA_B"}},
         {"archive_every", archive_every_},
+        {"colmap_pair_stride", colmap_pair_stride_},
+        {"offline_colmap_capture", "STRICT_SYNCHRONIZED_PAIRS"},
         {"stereo_processing", "OPENCV_RECTIFY_FILTERED_METRIC_DEPTH"},
     };
     std::ofstream(session_dir_ / "session.json") << std::setw(2) << session << '\n';
@@ -271,6 +297,9 @@ nlohmann::json HostState::status_json() const {
             {"queue_b", cameras_[1].pair_queue.size()},
             {"dropped_a", cameras_[0].pair_frames_dropped},
             {"dropped_b", cameras_[1].pair_frames_dropped},
+            {"colmap_pair_stride", colmap_pair_stride_},
+            {"colmap_archived_pairs", colmap_archived_pairs_},
+            {"colmap_archive_errors", colmap_archive_errors_},
         }},
         {"stereo_preview", stereo_preview_->status_json()},
     };
@@ -295,12 +324,83 @@ nlohmann::json HostState::live_preview_json() const {
     return stereo_preview_->live_status_json();
 }
 
+nlohmann::json HostState::depth_probe(
+    const double normalized_x,
+    const double normalized_y) const {
+    return stereo_preview_->depth_probe(normalized_x, normalized_y);
+}
+
 nlohmann::json HostState::select_depth_profile(const std::string& mode) {
     return stereo_preview_->select_depth_profile(mode);
 }
 
 nlohmann::json HostState::depth_profiles_json() const {
     return stereo_preview_->depth_profiles_json();
+}
+
+void HostState::archive_colmap_pair_locked(
+    const std::uint64_t pair_index,
+    const FrameRecord& frame_a,
+    const FrameRecord& frame_b,
+    const double delta_ms) {
+    if (colmap_pair_stride_ == 0 ||
+        ((pair_ready_count_ - 1) % colmap_pair_stride_) != 0) {
+        return;
+    }
+    std::ostringstream name;
+    name << std::setw(12) << std::setfill('0') << pair_index << ".jpg";
+    const auto filename = name.str();
+    const auto relative_a =
+        std::filesystem::path("colmap_frames") / "CAMERA_A" / filename;
+    const auto relative_b =
+        std::filesystem::path("colmap_frames") / "CAMERA_B" / filename;
+    const auto path_a = session_dir_ / relative_a;
+    const auto path_b = session_dir_ / relative_b;
+
+    std::ofstream image_a(path_a, std::ios::binary | std::ios::trunc);
+    std::ofstream image_b(path_b, std::ios::binary | std::ios::trunc);
+    if (!image_a || !image_b) {
+        ++colmap_archive_errors_;
+        return;
+    }
+    image_a.write(
+        reinterpret_cast<const char*>(frame_a.jpeg.data()),
+        static_cast<std::streamsize>(frame_a.jpeg.size()));
+    image_b.write(
+        reinterpret_cast<const char*>(frame_b.jpeg.data()),
+        static_cast<std::streamsize>(frame_b.jpeg.size()));
+    image_a.flush();
+    image_b.flush();
+    if (!image_a || !image_b) {
+        image_a.close();
+        image_b.close();
+        std::error_code error;
+        std::filesystem::remove(path_a, error);
+        error.clear();
+        std::filesystem::remove(path_b, error);
+        ++colmap_archive_errors_;
+        return;
+    }
+
+    append_jsonl_locked(colmap_pairs_file_, {
+        {"ts", utc_iso8601_now()},
+        {"pair_index", pair_index},
+        {"camera_a_sequence", frame_a.sequence},
+        {"camera_b_sequence", frame_b.sequence},
+        {"camera_a_timestamp_ns", frame_a.pair_timestamp_ns},
+        {"camera_b_timestamp_ns", frame_b.pair_timestamp_ns},
+        {"camera_a_width", frame_a.width},
+        {"camera_a_height", frame_a.height},
+        {"camera_b_width", frame_b.width},
+        {"camera_b_height", frame_b.height},
+        {"camera_a_rotation_degrees", frame_a.rotation_degrees},
+        {"camera_b_rotation_degrees", frame_b.rotation_degrees},
+        {"delta_ms", delta_ms},
+        {"sync_mode", "STRICT"},
+        {"image_a", relative_a.generic_string()},
+        {"image_b", relative_b.generic_string()},
+    });
+    ++colmap_archived_pairs_;
 }
 
 void HostState::maybe_archive_locked(const CameraSlot slot,
@@ -385,6 +485,8 @@ void HostState::update_pair_locked() {
             if (strict_ready) {
                 pair_ready_count_ += 1;
                 last_strict_pair_monotonic_ns_ = steady_now_ns();
+                archive_colmap_pair_locked(
+                    pair_count_, frame_a, frame_b, last_pair_delta_ms_);
             } else {
                 pair_relaxed_count_ += 1;
             }

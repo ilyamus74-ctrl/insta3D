@@ -6,9 +6,11 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -33,6 +35,36 @@ std::string status_text(const int status) {
         case 404: return "Not Found";
         default: return "Error";
     }
+}
+
+std::optional<double> query_number(
+    const std::string& target,
+    const std::string_view requested_name) {
+    const auto query_position = target.find('?');
+    if (query_position == std::string::npos || query_position + 1 >= target.size()) {
+        return std::nullopt;
+    }
+    std::string_view query(target.data() + query_position + 1,
+                           target.size() - query_position - 1);
+    while (!query.empty()) {
+        const auto separator = query.find('&');
+        const auto entry = query.substr(0, separator);
+        const auto equals = entry.find('=');
+        if (equals != std::string_view::npos &&
+            entry.substr(0, equals) == requested_name) {
+            try {
+                const std::string text(entry.substr(equals + 1));
+                std::size_t consumed = 0;
+                const double value = std::stod(text, &consumed);
+                if (consumed == text.size() && std::isfinite(value)) return value;
+            } catch (...) {
+            }
+            return std::nullopt;
+        }
+        if (separator == std::string_view::npos) break;
+        query.remove_prefix(separator + 1);
+    }
+    return std::nullopt;
 }
 
 }  // namespace
@@ -162,6 +194,18 @@ void HttpDashboard::handle_client(const int client_fd) {
     if (path == "/api/live-preview") {
         send_text(client_fd, 200, "application/json",
                   state_.live_preview_json().dump());
+        return;
+    }
+    if (path == "/api/depth/probe") {
+        const auto x = query_number(target, "x");
+        const auto y = query_number(target, "y");
+        if (!x || !y || *x < 0.0 || *x > 1.0 || *y < 0.0 || *y > 1.0) {
+            send_text(client_fd, 400, "application/json",
+                      R"({"error":"x and y must be finite normalized values in [0,1]"})");
+            return;
+        }
+        send_text(client_fd, 200, "application/json",
+                  state_.depth_probe(*x, *y).dump());
         return;
     }
     if (path == "/api/depth/profiles") {

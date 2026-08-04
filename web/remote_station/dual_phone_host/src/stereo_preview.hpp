@@ -64,6 +64,7 @@ public:
     nlohmann::json depth_profiles_json() const;
     nlohmann::json status_json() const;
     nlohmann::json live_status_json() const;
+    nlohmann::json depth_probe(double normalized_x, double normalized_y) const;
     std::optional<std::vector<std::uint8_t>> image(StereoPreviewImage kind) const;
 
 private:
