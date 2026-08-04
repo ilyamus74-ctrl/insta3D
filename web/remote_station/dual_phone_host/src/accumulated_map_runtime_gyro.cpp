@@ -75,6 +75,7 @@ constexpr double kMaximumStereoSe3VerticalStepM = 0.30;
 constexpr double kMaximumPnpStereoPoseDisagreementM = 0.22;
 constexpr double kMaximumPnpStereoYawDisagreementDeg = 18.0;
 constexpr std::uint32_t kProvisionalStepsToPromote = 2;
+constexpr std::size_t kMaximumProvisionalGeometryFrames = 8;
 constexpr double kTripodPivotRadiusM = 0.12;
 constexpr double kTripodHorizontalSmoothing = 0.35;
 constexpr double kTripodMaximumHorizontalStepM = 0.025;
@@ -142,6 +143,20 @@ struct Keyframe {
     double gyro_yaw_raw_deg = 0.0;
     bool pose_trusted = true;
     std::uint32_t provisional_chain_length = 0;
+};
+
+struct ProvisionalGeometryFrame {
+    MapJob job;
+    cv::Matx44d provisional_world_from_camera = cv::Matx44d::eye();
+    std::uint64_t anchor_keyframe_id = 0;
+    std::uint32_t chain_length = 0;
+};
+
+struct ProvisionalBackfillResult {
+    std::uint64_t frames = 0;
+    std::uint64_t discarded_frames = 0;
+    std::uint64_t raw_voxels_added = 0;
+    std::uint64_t strict_voxels_added = 0;
 };
 
 struct MatchSet {
@@ -215,7 +230,13 @@ struct PoseDecision {
     bool geometry_suppressed = false;
     bool reference_pose_trusted = true;
     bool provisional_promoted = false;
+    bool provisional_alignment_available = false;
     std::uint32_t provisional_chain_length = 0;
+    std::uint32_t provisional_alignment_chain_length = 0;
+    std::uint64_t provisional_alignment_anchor_keyframe_id = 0;
+    std::uint64_t provisional_alignment_reference_pair_index = 0;
+    cv::Matx44d provisional_alignment_world_from_provisional =
+        cv::Matx44d::eye();
     std::string state = "LOST";
     std::string method = "NONE";
     std::string translation_source = "NONE";
@@ -1256,7 +1277,7 @@ struct AccumulatedMapRuntime::Impl {
         return {
             {"state", state},
             {"ready", ready},
-            {"tracking_mode", "AUTO_MOTION_FULL_STEREO_SE3_PROVISIONAL_BRIDGE_APRILTAG_ANCHORS"},
+            {"tracking_mode", "AUTO_MOTION_FULL_STEREO_SE3_ANCHORED_PROVISIONAL_BACKFILL_APRILTAG_ANCHORS"},
             {"apriltag_anchor", apriltag_anchors.status_json()},
             {"motion_mode", motion_mode_name(motion_mode)},
             {"motion_rotation_votes", rotation_motion_votes},
@@ -1273,6 +1294,20 @@ struct AccumulatedMapRuntime::Impl {
             {"provisional_tracking_frames", provisional_tracking_frames},
             {"provisional_promotions", provisional_promotions},
             {"maximum_provisional_chain", maximum_provisional_chain},
+            {"provisional_geometry_pending_frames",
+             provisional_geometry_pending_frames},
+            {"provisional_geometry_cached_frames",
+             provisional_geometry_cached_frames},
+            {"provisional_geometry_backfilled_frames",
+             provisional_geometry_backfilled_frames},
+            {"provisional_geometry_backfill_events",
+             provisional_geometry_backfill_events},
+            {"provisional_geometry_discarded_frames",
+             provisional_geometry_discarded_frames},
+            {"provisional_geometry_raw_voxels_added",
+             provisional_geometry_raw_voxels_added},
+            {"provisional_geometry_strict_voxels_added",
+             provisional_geometry_strict_voxels_added},
             {"recommended_profile", "HIGH_640"},
             {"source_profile", source_profile},
             {"segment_id", segment_id},
@@ -1366,6 +1401,7 @@ struct AccumulatedMapRuntime::Impl {
     void clear_worker_state() {
         registration_keyframes.clear();
         tracking_buffer.clear();
+        provisional_geometry_frames.clear();
         trajectory.clear();
         voxels.clear();
         temporal_strict_voxels.clear();
@@ -1389,6 +1425,13 @@ struct AccumulatedMapRuntime::Impl {
             provisional_tracking_frames = 0;
             provisional_promotions = 0;
             maximum_provisional_chain = 0;
+            provisional_geometry_pending_frames = 0;
+            provisional_geometry_cached_frames = 0;
+            provisional_geometry_backfilled_frames = 0;
+            provisional_geometry_backfill_events = 0;
+            provisional_geometry_discarded_frames = 0;
+            provisional_geometry_raw_voxels_added = 0;
+            provisional_geometry_strict_voxels_added = 0;
         }
         segment_id = 1;
         segment_resume_pending = false;
@@ -1787,6 +1830,112 @@ struct AccumulatedMapRuntime::Impl {
         }
     }
 
+    static bool provisional_geometry_cacheable(
+        const PoseDecision& decision) {
+        return decision.geometry_suppressed &&
+            decision.visual.stereo_translation_valid &&
+            decision.method == "AUTO_WALK_STEREO_SE3_PROVISIONAL" &&
+            decision.provisional_chain_length > 0;
+    }
+
+    std::size_t cache_provisional_geometry(
+        const MapJob& job,
+        const cv::Matx44d& provisional_world_from_camera,
+        const PoseDecision& decision) {
+        std::size_t discarded = 0;
+        if (!provisional_geometry_cacheable(decision)) {
+            discarded = provisional_geometry_frames.size();
+            provisional_geometry_frames.clear();
+            return discarded;
+        }
+
+        if (!provisional_geometry_frames.empty()) {
+            const auto& previous = provisional_geometry_frames.back();
+            const bool same_chain =
+                previous.job.segment_id == job.segment_id &&
+                previous.anchor_keyframe_id ==
+                    decision.reference_keyframe_id &&
+                previous.chain_length <
+                    decision.provisional_chain_length &&
+                previous.job.pair_index < job.pair_index;
+            if (!same_chain) {
+                discarded = provisional_geometry_frames.size();
+                provisional_geometry_frames.clear();
+            }
+        }
+
+        ProvisionalGeometryFrame frame;
+        frame.job = job;
+        frame.provisional_world_from_camera =
+            provisional_world_from_camera;
+        frame.anchor_keyframe_id = decision.reference_keyframe_id;
+        frame.chain_length = decision.provisional_chain_length;
+        provisional_geometry_frames.push_back(std::move(frame));
+        while (provisional_geometry_frames.size() >
+               kMaximumProvisionalGeometryFrames) {
+            provisional_geometry_frames.pop_front();
+            ++discarded;
+        }
+        return discarded;
+    }
+
+    ProvisionalBackfillResult backfill_provisional_geometry(
+        const MapJob& anchored_job,
+        const PoseDecision& decision) {
+        ProvisionalBackfillResult result;
+        if (!decision.provisional_promoted ||
+            !decision.provisional_alignment_available ||
+            !decision.translation_trusted ||
+            provisional_geometry_frames.empty()) {
+            return result;
+        }
+
+        const auto raw_before = voxels.size();
+        const auto strict_before = temporal_strict_voxels.size();
+        std::unordered_set<std::uint64_t> merged_pairs;
+        for (const auto& frame : provisional_geometry_frames) {
+            const bool same_chain =
+                frame.job.segment_id == anchored_job.segment_id &&
+                frame.anchor_keyframe_id ==
+                    decision.provisional_alignment_anchor_keyframe_id &&
+                frame.chain_length > 0 &&
+                frame.chain_length <
+                    decision.provisional_alignment_chain_length;
+            if (!same_chain ||
+                !merged_pairs.insert(frame.job.pair_index).second) {
+                ++result.discarded_frames;
+                continue;
+            }
+
+            const auto corrected_world_from_camera =
+                decision.provisional_alignment_world_from_provisional *
+                frame.provisional_world_from_camera;
+            merge_keyframe(
+                frame.job,
+                corrected_world_from_camera,
+                frame.job.pair_index,
+                voxels);
+            if (!frame.job.strict_disparity.empty() &&
+                !frame.job.strict_mask.empty()) {
+                MapJob strict_job = frame.job;
+                strict_job.disparity = frame.job.strict_disparity;
+                strict_job.mask = frame.job.strict_mask;
+                merge_keyframe(
+                    strict_job,
+                    corrected_world_from_camera,
+                    frame.job.pair_index,
+                    temporal_strict_voxels);
+            }
+            ++result.frames;
+        }
+        result.raw_voxels_added = static_cast<std::uint64_t>(
+            voxels.size() - raw_before);
+        result.strict_voxels_added = static_cast<std::uint64_t>(
+            temporal_strict_voxels.size() - strict_before);
+        provisional_geometry_frames.clear();
+        return result;
+    }
+
     void push_tracking_reference(const TrackingFrame& frame,
                                  const cv::Matx44d& world_from_camera,
                                  const MapJob& job,
@@ -1918,18 +2067,12 @@ struct AccumulatedMapRuntime::Impl {
                 reference.pose_trusted
                     ? 0
                     : reference.provisional_chain_length + 1;
-            decision.provisional_promoted =
-                !reference.pose_trusted &&
-                decision.provisional_chain_length >=
-                    kProvisionalStepsToPromote;
-            decision.translation_trusted =
-                reference.pose_trusted || decision.provisional_promoted;
-            decision.geometry_suppressed = !decision.translation_trusted;
-            decision.method = decision.provisional_promoted
-                ? "AUTO_WALK_STEREO_SE3_PROVISIONAL_PROMOTED"
-                : (decision.translation_trusted
-                    ? "AUTO_WALK_STEREO_SE3_RANSAC"
-                    : "AUTO_WALK_STEREO_SE3_PROVISIONAL");
+            decision.provisional_promoted = false;
+            decision.translation_trusted = reference.pose_trusted;
+            decision.geometry_suppressed = !reference.pose_trusted;
+            decision.method = reference.pose_trusted
+                ? "AUTO_WALK_STEREO_SE3_RANSAC"
+                : "AUTO_WALK_STEREO_SE3_PROVISIONAL";
             decision.state = decision.geometry_suppressed
                 ? "TRACKING_PROVISIONAL_SE3"
                 : "TRACKING_WALK";
@@ -1938,7 +2081,7 @@ struct AccumulatedMapRuntime::Impl {
             if (decision.geometry_suppressed) {
                 decision.keyframe = false;
                 decision.rejection_reason =
-                    "PROVISIONAL_SE3_WAITING_FOR_CONFIRMATION";
+                    "PROVISIONAL_SE3_WAITING_FOR_TRUSTED_ANCHOR";
                 return decision;
             }
         } else if (inertial_walk || active_mode == MotionMode::Walk) {
@@ -1951,10 +2094,7 @@ struct AccumulatedMapRuntime::Impl {
             decision.translation_m = 0.0;
             decision.translation_trusted = false;
             decision.geometry_suppressed = true;
-            decision.provisional_chain_length =
-                reference.pose_trusted
-                    ? 1
-                    : reference.provisional_chain_length + 1;
+            decision.provisional_chain_length = 0;
             decision.valid = true;
             decision.keyframe = false;
             decision.state = "TRACKING_TRANSLATION_UNCERTAIN";
@@ -1981,6 +2121,11 @@ struct AccumulatedMapRuntime::Impl {
                 reference.world_from_camera, decision.world_from_camera);
             decision.translation_source =
                 walk_translation_source(decision.visual);
+            decision.provisional_chain_length =
+                reference.pose_trusted
+                    ? 0
+                    : reference.provisional_chain_length + 1;
+            decision.provisional_promoted = false;
             decision.translation_trusted = reference.pose_trusted;
             decision.geometry_suppressed = !reference.pose_trusted;
             decision.method = reference.pose_trusted
@@ -1988,6 +2133,13 @@ struct AccumulatedMapRuntime::Impl {
                 : "AUTO_WALK_STEREO_SE3_PROVISIONAL";
             decision.used_visual = true;
             decision.valid = true;
+            if (decision.geometry_suppressed) {
+                decision.keyframe = false;
+                decision.state = "TRACKING_PROVISIONAL_SE3";
+                decision.rejection_reason =
+                    "PROVISIONAL_SE3_WAITING_FOR_TRUSTED_ANCHOR";
+                return decision;
+            }
         }
 
         if (!decision.valid) {
@@ -2031,6 +2183,12 @@ struct AccumulatedMapRuntime::Impl {
                                           const MapJob& job) {
         PoseDecision best;
         std::unordered_set<std::uint64_t> attempted_pairs;
+        std::optional<cv::Matx44d> provisional_current_pose;
+        std::uint64_t provisional_anchor_keyframe_id = 0;
+        std::uint64_t provisional_reference_pair_index = 0;
+        std::uint32_t provisional_chain_length = 0;
+        double provisional_score =
+            -std::numeric_limits<double>::infinity();
         int attempts = 0;
         auto consider = [&](const Keyframe& reference,
                                   const bool recovery_attempt,
@@ -2038,12 +2196,24 @@ struct AccumulatedMapRuntime::Impl {
             if (!attempted_pairs.insert(reference.pair_index).second) return;
             auto candidate = decide_pose(reference, current, job, recovery_attempt);
             if (recovery_attempt) ++attempts;
+            if (!reference.pose_trusted && candidate.valid &&
+                candidate.geometry_suppressed &&
+                candidate.visual.stereo_translation_valid) {
+                const double score = decision_score(candidate);
+                if (!provisional_current_pose || score > provisional_score) {
+                    provisional_current_pose = candidate.world_from_camera;
+                    provisional_anchor_keyframe_id =
+                        candidate.reference_keyframe_id;
+                    provisional_reference_pair_index = reference.pair_index;
+                    provisional_chain_length =
+                        candidate.provisional_chain_length;
+                    provisional_score = score;
+                }
+            }
             const auto anchor_rank = [](const PoseDecision& value) {
                 if (!value.valid) return 0;
                 if (value.translation_trusted &&
                     value.reference_pose_trusted) return 3;
-                if (value.translation_trusted &&
-                    value.provisional_promoted) return 2;
                 return 1;
             };
             const int candidate_rank = anchor_rank(candidate);
@@ -2074,6 +2244,25 @@ struct AccumulatedMapRuntime::Impl {
             }
         }
         best.recovery_attempts = attempts;
+        if (best.valid && best.translation_trusted &&
+            best.reference_pose_trusted && provisional_current_pose &&
+            provisional_chain_length >= kProvisionalStepsToPromote &&
+            !provisional_geometry_frames.empty()) {
+            best.provisional_alignment_available = true;
+            best.provisional_promoted = true;
+            best.provisional_chain_length = provisional_chain_length;
+            best.provisional_alignment_chain_length =
+                provisional_chain_length;
+            best.provisional_alignment_anchor_keyframe_id =
+                provisional_anchor_keyframe_id;
+            best.provisional_alignment_reference_pair_index =
+                provisional_reference_pair_index;
+            best.provisional_alignment_world_from_provisional =
+                best.world_from_camera *
+                rigid_inverse(*provisional_current_pose);
+            best.method =
+                "AUTO_WALK_STEREO_SE3_PROVISIONAL_PROMOTED_RELOCALIZED";
+        }
         if (best.valid && !best.geometry_suppressed && attempts > 0) {
             best.recovered = true;
             best.method = "RECOVERED_" + best.method;
@@ -2180,6 +2369,8 @@ struct AccumulatedMapRuntime::Impl {
                         decision.translation_trusted = true;
                         decision.translation_source = "APRILTAG_STEREO";
                         decision.geometry_suppressed = false;
+                        decision.provisional_alignment_available = false;
+                        decision.provisional_promoted = false;
                         decision.valid = true;
                         decision.keyframe = apriltag_result.relocalized ||
                             decision.translation_m >=
@@ -2330,6 +2521,16 @@ struct AccumulatedMapRuntime::Impl {
                          decision.provisional_chain_length},
                         {"provisional_promoted",
                          decision.provisional_promoted},
+                        {"provisional_alignment_available",
+                         decision.provisional_alignment_available},
+                        {"provisional_alignment_chain_length",
+                         decision.provisional_alignment_chain_length},
+                        {"provisional_alignment_anchor_keyframe_id",
+                         decision.provisional_alignment_anchor_keyframe_id},
+                        {"provisional_alignment_reference_pair_index",
+                         decision.provisional_alignment_reference_pair_index},
+                        {"provisional_geometry_pending_frames",
+                         provisional_geometry_frames.size()},
                         {"translation_source", decision.translation_source},
                         {"translation_trusted", decision.translation_trusted},
                         {"geometry_suppressed", decision.geometry_suppressed},
@@ -2364,18 +2565,34 @@ struct AccumulatedMapRuntime::Impl {
                     }
                     pose = decision.world_from_camera;
                     if (!decision.keyframe) {
+                        const bool provisional_geometry_cached =
+                            features_usable &&
+                            provisional_geometry_cacheable(decision);
+                        std::size_t provisional_geometry_discarded = 0;
                         if (!decision.geometry_suppressed) {
+                            provisional_geometry_discarded =
+                                provisional_geometry_frames.size();
+                            provisional_geometry_frames.clear();
                             push_tracking_reference(
                                 current, pose, job,
                                 decision.reference_keyframe_id,
                                 true, 0);
                         } else if (features_usable) {
+                            provisional_geometry_discarded =
+                                cache_provisional_geometry(
+                                    job, pose, decision);
                             push_tracking_reference(
                                 current, pose, job,
                                 decision.reference_keyframe_id,
                                 false,
                                 decision.provisional_chain_length);
+                        } else {
+                            provisional_geometry_discarded =
+                                provisional_geometry_frames.size();
+                            provisional_geometry_frames.clear();
                         }
+                        const auto provisional_geometry_pending =
+                            provisional_geometry_frames.size();
                         const double duration = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - started).count();
                         {
@@ -2400,6 +2617,15 @@ struct AccumulatedMapRuntime::Impl {
                             } else {
                                 ++stationary_frames;
                             }
+                            provisional_geometry_pending_frames =
+                                static_cast<std::uint64_t>(
+                                    provisional_geometry_pending);
+                            if (provisional_geometry_cached) {
+                                ++provisional_geometry_cached_frames;
+                            }
+                            provisional_geometry_discarded_frames +=
+                                static_cast<std::uint64_t>(
+                                    provisional_geometry_discarded);
                             recovery_attempts_total +=
                                 static_cast<std::uint64_t>(decision.recovery_attempts);
                             if (decision.recovered) {
@@ -2426,12 +2652,25 @@ struct AccumulatedMapRuntime::Impl {
                             last_fused_yaw_step_deg = decision.fused_yaw_step_deg;
                             last_translation_m = decision.translation_m;
                             last_processing_ms = duration;
-                                last_rejection_reason =
-                                    decision.rejection_reason;
+                            last_rejection_reason =
+                                decision.rejection_reason;
                         }
                         write_status_file();
                         continue;
                     }
+                }
+
+                ProvisionalBackfillResult provisional_backfill;
+                std::size_t provisional_geometry_discarded = 0;
+                if (!first && decision.provisional_promoted &&
+                    decision.provisional_alignment_available) {
+                    provisional_backfill = backfill_provisional_geometry(
+                        job, decision);
+                } else if (!first && decision.translation_trusted &&
+                           !provisional_geometry_frames.empty()) {
+                    provisional_geometry_discarded =
+                        provisional_geometry_frames.size();
+                    provisional_geometry_frames.clear();
                 }
 
                 const std::uint64_t keyframe_id = next_keyframe_id++;
@@ -2592,6 +2831,22 @@ struct AccumulatedMapRuntime::Impl {
                     if (!first && decision.provisional_promoted) {
                         ++provisional_promotions;
                     }
+                    provisional_geometry_pending_frames =
+                        static_cast<std::uint64_t>(
+                            provisional_geometry_frames.size());
+                    provisional_geometry_backfilled_frames +=
+                        provisional_backfill.frames;
+                    provisional_geometry_discarded_frames +=
+                        provisional_backfill.discarded_frames +
+                        static_cast<std::uint64_t>(
+                            provisional_geometry_discarded);
+                    provisional_geometry_raw_voxels_added +=
+                        provisional_backfill.raw_voxels_added;
+                    provisional_geometry_strict_voxels_added +=
+                        provisional_backfill.strict_voxels_added;
+                    if (provisional_backfill.frames > 0) {
+                        ++provisional_geometry_backfill_events;
+                    }
                     recovery_attempts_total +=
                         static_cast<std::uint64_t>(decision.recovery_attempts);
                     if (!first && decision.recovered) {
@@ -2615,6 +2870,20 @@ struct AccumulatedMapRuntime::Impl {
                         {"recovered", decision.recovered},
                         {"recovery_attempts", decision.recovery_attempts},
                         {"reference_pair_index", decision.reference_pair_index},
+                        {"provisional_alignment_available",
+                         decision.provisional_alignment_available},
+                        {"provisional_alignment_chain_length",
+                         decision.provisional_alignment_chain_length},
+                        {"provisional_alignment_reference_pair_index",
+                         decision.provisional_alignment_reference_pair_index},
+                        {"provisional_backfilled_frames",
+                         provisional_backfill.frames},
+                        {"provisional_backfill_discarded_frames",
+                         provisional_backfill.discarded_frames},
+                        {"provisional_backfill_raw_voxels_added",
+                         provisional_backfill.raw_voxels_added},
+                        {"provisional_backfill_strict_voxels_added",
+                         provisional_backfill.strict_voxels_added},
                         {"gyro_yaw_step_deg", gyro_step},
                         {"visual_yaw_step_deg", visual_step},
                         {"fused_yaw_step_deg", fused_step},
@@ -2678,6 +2947,7 @@ struct AccumulatedMapRuntime::Impl {
 
     std::deque<Keyframe> registration_keyframes;
     std::deque<Keyframe> tracking_buffer;
+    std::deque<ProvisionalGeometryFrame> provisional_geometry_frames;
     std::vector<TrajectorySample> trajectory;
     std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash> voxels;
     std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash>
@@ -2752,6 +3022,13 @@ struct AccumulatedMapRuntime::Impl {
     std::uint64_t provisional_tracking_frames = 0;
     std::uint64_t provisional_promotions = 0;
     std::uint64_t maximum_provisional_chain = 0;
+    std::uint64_t provisional_geometry_pending_frames = 0;
+    std::uint64_t provisional_geometry_cached_frames = 0;
+    std::uint64_t provisional_geometry_backfilled_frames = 0;
+    std::uint64_t provisional_geometry_backfill_events = 0;
+    std::uint64_t provisional_geometry_discarded_frames = 0;
+    std::uint64_t provisional_geometry_raw_voxels_added = 0;
+    std::uint64_t provisional_geometry_strict_voxels_added = 0;
 
     std::uint64_t submitted_frames = 0;
     std::uint64_t accepted_frames = 0;

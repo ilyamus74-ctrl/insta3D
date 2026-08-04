@@ -58,13 +58,14 @@ foreach ([
     }
 }
 
+$normalizedContract = preg_replace('/\s+/', ' ', $contract) ?? $contract;
 foreach ([
     'known-yaw stereo 3D-to-3D translation estimator',
     'must not be merged into the accumulated cloud',
     'must not replace the last trusted tracking reference',
     'No inertial position integration',
 ] as $token) {
-    if (!str_contains($contract, $token)) {
+    if (!str_contains($normalizedContract, $token)) {
         fwrite(STDERR, "missing contract token: {$token}\n");
         exit(1);
     }
