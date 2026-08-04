@@ -218,6 +218,37 @@ void HttpDashboard::handle_client(const int client_fd) {
                   nlohmann::json(state_.recent_events()).dump());
         return;
     }
+    std::filesystem::path map_asset;
+    std::string map_content_type;
+    if (path == "/api/map/raw.ply") {
+        map_asset = "point_cloud_accumulated_raw.ply";
+        map_content_type = "application/x-ply";
+    } else if (path == "/api/map/multiview.ply") {
+        map_asset = "point_cloud_accumulated_multiview.ply";
+        map_content_type = "application/x-ply";
+    } else if (path == "/api/map/strict.ply") {
+        map_asset = "point_cloud_accumulated_temporal_strict_raw.ply";
+        map_content_type = "application/x-ply";
+    } else if (path == "/api/map/strict-multiview.ply") {
+        map_asset = "point_cloud_accumulated_temporal_strict_multiview.ply";
+        map_content_type = "application/x-ply";
+    } else if (path == "/api/map/trajectory.json") {
+        map_asset = "camera_trajectory.json";
+        map_content_type = "application/json";
+    }
+    if (!map_asset.empty()) {
+        try {
+            const auto body = read_binary_file(
+                state_.session_directory() / map_asset);
+            send_response(
+                client_fd, 200, map_content_type, body,
+                "no-store, max-age=0");
+        } catch (const std::exception&) {
+            send_text(client_fd, 404, "application/json",
+                      R"({"error":"live map asset not ready"})");
+        }
+        return;
+    }
     if (path == "/camera/a.jpg" || path == "/camera/b.jpg") {
         const auto slot = path == "/camera/a.jpg" ? CameraSlot::A : CameraSlot::B;
         const auto camera = state_.camera(slot);
