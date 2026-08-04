@@ -62,6 +62,16 @@ if [[ -x "$MULTI_PLANE_TOOL" && -f "$SESSION_DIR/room_planes_accumulated.json" ]
   fi
 fi
 
+MANHATTAN_FUSION_TOOL="$SCRIPT_DIR/../tools/fuse_manhattan_room.py"
+if [[ -x "$MANHATTAN_FUSION_TOOL" && \
+      -f "$SESSION_DIR/room_plane_candidates_accumulated.json" && \
+      -f "$SESSION_DIR/room_corner_hypotheses_accumulated.json" ]]; then
+  echo "[MANHATTAN-FUSION] Merging fragmented walls and confirming supported room corners..."
+  if ! python3 "$MANHATTAN_FUSION_TOOL" "$SESSION_DIR" >"$SESSION_DIR/room_manhattan_fusion_console.json"; then
+    echo "[MANHATTAN-FUSION] Warning: conservative Manhattan fusion failed; archive creation will continue." >&2
+  fi
+fi
+
 LOCAL_STEREO_TOOL="$SCRIPT_DIR/../tools/analyze_local_stereo_geometry.py"
 if [[ -x "$LOCAL_STEREO_TOOL" && -d "$SESSION_DIR/keyframes" ]]; then
   echo "[LOCAL-STEREO] Validating local clouds, world transforms and tripod pose..."
@@ -121,6 +131,11 @@ for name in \
   room_candidate_skeleton_accumulated.ply \
   room_multi_plane_status.json \
   room_multi_plane_console.json \
+  room_planes_manhattan_accumulated.json \
+  room_edges_manhattan_accumulated.json \
+  room_skeleton_manhattan_accumulated.ply \
+  room_manhattan_fusion_status.json \
+  room_manhattan_fusion_console.json \
   local_stereo_validation.json \
   local_stereo_validation.txt \
   local_stereo_validation_console.json \
