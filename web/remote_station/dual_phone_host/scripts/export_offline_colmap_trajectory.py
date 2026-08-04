@@ -82,7 +82,11 @@ def read_live_path(session: Path) -> float | None:
         value = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
-    samples = value.get("trajectory", value) if isinstance(value, dict) else value
+    samples = (
+        value.get("trajectory", value.get("samples", value))
+        if isinstance(value, dict)
+        else value
+    )
     if not isinstance(samples, list):
         return None
     positions = [
