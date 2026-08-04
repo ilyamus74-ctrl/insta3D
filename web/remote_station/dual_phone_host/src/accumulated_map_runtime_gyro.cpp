@@ -64,7 +64,9 @@ constexpr double kMinimumWalkTranslationStepM = 0.035;
 constexpr double kTripodPivotRadiusM = 0.12;
 constexpr double kMinimumAccelerationMotionMps2 = 0.18;
 constexpr int kMotionVotesToSwitch = 3;
-constexpr double kGyroStillThresholdRadS = 0.10;
+constexpr std::uint64_t kGyroBiasCalibrationSamples = 80;
+constexpr double kGyroBiasCalibrationMaximumRateRadS = 0.06;
+constexpr double kGyroBiasCalibrationMaximumAccelerationDeltaMps2 = 0.25;
 constexpr double kGyroMaximumDtSeconds = 0.15;
 constexpr std::uint32_t kMinimumMultiviewKeyframes = 2;
 
@@ -88,7 +90,11 @@ struct MapJob {
     double principal_x_px = 0.0;
     double principal_y_px = 0.0;
     bool gyro_valid = false;
+    bool gyro_bias_ready = false;
+    double gyro_bias_rad_s = 0.0;
+    double gyro_yaw_uncalibrated_deg = 0.0;
     double gyro_yaw_raw_deg = 0.0;
+    std::uint64_t gyro_bias_calibration_samples = 0;
     std::uint64_t gyro_samples = 0;
     bool accelerometer_valid = false;
     double acceleration_motion_mps2 = 0.0;
@@ -114,6 +120,7 @@ struct Keyframe {
     TrackingFrame frame;
     cv::Matx44d world_from_camera = cv::Matx44d::eye();
     bool gyro_valid = false;
+    double gyro_yaw_uncalibrated_deg = 0.0;
     double gyro_yaw_raw_deg = 0.0;
 };
 
@@ -169,6 +176,8 @@ struct PoseDecision {
     std::string rejection_reason;
     cv::Matx44d world_from_camera = cv::Matx44d::eye();
     double gyro_yaw_step_deg = 0.0;
+    double gyro_uncalibrated_yaw_step_deg = 0.0;
+    double gyro_bias_removed_step_deg = 0.0;
     double visual_yaw_step_deg = 0.0;
     double fused_yaw_step_deg = 0.0;
     double translation_m = 0.0;
@@ -733,6 +742,11 @@ struct AccumulatedMapRuntime::Impl {
             if (!session.empty() && session != imu_session_id) {
                 imu_session_id = session;
                 last_imu_timestamp_ns = 0;
+                imu_ready = false;
+                gyro_bias_ready = false;
+                gyro_bias_calibration_sum_rad_s = 0.0;
+                gyro_bias_calibration_samples = 0;
+                gyro_bias_rad_s = 0.0;
                 ++imu_session_changes;
             }
             if (acceleration_delta_mps2) {
@@ -740,14 +754,35 @@ struct AccumulatedMapRuntime::Impl {
                     *acceleration_delta_mps2 * 0.15;
                 accelerometer_valid = true;
             }
+            if (!gyro_bias_ready) {
+                const bool acceleration_safe =
+                    !acceleration_delta_mps2 ||
+                    *acceleration_delta_mps2 <=
+                        kGyroBiasCalibrationMaximumAccelerationDeltaMps2;
+                if (acceleration_safe &&
+                    std::abs(rate) <= kGyroBiasCalibrationMaximumRateRadS) {
+                    gyro_bias_calibration_sum_rad_s += rate;
+                    ++gyro_bias_calibration_samples;
+                    gyro_bias_rad_s = gyro_bias_calibration_sum_rad_s /
+                        static_cast<double>(gyro_bias_calibration_samples);
+                    if (gyro_bias_calibration_samples >=
+                        kGyroBiasCalibrationSamples) {
+                        gyro_bias_ready = true;
+                        imu_ready = true;
+                    }
+                }
+                last_imu_timestamp_ns = timestamp;
+                last_gyro_rate_rad_s = rate;
+                imu_axis = axis;
+                ++imu_samples;
+                return;
+            }
             if (last_imu_timestamp_ns > 0) {
                 const double dt = static_cast<double>(
                     timestamp - last_imu_timestamp_ns) / 1'000'000'000.0;
                 if (dt > 0.0 && dt <= kGyroMaximumDtSeconds) {
-                    if (std::abs(rate) < kGyroStillThresholdRadS) {
-                        gyro_bias_rad_s = gyro_bias_rad_s * 0.995 +
-                            rate * 0.005;
-                    }
+                    gyro_yaw_uncalibrated_deg += rate * dt *
+                        180.0 / std::numbers::pi;
                     gyro_yaw_raw_deg += (rate - gyro_bias_rad_s) * dt *
                         180.0 / std::numbers::pi;
                     imu_ready = true;
@@ -830,7 +865,12 @@ struct AccumulatedMapRuntime::Impl {
         job.principal_x_px = depth.principal_x_px;
         job.principal_y_px = depth.principal_y_px;
         job.gyro_valid = imu_ready;
+        job.gyro_bias_ready = gyro_bias_ready;
+        job.gyro_bias_rad_s = gyro_bias_rad_s;
+        job.gyro_yaw_uncalibrated_deg = gyro_yaw_uncalibrated_deg;
         job.gyro_yaw_raw_deg = gyro_yaw_raw_deg;
+        job.gyro_bias_calibration_samples =
+            gyro_bias_calibration_samples;
         job.gyro_samples = imu_samples;
         job.accelerometer_valid = accelerometer_valid;
         job.acceleration_motion_mps2 = acceleration_motion_mps2;
@@ -903,8 +943,18 @@ struct AccumulatedMapRuntime::Impl {
             {"gyro_samples", imu_samples},
             {"gyro_invalid_samples", imu_invalid_samples},
             {"gyro_session_changes", imu_session_changes},
+            {"gyro_bias_mode", "INITIAL_STILLNESS_FREEZE"},
+            {"gyro_bias_ready", gyro_bias_ready},
+            {"gyro_bias_calibration_samples",
+             gyro_bias_calibration_samples},
+            {"gyro_bias_calibration_required_samples",
+             kGyroBiasCalibrationSamples},
             {"gyro_bias_rad_s", gyro_bias_rad_s},
+            {"gyro_yaw_uncalibrated_deg",
+             gyro_yaw_uncalibrated_deg},
             {"gyro_yaw_raw_deg", gyro_yaw_raw_deg},
+            {"gyro_yaw_bias_removed_deg",
+             gyro_yaw_uncalibrated_deg - gyro_yaw_raw_deg},
             {"accelerometer_valid", accelerometer_valid},
             {"acceleration_motion_mps2", acceleration_motion_mps2},
             {"gyro_to_camera_sign", gyro_to_camera_sign},
@@ -1166,6 +1216,8 @@ struct AccumulatedMapRuntime::Impl {
         reference.frame = frame;
         reference.world_from_camera = world_from_camera;
         reference.gyro_valid = job.gyro_valid;
+        reference.gyro_yaw_uncalibrated_deg =
+            job.gyro_yaw_uncalibrated_deg;
         reference.gyro_yaw_raw_deg = job.gyro_yaw_raw_deg;
         tracking_buffer.push_back(std::move(reference));
         while (tracking_buffer.size() > kMaximumTrackingBufferFrames) {
@@ -1189,6 +1241,12 @@ struct AccumulatedMapRuntime::Impl {
         double gyro_step = gyro_pair_valid
             ? std::remainder(job.gyro_yaw_raw_deg - reference.gyro_yaw_raw_deg, 360.0)
             : 0.0;
+        double gyro_uncalibrated_step = gyro_pair_valid
+            ? std::remainder(
+                  job.gyro_yaw_uncalibrated_deg -
+                      reference.gyro_yaw_uncalibrated_deg,
+                  360.0)
+            : 0.0;
         if (gyro_pair_valid && decision.visual.homography_valid && !gyro_sign_locked &&
             std::abs(gyro_step) >= 0.5 &&
             std::abs(decision.visual_yaw_step_deg) >= 0.5) {
@@ -1198,7 +1256,12 @@ struct AccumulatedMapRuntime::Impl {
             gyro_sign_locked = true;
         }
         gyro_step *= gyro_to_camera_sign;
+        gyro_uncalibrated_step *= gyro_to_camera_sign;
         decision.gyro_yaw_step_deg = gyro_step;
+        decision.gyro_uncalibrated_yaw_step_deg =
+            gyro_uncalibrated_step;
+        decision.gyro_bias_removed_step_deg =
+            gyro_uncalibrated_step - gyro_step;
         const double maximum_gyro_step = recovery_attempt
             ? kMaximumRecoveryGyroStepDeg : kMaximumGyroYawStepDeg;
         const bool gyro_valid = gyro_pair_valid && std::isfinite(gyro_step) &&
@@ -1476,7 +1539,19 @@ struct AccumulatedMapRuntime::Impl {
                         {"reference_keyframe_id", decision.reference_keyframe_id},
                         {"reference_pair_index", decision.reference_pair_index},
                         {"gyro_valid", job.gyro_valid},
+                        {"gyro_bias_ready", job.gyro_bias_ready},
+                        {"gyro_bias_rad_s", job.gyro_bias_rad_s},
+                        {"gyro_bias_calibration_samples",
+                         job.gyro_bias_calibration_samples},
+                        {"gyro_yaw_uncalibrated_deg",
+                         job.gyro_yaw_uncalibrated_deg},
+                        {"gyro_yaw_corrected_deg",
+                         job.gyro_yaw_raw_deg},
                         {"gyro_yaw_step_deg", decision.gyro_yaw_step_deg},
+                        {"gyro_uncalibrated_yaw_step_deg",
+                         decision.gyro_uncalibrated_yaw_step_deg},
+                        {"gyro_bias_removed_step_deg",
+                         decision.gyro_bias_removed_step_deg},
                         {"visual_yaw_step_deg", decision.visual_yaw_step_deg},
                         {"fused_yaw_step_deg", decision.fused_yaw_step_deg},
                         {"translation_from_last_keyframe_m",
@@ -1627,6 +1702,8 @@ struct AccumulatedMapRuntime::Impl {
                 keyframe.frame = current;
                 keyframe.world_from_camera = pose;
                 keyframe.gyro_valid = job.gyro_valid;
+                keyframe.gyro_yaw_uncalibrated_deg =
+                    job.gyro_yaw_uncalibrated_deg;
                 keyframe.gyro_yaw_raw_deg = job.gyro_yaw_raw_deg;
                 registration_keyframes.push_back(std::move(keyframe));
                 while (registration_keyframes.size() > kMaximumRegistrationKeyframes) {
@@ -1832,7 +1909,11 @@ struct AccumulatedMapRuntime::Impl {
     std::int64_t last_imu_timestamp_ns = 0;
     int imu_axis = 1;
     double last_gyro_rate_rad_s = 0.0;
+    bool gyro_bias_ready = false;
+    double gyro_bias_calibration_sum_rad_s = 0.0;
+    std::uint64_t gyro_bias_calibration_samples = 0;
     double gyro_bias_rad_s = 0.0;
+    double gyro_yaw_uncalibrated_deg = 0.0;
     double gyro_yaw_raw_deg = 0.0;
     bool accelerometer_valid = false;
     double acceleration_motion_mps2 = 0.0;
