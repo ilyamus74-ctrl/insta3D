@@ -181,6 +181,11 @@ struct PoseDecision {
     double visual_yaw_step_deg = 0.0;
     double fused_yaw_step_deg = 0.0;
     double translation_m = 0.0;
+    bool rotation_translation_applied = false;
+    double rotation_translation_candidate_m = 0.0;
+    double rotation_translation_limit_m = 0.0;
+    cv::Vec3d rotation_translation_vector_world_m{0.0, 0.0, 0.0};
+    std::string rotation_translation_rejection_reason = "NOT_EVALUATED";
     double rotation_deg = 0.0;
     double translation_from_last_keyframe_m = 0.0;
     double yaw_from_last_keyframe_deg = 0.0;
@@ -1165,6 +1170,36 @@ struct AccumulatedMapRuntime::Impl {
              visual.sparse_depth_median_m <= kMaximumWalkSparseDepthMedianM);
     }
 
+    static bool rotation_pnp_translation_safe(
+        const VisualEstimate& visual,
+        const double maximum_translation_m,
+        std::string& rejection_reason) {
+        if (!visual.pnp_valid) {
+            rejection_reason = "PNP_POSE_INVALID";
+            return false;
+        }
+        if (!std::isfinite(visual.translation_m)) {
+            rejection_reason = "PNP_TRANSLATION_NONFINITE";
+            return false;
+        }
+        if (visual.pnp_inliers < kMinimumPnPInliers ||
+            visual.pnp_inlier_ratio < kMinimumPnPInlierRatio) {
+            rejection_reason = "PNP_SUPPORT_TOO_WEAK";
+            return false;
+        }
+        if (std::isfinite(visual.sparse_depth_median_m) &&
+            visual.sparse_depth_median_m > kMaximumSparseDepthMedianM) {
+            rejection_reason = "PNP_DEPTH_RESIDUAL_TOO_LARGE";
+            return false;
+        }
+        if (visual.translation_m > maximum_translation_m) {
+            rejection_reason = "PNP_TRANSLATION_EXCEEDS_TRIPOD_BOUND";
+            return false;
+        }
+        rejection_reason.clear();
+        return true;
+    }
+
     static MotionMode classify_motion_evidence(const PoseDecision& decision,
                                                 const MapJob& job) {
         const bool rotation_available = decision.used_gyro || decision.used_visual;
@@ -1314,13 +1349,51 @@ struct AccumulatedMapRuntime::Impl {
             decision.rotation_only = true;
             decision.world_from_camera = reference.world_from_camera *
                 yaw_rotation_deg(decision.fused_yaw_step_deg);
-            decision.translation_m = 0.0;
+            decision.rotation_translation_limit_m = tripod_translation_limit(
+                decision.fused_yaw_step_deg);
+            if (decision.visual.pnp_valid) {
+                decision.rotation_translation_vector_world_m = {
+                    decision.visual.pnp_world_from_camera(0, 3) -
+                        reference.world_from_camera(0, 3),
+                    decision.visual.pnp_world_from_camera(1, 3) -
+                        reference.world_from_camera(1, 3),
+                    decision.visual.pnp_world_from_camera(2, 3) -
+                        reference.world_from_camera(2, 3),
+                };
+                decision.rotation_translation_candidate_m = std::sqrt(
+                    decision.rotation_translation_vector_world_m.dot(
+                        decision.rotation_translation_vector_world_m));
+            }
+            if (active_mode == MotionMode::Walk) {
+                decision.rotation_translation_rejection_reason =
+                    "ACTIVE_WALK_MODE";
+            } else if (decision.motion_evidence != MotionMode::Rotation) {
+                decision.rotation_translation_rejection_reason =
+                    "NO_ROTATION_EVIDENCE";
+            } else if (rotation_pnp_translation_safe(
+                           decision.visual,
+                           decision.rotation_translation_limit_m,
+                           decision.rotation_translation_rejection_reason)) {
+                decision.world_from_camera(0, 3) =
+                    decision.visual.pnp_world_from_camera(0, 3);
+                decision.world_from_camera(1, 3) =
+                    decision.visual.pnp_world_from_camera(1, 3);
+                decision.world_from_camera(2, 3) =
+                    decision.visual.pnp_world_from_camera(2, 3);
+                decision.translation_m = translation_delta_m(
+                    reference.world_from_camera,
+                    decision.world_from_camera);
+                decision.rotation_translation_applied = true;
+            }
             decision.rotation_deg = std::abs(decision.fused_yaw_step_deg);
             decision.valid = true;
             if (active_mode == MotionMode::Walk && !walk_safe) {
                 decision.method = "AUTO_WALK_GYRO_COAST";
             } else {
                 decision.method = "AUTO_ROTATION_" + decision.method;
+                if (decision.rotation_translation_applied) {
+                    decision.method += "_PNP_TRANSLATION";
+                }
             }
         } else if (walk_safe) {
             decision.world_from_camera = decision.visual.pnp_world_from_camera;
@@ -1554,6 +1627,20 @@ struct AccumulatedMapRuntime::Impl {
                          decision.gyro_bias_removed_step_deg},
                         {"visual_yaw_step_deg", decision.visual_yaw_step_deg},
                         {"fused_yaw_step_deg", decision.fused_yaw_step_deg},
+                        {"rotation_translation_applied",
+                         decision.rotation_translation_applied},
+                        {"rotation_translation_candidate_m",
+                         decision.rotation_translation_candidate_m},
+                        {"rotation_translation_limit_m",
+                         decision.rotation_translation_limit_m},
+                        {"rotation_translation_vector_world_m",
+                         nlohmann::json::array({
+                             decision.rotation_translation_vector_world_m[0],
+                             decision.rotation_translation_vector_world_m[1],
+                             decision.rotation_translation_vector_world_m[2],
+                         })},
+                        {"rotation_translation_rejection_reason",
+                         decision.rotation_translation_rejection_reason},
                         {"translation_from_last_keyframe_m",
                          decision.translation_from_last_keyframe_m},
                         {"yaw_from_last_keyframe_deg",
