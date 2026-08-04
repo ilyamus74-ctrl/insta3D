@@ -67,6 +67,14 @@ constexpr double kMinimumStereoTranslationInlierRatio = 0.35;
 constexpr double kMaximumStereoTranslationResidualM = 0.18;
 constexpr double kMinimumStereoTranslationResidualGateM = 0.045;
 constexpr double kMaximumStereoTranslationResidualGateM = 0.20;
+constexpr int kStereoSe3RansacIterations = 192;
+constexpr double kStereoSe3RansacThresholdM = 0.14;
+constexpr double kMaximumStereoSe3RotationDeg = 55.0;
+constexpr double kMaximumStereoSe3GyroYawErrorDeg = 20.0;
+constexpr double kMaximumStereoSe3VerticalStepM = 0.30;
+constexpr double kMaximumPnpStereoPoseDisagreementM = 0.22;
+constexpr double kMaximumPnpStereoYawDisagreementDeg = 18.0;
+constexpr std::uint32_t kProvisionalStepsToPromote = 2;
 constexpr double kTripodPivotRadiusM = 0.12;
 constexpr double kTripodHorizontalSmoothing = 0.35;
 constexpr double kTripodMaximumHorizontalStepM = 0.025;
@@ -132,10 +140,14 @@ struct Keyframe {
     bool gyro_valid = false;
     double gyro_yaw_uncalibrated_deg = 0.0;
     double gyro_yaw_raw_deg = 0.0;
+    bool pose_trusted = true;
+    std::uint32_t provisional_chain_length = 0;
 };
 
 struct MatchSet {
     int ratio_matches = 0;
+    int mutual_matches = 0;
+    int geometric_inliers = 0;
     std::vector<cv::Point2f> reference_pixels;
     std::vector<cv::Point2f> current_pixels;
     std::vector<cv::Point3f> pnp_object_points;
@@ -148,7 +160,11 @@ struct VisualEstimate {
     bool pnp_valid = false;
     bool stereo_translation_attempted = false;
     bool stereo_translation_valid = false;
+    bool stereo_gyro_yaw_checked = false;
+    bool pnp_stereo_confirmed = false;
     int matches = 0;
+    int mutual_matches = 0;
+    int geometric_inliers = 0;
     int homography_inliers = 0;
     int pnp_inliers = 0;
     int stereo_translation_pairs = 0;
@@ -163,6 +179,10 @@ struct VisualEstimate {
     double sparse_depth_median_m = 0.0;
     double stereo_translation_m = 0.0;
     double stereo_translation_residual_m =
+        std::numeric_limits<double>::infinity();
+    double stereo_rotation_deg = 0.0;
+    double stereo_yaw_deg = 0.0;
+    double stereo_gyro_yaw_error_deg =
         std::numeric_limits<double>::infinity();
     cv::Matx44d pnp_world_from_camera = cv::Matx44d::eye();
     cv::Matx44d stereo_world_from_camera = cv::Matx44d::eye();
@@ -193,6 +213,9 @@ struct PoseDecision {
     bool recovered = false;
     bool translation_trusted = false;
     bool geometry_suppressed = false;
+    bool reference_pose_trusted = true;
+    bool provisional_promoted = false;
+    std::uint32_t provisional_chain_length = 0;
     std::string state = "LOST";
     std::string method = "NONE";
     std::string translation_source = "NONE";
@@ -414,28 +437,92 @@ TrackingFrame make_tracking_frame(const MapJob& job) {
 
 MatchSet collect_matches(const TrackingFrame& reference,
                          const TrackingFrame& current) {
+    struct Candidate {
+        cv::Point2f reference_pixel;
+        cv::Point2f current_pixel;
+    };
+
     MatchSet result;
     if (reference.descriptors.empty() || current.descriptors.empty()) return result;
     cv::BFMatcher matcher(cv::NORM_HAMMING, false);
-    std::vector<std::vector<cv::DMatch>> neighbours;
-    matcher.knnMatch(reference.descriptors, current.descriptors, neighbours, 2);
-    for (const auto& pair : neighbours) {
+    std::vector<std::vector<cv::DMatch>> forward_neighbours;
+    std::vector<std::vector<cv::DMatch>> reverse_neighbours;
+    matcher.knnMatch(
+        reference.descriptors, current.descriptors,
+        forward_neighbours, 2);
+    matcher.knnMatch(
+        current.descriptors, reference.descriptors,
+        reverse_neighbours, 2);
+
+    std::vector<int> reverse_reference(
+        static_cast<std::size_t>(current.descriptors.rows), -1);
+    for (const auto& pair : reverse_neighbours) {
         if (pair.size() < 2 || pair[0].distance >= 0.75F * pair[1].distance) continue;
+        if (pair[0].queryIdx < 0 || pair[0].trainIdx < 0 ||
+            pair[0].queryIdx >= current.descriptors.rows) continue;
+        reverse_reference[static_cast<std::size_t>(pair[0].queryIdx)] =
+            pair[0].trainIdx;
+    }
+
+    std::vector<Candidate> candidates;
+    for (const auto& pair : forward_neighbours) {
+        if (pair.size() < 2 || pair[0].distance >= 0.75F * pair[1].distance) continue;
+        if (pair[0].queryIdx < 0 || pair[0].trainIdx < 0) continue;
         const auto query = static_cast<std::size_t>(pair[0].queryIdx);
         const auto train = static_cast<std::size_t>(pair[0].trainIdx);
-        if (query >= reference.keypoints.size() || train >= current.keypoints.size()) continue;
-        ++result.ratio_matches;
-        const auto reference_pixel = reference.keypoints[query].pt;
-        const auto current_pixel = current.keypoints[train].pt;
-        result.reference_pixels.push_back(reference_pixel);
-        result.current_pixels.push_back(current_pixel);
-        const auto reference_point = point_from_disparity(reference, reference_pixel);
+        if (query >= reference.keypoints.size() ||
+            train >= current.keypoints.size() ||
+            train >= reverse_reference.size() ||
+            reverse_reference[train] != pair[0].queryIdx) continue;
+        candidates.push_back({
+            reference.keypoints[query].pt,
+            current.keypoints[train].pt,
+        });
+    }
+    result.mutual_matches = static_cast<int>(candidates.size());
+    if (candidates.empty()) return result;
+
+    std::vector<cv::Point2f> reference_pixels;
+    std::vector<cv::Point2f> current_pixels;
+    reference_pixels.reserve(candidates.size());
+    current_pixels.reserve(candidates.size());
+    for (const auto& candidate : candidates) {
+        reference_pixels.push_back(candidate.reference_pixel);
+        current_pixels.push_back(candidate.current_pixel);
+    }
+
+    cv::Mat geometric_mask;
+    bool geometric_filter_valid = false;
+    if (candidates.size() >= 8) {
+        const auto fundamental = cv::findFundamentalMat(
+            reference_pixels, current_pixels,
+            cv::FM_RANSAC, 1.5, 0.995, geometric_mask);
+        geometric_filter_valid = !fundamental.empty() &&
+            !geometric_mask.empty() &&
+            geometric_mask.total() == candidates.size();
+    }
+
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        if (geometric_filter_valid &&
+            geometric_mask.at<std::uint8_t>(static_cast<int>(index)) == 0) {
+            continue;
+        }
+        const auto& candidate = candidates[index];
+        ++result.geometric_inliers;
+        result.reference_pixels.push_back(candidate.reference_pixel);
+        result.current_pixels.push_back(candidate.current_pixel);
+        const auto reference_point = point_from_disparity(
+            reference, candidate.reference_pixel);
         if (!reference_point) continue;
         result.pnp_object_points.push_back(*reference_point);
-        result.pnp_image_points.push_back(current_pixel);
-        const auto current_point = point_from_disparity(current, current_pixel);
-        if (current_point) result.depth_pairs.emplace_back(*reference_point, *current_point);
+        result.pnp_image_points.push_back(candidate.current_pixel);
+        const auto current_point = point_from_disparity(
+            current, candidate.current_pixel);
+        if (current_point) {
+            result.depth_pairs.emplace_back(*reference_point, *current_point);
+        }
     }
+    result.ratio_matches = result.geometric_inliers;
     return result;
 }
 
@@ -485,126 +572,213 @@ double median_scalar(std::vector<double> values) {
     return *middle;
 }
 
-void estimate_known_yaw_stereo_translation(
+bool fit_rigid_transform(
+    const std::vector<std::pair<cv::Point3f, cv::Point3f>>& pairs,
+    const std::vector<std::size_t>& indices,
+    cv::Matx44d& camera_from_reference) {
+    if (indices.size() < 3) return false;
+    cv::Vec3d reference_centroid{0.0, 0.0, 0.0};
+    cv::Vec3d current_centroid{0.0, 0.0, 0.0};
+    for (const auto index : indices) {
+        if (index >= pairs.size()) return false;
+        const auto& [reference_point, current_point] = pairs[index];
+        reference_centroid += cv::Vec3d{
+            reference_point.x, reference_point.y, reference_point.z};
+        current_centroid += cv::Vec3d{
+            current_point.x, current_point.y, current_point.z};
+    }
+    const double inverse_count = 1.0 / static_cast<double>(indices.size());
+    reference_centroid *= inverse_count;
+    current_centroid *= inverse_count;
+
+    cv::Matx33d covariance = cv::Matx33d::zeros();
+    for (const auto index : indices) {
+        const auto& [reference_point, current_point] = pairs[index];
+        const cv::Vec3d reference_delta = cv::Vec3d{
+            reference_point.x, reference_point.y, reference_point.z} -
+            reference_centroid;
+        const cv::Vec3d current_delta = cv::Vec3d{
+            current_point.x, current_point.y, current_point.z} -
+            current_centroid;
+        for (int row = 0; row < 3; ++row) {
+            for (int column = 0; column < 3; ++column) {
+                covariance(row, column) +=
+                    reference_delta[row] * current_delta[column];
+            }
+        }
+    }
+
+    cv::Mat covariance_matrix(3, 3, CV_64F);
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            covariance_matrix.at<double>(row, column) =
+                covariance(row, column);
+        }
+    }
+    cv::SVD decomposition(covariance_matrix, cv::SVD::FULL_UV);
+    cv::Mat v = decomposition.vt.t();
+    cv::Mat rotation = v * decomposition.u.t();
+    if (cv::determinant(rotation) < 0.0) {
+        v.col(2) *= -1.0;
+        rotation = v * decomposition.u.t();
+    }
+    const cv::Matx33d rotation_value(
+        rotation.at<double>(0, 0), rotation.at<double>(0, 1), rotation.at<double>(0, 2),
+        rotation.at<double>(1, 0), rotation.at<double>(1, 1), rotation.at<double>(1, 2),
+        rotation.at<double>(2, 0), rotation.at<double>(2, 1), rotation.at<double>(2, 2));
+    const cv::Vec3d translation =
+        current_centroid - rotation_value * reference_centroid;
+    if (!std::isfinite(translation[0]) ||
+        !std::isfinite(translation[1]) ||
+        !std::isfinite(translation[2])) return false;
+    camera_from_reference = matx44_from_rt(rotation, translation);
+    return true;
+}
+
+double rigid_residual_m(
+    const cv::Matx44d& camera_from_reference,
+    const std::pair<cv::Point3f, cv::Point3f>& pair) {
+    const auto& [reference_point, current_point] = pair;
+    const auto predicted = camera_from_reference * cv::Vec4d{
+        reference_point.x, reference_point.y, reference_point.z, 1.0};
+    const cv::Vec3d delta{
+        predicted[0] - static_cast<double>(current_point.x),
+        predicted[1] - static_cast<double>(current_point.y),
+        predicted[2] - static_cast<double>(current_point.z),
+    };
+    return std::sqrt(delta.dot(delta));
+}
+
+double rigid_rotation_deg(const cv::Matx44d& transform) {
+    const double cosine = std::clamp(
+        (transform(0, 0) + transform(1, 1) + transform(2, 2) - 1.0) * 0.5,
+        -1.0, 1.0);
+    return std::acos(cosine) * 180.0 / std::numbers::pi;
+}
+
+void estimate_stereo_se3(
     const Keyframe& reference,
-    const double yaw_step_deg,
+    const std::optional<double> gyro_yaw_step_deg,
     VisualEstimate& estimate) {
+    // Supersedes estimate_known_yaw_stereo_translation(: yaw is a check,
+    // never a hard rotation prior. Legacy diagnostic token: STEREO_3D3D_KNOWN_YAW.
     estimate.stereo_translation_pairs =
         static_cast<int>(estimate.depth_pairs.size());
     estimate.stereo_translation_attempted =
         estimate.depth_pairs.size() >= kMinimumStereoTranslationPairs;
-    if (!estimate.stereo_translation_attempted ||
-        !std::isfinite(yaw_step_deg)) {
-        return;
-    }
+    if (!estimate.stereo_translation_attempted) return;
 
-    const auto camera_from_reference_y_up =
-        rigid_inverse(yaw_rotation_deg(yaw_step_deg));
-    const auto camera_from_reference_rotation =
-        cv_to_y_up_transform(camera_from_reference_y_up);
-    const cv::Matx33d rotation(
-        camera_from_reference_rotation(0, 0),
-        camera_from_reference_rotation(0, 1),
-        camera_from_reference_rotation(0, 2),
-        camera_from_reference_rotation(1, 0),
-        camera_from_reference_rotation(1, 1),
-        camera_from_reference_rotation(1, 2),
-        camera_from_reference_rotation(2, 0),
-        camera_from_reference_rotation(2, 1),
-        camera_from_reference_rotation(2, 2));
-
-    std::vector<cv::Vec3d> candidates;
-    candidates.reserve(estimate.depth_pairs.size());
-    std::array<std::vector<double>, 3> components;
-    for (const auto& [reference_point, current_point] : estimate.depth_pairs) {
-        const cv::Vec3d rotated = rotation * cv::Vec3d{
-            reference_point.x, reference_point.y, reference_point.z};
-        const cv::Vec3d translation{
-            static_cast<double>(current_point.x) - rotated[0],
-            static_cast<double>(current_point.y) - rotated[1],
-            static_cast<double>(current_point.z) - rotated[2],
-        };
-        if (!std::isfinite(translation[0]) ||
-            !std::isfinite(translation[1]) ||
-            !std::isfinite(translation[2])) {
-            continue;
+    const std::size_t pair_count = estimate.depth_pairs.size();
+    cv::RNG random(
+        static_cast<std::uint64_t>(reference.pair_index * 2654435761ULL) ^
+        static_cast<std::uint64_t>(pair_count));
+    std::vector<std::size_t> best_inliers;
+    double best_residual = std::numeric_limits<double>::infinity();
+    for (int iteration = 0; iteration < kStereoSe3RansacIterations; ++iteration) {
+        std::vector<std::size_t> sample;
+        sample.reserve(3);
+        while (sample.size() < 3) {
+            const auto index = static_cast<std::size_t>(
+                random.uniform(0, static_cast<int>(pair_count)));
+            if (std::find(sample.begin(), sample.end(), index) == sample.end()) {
+                sample.push_back(index);
+            }
         }
-        candidates.push_back(translation);
-        for (int axis = 0; axis < 3; ++axis) {
-            components[static_cast<std::size_t>(axis)].push_back(
-                translation[axis]);
+        const auto& first = estimate.depth_pairs[sample[0]];
+        const auto& second = estimate.depth_pairs[sample[1]];
+        const auto& third = estimate.depth_pairs[sample[2]];
+        const cv::Vec3d reference_edge_a = cv::Vec3d{
+            second.first.x - first.first.x,
+            second.first.y - first.first.y,
+            second.first.z - first.first.z};
+        const cv::Vec3d reference_edge_b = cv::Vec3d{
+            third.first.x - first.first.x,
+            third.first.y - first.first.y,
+            third.first.z - first.first.z};
+        const cv::Vec3d current_edge_a = cv::Vec3d{
+            second.second.x - first.second.x,
+            second.second.y - first.second.y,
+            second.second.z - first.second.z};
+        const cv::Vec3d current_edge_b = cv::Vec3d{
+            third.second.x - first.second.x,
+            third.second.y - first.second.y,
+            third.second.z - first.second.z};
+        if (cv::norm(reference_edge_a.cross(reference_edge_b)) < 0.002 ||
+            cv::norm(current_edge_a.cross(current_edge_b)) < 0.002) continue;
+
+        cv::Matx44d candidate;
+        if (!fit_rigid_transform(estimate.depth_pairs, sample, candidate)) continue;
+        std::vector<std::size_t> inliers;
+        std::vector<double> residuals;
+        for (std::size_t index = 0; index < pair_count; ++index) {
+            const double residual = rigid_residual_m(
+                candidate, estimate.depth_pairs[index]);
+            if (!std::isfinite(residual) ||
+                residual > kStereoSe3RansacThresholdM) continue;
+            inliers.push_back(index);
+            residuals.push_back(residual);
         }
-    }
-    if (candidates.size() < kMinimumStereoTranslationPairs) return;
-
-    cv::Vec3d median_translation{
-        median_scalar(components[0]),
-        median_scalar(components[1]),
-        median_scalar(components[2]),
-    };
-    std::vector<double> residuals;
-    residuals.reserve(candidates.size());
-    for (const auto& candidate : candidates) {
-        const auto delta = candidate - median_translation;
-        residuals.push_back(std::sqrt(delta.dot(delta)));
-    }
-    const double residual_median = median_scalar(residuals);
-    std::vector<double> deviations;
-    deviations.reserve(residuals.size());
-    for (const double residual : residuals) {
-        deviations.push_back(std::abs(residual - residual_median));
-    }
-    const double mad = median_scalar(std::move(deviations));
-    const double gate = std::clamp(
-        residual_median + 3.0 * 1.4826 * mad,
-        kMinimumStereoTranslationResidualGateM,
-        kMaximumStereoTranslationResidualGateM);
-
-    std::array<std::vector<double>, 3> inlier_components;
-    for (std::size_t index = 0; index < candidates.size(); ++index) {
-        if (residuals[index] > gate) continue;
-        for (int axis = 0; axis < 3; ++axis) {
-            inlier_components[static_cast<std::size_t>(axis)].push_back(
-                candidates[index][axis]);
+        const double residual = median_scalar(std::move(residuals));
+        if (inliers.size() > best_inliers.size() ||
+            (inliers.size() == best_inliers.size() &&
+             residual < best_residual)) {
+            best_inliers = std::move(inliers);
+            best_residual = residual;
         }
     }
+
     estimate.stereo_translation_inliers =
-        static_cast<int>(inlier_components[0].size());
+        static_cast<int>(best_inliers.size());
     estimate.stereo_translation_inlier_ratio =
-        static_cast<double>(estimate.stereo_translation_inliers) /
-        static_cast<double>(std::max<std::size_t>(1, candidates.size()));
+        static_cast<double>(best_inliers.size()) /
+        static_cast<double>(std::max<std::size_t>(1, pair_count));
     if (estimate.stereo_translation_inliers <
             kMinimumStereoTranslationInliers ||
         estimate.stereo_translation_inlier_ratio <
-            kMinimumStereoTranslationInlierRatio) {
-        return;
-    }
+            kMinimumStereoTranslationInlierRatio) return;
 
-    median_translation = {
-        median_scalar(std::move(inlier_components[0])),
-        median_scalar(std::move(inlier_components[1])),
-        median_scalar(std::move(inlier_components[2])),
-    };
-    const cv::Mat rotation_matrix = (cv::Mat_<double>(3, 3) <<
-        rotation(0, 0), rotation(0, 1), rotation(0, 2),
-        rotation(1, 0), rotation(1, 1), rotation(1, 2),
-        rotation(2, 0), rotation(2, 1), rotation(2, 2));
-    const auto camera_from_reference = matx44_from_rt(
-        rotation_matrix, median_translation);
-    estimate.stereo_translation_residual_m = median_depth_residual(
-        camera_from_reference, estimate.depth_pairs);
+    cv::Matx44d camera_from_reference;
+    if (!fit_rigid_transform(
+            estimate.depth_pairs, best_inliers,
+            camera_from_reference)) return;
+    std::vector<double> refined_residuals;
+    refined_residuals.reserve(best_inliers.size());
+    for (const auto index : best_inliers) {
+        refined_residuals.push_back(rigid_residual_m(
+            camera_from_reference, estimate.depth_pairs[index]));
+    }
+    estimate.stereo_translation_residual_m =
+        median_scalar(std::move(refined_residuals));
+    estimate.stereo_rotation_deg = rigid_rotation_deg(camera_from_reference);
     estimate.stereo_world_from_camera = reference.world_from_camera *
         rigid_inverse(cv_to_y_up_transform(camera_from_reference));
     estimate.stereo_translation_m = translation_delta_m(
         reference.world_from_camera,
         estimate.stereo_world_from_camera);
+    estimate.stereo_yaw_deg = signed_yaw_delta_deg(
+        reference.world_from_camera,
+        estimate.stereo_world_from_camera);
+    if (gyro_yaw_step_deg && std::isfinite(*gyro_yaw_step_deg)) {
+        estimate.stereo_gyro_yaw_checked = true;
+        estimate.stereo_gyro_yaw_error_deg = std::abs(std::remainder(
+            estimate.stereo_yaw_deg - *gyro_yaw_step_deg, 360.0));
+    }
+    const double vertical_step_m = std::abs(
+        estimate.stereo_world_from_camera(1, 3) -
+        reference.world_from_camera(1, 3));
     estimate.stereo_translation_valid =
         std::isfinite(estimate.stereo_translation_m) &&
         estimate.stereo_translation_m >= kMinimumWalkTranslationStepM &&
         estimate.stereo_translation_m <= kMaximumWalkTranslationStepM &&
         std::isfinite(estimate.stereo_translation_residual_m) &&
         estimate.stereo_translation_residual_m <=
-            kMaximumStereoTranslationResidualM;
+            kMaximumStereoTranslationResidualM &&
+        std::isfinite(estimate.stereo_rotation_deg) &&
+        estimate.stereo_rotation_deg <= kMaximumStereoSe3RotationDeg &&
+        vertical_step_m <= kMaximumStereoSe3VerticalStepM &&
+        (!estimate.stereo_gyro_yaw_checked ||
+         estimate.stereo_gyro_yaw_error_deg <=
+            kMaximumStereoSe3GyroYawErrorDeg);
 }
 
 VisualEstimate estimate_visual(const Keyframe& reference,
@@ -612,6 +786,8 @@ VisualEstimate estimate_visual(const Keyframe& reference,
     VisualEstimate result;
     const auto matches = collect_matches(reference.frame, current);
     result.matches = matches.ratio_matches;
+    result.mutual_matches = matches.mutual_matches;
+    result.geometric_inliers = matches.geometric_inliers;
     result.depth_pairs = matches.depth_pairs;
     result.stereo_translation_pairs =
         static_cast<int>(matches.depth_pairs.size());
@@ -1080,7 +1256,7 @@ struct AccumulatedMapRuntime::Impl {
         return {
             {"state", state},
             {"ready", ready},
-            {"tracking_mode", "AUTO_MOTION_STEREO_3D3D_TRANSLATION_GUARD_APRILTAG_ANCHORS"},
+            {"tracking_mode", "AUTO_MOTION_FULL_STEREO_SE3_PROVISIONAL_BRIDGE_APRILTAG_ANCHORS"},
             {"apriltag_anchor", apriltag_anchors.status_json()},
             {"motion_mode", motion_mode_name(motion_mode)},
             {"motion_rotation_votes", rotation_motion_votes},
@@ -1094,6 +1270,9 @@ struct AccumulatedMapRuntime::Impl {
             {"geometry_suppressed_frames", geometry_suppressed_frames},
             {"stereo_translation_attempts", stereo_translation_attempts},
             {"stereo_translation_successes", stereo_translation_successes},
+            {"provisional_tracking_frames", provisional_tracking_frames},
+            {"provisional_promotions", provisional_promotions},
+            {"maximum_provisional_chain", maximum_provisional_chain},
             {"recommended_profile", "HIGH_640"},
             {"source_profile", source_profile},
             {"segment_id", segment_id},
@@ -1203,10 +1382,13 @@ struct AccumulatedMapRuntime::Impl {
             walk_motion_votes = 0;
             tracking_buffer_frames = 0;
             last_recovery_reference_pair = 0;
-                translation_uncertain_frames = 0;
-                geometry_suppressed_frames = 0;
-                stereo_translation_attempts = 0;
-                stereo_translation_successes = 0;
+            translation_uncertain_frames = 0;
+            geometry_suppressed_frames = 0;
+            stereo_translation_attempts = 0;
+            stereo_translation_successes = 0;
+            provisional_tracking_frames = 0;
+            provisional_promotions = 0;
+            maximum_provisional_chain = 0;
         }
         segment_id = 1;
         segment_resume_pending = false;
@@ -1357,29 +1539,40 @@ struct AccumulatedMapRuntime::Impl {
                 kMaximumStereoTranslationResidualM;
     }
 
+    static bool pnp_confirms_stereo(VisualEstimate& visual) {
+        if (!pnp_walk_translation_safe(visual) ||
+            !stereo_walk_translation_safe(visual)) return false;
+        const double pose_disagreement_m = translation_delta_m(
+            visual.pnp_world_from_camera,
+            visual.stereo_world_from_camera);
+        const double yaw_disagreement_deg = std::abs(signed_yaw_delta_deg(
+            visual.pnp_world_from_camera,
+            visual.stereo_world_from_camera));
+        visual.pnp_stereo_confirmed =
+            pose_disagreement_m <= kMaximumPnpStereoPoseDisagreementM &&
+            yaw_disagreement_deg <=
+                kMaximumPnpStereoYawDisagreementDeg;
+        return visual.pnp_stereo_confirmed;
+    }
+
     static bool walk_translation_safe(const VisualEstimate& visual) {
-        return pnp_walk_translation_safe(visual) ||
-            stereo_walk_translation_safe(visual);
+        return stereo_walk_translation_safe(visual);
     }
 
     static double walk_translation_m(const VisualEstimate& visual) {
-        return pnp_walk_translation_safe(visual)
-            ? visual.translation_m
-            : visual.stereo_translation_m;
+        return visual.stereo_translation_m;
     }
 
     static cv::Matx44d walk_world_from_camera(
         const VisualEstimate& visual) {
-        return pnp_walk_translation_safe(visual)
-            ? visual.pnp_world_from_camera
-            : visual.stereo_world_from_camera;
+        return visual.stereo_world_from_camera;
     }
 
     static const char* walk_translation_source(
         const VisualEstimate& visual) {
-        return pnp_walk_translation_safe(visual)
-            ? "PNP_DEPTH"
-            : "STEREO_3D3D_KNOWN_YAW";
+        return visual.pnp_stereo_confirmed
+            ? "STEREO_SE3_PNP_CONFIRMED"
+            : "STEREO_SE3_RANSAC";
     }
 
     static double tripod_horizontal_step_limit(const double yaw_deg) {
@@ -1597,7 +1790,9 @@ struct AccumulatedMapRuntime::Impl {
     void push_tracking_reference(const TrackingFrame& frame,
                                  const cv::Matx44d& world_from_camera,
                                  const MapJob& job,
-                                 const std::uint64_t keyframe_id) {
+                                 const std::uint64_t keyframe_id,
+                                 const bool pose_trusted = true,
+                                 const std::uint32_t provisional_chain_length = 0) {
         Keyframe reference;
         reference.id = keyframe_id;
         reference.pair_index = job.pair_index;
@@ -1608,6 +1803,8 @@ struct AccumulatedMapRuntime::Impl {
         reference.gyro_yaw_uncalibrated_deg =
             job.gyro_yaw_uncalibrated_deg;
         reference.gyro_yaw_raw_deg = job.gyro_yaw_raw_deg;
+        reference.pose_trusted = pose_trusted;
+        reference.provisional_chain_length = provisional_chain_length;
         tracking_buffer.push_back(std::move(reference));
         while (tracking_buffer.size() > kMaximumTrackingBufferFrames) {
             tracking_buffer.pop_front();
@@ -1624,6 +1821,11 @@ struct AccumulatedMapRuntime::Impl {
         decision.reference_keyframe_id = reference.id;
         decision.reference_pair_index = reference.pair_index;
         decision.reference_world_from_camera = reference.world_from_camera;
+        decision.reference_pose_trusted = reference.pose_trusted;
+        decision.provisional_chain_length =
+            reference.pose_trusted
+                ? 0
+                : reference.provisional_chain_length;
         decision.visual = estimate_visual(reference, current);
         decision.visual_yaw_step_deg = decision.visual.homography_valid
             ? decision.visual.visual_yaw_deg : 0.0;
@@ -1686,14 +1888,18 @@ struct AccumulatedMapRuntime::Impl {
         const auto active_mode = motion_mode_snapshot();
         const bool inertial_walk = job.accelerometer_valid &&
             job.acceleration_motion_mps2 >= kMinimumAccelerationMotionMps2;
-        if (rotation_available &&
-            (inertial_walk || active_mode == MotionMode::Walk ||
-             !pnp_walk_translation_safe(decision.visual))) {
-            estimate_known_yaw_stereo_translation(
+        if (inertial_walk || active_mode == MotionMode::Walk ||
+            !pnp_walk_translation_safe(decision.visual) ||
+            decision.visual.depth_pairs.size() >=
+                kMinimumStereoTranslationPairs) {
+            estimate_stereo_se3(
                 reference,
-                decision.fused_yaw_step_deg,
+                gyro_valid
+                    ? std::optional<double>(gyro_step)
+                    : std::nullopt,
                 decision.visual);
         }
+        pnp_confirms_stereo(decision.visual);
         decision.motion_evidence = classify_motion_evidence(decision, job);
         const bool walk_safe = walk_translation_safe(decision.visual);
         const bool walk_candidate = walk_safe &&
@@ -1703,18 +1909,38 @@ struct AccumulatedMapRuntime::Impl {
         if (walk_candidate) {
             decision.world_from_camera = walk_world_from_camera(decision.visual);
             decision.translation_m = walk_translation_m(decision.visual);
-            decision.rotation_deg = std::abs(signed_yaw_delta_deg(
-                reference.world_from_camera, decision.world_from_camera));
+            decision.rotation_deg = decision.visual.stereo_rotation_deg;
             decision.fused_yaw_step_deg = signed_yaw_delta_deg(
                 reference.world_from_camera, decision.world_from_camera);
             decision.translation_source =
                 walk_translation_source(decision.visual);
-            decision.method = pnp_walk_translation_safe(decision.visual)
-                ? "AUTO_WALK_PNP_DEPTH"
-                : "AUTO_WALK_STEREO_3D3D_KNOWN_YAW";
-            decision.translation_trusted = true;
+            decision.provisional_chain_length =
+                reference.pose_trusted
+                    ? 0
+                    : reference.provisional_chain_length + 1;
+            decision.provisional_promoted =
+                !reference.pose_trusted &&
+                decision.provisional_chain_length >=
+                    kProvisionalStepsToPromote;
+            decision.translation_trusted =
+                reference.pose_trusted || decision.provisional_promoted;
+            decision.geometry_suppressed = !decision.translation_trusted;
+            decision.method = decision.provisional_promoted
+                ? "AUTO_WALK_STEREO_SE3_PROVISIONAL_PROMOTED"
+                : (decision.translation_trusted
+                    ? "AUTO_WALK_STEREO_SE3_RANSAC"
+                    : "AUTO_WALK_STEREO_SE3_PROVISIONAL");
+            decision.state = decision.geometry_suppressed
+                ? "TRACKING_PROVISIONAL_SE3"
+                : "TRACKING_WALK";
             decision.used_visual = true;
             decision.valid = true;
+            if (decision.geometry_suppressed) {
+                decision.keyframe = false;
+                decision.rejection_reason =
+                    "PROVISIONAL_SE3_WAITING_FOR_CONFIRMATION";
+                return decision;
+            }
         } else if (inertial_walk || active_mode == MotionMode::Walk) {
             decision.world_from_camera = rotation_available
                 ? reference.world_from_camera *
@@ -1725,6 +1951,10 @@ struct AccumulatedMapRuntime::Impl {
             decision.translation_m = 0.0;
             decision.translation_trusted = false;
             decision.geometry_suppressed = true;
+            decision.provisional_chain_length =
+                reference.pose_trusted
+                    ? 1
+                    : reference.provisional_chain_length + 1;
             decision.valid = true;
             decision.keyframe = false;
             decision.state = "TRACKING_TRANSLATION_UNCERTAIN";
@@ -1746,16 +1976,16 @@ struct AccumulatedMapRuntime::Impl {
         } else if (walk_safe) {
             decision.world_from_camera = walk_world_from_camera(decision.visual);
             decision.translation_m = walk_translation_m(decision.visual);
-            decision.rotation_deg = std::abs(signed_yaw_delta_deg(
-                reference.world_from_camera, decision.world_from_camera));
+            decision.rotation_deg = decision.visual.stereo_rotation_deg;
             decision.fused_yaw_step_deg = signed_yaw_delta_deg(
                 reference.world_from_camera, decision.world_from_camera);
             decision.translation_source =
                 walk_translation_source(decision.visual);
-            decision.method = pnp_walk_translation_safe(decision.visual)
-                ? "AUTO_WALK_PNP_DEPTH"
-                : "AUTO_WALK_STEREO_3D3D_KNOWN_YAW";
-            decision.translation_trusted = true;
+            decision.translation_trusted = reference.pose_trusted;
+            decision.geometry_suppressed = !reference.pose_trusted;
+            decision.method = reference.pose_trusted
+                ? "AUTO_WALK_STEREO_SE3_RANSAC"
+                : "AUTO_WALK_STEREO_SE3_PROVISIONAL";
             decision.used_visual = true;
             decision.valid = true;
         }
@@ -1774,14 +2004,20 @@ struct AccumulatedMapRuntime::Impl {
 
     static double decision_score(const PoseDecision& decision) {
         if (!decision.valid) return -std::numeric_limits<double>::infinity();
-        const int inliers = std::max(
-            decision.visual.homography_inliers, decision.visual.pnp_inliers);
-        const double ratio = std::max(
+        const int inliers = std::max({
+            decision.visual.homography_inliers,
+            decision.visual.pnp_inliers,
+            decision.visual.stereo_translation_inliers,
+        });
+        const double ratio = std::max({
             decision.visual.homography_inlier_ratio,
-            decision.visual.pnp_inlier_ratio);
+            decision.visual.pnp_inlier_ratio,
+            decision.visual.stereo_translation_inlier_ratio,
+        });
         double score = static_cast<double>(inliers) + ratio * 100.0;
-        if (decision.visual.pnp_valid) score += 20.0;
-        if (decision.visual.stereo_translation_valid) score += 18.0;
+        if (decision.visual.pnp_stereo_confirmed) score += 25.0;
+        if (decision.visual.stereo_translation_valid) score += 35.0;
+        if (decision.provisional_promoted) score += 12.0;
         if (decision.used_gyro && decision.used_visual) score += 10.0;
         if (decision.geometry_suppressed) score -= 500.0;
         const double translation_penalty = decision.rotation_only
@@ -1802,8 +2038,20 @@ struct AccumulatedMapRuntime::Impl {
             if (!attempted_pairs.insert(reference.pair_index).second) return;
             auto candidate = decide_pose(reference, current, job, recovery_attempt);
             if (recovery_attempt) ++attempts;
+            const auto anchor_rank = [](const PoseDecision& value) {
+                if (!value.valid) return 0;
+                if (value.translation_trusted &&
+                    value.reference_pose_trusted) return 3;
+                if (value.translation_trusted &&
+                    value.provisional_promoted) return 2;
+                return 1;
+            };
+            const int candidate_rank = anchor_rank(candidate);
+            const int selected_rank = anchor_rank(selected);
             if (attempted_pairs.size() == 1 ||
-                decision_score(candidate) > decision_score(selected)) {
+                candidate_rank > selected_rank ||
+                (candidate_rank == selected_rank &&
+                 decision_score(candidate) > decision_score(selected))) {
                 selected = std::move(candidate);
             }
         };
@@ -2047,6 +2295,8 @@ struct AccumulatedMapRuntime::Impl {
                         {"apriltag_confidence",
                          apriltag_result.confidence},
                         {"matches", decision.visual.matches},
+                        {"mutual_matches", decision.visual.mutual_matches},
+                        {"geometric_inliers", decision.visual.geometric_inliers},
                         {"homography_inliers", decision.visual.homography_inliers},
                         {"pnp_inliers", decision.visual.pnp_inliers},
                         {"pnp_translation_m", decision.visual.translation_m},
@@ -2064,6 +2314,22 @@ struct AccumulatedMapRuntime::Impl {
                          decision.visual.stereo_translation_residual_m},
                         {"stereo_translation_m",
                          decision.visual.stereo_translation_m},
+                        {"stereo_rotation_deg",
+                         decision.visual.stereo_rotation_deg},
+                        {"stereo_yaw_deg",
+                         decision.visual.stereo_yaw_deg},
+                        {"stereo_gyro_yaw_checked",
+                         decision.visual.stereo_gyro_yaw_checked},
+                        {"stereo_gyro_yaw_error_deg",
+                         decision.visual.stereo_gyro_yaw_error_deg},
+                        {"pnp_stereo_confirmed",
+                         decision.visual.pnp_stereo_confirmed},
+                        {"reference_pose_trusted",
+                         decision.reference_pose_trusted},
+                        {"provisional_chain_length",
+                         decision.provisional_chain_length},
+                        {"provisional_promoted",
+                         decision.provisional_promoted},
                         {"translation_source", decision.translation_source},
                         {"translation_trusted", decision.translation_trusted},
                         {"geometry_suppressed", decision.geometry_suppressed},
@@ -2101,7 +2367,14 @@ struct AccumulatedMapRuntime::Impl {
                         if (!decision.geometry_suppressed) {
                             push_tracking_reference(
                                 current, pose, job,
-                                decision.reference_keyframe_id);
+                                decision.reference_keyframe_id,
+                                true, 0);
+                        } else if (features_usable) {
+                            push_tracking_reference(
+                                current, pose, job,
+                                decision.reference_keyframe_id,
+                                false,
+                                decision.provisional_chain_length);
                         }
                         const double duration = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - started).count();
@@ -2117,6 +2390,11 @@ struct AccumulatedMapRuntime::Impl {
                             if (decision.geometry_suppressed) {
                                 ++translation_uncertain_frames;
                                 ++geometry_suppressed_frames;
+                                ++provisional_tracking_frames;
+                                maximum_provisional_chain = std::max(
+                                    maximum_provisional_chain,
+                                    static_cast<std::uint64_t>(
+                                        decision.provisional_chain_length));
                             } else if (decision.state == "TRACKING_COASTING") {
                                 ++coasting_frames;
                             } else {
@@ -2199,11 +2477,15 @@ struct AccumulatedMapRuntime::Impl {
                 keyframe.gyro_yaw_uncalibrated_deg =
                     job.gyro_yaw_uncalibrated_deg;
                 keyframe.gyro_yaw_raw_deg = job.gyro_yaw_raw_deg;
+                keyframe.pose_trusted = true;
+                keyframe.provisional_chain_length = 0;
                 registration_keyframes.push_back(std::move(keyframe));
                 while (registration_keyframes.size() > kMaximumRegistrationKeyframes) {
                     registration_keyframes.pop_front();
                 }
-                push_tracking_reference(current, pose, job, keyframe_id);
+                push_tracking_reference(
+                    current, pose, job, keyframe_id,
+                    true, 0);
 
                 const double gyro_step = first ? 0.0 : decision.gyro_yaw_step_deg;
                 const double visual_step = first ? 0.0 : decision.visual_yaw_step_deg;
@@ -2306,6 +2588,9 @@ struct AccumulatedMapRuntime::Impl {
                     if (!first &&
                         decision.visual.stereo_translation_valid) {
                         ++stereo_translation_successes;
+                    }
+                    if (!first && decision.provisional_promoted) {
+                        ++provisional_promotions;
                     }
                     recovery_attempts_total +=
                         static_cast<std::uint64_t>(decision.recovery_attempts);
@@ -2464,6 +2749,9 @@ struct AccumulatedMapRuntime::Impl {
     std::uint64_t geometry_suppressed_frames = 0;
     std::uint64_t stereo_translation_attempts = 0;
     std::uint64_t stereo_translation_successes = 0;
+    std::uint64_t provisional_tracking_frames = 0;
+    std::uint64_t provisional_promotions = 0;
+    std::uint64_t maximum_provisional_chain = 0;
 
     std::uint64_t submitted_frames = 0;
     std::uint64_t accepted_frames = 0;
