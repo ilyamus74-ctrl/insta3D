@@ -5,10 +5,13 @@ usage() {
   cat <<'USAGE'
 Usage:
   pack_session.sh SESSION_DIR [--sample-every N] [--output-dir DIR]
+                  [--include-intermediate-models]
 
 Creates a .tar.zst diagnostic package outside the Git repository.
-By default only JSON/JSONL diagnostics are included. --sample-every N adds
-JPEG + sidecar JSON for every Nth frame from CAMERA_A and CAMERA_B.
+The default archive contains diagnostics plus a small curated `models/` set.
+Raw, duplicate and per-keyframe PLY models are omitted. Use
+--include-intermediate-models only for a full geometry-debug package.
+--sample-every N adds JPEG + sidecar JSON for every Nth frame.
 USAGE
 }
 
@@ -16,6 +19,7 @@ USAGE
 SESSION_DIR="$(realpath "$1")"
 shift
 SAMPLE_EVERY=0
+INCLUDE_INTERMEDIATE_MODELS=0
 OUTPUT_DIR="${MAKLER_ARCHIVE_DIR:-$HOME/MaklerTourData/archives}"
 
 while [[ $# -gt 0 ]]; do
@@ -29,6 +33,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "missing value for --output-dir" >&2; exit 2; }
       OUTPUT_DIR="$2"
       shift 2
+      ;;
+    --include-intermediate-models)
+      INCLUDE_INTERMEDIATE_MODELS=1
+      shift
       ;;
     -h|--help)
       usage
@@ -103,37 +111,23 @@ for name in \
   apriltag_stereo_observations.jsonl \
   apriltag_constraints.jsonl \
   apriltag_map.json \
-  apriltag_map.ply \
   apriltag_relations.json \
   apriltag_tag_graph.json \
   apriltag_status.json \
   apriltag_latest.jpg \
   apriltag_latest_a.jpg \
   apriltag_latest_b.jpg \
-  point_cloud_accumulated.ply \
-  point_cloud_accumulated_raw.ply \
-  point_cloud_accumulated_multiview.ply \
-  point_cloud_accumulated_temporal_strict_raw.ply \
-  point_cloud_accumulated_temporal_strict_multiview.ply \
-  point_cloud_accumulated_confirmed.ply \
-  point_cloud_accumulated_strict.ply \
-  point_cloud_accumulated_keyframe_colors.ply \
-  point_cloud_accumulated_filtered_raw.ply \
-  point_cloud_accumulated_filtered.ply \
   room_planes_accumulated.json \
   room_edges_accumulated.json \
-  room_skeleton_accumulated.ply \
   room_fusion_status.json \
   room_fusion_diagnostics.json \
   room_fusion_console.json \
   room_plane_candidates_accumulated.json \
   room_corner_hypotheses_accumulated.json \
-  room_candidate_skeleton_accumulated.ply \
   room_multi_plane_status.json \
   room_multi_plane_console.json \
   room_planes_manhattan_accumulated.json \
   room_edges_manhattan_accumulated.json \
-  room_skeleton_manhattan_accumulated.ply \
   room_manhattan_fusion_status.json \
   room_manhattan_fusion_console.json \
   local_stereo_validation.json \
@@ -142,9 +136,6 @@ for name in \
   accumulated_diagnostics.json \
   accumulated_diagnostics.txt \
   camera_trajectory.json \
-  camera_trajectory.ply \
-  point_cloud_latest.ply \
-  room_skeleton_latest.ply \
   room_planes_latest.json \
   room_edges_latest.json \
   imu_a.jsonl \
@@ -166,9 +157,52 @@ do
   [[ -f "$SESSION_DIR/$name" ]] && cp -a "$SESSION_DIR/$name" "$PACKAGE_ROOT/"
 done
 
-if [[ -d "$SESSION_DIR/keyframes" ]]; then
-  mkdir -p "$PACKAGE_ROOT/keyframes"
-  cp -a "$SESSION_DIR/keyframes/." "$PACKAGE_ROOT/keyframes/"
+MODEL_DIR="$PACKAGE_ROOT/models"
+mkdir -p "$MODEL_DIR"
+
+copy_model() {
+  local source_name="$1"
+  local target_name="$2"
+  [[ -f "$SESSION_DIR/$source_name" ]] || return 1
+  cp -a "$SESSION_DIR/$source_name" "$MODEL_DIR/$target_name"
+}
+
+if ! copy_model point_cloud_accumulated_filtered.ply 01_cloud_filtered_multiview.ply; then
+  copy_model point_cloud_accumulated_multiview.ply 01_cloud_filtered_multiview.ply || true
+fi
+copy_model point_cloud_accumulated_temporal_strict_multiview.ply \
+  02_cloud_temporal_strict_multiview.ply || true
+if ! copy_model room_skeleton_manhattan_accumulated.ply \
+  03_room_manhattan_skeleton.ply; then
+  copy_model room_skeleton_accumulated.ply 03_room_manhattan_skeleton.ply || true
+fi
+copy_model camera_trajectory.ply 04_camera_trajectory.ply || true
+copy_model apriltag_map.ply 05_apriltag_map.ply || true
+
+cat >"$MODEL_DIR/README.txt" <<'README'
+Curated model set
+=================
+01_cloud_filtered_multiview.ply       final filtered multi-view point cloud
+02_cloud_temporal_strict_multiview.ply strict temporal-overlap cloud
+03_room_manhattan_skeleton.ply        final Manhattan room planes and edges
+04_camera_trajectory.ply              constrained camera trajectory
+05_apriltag_map.ply                   mapped AprilTag anchors
+
+Raw clouds, duplicate live models and per-keyframe PLY files are intentionally
+excluded from the default archive. Re-run pack_session.sh with
+--include-intermediate-models when those files are required for deep debugging.
+README
+
+if (( INCLUDE_INTERMEDIATE_MODELS > 0 )); then
+  INTERMEDIATE_DIR="$MODEL_DIR/intermediate"
+  mkdir -p "$INTERMEDIATE_DIR"
+  while IFS= read -r -d '' model; do
+    cp -a "$model" "$INTERMEDIATE_DIR/"
+  done < <(find "$SESSION_DIR" -maxdepth 1 -type f -name '*.ply' -print0 | sort -z)
+  if [[ -d "$SESSION_DIR/keyframes" ]]; then
+    mkdir -p "$INTERMEDIATE_DIR/keyframes"
+    cp -a "$SESSION_DIR/keyframes/." "$INTERMEDIATE_DIR/keyframes/"
+  fi
 fi
 
 if (( SAMPLE_EVERY > 0 )); then
@@ -203,3 +237,4 @@ sha256sum "$archive" > "$archive.sha256"
 printf 'Archive: %s\n' "$archive"
 printf 'Checksum: %s\n' "$archive.sha256"
 printf 'Sample every: %s\n' "$SAMPLE_EVERY"
+printf 'Intermediate models: %s\n' "$INCLUDE_INTERMEDIATE_MODELS"

@@ -62,6 +62,10 @@ constexpr double kMaximumYawDisagreementDeg = 14.0;
 constexpr double kMaximumWalkTranslationStepM = 0.65;
 constexpr double kMinimumWalkTranslationStepM = 0.035;
 constexpr double kTripodPivotRadiusM = 0.12;
+constexpr double kTripodHorizontalSmoothing = 0.35;
+constexpr double kTripodMaximumHorizontalStepM = 0.025;
+constexpr double kTripodHorizontalStepToleranceM = 0.006;
+constexpr double kTripodReturnPositionToleranceM = 0.015;
 constexpr double kMinimumAccelerationMotionMps2 = 0.18;
 constexpr int kMotionVotesToSwitch = 3;
 constexpr std::uint64_t kGyroBiasCalibrationSamples = 80;
@@ -175,6 +179,7 @@ struct PoseDecision {
     std::string method = "NONE";
     std::string rejection_reason;
     cv::Matx44d world_from_camera = cv::Matx44d::eye();
+    cv::Matx44d reference_world_from_camera = cv::Matx44d::eye();
     double gyro_yaw_step_deg = 0.0;
     double gyro_uncalibrated_yaw_step_deg = 0.0;
     double gyro_bias_removed_step_deg = 0.0;
@@ -184,6 +189,13 @@ struct PoseDecision {
     bool rotation_translation_applied = false;
     double rotation_translation_candidate_m = 0.0;
     double rotation_translation_limit_m = 0.0;
+    double rotation_translation_horizontal_candidate_m = 0.0;
+    double rotation_translation_horizontal_step_m = 0.0;
+    double rotation_translation_horizontal_step_limit_m = 0.0;
+    double rotation_translation_total_radius_m = 0.0;
+    double rotation_translation_total_limit_m = 0.0;
+    double rotation_translation_yaw_from_anchor_deg = 0.0;
+    double rotation_translation_locked_y_m = 0.0;
     cv::Vec3d rotation_translation_vector_world_m{0.0, 0.0, 0.0};
     std::string rotation_translation_rejection_reason = "NOT_EVALUATED";
     double rotation_deg = 0.0;
@@ -1025,6 +1037,7 @@ struct AccumulatedMapRuntime::Impl {
         apriltag_anchors.reset();
         next_keyframe_id = 1;
         worker_accumulated_yaw_deg = 0.0;
+        reset_tripod_constraint();
         gyro_to_camera_sign = 1.0;
         gyro_sign_locked = false;
         {
@@ -1170,15 +1183,34 @@ struct AccumulatedMapRuntime::Impl {
              visual.sparse_depth_median_m <= kMaximumWalkSparseDepthMedianM);
     }
 
+    static double tripod_horizontal_step_limit(const double yaw_deg) {
+        const double chord = 2.0 * kTripodPivotRadiusM *
+            std::sin(std::abs(yaw_deg) * std::numbers::pi / 360.0);
+        return std::min(
+            kTripodMaximumHorizontalStepM,
+            chord * 1.8 + kTripodHorizontalStepToleranceM);
+    }
+
+    static double tripod_total_position_limit(const double yaw_from_anchor_deg) {
+        const double wrapped_yaw = std::abs(
+            std::remainder(yaw_from_anchor_deg, 360.0));
+        const double chord = 2.0 * kTripodPivotRadiusM *
+            std::sin(wrapped_yaw * std::numbers::pi / 360.0);
+        return std::min(
+            2.0 * kTripodPivotRadiusM,
+            chord + kTripodReturnPositionToleranceM);
+    }
+
     static bool rotation_pnp_translation_safe(
         const VisualEstimate& visual,
+        const double candidate_translation_m,
         const double maximum_translation_m,
         std::string& rejection_reason) {
         if (!visual.pnp_valid) {
             rejection_reason = "PNP_POSE_INVALID";
             return false;
         }
-        if (!std::isfinite(visual.translation_m)) {
+        if (!std::isfinite(candidate_translation_m)) {
             rejection_reason = "PNP_TRANSLATION_NONFINITE";
             return false;
         }
@@ -1192,12 +1224,132 @@ struct AccumulatedMapRuntime::Impl {
             rejection_reason = "PNP_DEPTH_RESIDUAL_TOO_LARGE";
             return false;
         }
-        if (visual.translation_m > maximum_translation_m) {
+        if (candidate_translation_m > maximum_translation_m) {
             rejection_reason = "PNP_TRANSLATION_EXCEEDS_TRIPOD_BOUND";
             return false;
         }
         rejection_reason.clear();
         return true;
+    }
+
+    void reset_tripod_constraint() {
+        tripod_constraint_active = false;
+        tripod_constraint_segment_id = 0;
+        tripod_anchor_position_world_m = {0.0, 0.0, 0.0};
+        tripod_anchor_yaw_deg = 0.0;
+    }
+
+    void apply_tripod_rotation_constraint(
+        PoseDecision& decision,
+        const MapJob& job) {
+        if (!decision.valid) return;
+        if (!decision.rotation_only ||
+            decision.method == "AUTO_WALK_GYRO_COAST") {
+            reset_tripod_constraint();
+            if (decision.method == "AUTO_WALK_GYRO_COAST") {
+                decision.rotation_translation_rejection_reason =
+                    "ACTIVE_WALK_MODE";
+            }
+            return;
+        }
+
+        const auto& reference = decision.reference_world_from_camera;
+        if (!tripod_constraint_active ||
+            tripod_constraint_segment_id != job.segment_id) {
+            tripod_constraint_active = true;
+            tripod_constraint_segment_id = job.segment_id;
+            tripod_anchor_position_world_m = {
+                reference(0, 3), reference(1, 3), reference(2, 3)};
+            tripod_anchor_yaw_deg = pose_yaw_deg(reference);
+        }
+
+        decision.rotation_translation_locked_y_m =
+            tripod_anchor_position_world_m[1];
+        decision.rotation_translation_yaw_from_anchor_deg = std::remainder(
+            pose_yaw_deg(decision.world_from_camera) - tripod_anchor_yaw_deg,
+            360.0);
+        decision.rotation_translation_limit_m = tripod_translation_limit(
+            decision.fused_yaw_step_deg);
+        decision.rotation_translation_horizontal_step_limit_m =
+            tripod_horizontal_step_limit(decision.fused_yaw_step_deg);
+        decision.rotation_translation_total_limit_m =
+            tripod_total_position_limit(
+                decision.rotation_translation_yaw_from_anchor_deg);
+
+        if (decision.visual.pnp_valid) {
+            decision.rotation_translation_vector_world_m = {
+                decision.visual.pnp_world_from_camera(0, 3) - reference(0, 3),
+                decision.visual.pnp_world_from_camera(1, 3) - reference(1, 3),
+                decision.visual.pnp_world_from_camera(2, 3) - reference(2, 3),
+            };
+            decision.rotation_translation_candidate_m = std::sqrt(
+                decision.rotation_translation_vector_world_m.dot(
+                    decision.rotation_translation_vector_world_m));
+            decision.rotation_translation_horizontal_candidate_m = std::hypot(
+                decision.rotation_translation_vector_world_m[0],
+                decision.rotation_translation_vector_world_m[2]);
+        }
+
+        if (decision.motion_evidence != MotionMode::Rotation) {
+            decision.rotation_translation_rejection_reason =
+                "NO_ROTATION_EVIDENCE";
+            return;
+        }
+        if (!rotation_pnp_translation_safe(
+                decision.visual,
+                decision.rotation_translation_candidate_m,
+                decision.rotation_translation_limit_m,
+                decision.rotation_translation_rejection_reason)) {
+            return;
+        }
+
+        double target_x = reference(0, 3) +
+            (decision.visual.pnp_world_from_camera(0, 3) - reference(0, 3)) *
+                kTripodHorizontalSmoothing;
+        double target_z = reference(2, 3) +
+            (decision.visual.pnp_world_from_camera(2, 3) - reference(2, 3)) *
+                kTripodHorizontalSmoothing;
+
+        double step_x = target_x - reference(0, 3);
+        double step_z = target_z - reference(2, 3);
+        double step_m = std::hypot(step_x, step_z);
+        if (step_m > decision.rotation_translation_horizontal_step_limit_m &&
+            step_m > 0.0) {
+            const double scale =
+                decision.rotation_translation_horizontal_step_limit_m / step_m;
+            step_x *= scale;
+            step_z *= scale;
+            target_x = reference(0, 3) + step_x;
+            target_z = reference(2, 3) + step_z;
+        }
+
+        double anchor_x = target_x - tripod_anchor_position_world_m[0];
+        double anchor_z = target_z - tripod_anchor_position_world_m[2];
+        double radius_m = std::hypot(anchor_x, anchor_z);
+        if (radius_m > decision.rotation_translation_total_limit_m &&
+            radius_m > 0.0) {
+            const double scale =
+                decision.rotation_translation_total_limit_m / radius_m;
+            anchor_x *= scale;
+            anchor_z *= scale;
+            target_x = tripod_anchor_position_world_m[0] + anchor_x;
+            target_z = tripod_anchor_position_world_m[2] + anchor_z;
+        }
+
+        decision.world_from_camera(0, 3) = target_x;
+        decision.world_from_camera(1, 3) =
+            tripod_anchor_position_world_m[1];
+        decision.world_from_camera(2, 3) = target_z;
+        decision.rotation_translation_horizontal_step_m = std::hypot(
+            target_x - reference(0, 3),
+            target_z - reference(2, 3));
+        decision.rotation_translation_total_radius_m = std::hypot(
+            target_x - tripod_anchor_position_world_m[0],
+            target_z - tripod_anchor_position_world_m[2]);
+        decision.translation_m = decision.rotation_translation_horizontal_step_m;
+        decision.rotation_translation_applied = true;
+        decision.rotation_translation_rejection_reason.clear();
+        decision.method += "_PNP_TRANSLATION_XZ_CONSTRAINED";
     }
 
     static MotionMode classify_motion_evidence(const PoseDecision& decision,
@@ -1269,6 +1421,7 @@ struct AccumulatedMapRuntime::Impl {
         PoseDecision decision;
         decision.reference_keyframe_id = reference.id;
         decision.reference_pair_index = reference.pair_index;
+        decision.reference_world_from_camera = reference.world_from_camera;
         decision.visual = estimate_visual(reference, current);
         decision.visual_yaw_step_deg = decision.visual.homography_valid
             ? decision.visual.visual_yaw_deg : 0.0;
@@ -1349,51 +1502,14 @@ struct AccumulatedMapRuntime::Impl {
             decision.rotation_only = true;
             decision.world_from_camera = reference.world_from_camera *
                 yaw_rotation_deg(decision.fused_yaw_step_deg);
-            decision.rotation_translation_limit_m = tripod_translation_limit(
-                decision.fused_yaw_step_deg);
-            if (decision.visual.pnp_valid) {
-                decision.rotation_translation_vector_world_m = {
-                    decision.visual.pnp_world_from_camera(0, 3) -
-                        reference.world_from_camera(0, 3),
-                    decision.visual.pnp_world_from_camera(1, 3) -
-                        reference.world_from_camera(1, 3),
-                    decision.visual.pnp_world_from_camera(2, 3) -
-                        reference.world_from_camera(2, 3),
-                };
-                decision.rotation_translation_candidate_m = std::sqrt(
-                    decision.rotation_translation_vector_world_m.dot(
-                        decision.rotation_translation_vector_world_m));
-            }
-            if (active_mode == MotionMode::Walk) {
-                decision.rotation_translation_rejection_reason =
-                    "ACTIVE_WALK_MODE";
-            } else if (decision.motion_evidence != MotionMode::Rotation) {
-                decision.rotation_translation_rejection_reason =
-                    "NO_ROTATION_EVIDENCE";
-            } else if (rotation_pnp_translation_safe(
-                           decision.visual,
-                           decision.rotation_translation_limit_m,
-                           decision.rotation_translation_rejection_reason)) {
-                decision.world_from_camera(0, 3) =
-                    decision.visual.pnp_world_from_camera(0, 3);
-                decision.world_from_camera(1, 3) =
-                    decision.visual.pnp_world_from_camera(1, 3);
-                decision.world_from_camera(2, 3) =
-                    decision.visual.pnp_world_from_camera(2, 3);
-                decision.translation_m = translation_delta_m(
-                    reference.world_from_camera,
-                    decision.world_from_camera);
-                decision.rotation_translation_applied = true;
-            }
             decision.rotation_deg = std::abs(decision.fused_yaw_step_deg);
             decision.valid = true;
             if (active_mode == MotionMode::Walk && !walk_safe) {
                 decision.method = "AUTO_WALK_GYRO_COAST";
             } else {
                 decision.method = "AUTO_ROTATION_" + decision.method;
-                if (decision.rotation_translation_applied) {
-                    decision.method += "_PNP_TRANSLATION";
-                }
+                decision.rotation_translation_rejection_reason =
+                    "PENDING_TRIPOD_CONSTRAINT";
             }
         } else if (walk_safe) {
             decision.world_from_camera = decision.visual.pnp_world_from_camera;
@@ -1434,7 +1550,10 @@ struct AccumulatedMapRuntime::Impl {
         double score = static_cast<double>(inliers) + ratio * 100.0;
         if (decision.visual.pnp_valid) score += 20.0;
         if (decision.used_gyro && decision.used_visual) score += 10.0;
-        score -= decision.translation_m * 8.0;
+        const double translation_penalty = decision.rotation_only
+            ? decision.visual.translation_m
+            : decision.translation_m;
+        score -= translation_penalty * 8.0;
         return score;
     }
 
@@ -1547,6 +1666,7 @@ struct AccumulatedMapRuntime::Impl {
                         true);
                 } else {
                     decision = decide_pose_with_retries(current, job);
+                    apply_tripod_rotation_constraint(decision, job);
                     const std::optional<cv::Matx44d> preliminary_pose =
                         decision.valid
                             ? std::optional<cv::Matx44d>(
@@ -1565,6 +1685,7 @@ struct AccumulatedMapRuntime::Impl {
                                 ? tracking_buffer.back().world_from_camera
                                 : registration_keyframes.back()
                                       .world_from_camera;
+                        reset_tripod_constraint();
                         decision.world_from_camera =
                             apriltag_result.world_from_camera;
                         decision.translation_m = translation_delta_m(
@@ -1639,6 +1760,20 @@ struct AccumulatedMapRuntime::Impl {
                              decision.rotation_translation_vector_world_m[1],
                              decision.rotation_translation_vector_world_m[2],
                          })},
+                        {"rotation_translation_horizontal_candidate_m",
+                         decision.rotation_translation_horizontal_candidate_m},
+                        {"rotation_translation_horizontal_step_m",
+                         decision.rotation_translation_horizontal_step_m},
+                        {"rotation_translation_horizontal_step_limit_m",
+                         decision.rotation_translation_horizontal_step_limit_m},
+                        {"rotation_translation_total_radius_m",
+                         decision.rotation_translation_total_radius_m},
+                        {"rotation_translation_total_limit_m",
+                         decision.rotation_translation_total_limit_m},
+                        {"rotation_translation_yaw_from_anchor_deg",
+                         decision.rotation_translation_yaw_from_anchor_deg},
+                        {"rotation_translation_locked_y_m",
+                         decision.rotation_translation_locked_y_m},
                         {"rotation_translation_rejection_reason",
                          decision.rotation_translation_rejection_reason},
                         {"translation_from_last_keyframe_m",
@@ -1984,6 +2119,10 @@ struct AccumulatedMapRuntime::Impl {
         temporal_strict_voxels;
     std::uint64_t next_keyframe_id = 1;
     double worker_accumulated_yaw_deg = 0.0;
+    bool tripod_constraint_active = false;
+    std::uint64_t tripod_constraint_segment_id = 0;
+    cv::Vec3d tripod_anchor_position_world_m{0.0, 0.0, 0.0};
+    double tripod_anchor_yaw_deg = 0.0;
 
     std::array<bool, 2> camera_connected{false, false};
     std::array<std::string, 2> camera_device_ids;
