@@ -54,6 +54,14 @@ if [[ -x "$FUSION_TOOL" && -d "$SESSION_DIR/keyframes" ]]; then
   fi
 fi
 
+MULTI_PLANE_TOOL="$SCRIPT_DIR/../tools/analyze_multi_plane_corners.py"
+if [[ -x "$MULTI_PLANE_TOOL" && -f "$SESSION_DIR/room_planes_accumulated.json" ]]; then
+  echo "[MULTI-PLANE] Diagnosing wall, ceiling and Manhattan corner candidates..."
+  if ! python3 "$MULTI_PLANE_TOOL" "$SESSION_DIR" >"$SESSION_DIR/room_multi_plane_console.json"; then
+    echo "[MULTI-PLANE] Warning: candidate diagnostics failed; archive creation will continue." >&2
+  fi
+fi
+
 LOCAL_STEREO_TOOL="$SCRIPT_DIR/../tools/analyze_local_stereo_geometry.py"
 if [[ -x "$LOCAL_STEREO_TOOL" && -d "$SESSION_DIR/keyframes" ]]; then
   echo "[LOCAL-STEREO] Validating local clouds, world transforms and tripod pose..."
@@ -108,6 +116,11 @@ for name in \
   room_fusion_status.json \
   room_fusion_diagnostics.json \
   room_fusion_console.json \
+  room_plane_candidates_accumulated.json \
+  room_corner_hypotheses_accumulated.json \
+  room_candidate_skeleton_accumulated.ply \
+  room_multi_plane_status.json \
+  room_multi_plane_console.json \
   local_stereo_validation.json \
   local_stereo_validation.txt \
   local_stereo_validation_console.json \
