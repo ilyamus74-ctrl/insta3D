@@ -17,6 +17,8 @@ enum class DualPhoneTransport {
 data class DualPhoneStereoSettings(
     val deviceId: String,
     val role: DualPhoneRole = DualPhoneRole.STANDALONE,
+    val applicationMode: ApplicationCaptureMode =
+        ApplicationCaptureMode.migrateFromLegacyRole(role),
     val transport: DualPhoneTransport = DualPhoneTransport.WIFI_LAN,
     val peerDeviceId: String? = null,
     val masterHost: String? = null,
@@ -32,10 +34,18 @@ data class DualPhoneStereoSettings(
     val calibrationBoard: DualPhoneCalibrationBoardSettings =
         DualPhoneCalibrationBoardSettings(),
 ) {
+    fun withApplicationMode(
+        mode: ApplicationCaptureMode,
+    ): DualPhoneStereoSettings = copy(
+        applicationMode = mode,
+        role = mode.compatibilityRole,
+    )
+
     fun toJson(): JSONObject = JSONObject()
-        .put("schema_version", 5)
+        .put("schema_version", 6)
         .put("device_id", deviceId)
         .put("role", role.name)
+        .put("application_mode", applicationMode.name)
         .put("transport", transport.name)
         .put("peer_device_id", peerDeviceId ?: JSONObject.NULL)
         .put("master_host", masterHost ?: JSONObject.NULL)
@@ -67,12 +77,36 @@ class DualPhoneStereoSettingsStore(context: Context) {
                 prefs.edit().putString(KEY_DEVICE_ID, it).apply()
             }
 
+        val storedRole = enumValueOrDefault(
+            prefs.getString(KEY_ROLE, null),
+            DualPhoneRole.STANDALONE,
+        )
+        val rawApplicationMode = prefs.getString(
+            KEY_APPLICATION_MODE,
+            null,
+        )
+        val applicationMode = rawApplicationMode
+            ?.let { raw ->
+                runCatching {
+                    enumValueOf<ApplicationCaptureMode>(raw)
+                }.getOrNull()
+            }
+            ?: ApplicationCaptureMode.migrateFromLegacyRole(storedRole)
+        val compatibilityRole = applicationMode.compatibilityRole
+        if (
+            rawApplicationMode != applicationMode.name ||
+            prefs.getString(KEY_ROLE, null) != compatibilityRole.name
+        ) {
+            prefs.edit()
+                .putString(KEY_APPLICATION_MODE, applicationMode.name)
+                .putString(KEY_ROLE, compatibilityRole.name)
+                .apply()
+        }
+
         return DualPhoneStereoSettings(
             deviceId = deviceId,
-            role = enumValueOrDefault(
-                prefs.getString(KEY_ROLE, null),
-                DualPhoneRole.STANDALONE,
-            ),
+            role = compatibilityRole,
+            applicationMode = applicationMode,
             transport = enumValueOrDefault(
                 prefs.getString(KEY_TRANSPORT, null),
                 DualPhoneTransport.WIFI_LAN,
@@ -117,9 +151,20 @@ class DualPhoneStereoSettingsStore(context: Context) {
     }
 
     fun save(settings: DualPhoneStereoSettings) {
+        // Old callers still mutate only role. Preserve them until the role UI
+        // is removed by deriving a matching top-level mode on mismatch.
+        val applicationMode = if (
+            settings.role == settings.applicationMode.compatibilityRole
+        ) {
+            settings.applicationMode
+        } else {
+            ApplicationCaptureMode.migrateFromLegacyRole(settings.role)
+        }
+        val compatibilityRole = applicationMode.compatibilityRole
         prefs.edit()
             .putString(KEY_DEVICE_ID, settings.deviceId)
-            .putString(KEY_ROLE, settings.role.name)
+            .putString(KEY_ROLE, compatibilityRole.name)
+            .putString(KEY_APPLICATION_MODE, applicationMode.name)
             .putString(KEY_TRANSPORT, DualPhoneTransport.WIFI_LAN.name)
             .putString(KEY_PEER_DEVICE_ID, settings.peerDeviceId)
             .putString(KEY_MASTER_HOST, settings.masterHost)
@@ -153,6 +198,7 @@ class DualPhoneStereoSettingsStore(context: Context) {
         private const val PREFS = "dual_phone_stereo"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_ROLE = "role"
+        private const val KEY_APPLICATION_MODE = "application_capture_mode"
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_PEER_DEVICE_ID = "peer_device_id"
         private const val KEY_MASTER_HOST = "master_host"

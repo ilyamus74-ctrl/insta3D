@@ -113,6 +113,8 @@ fun DualPhoneControlSettingsCard(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            ApplicationCaptureModeSelector(settings = settings)
+
             Text(
                 "Dual-phone Wi-Fi control + clock sync (DP03)",
                 style = MaterialTheme.typography.titleMedium,
