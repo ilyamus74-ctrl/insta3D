@@ -82,6 +82,9 @@ constexpr double kTripodMaximumHorizontalStepM = 0.025;
 constexpr double kTripodHorizontalStepToleranceM = 0.006;
 constexpr double kTripodReturnPositionToleranceM = 0.015;
 constexpr double kMinimumAccelerationMotionMps2 = 0.18;
+constexpr double kMaximumConfirmedRotationAccelerationMps2 = 0.08;
+constexpr double kMinimumConfirmedRotationYawDeg = 0.75;
+constexpr std::uint32_t kWalkContextHoldFrames = 18;
 constexpr int kMotionVotesToSwitch = 3;
 constexpr std::uint64_t kGyroBiasCalibrationSamples = 80;
 constexpr double kGyroBiasCalibrationMaximumRateRadS = 0.06;
@@ -231,6 +234,10 @@ struct PoseDecision {
     bool reference_pose_trusted = true;
     bool provisional_promoted = false;
     bool provisional_alignment_available = false;
+    bool walk_context_active = false;
+    bool rotation_publish_candidate = false;
+    bool rotation_publish_confirmed = false;
+    std::uint32_t walk_context_remaining_frames = 0;
     std::uint32_t provisional_chain_length = 0;
     std::uint32_t provisional_alignment_chain_length = 0;
     std::uint64_t provisional_alignment_anchor_keyframe_id = 0;
@@ -240,6 +247,7 @@ struct PoseDecision {
     std::string state = "LOST";
     std::string method = "NONE";
     std::string translation_source = "NONE";
+    std::string rotation_publish_rejection_reason = "NOT_EVALUATED";
     std::string rejection_reason;
     cv::Matx44d world_from_camera = cv::Matx44d::eye();
     cv::Matx44d reference_world_from_camera = cv::Matx44d::eye();
@@ -1277,11 +1285,19 @@ struct AccumulatedMapRuntime::Impl {
         return {
             {"state", state},
             {"ready", ready},
-            {"tracking_mode", "AUTO_MOTION_FULL_STEREO_SE3_ANCHORED_PROVISIONAL_BACKFILL_APRILTAG_ANCHORS"},
+            {"tracking_mode", "AUTO_MOTION_FULL_STEREO_SE3_WALK_CONTEXT_ROTATION_GUARD_ANCHORED_BACKFILL_APRILTAG_ANCHORS"},
             {"apriltag_anchor", apriltag_anchors.status_json()},
             {"motion_mode", motion_mode_name(motion_mode)},
             {"motion_rotation_votes", rotation_motion_votes},
             {"motion_walk_votes", walk_motion_votes},
+            {"walk_context_active", walk_context_remaining_frames > 0},
+            {"walk_context_remaining_frames", walk_context_remaining_frames},
+            {"rotation_publish_candidates", rotation_publish_candidates},
+            {"rotation_publish_confirmed", rotation_publish_confirmed},
+            {"rotation_geometry_suppressed", rotation_geometry_suppressed},
+            {"rotation_rejected_recent_walk", rotation_rejected_recent_walk},
+            {"rotation_rejected_no_tripod_confirmation",
+             rotation_rejected_no_tripod_confirmation},
             {"tracking_buffer_frames", tracking_buffer_frames},
             {"recovery_attempts", recovery_attempts_total},
             {"recovery_successes", recovery_successes},
@@ -1416,6 +1432,12 @@ struct AccumulatedMapRuntime::Impl {
             motion_mode = MotionMode::Unknown;
             rotation_motion_votes = 0;
             walk_motion_votes = 0;
+            walk_context_remaining_frames = 0;
+            rotation_publish_candidates = 0;
+            rotation_publish_confirmed = 0;
+            rotation_geometry_suppressed = 0;
+            rotation_rejected_recent_walk = 0;
+            rotation_rejected_no_tripod_confirmation = 0;
             tracking_buffer_frames = 0;
             last_recovery_reference_pair = 0;
             translation_uncertain_frames = 0;
@@ -1787,9 +1809,41 @@ struct AccumulatedMapRuntime::Impl {
         decision.method += "_PNP_TRANSLATION_XZ_CONSTRAINED";
     }
 
+    static bool positive_rotation_evidence(
+        const PoseDecision& decision,
+        const MapJob& job,
+        std::string& rejection_reason) {
+        if (!decision.used_gyro || !decision.used_visual) {
+            rejection_reason = "ROTATION_REQUIRES_GYRO_VISUAL_AGREEMENT";
+            return false;
+        }
+        if (std::abs(decision.fused_yaw_step_deg) <
+            kMinimumConfirmedRotationYawDeg) {
+            rejection_reason = "ROTATION_YAW_TOO_SMALL";
+            return false;
+        }
+        if (!job.accelerometer_valid ||
+            job.acceleration_motion_mps2 >
+                kMaximumConfirmedRotationAccelerationMps2) {
+            rejection_reason = "ROTATION_ACCELERATION_NOT_STILL";
+            return false;
+        }
+        const double pivot_limit = tripod_translation_limit(
+            decision.fused_yaw_step_deg);
+        if (!rotation_pnp_translation_safe(
+                decision.visual, decision.visual.translation_m,
+                pivot_limit, rejection_reason)) {
+            if (rejection_reason.empty()) {
+                rejection_reason = "ROTATION_TRIPOD_TRANSLATION_UNCONFIRMED";
+            }
+            return false;
+        }
+        rejection_reason.clear();
+        return true;
+    }
+
     static MotionMode classify_motion_evidence(const PoseDecision& decision,
                                                 const MapJob& job) {
-        const bool rotation_available = decision.used_gyro || decision.used_visual;
         const bool walk_safe = walk_translation_safe(decision.visual);
         const double translation_m = walk_safe
             ? walk_translation_m(decision.visual)
@@ -1802,31 +1856,68 @@ struct AccumulatedMapRuntime::Impl {
         if (walk_safe && translation_m > pivot_limit * 1.6) {
             return MotionMode::Walk;
         }
-        if (rotation_available &&
-            (!walk_safe || translation_m <= pivot_limit)) {
+        std::string rotation_rejection_reason;
+        if (positive_rotation_evidence(
+                decision, job, rotation_rejection_reason)) {
             return MotionMode::Rotation;
         }
-        return walk_safe ? MotionMode::Walk : MotionMode::Unknown;
+        return MotionMode::Unknown;
+    }
+
+    std::uint32_t walk_context_snapshot() const {
+        std::scoped_lock lock(mutex);
+        return walk_context_remaining_frames;
     }
 
     void commit_motion_mode(const MotionMode evidence) {
         std::scoped_lock lock(mutex);
         if (evidence == MotionMode::Walk) {
+            walk_context_remaining_frames = kWalkContextHoldFrames;
             walk_motion_votes = std::min(8, walk_motion_votes + 1);
             rotation_motion_votes = std::max(0, rotation_motion_votes - 1);
-        } else if (evidence == MotionMode::Rotation) {
-            rotation_motion_votes = std::min(8, rotation_motion_votes + 1);
-            walk_motion_votes = std::max(0, walk_motion_votes - 1);
         } else {
-            rotation_motion_votes = std::max(0, rotation_motion_votes - 1);
-            walk_motion_votes = std::max(0, walk_motion_votes - 1);
+            if (walk_context_remaining_frames > 0) {
+                --walk_context_remaining_frames;
+            }
+            if (evidence == MotionMode::Rotation) {
+                rotation_motion_votes = std::min(8, rotation_motion_votes + 1);
+                walk_motion_votes = std::max(0, walk_motion_votes - 1);
+            } else {
+                rotation_motion_votes = std::max(0, rotation_motion_votes - 1);
+                walk_motion_votes = std::max(0, walk_motion_votes - 1);
+            }
         }
         if (walk_motion_votes >= kMotionVotesToSwitch &&
             walk_motion_votes > rotation_motion_votes) {
             motion_mode = MotionMode::Walk;
         } else if (rotation_motion_votes >= kMotionVotesToSwitch &&
-                   rotation_motion_votes > walk_motion_votes) {
+                   rotation_motion_votes > walk_motion_votes &&
+                   walk_context_remaining_frames == 0) {
             motion_mode = MotionMode::Rotation;
+        } else if (walk_context_remaining_frames == 0 &&
+                   walk_motion_votes == 0 && rotation_motion_votes == 0) {
+            motion_mode = MotionMode::Unknown;
+        }
+    }
+
+    void record_rotation_publish_guard(const PoseDecision& decision) {
+        if (!decision.rotation_publish_candidate) return;
+        std::scoped_lock lock(mutex);
+        ++rotation_publish_candidates;
+        if (decision.rotation_publish_confirmed) {
+            ++rotation_publish_confirmed;
+            return;
+        }
+        if (decision.geometry_suppressed) {
+            ++rotation_geometry_suppressed;
+        }
+        if (decision.rotation_publish_rejection_reason ==
+                "RECENT_WALK_CONTEXT" ||
+            decision.rotation_publish_rejection_reason ==
+                "ACTIVE_WALK_MODE") {
+            ++rotation_rejected_recent_walk;
+        } else {
+            ++rotation_rejected_no_tripod_confirmation;
         }
     }
 
@@ -1967,6 +2058,9 @@ struct AccumulatedMapRuntime::Impl {
                              const MapJob& job,
                              const bool recovery_attempt) {
         PoseDecision decision;
+        decision.walk_context_remaining_frames = walk_context_snapshot();
+        decision.walk_context_active =
+            decision.walk_context_remaining_frames > 0;
         decision.reference_keyframe_id = reference.id;
         decision.reference_pair_index = reference.pair_index;
         decision.reference_world_from_camera = reference.world_from_camera;
@@ -2050,6 +2144,10 @@ struct AccumulatedMapRuntime::Impl {
         }
         pnp_confirms_stereo(decision.visual);
         decision.motion_evidence = classify_motion_evidence(decision, job);
+        std::string rotation_confirmation_rejection_reason;
+        const bool rotation_confirmed = positive_rotation_evidence(
+            decision, job, rotation_confirmation_rejection_reason);
+        const bool recent_walk_context = decision.walk_context_active;
         const bool walk_safe = walk_translation_safe(decision.visual);
         const bool walk_candidate = walk_safe &&
             (decision.motion_evidence == MotionMode::Walk ||
@@ -2084,7 +2182,12 @@ struct AccumulatedMapRuntime::Impl {
                     "PROVISIONAL_SE3_WAITING_FOR_TRUSTED_ANCHOR";
                 return decision;
             }
-        } else if (inertial_walk || active_mode == MotionMode::Walk) {
+        } else if (inertial_walk || active_mode == MotionMode::Walk ||
+                   recent_walk_context) {
+            decision.rotation_publish_candidate = rotation_available;
+            decision.rotation_publish_rejection_reason = recent_walk_context
+                ? "RECENT_WALK_CONTEXT"
+                : "ACTIVE_WALK_MODE";
             decision.world_from_camera = rotation_available
                 ? reference.world_from_camera *
                     yaw_rotation_deg(decision.fused_yaw_step_deg)
@@ -2099,18 +2202,45 @@ struct AccumulatedMapRuntime::Impl {
             decision.keyframe = false;
             decision.state = "TRACKING_TRANSLATION_UNCERTAIN";
             decision.method = "AUTO_WALK_TRANSLATION_UNCERTAIN";
-            decision.rejection_reason =
-                decision.visual.stereo_translation_attempted
+            decision.rejection_reason = recent_walk_context
+                ? "ROTATION_REJECTED_RECENT_WALK_CONTEXT"
+                : (decision.visual.stereo_translation_attempted
                     ? "STEREO_3D3D_TRANSLATION_REJECTED"
-                    : "NO_STEREO_3D3D_TRANSLATION_SUPPORT";
+                    : "NO_STEREO_3D3D_TRANSLATION_SUPPORT");
             return decision;
         } else if (rotation_available) {
+            decision.rotation_publish_candidate = true;
+            if (!rotation_confirmed) {
+                decision.rotation_publish_rejection_reason =
+                    rotation_confirmation_rejection_reason.empty()
+                        ? "NO_POSITIVE_TRIPOD_CONFIRMATION"
+                        : rotation_confirmation_rejection_reason;
+                decision.world_from_camera = reference.world_from_camera *
+                    yaw_rotation_deg(decision.fused_yaw_step_deg);
+                decision.rotation_deg =
+                    std::abs(decision.fused_yaw_step_deg);
+                decision.rotation_only = false;
+                decision.translation_m = 0.0;
+                decision.translation_trusted = false;
+                decision.geometry_suppressed = true;
+                decision.provisional_chain_length = 0;
+                decision.valid = true;
+                decision.keyframe = false;
+                decision.state = "TRACKING_TRANSLATION_UNCERTAIN";
+                decision.method =
+                    "AUTO_ROTATION_UNCONFIRMED_SUPPRESSED";
+                decision.rejection_reason =
+                    "ROTATION_REQUIRES_POSITIVE_TRIPOD_CONFIRMATION";
+                return decision;
+            }
+            decision.rotation_publish_confirmed = true;
+            decision.rotation_publish_rejection_reason.clear();
             decision.rotation_only = true;
             decision.world_from_camera = reference.world_from_camera *
                 yaw_rotation_deg(decision.fused_yaw_step_deg);
             decision.rotation_deg = std::abs(decision.fused_yaw_step_deg);
             decision.valid = true;
-            decision.method = "AUTO_ROTATION_" + decision.method;
+            decision.method = "AUTO_ROTATION_CONFIRMED_" + decision.method;
             decision.rotation_translation_rejection_reason =
                 "PENDING_TRIPOD_CONSTRAINT";
         } else if (walk_safe) {
@@ -2457,6 +2587,15 @@ struct AccumulatedMapRuntime::Impl {
                          decision.yaw_from_last_keyframe_deg},
                         {"motion_mode", motion_mode_name(motion_mode_snapshot())},
                         {"motion_evidence", motion_mode_name(decision.motion_evidence)},
+                        {"walk_context_active", decision.walk_context_active},
+                        {"walk_context_remaining_frames",
+                         decision.walk_context_remaining_frames},
+                        {"rotation_publish_candidate",
+                         decision.rotation_publish_candidate},
+                        {"rotation_publish_confirmed",
+                         decision.rotation_publish_confirmed},
+                        {"rotation_publish_rejection_reason",
+                         decision.rotation_publish_rejection_reason},
                         {"accelerometer_motion_mps2", job.acceleration_motion_mps2},
                         {"method", decision.method},
                         {"recovered", decision.recovered},
@@ -2538,6 +2677,7 @@ struct AccumulatedMapRuntime::Impl {
                         {"accepted", decision.valid && decision.keyframe},
                         {"reason", decision.rejection_reason},
                     });
+                    record_rotation_publish_guard(decision);
                     if (!decision.valid) {
                         const double duration = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - started).count();
@@ -3010,6 +3150,12 @@ struct AccumulatedMapRuntime::Impl {
     MotionMode motion_mode = MotionMode::Unknown;
     int rotation_motion_votes = 0;
     int walk_motion_votes = 0;
+    std::uint32_t walk_context_remaining_frames = 0;
+    std::uint64_t rotation_publish_candidates = 0;
+    std::uint64_t rotation_publish_confirmed = 0;
+    std::uint64_t rotation_geometry_suppressed = 0;
+    std::uint64_t rotation_rejected_recent_walk = 0;
+    std::uint64_t rotation_rejected_no_tripod_confirmation = 0;
     std::size_t tracking_buffer_frames = 0;
     std::uint64_t recovery_attempts_total = 0;
     std::uint64_t recovery_successes = 0;
