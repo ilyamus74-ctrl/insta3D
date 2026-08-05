@@ -237,6 +237,7 @@ struct PoseDecision {
     bool walk_context_active = false;
     bool rotation_publish_candidate = false;
     bool rotation_publish_confirmed = false;
+    bool trusted_stereo_bridge = false;
     std::uint32_t walk_context_remaining_frames = 0;
     std::uint32_t provisional_chain_length = 0;
     std::uint32_t provisional_alignment_chain_length = 0;
@@ -1285,7 +1286,7 @@ struct AccumulatedMapRuntime::Impl {
         return {
             {"state", state},
             {"ready", ready},
-            {"tracking_mode", "AUTO_MOTION_FULL_STEREO_SE3_WALK_CONTEXT_ROTATION_GUARD_ANCHORED_BACKFILL_APRILTAG_ANCHORS"},
+            {"tracking_mode", "AUTO_MOTION_FULL_STEREO_SE3_TRUSTED_BRIDGE_WALK_CONTEXT_ROTATION_GUARD_ANCHORED_BACKFILL_APRILTAG_ANCHORS"},
             {"apriltag_anchor", apriltag_anchors.status_json()},
             {"motion_mode", motion_mode_name(motion_mode)},
             {"motion_rotation_votes", rotation_motion_votes},
@@ -1298,6 +1299,7 @@ struct AccumulatedMapRuntime::Impl {
             {"rotation_rejected_recent_walk", rotation_rejected_recent_walk},
             {"rotation_rejected_no_tripod_confirmation",
              rotation_rejected_no_tripod_confirmation},
+            {"trusted_stereo_bridge_frames", trusted_stereo_bridge_frames},
             {"tracking_buffer_frames", tracking_buffer_frames},
             {"recovery_attempts", recovery_attempts_total},
             {"recovery_successes", recovery_successes},
@@ -1438,6 +1440,7 @@ struct AccumulatedMapRuntime::Impl {
             rotation_geometry_suppressed = 0;
             rotation_rejected_recent_walk = 0;
             rotation_rejected_no_tripod_confirmation = 0;
+            trusted_stereo_bridge_frames = 0;
             tracking_buffer_frames = 0;
             last_recovery_reference_pair = 0;
             translation_uncertain_frames = 0;
@@ -1809,6 +1812,47 @@ struct AccumulatedMapRuntime::Impl {
         decision.method += "_PNP_TRANSLATION_XZ_CONSTRAINED";
     }
 
+    static bool trusted_stereo_bridge_pose_valid(
+        const Keyframe& reference,
+        const VisualEstimate& estimate) {
+        if (!estimate.stereo_translation_attempted ||
+            estimate.stereo_translation_pairs <
+                static_cast<int>(kMinimumStereoTranslationPairs) ||
+            estimate.stereo_translation_inliers <
+                kMinimumStereoTranslationInliers ||
+            estimate.stereo_translation_inlier_ratio <
+                kMinimumStereoTranslationInlierRatio ||
+            !std::isfinite(estimate.stereo_translation_residual_m) ||
+            estimate.stereo_translation_residual_m >
+                kMaximumStereoTranslationResidualM ||
+            !std::isfinite(estimate.stereo_translation_m) ||
+            estimate.stereo_translation_m < 0.0 ||
+            estimate.stereo_translation_m >=
+                kMinimumWalkTranslationStepM ||
+            !std::isfinite(estimate.stereo_rotation_deg) ||
+            estimate.stereo_rotation_deg >
+                kMaximumStereoSe3RotationDeg ||
+            (estimate.stereo_gyro_yaw_checked &&
+             (!std::isfinite(estimate.stereo_gyro_yaw_error_deg) ||
+              estimate.stereo_gyro_yaw_error_deg >
+                  kMaximumStereoSe3GyroYawErrorDeg))) {
+            return false;
+        }
+        for (int row = 0; row < 4; ++row) {
+            for (int column = 0; column < 4; ++column) {
+                if (!std::isfinite(
+                        estimate.stereo_world_from_camera(row, column))) {
+                    return false;
+                }
+            }
+        }
+        const double vertical_step_m = std::abs(
+            estimate.stereo_world_from_camera(1, 3) -
+            reference.world_from_camera(1, 3));
+        return std::isfinite(vertical_step_m) &&
+            vertical_step_m <= kMaximumStereoSe3VerticalStepM;
+    }
+
     static bool positive_rotation_evidence(
         const PoseDecision& decision,
         const MapJob& job,
@@ -2143,6 +2187,11 @@ struct AccumulatedMapRuntime::Impl {
                 decision.visual);
         }
         pnp_confirms_stereo(decision.visual);
+        const bool trusted_stereo_bridge =
+            reference.pose_trusted &&
+            trusted_stereo_bridge_pose_valid(
+                reference, decision.visual);
+        decision.trusted_stereo_bridge = trusted_stereo_bridge;
         decision.motion_evidence = classify_motion_evidence(decision, job);
         std::string rotation_confirmation_rejection_reason;
         const bool rotation_confirmed = positive_rotation_evidence(
@@ -2152,6 +2201,32 @@ struct AccumulatedMapRuntime::Impl {
         const bool walk_candidate = walk_safe &&
             (decision.motion_evidence == MotionMode::Walk ||
              active_mode == MotionMode::Walk || inertial_walk);
+
+        if (trusted_stereo_bridge) {
+            decision.world_from_camera =
+                decision.visual.stereo_world_from_camera;
+            decision.translation_m =
+                decision.visual.stereo_translation_m;
+            decision.rotation_deg =
+                decision.visual.stereo_rotation_deg;
+            decision.fused_yaw_step_deg = signed_yaw_delta_deg(
+                reference.world_from_camera,
+                decision.world_from_camera);
+            decision.rotation_only = false;
+            decision.used_visual = true;
+            decision.translation_trusted = true;
+            decision.translation_source =
+                "STEREO_SE3_TRUSTED_BRIDGE";
+            decision.geometry_suppressed = false;
+            decision.provisional_chain_length = 0;
+            decision.valid = true;
+            decision.keyframe = false;
+            decision.state = "TRACKING_STATIONARY";
+            decision.method =
+                "AUTO_STEREO_SE3_TRUSTED_BRIDGE";
+            decision.rejection_reason.clear();
+            return decision;
+        }
 
         if (walk_candidate) {
             decision.world_from_camera = walk_world_from_camera(decision.visual);
@@ -2405,6 +2480,11 @@ struct AccumulatedMapRuntime::Impl {
             decision.geometry_suppressed) {
             return;
         }
+        if (decision.trusted_stereo_bridge) {
+            decision.keyframe = false;
+            decision.state = "TRACKING_STATIONARY";
+            return;
+        }
         const auto& last_keyframe_pose =
             registration_keyframes.back().world_from_camera;
         decision.translation_from_last_keyframe_m = translation_delta_m(
@@ -2596,6 +2676,8 @@ struct AccumulatedMapRuntime::Impl {
                          decision.rotation_publish_confirmed},
                         {"rotation_publish_rejection_reason",
                          decision.rotation_publish_rejection_reason},
+                        {"trusted_stereo_bridge",
+                         decision.trusted_stereo_bridge},
                         {"accelerometer_motion_mps2", job.acceleration_motion_mps2},
                         {"method", decision.method},
                         {"recovered", decision.recovered},
@@ -2678,6 +2760,10 @@ struct AccumulatedMapRuntime::Impl {
                         {"reason", decision.rejection_reason},
                     });
                     record_rotation_publish_guard(decision);
+                    if (decision.trusted_stereo_bridge) {
+                        std::scoped_lock lock(mutex);
+                        ++trusted_stereo_bridge_frames;
+                    }
                     if (!decision.valid) {
                         const double duration = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - started).count();
@@ -3156,6 +3242,7 @@ struct AccumulatedMapRuntime::Impl {
     std::uint64_t rotation_geometry_suppressed = 0;
     std::uint64_t rotation_rejected_recent_walk = 0;
     std::uint64_t rotation_rejected_no_tripod_confirmation = 0;
+    std::uint64_t trusted_stereo_bridge_frames = 0;
     std::size_t tracking_buffer_frames = 0;
     std::uint64_t recovery_attempts_total = 0;
     std::uint64_t recovery_successes = 0;

@@ -141,6 +141,12 @@ pre { max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap;
           <option value="strict-multiview">TEMPORAL STRICT · confirmed</option>
         </select>
       </label>
+      <label>ORIENTATION
+        <select id="mapOrientation">
+          <option value="upright" selected>UPRIGHT · 180° display roll</option>
+          <option value="raw">RAW · stored Y-up</option>
+        </select>
+      </label>
       <label>POINT
         <input id="mapPointSize" type="range" min="1" max="8" step="0.5" value="2.5">
         <span id="mapPointSizeValue">2.5 px</span>
@@ -183,6 +189,7 @@ const captureTab = document.getElementById('captureTab');
 const mapTab = document.getElementById('mapTab');
 const mapRuntimeStatus = document.getElementById('mapRuntimeStatus');
 const mapCloudMode = document.getElementById('mapCloudMode');
+const mapOrientation = document.getElementById('mapOrientation');
 const mapPointSize = document.getElementById('mapPointSize');
 const mapPointSizeValue = document.getElementById('mapPointSizeValue');
 const mapTrajectoryEnabled = document.getElementById('mapTrajectoryEnabled');
@@ -860,7 +867,10 @@ function drawMap() {
     near,
     far
   );
-  const view = mat4LookAt(eye, renderer.target, [0, 1, 0]);
+  const displayUp = mapOrientation.value === 'upright'
+    ? [0, -1, 0]
+    : [0, 1, 0];
+  const view = mat4LookAt(eye, renderer.target, displayUp);
   const mvp = mat4Multiply(projection, view);
   gl.useProgram(renderer.program);
   gl.uniformMatrix4fv(renderer.mvpLocation, false, mvp);
@@ -968,6 +978,7 @@ async function requestMapRefresh(force) {
 }
 
 mapCloudMode.addEventListener('change', () => requestMapRefresh(true));
+mapOrientation.addEventListener('change', drawMap);
 mapPointSize.addEventListener('input', () => {
   mapPointSizeValue.textContent = `${Number(mapPointSize.value).toFixed(1)} px`;
 });
