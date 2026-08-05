@@ -99,6 +99,13 @@ constexpr double kGyroBiasCalibrationMaximumRateRadS = 0.06;
 constexpr double kGyroBiasCalibrationMaximumAccelerationDeltaMps2 = 0.25;
 constexpr double kGyroMaximumDtSeconds = 0.15;
 constexpr std::uint32_t kMinimumMultiviewKeyframes = 2;
+constexpr std::uint32_t kStructuralMinimumPixelSamples = 4;
+constexpr int kStructuralMinimumNeighbours = 4;
+constexpr int kStructuralMinimumAxes = 2;
+constexpr double kMaximumBridgePnpPoseDisagreementM = 0.06;
+constexpr double kMaximumBridgePnpYawDisagreementDeg = 8.0;
+constexpr std::uint32_t kMinimumBridgeChainLength = 3;
+constexpr std::uint32_t kMinimumBridgeConfirmedSteps = 2;
 
 std::int64_t unix_time_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -154,6 +161,8 @@ struct Keyframe {
     double gyro_yaw_raw_deg = 0.0;
     bool pose_trusted = true;
     std::uint32_t provisional_chain_length = 0;
+    std::uint32_t trusted_bridge_chain_length = 0;
+    std::uint32_t trusted_bridge_confirmed_steps = 0;
 };
 
 struct ProvisionalGeometryFrame {
@@ -248,7 +257,11 @@ struct PoseDecision {
     bool trusted_stereo_bridge = false;
     bool provisional_stereo_bridge = false;
     bool local_submap_promoted = false;
+    bool trusted_bridge_pnp_confirmed = false;
+    bool trusted_bridge_publish_ready = false;
     std::uint32_t walk_context_remaining_frames = 0;
+    std::uint32_t trusted_bridge_chain_length = 0;
+    std::uint32_t trusted_bridge_confirmed_steps = 0;
     std::uint32_t provisional_chain_length = 0;
     std::uint32_t provisional_alignment_chain_length = 0;
     std::uint64_t provisional_alignment_anchor_keyframe_id = 0;
@@ -907,14 +920,57 @@ VisualEstimate estimate_visual(const Keyframe& reference,
     return result;
 }
 
+bool structural_voxel_supported(
+    const std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash>& voxels,
+    const VoxelKey& key,
+    const VoxelAccumulator& voxel) {
+    if (voxel.pixel_samples < kStructuralMinimumPixelSamples ||
+        voxel.keyframe_observations < kMinimumMultiviewKeyframes) {
+        return false;
+    }
+    int neighbours = 0;
+    std::array<bool, 3> supported_axes{false, false, false};
+    for (int dx = -1; dx <= 1; ++dx) {
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dz = -1; dz <= 1; ++dz) {
+                if (dx == 0 && dy == 0 && dz == 0) continue;
+                const auto match = voxels.find({
+                    key.x + dx, key.y + dy, key.z + dz});
+                if (match == voxels.end() ||
+                    match->second.pixel_samples <
+                        kStructuralMinimumPixelSamples ||
+                    match->second.keyframe_observations <
+                        kMinimumMultiviewKeyframes) {
+                    continue;
+                }
+                ++neighbours;
+                if (dx != 0) supported_axes[0] = true;
+                if (dy != 0) supported_axes[1] = true;
+                if (dz != 0) supported_axes[2] = true;
+            }
+        }
+    }
+    return neighbours >= kStructuralMinimumNeighbours &&
+        static_cast<int>(std::count(
+            supported_axes.begin(), supported_axes.end(), true)) >=
+            kStructuralMinimumAxes;
+}
+
 std::string cloud_ply(
     const std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash>& voxels,
     const std::uint32_t minimum_keyframes,
-    const std::string& comment) {
+    const std::string& comment,
+    const bool require_structural_support = false) {
+    const auto accepted = [&](const VoxelKey& key,
+                              const VoxelAccumulator& voxel) {
+        return voxel.pixel_samples > 0 &&
+            voxel.keyframe_observations >= minimum_keyframes &&
+            (!require_structural_support ||
+             structural_voxel_supported(voxels, key, voxel));
+    };
     std::size_t count = 0;
     for (const auto& [key, voxel] : voxels) {
-        static_cast<void>(key);
-        if (voxel.pixel_samples > 0 && voxel.keyframe_observations >= minimum_keyframes) ++count;
+        if (accepted(key, voxel)) ++count;
     }
     std::ostringstream output;
     output << "ply\nformat ascii 1.0\n"
@@ -930,8 +986,7 @@ std::string cloud_ply(
            << "end_header\n";
     output << std::fixed << std::setprecision(6);
     for (const auto& [key, voxel] : voxels) {
-        static_cast<void>(key);
-        if (voxel.pixel_samples == 0 || voxel.keyframe_observations < minimum_keyframes) continue;
+        if (!accepted(key, voxel)) continue;
         const double scale = 1.0 / static_cast<double>(voxel.pixel_samples);
         const auto position = voxel.position_sum * scale;
         const auto colour = voxel.colour_sum * scale;
@@ -1220,7 +1275,17 @@ struct AccumulatedMapRuntime::Impl {
         const auto now = std::chrono::steady_clock::now();
         std::scoped_lock lock(mutex);
         ++submitted_frames;
-        if (source_profile != "HIGH_640") { ++rejected_profile_frames; return false; }
+        const bool supported_profile =
+            source_profile == "ULTRA_960" ||
+            source_profile == "HIGH_640" ||
+            source_profile == "QUALITY_480" ||
+            source_profile == "BALANCED_320" ||
+            source_profile == "THROTTLED_320" ||
+            source_profile == "FHD_1920";
+        if (!supported_profile) {
+            ++rejected_profile_frames;
+            return false;
+        }
         if (pending) { ++rejected_busy_frames; return false; }
         if (last_accepted_submission.time_since_epoch().count() != 0 &&
             now - last_accepted_submission < kMinimumSubmissionInterval) {
@@ -1337,6 +1402,9 @@ struct AccumulatedMapRuntime::Impl {
             {"provisional_geometry_strict_voxels_added",
              provisional_geometry_strict_voxels_added},
             {"recommended_profile", "HIGH_640"},
+            {"supported_profiles", nlohmann::json::array({
+                "ULTRA_960", "HIGH_640", "QUALITY_480",
+                "BALANCED_320", "THROTTLED_320", "FHD_1920"})},
             {"source_profile", source_profile},
             {"segment_id", segment_id},
             {"disconnect_boundaries", disconnect_boundaries},
@@ -1398,6 +1466,8 @@ struct AccumulatedMapRuntime::Impl {
             {"coordinate_system", "X_right_Y_up_Z_forward_meters"},
             {"point_cloud_file", "point_cloud_accumulated_raw.ply"},
             {"multiview_point_cloud_file", "point_cloud_accumulated_multiview.ply"},
+            {"structural_point_cloud_file",
+             "point_cloud_accumulated_structural.ply"},
             {"temporal_strict_point_cloud_file",
              "point_cloud_accumulated_temporal_strict_raw.ply"},
             {"temporal_strict_multiview_point_cloud_file",
@@ -1478,6 +1548,7 @@ struct AccumulatedMapRuntime::Impl {
                  "point_cloud_accumulated.ply",
                  "point_cloud_accumulated_raw.ply",
                  "point_cloud_accumulated_multiview.ply",
+                 "point_cloud_accumulated_structural.ply",
                  "point_cloud_accumulated_temporal_strict_raw.ply",
                  "point_cloud_accumulated_temporal_strict_multiview.ply",
                  "camera_trajectory.json",
@@ -1561,6 +1632,11 @@ struct AccumulatedMapRuntime::Impl {
         write_text_atomic(session_directory / "point_cloud_accumulated_raw.ply", raw);
         write_text_atomic(session_directory / "point_cloud_accumulated.ply", raw);
         write_text_atomic(session_directory / "point_cloud_accumulated_multiview.ply", multiview);
+        write_text_atomic(
+            session_directory / "point_cloud_accumulated_structural.ply",
+            cloud_ply(
+                voxels, kMinimumMultiviewKeyframes,
+                "connected multi-keyframe structural live cloud", true));
         if (!temporal_strict_voxels.empty()) {
             write_text_atomic(
                 session_directory /
@@ -1631,6 +1707,32 @@ struct AccumulatedMapRuntime::Impl {
             yaw_disagreement_deg <=
                 kMaximumPnpStereoYawDisagreementDeg;
         return visual.pnp_stereo_confirmed;
+    }
+
+    static bool pnp_confirms_stereo_bridge(
+        const VisualEstimate& visual) {
+        if (!visual.pnp_valid ||
+            !visual.stereo_translation_attempted ||
+            visual.pnp_inliers < kMinimumPnPInliers ||
+            visual.pnp_inlier_ratio < kMinimumPnPInlierRatio ||
+            (std::isfinite(visual.sparse_depth_median_m) &&
+             visual.sparse_depth_median_m >
+                 kMaximumSparseDepthMedianM)) {
+            return false;
+        }
+        const double pose_disagreement_m = translation_delta_m(
+            visual.pnp_world_from_camera,
+            visual.stereo_world_from_camera);
+        const double yaw_disagreement_deg = std::abs(
+            signed_yaw_delta_deg(
+                visual.pnp_world_from_camera,
+                visual.stereo_world_from_camera));
+        return std::isfinite(pose_disagreement_m) &&
+            std::isfinite(yaw_disagreement_deg) &&
+            pose_disagreement_m <=
+                kMaximumBridgePnpPoseDisagreementM &&
+            yaw_disagreement_deg <=
+                kMaximumBridgePnpYawDisagreementDeg;
     }
 
     static bool walk_translation_safe(const VisualEstimate& visual) {
@@ -2122,7 +2224,9 @@ struct AccumulatedMapRuntime::Impl {
                                  const MapJob& job,
                                  const std::uint64_t keyframe_id,
                                  const bool pose_trusted = true,
-                                 const std::uint32_t provisional_chain_length = 0) {
+                                 const std::uint32_t provisional_chain_length = 0,
+                                 const std::uint32_t trusted_bridge_chain_length = 0,
+                                 const std::uint32_t trusted_bridge_confirmed_steps = 0) {
         Keyframe reference;
         reference.id = keyframe_id;
         reference.pair_index = job.pair_index;
@@ -2135,6 +2239,10 @@ struct AccumulatedMapRuntime::Impl {
         reference.gyro_yaw_raw_deg = job.gyro_yaw_raw_deg;
         reference.pose_trusted = pose_trusted;
         reference.provisional_chain_length = provisional_chain_length;
+        reference.trusted_bridge_chain_length =
+            trusted_bridge_chain_length;
+        reference.trusted_bridge_confirmed_steps =
+            trusted_bridge_confirmed_steps;
         tracking_buffer.push_back(std::move(reference));
         while (tracking_buffer.size() > kMaximumTrackingBufferFrames) {
             tracking_buffer.pop_front();
@@ -2277,6 +2385,13 @@ struct AccumulatedMapRuntime::Impl {
                 "STEREO_SE3_TRUSTED_BRIDGE";
             decision.geometry_suppressed = false;
             decision.provisional_chain_length = 0;
+            decision.trusted_bridge_pnp_confirmed =
+                pnp_confirms_stereo_bridge(decision.visual);
+            decision.trusted_bridge_chain_length =
+                reference.trusted_bridge_chain_length + 1;
+            decision.trusted_bridge_confirmed_steps =
+                reference.trusted_bridge_confirmed_steps +
+                (decision.trusted_bridge_pnp_confirmed ? 1U : 0U);
             decision.valid = true;
             decision.keyframe = false;
             decision.state = "TRACKING_STATIONARY";
@@ -2618,6 +2733,22 @@ struct AccumulatedMapRuntime::Impl {
             last_keyframe_pose, decision.world_from_camera);
         decision.yaw_from_last_keyframe_deg = signed_yaw_delta_deg(
             last_keyframe_pose, decision.world_from_camera);
+        if (decision.trusted_stereo_bridge) {
+            decision.trusted_bridge_publish_ready =
+                decision.trusted_bridge_pnp_confirmed &&
+                decision.trusted_bridge_chain_length >=
+                    kMinimumBridgeChainLength &&
+                decision.trusted_bridge_confirmed_steps >=
+                    kMinimumBridgeConfirmedSteps &&
+                decision.trusted_bridge_confirmed_steps * 3U >=
+                    decision.trusted_bridge_chain_length * 2U;
+            if (!decision.trusted_bridge_publish_ready) {
+                decision.keyframe = false;
+                decision.state = "TRACKING_STATIONARY";
+                decision.method += "_QUARANTINED";
+                return;
+            }
+        }
         const bool forced_anchor =
             decision.local_submap_promoted ||
             decision.method.find("RELOCALIZED") != std::string::npos;
@@ -2630,7 +2761,8 @@ struct AccumulatedMapRuntime::Impl {
         if (!decision.keyframe) {
             decision.state = "TRACKING_STATIONARY";
         } else if (decision.trusted_stereo_bridge) {
-            decision.method += "_CUMULATIVE_KEYFRAME";
+            decision.method +=
+                "_CONFIRMED_CUMULATIVE_KEYFRAME";
             decision.state = "TRACKING_WALK";
         } else if (decision.method.find("APRILTAG") != std::string::npos) {
             decision.state = "TRACKING_APRILTAG";
@@ -2813,6 +2945,14 @@ struct AccumulatedMapRuntime::Impl {
                          decision.provisional_stereo_bridge},
                         {"local_submap_promoted",
                          decision.local_submap_promoted},
+                        {"trusted_bridge_pnp_confirmed",
+                         decision.trusted_bridge_pnp_confirmed},
+                        {"trusted_bridge_publish_ready",
+                         decision.trusted_bridge_publish_ready},
+                        {"trusted_bridge_chain_length",
+                         decision.trusted_bridge_chain_length},
+                        {"trusted_bridge_confirmed_steps",
+                         decision.trusted_bridge_confirmed_steps},
                         {"accelerometer_motion_mps2", job.acceleration_motion_mps2},
                         {"method", decision.method},
                         {"recovered", decision.recovered},
@@ -2937,7 +3077,9 @@ struct AccumulatedMapRuntime::Impl {
                             push_tracking_reference(
                                 current, pose, job,
                                 decision.reference_keyframe_id,
-                                true, 0);
+                                true, 0,
+                                decision.trusted_bridge_chain_length,
+                                decision.trusted_bridge_confirmed_steps);
                         } else if (features_usable) {
                             provisional_geometry_discarded =
                                 cache_provisional_geometry(

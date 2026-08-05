@@ -220,7 +220,10 @@ void HttpDashboard::handle_client(const int client_fd) {
     }
     std::filesystem::path map_asset;
     std::string map_content_type;
-    if (path == "/api/map/raw.ply") {
+    if (path == "/api/map/structural.ply") {
+        map_asset = "point_cloud_accumulated_structural.ply";
+        map_content_type = "application/x-ply";
+    } else if (path == "/api/map/raw.ply") {
         map_asset = "point_cloud_accumulated_raw.ply";
         map_content_type = "application/x-ply";
     } else if (path == "/api/map/multiview.ply") {

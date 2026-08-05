@@ -135,7 +135,8 @@ pre { max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap;
     <div class="map-toolbar">
       <label>CLOUD
         <select id="mapCloudMode">
-          <option value="raw" selected>RAW · maximum coverage</option>
+          <option value="structural" selected>STRUCTURAL · confirmed + connected</option>
+          <option value="raw">RAW · maximum coverage</option>
           <option value="multiview">MULTIVIEW · confirmed</option>
           <option value="strict">TEMPORAL STRICT · raw</option>
           <option value="strict-multiview">TEMPORAL STRICT · confirmed</option>
@@ -363,7 +364,6 @@ function pumpSelectedPreview() {
     if (success) {
       selectedPreview.src = loader.src;
       lastSelectedSequence = sequence;
-      hideDepthProbe();
     }
     selectedImageLoading = false;
     if (wantedSelectedSequence > lastSelectedSequence) {
@@ -483,11 +483,12 @@ selectedPreview.addEventListener('mouseleave', hideDepthProbe);
 
 function mapModeEndpoint(mode) {
   return {
+    structural: '/api/map/structural.ply',
     raw: '/api/map/raw.ply',
     multiview: '/api/map/multiview.ply',
     strict: '/api/map/strict.ply',
     'strict-multiview': '/api/map/strict-multiview.ply',
-  }[mode] || '/api/map/raw.ply';
+  }[mode] || '/api/map/structural.ply';
 }
 
 function parseAsciiPly(text) {
