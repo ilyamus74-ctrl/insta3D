@@ -7,6 +7,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.SystemClock
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
+import com.maklertour.data.dualphone.ApplicationCaptureMode
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 import java.io.BufferedInputStream
@@ -54,6 +55,12 @@ data class DualPhoneLaptopUplinkSnapshot(
     val clockRttMs: Double = 0.0,
     val clockSamples: Long = 0L,
     val imuPacketsSent: Long = 0L,
+    val calibrationProfileId: String? = null,
+    val hostCalibrationProfileId: String? = null,
+    val calibrationAccepted: Boolean = false,
+    val hostCalibrationReady: Boolean = false,
+    val calibrationRevision: Long = 0L,
+    val calibrationReason: String = "NOT_CONNECTED",
     val producer: DualPhoneReducedFrameProducerSnapshot =
         DualPhoneReducedFrameProducerSnapshot(),
     val lastError: String? = null,
@@ -75,7 +82,7 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         val rigId: String,
         val rigMountRevision: String,
         val recordingModeIdentity: String,
-        val calibrationId: String?,
+        val calibrationId: String,
         val calibrationProfile: JSONObject?,
     )
 
@@ -109,6 +116,18 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
     private var sessionId: String? = null
     @Volatile
     private var activeConfig: DualPhoneLaptopUplinkConfig? = null
+    @Volatile
+    private var calibrationProfileId: String? = null
+    @Volatile
+    private var hostCalibrationProfileId: String? = null
+    @Volatile
+    private var calibrationAccepted: Boolean = false
+    @Volatile
+    private var hostCalibrationReady: Boolean = false
+    @Volatile
+    private var calibrationRevision: Long = 0L
+    @Volatile
+    private var calibrationReason: String = "NOT_CONNECTED"
 
     private val sensorManager =
         appContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -152,6 +171,12 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         clockRttNs.set(Long.MAX_VALUE)
         clockSamples.set(0L)
         imuPacketsSent.set(0L)
+        calibrationProfileId = initialHandshake.calibrationId
+        hostCalibrationProfileId = null
+        calibrationAccepted = false
+        hostCalibrationReady = false
+        calibrationRevision = 0L
+        calibrationReason = "CONNECTING"
         pendingFrame.set(null)
         latestAccelerometer.set(null)
         latestGyroscope.set(null)
@@ -168,18 +193,27 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         val owner = DualPhoneLiveStreamOwner(
             sessionUuid = currentSession,
             dualCaptureId = initialHandshake.rigId.ifBlank { "laptop-rig" },
-            localRole = DualPhoneRole.SLAVE.name,
+            localRole = "LAPTOP_${config.slot.name}",
             peerIdentity = "CPU_LAPTOP_HOST",
             cameraIdentity = "SELECTED_PHONE_CAMERA",
             recordingModeIdentity = initialHandshake.recordingModeIdentity,
-            calibrationIdentity =
-                initialHandshake.calibrationId ?: "UNSPECIFIED",
+            calibrationIdentity = initialHandshake.calibrationId,
             rigMountRevision =
                 initialHandshake.rigMountRevision.ifBlank { "unknown" },
             captureMode = DualPhoneLiveStreamMode.LIVE_METRIC,
             streamId = "laptop-${config.slot.name.lowercase()}-$currentSession",
         )
-        producer.start(owner, DualPhoneRole.SLAVE) { frame ->
+        // DualPhoneReducedFrame still carries the legacy role enum in its frame
+        // metadata. Derive it from the laptop camera slot; never read or mutate
+        // the persisted phone-to-phone role for laptop transport.
+        val producerRole = if (
+            config.slot == DualPhoneLaptopCameraSlot.CAMERA_A
+        ) {
+            DualPhoneRole.MASTER
+        } else {
+            DualPhoneRole.SLAVE
+        }
+        producer.start(owner, producerRole) { frame ->
             offered.incrementAndGet()
             if (pendingFrame.getAndSet(frame) != null) {
                 replaced.incrementAndGet()
@@ -204,28 +238,38 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         config: DualPhoneLaptopUplinkConfig,
     ): LaptopHandshakeContext {
         val settings = stereoSettingsStore.load()
-        require(settings.role == DualPhoneRole.SLAVE) {
-            "Select the transitional SLAVE transport role before laptop capture"
+        require(
+            settings.applicationMode == ApplicationCaptureMode.LAPTOP_STEREO_CLIENT
+        ) {
+            "Select the application mode 'Two phones -> laptop/PC' before laptop capture"
         }
 
-        val calibrationId = settings.activeCalibrationProfileId
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
+        val missingProfileMessage = if (
+            config.slot == DualPhoneLaptopCameraSlot.CAMERA_A
+        ) {
+            "CAMERA_A requires an active calibration profile created on the MASTER phone"
+        } else {
+            "CAMERA_B requires the active dual-phone calibration profile ID"
+        }
+        val calibrationId = requireNotNull(
+            settings.activeCalibrationProfileId
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() },
+        ) {
+            missingProfileMessage
+        }
         val calibrationProfile = if (
             config.slot == DualPhoneLaptopCameraSlot.CAMERA_A
         ) {
-            val requiredProfileId = requireNotNull(calibrationId) {
-                "CAMERA_A requires an active calibration profile created on the MASTER phone"
-            }
             val profile = requireNotNull(
-                calibrationProfileStore.load(requiredProfileId),
+                calibrationProfileStore.load(calibrationId),
             ) {
-                "CAMERA_A calibration profile $requiredProfileId was not found"
+                "CAMERA_A calibration profile $calibrationId was not found"
             }
             require(profile.successful) {
-                "CAMERA_A calibration profile $requiredProfileId is not successful"
+                "CAMERA_A calibration profile $calibrationId is not successful"
             }
-            require(profile.profileId == requiredProfileId) {
+            require(profile.profileId == calibrationId) {
                 "CAMERA_A calibration profile ID mismatch"
             }
             require(profile.masterDeviceId == settings.deviceId) {
@@ -271,6 +315,10 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
             if (!active.get() || generation.get() != token) break
 
             try {
+                calibrationAccepted = false
+                hostCalibrationReady = false
+                hostCalibrationProfileId = null
+                calibrationReason = "HANDSHAKING"
                 publish(
                     state = DualPhoneLaptopUplinkState.CONNECTING,
                     error = null,
@@ -278,6 +326,7 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
                 // Re-read the authoritative settings/profile on every
                 // handshake and reconnect instead of reusing a UI snapshot.
                 val handshake = loadHandshakeContext(config)
+                calibrationProfileId = handshake.calibrationId
                 val socket = Socket()
                 socket.tcpNoDelay = true
                 socket.keepAlive = true
@@ -314,7 +363,7 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
                         )
                         .put(
                             "calibration_profile_id",
-                            handshake.calibrationId ?: JSONObject.NULL,
+                            handshake.calibrationId,
                         )
                         .put(
                             "calibration_authority",
@@ -330,9 +379,53 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
 
                 val ack = JSONObject(readUtf8Line(input, MAX_HELLO_BYTES))
                 val helloClientReceiveNs = SystemClock.elapsedRealtimeNanos()
+                check(ack.optString("type") == "hello_ack") {
+                    "Unexpected laptop hello response"
+                }
+                val responseCalibrationReason = ack.optString(
+                    "calibration_reason",
+                    ack.optString("reason", "unknown"),
+                )
+                calibrationReason = responseCalibrationReason
                 check(ack.optBoolean("accepted", false)) {
                     "Laptop rejected hello: ${ack.optString("reason", "unknown")}"
                 }
+                val reportedProfileId = ack
+                    .optString("reported_calibration_profile_id", "")
+                    .trim()
+                    .takeIf { it.isNotEmpty() }
+                val acceptedHostProfileId = ack
+                    .optString("host_calibration_profile_id", "")
+                    .trim()
+                    .takeIf { it.isNotEmpty() }
+                val acceptedCalibration =
+                    ack.optBoolean("calibration_accepted", false)
+                val readyOnHost =
+                    ack.optBoolean("host_calibration_ready", false)
+                val revision = ack.optLong("calibration_revision", 0L)
+                val reason = responseCalibrationReason
+                check(acceptedCalibration) {
+                    "Laptop rejected calibration: $reason"
+                }
+                check(reportedProfileId == handshake.calibrationId) {
+                    "Laptop acknowledged a different reported calibration profile"
+                }
+                if (acceptedHostProfileId != null) {
+                    check(acceptedHostProfileId == handshake.calibrationId) {
+                        "Laptop host calibration profile does not match this phone"
+                    }
+                }
+                if (config.slot == DualPhoneLaptopCameraSlot.CAMERA_A) {
+                    check(readyOnHost && acceptedHostProfileId == handshake.calibrationId) {
+                        "Laptop did not activate CAMERA_A calibration profile: $reason"
+                    }
+                }
+                calibrationProfileId = handshake.calibrationId
+                hostCalibrationProfileId = acceptedHostProfileId
+                calibrationAccepted = acceptedCalibration
+                hostCalibrationReady = readyOnHost
+                calibrationRevision = revision
+                calibrationReason = reason
                 updateClockFromAck(
                     ack = ack,
                     clientSendNs = helloClientNs,
@@ -345,6 +438,11 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
                 streamLoop(token, input, output)
             } catch (error: Throwable) {
                 if (active.get() && generation.get() == token) {
+                    calibrationAccepted = false
+                    hostCalibrationReady = false
+                    if (calibrationReason == "HANDSHAKING") {
+                        calibrationReason = "CONNECTION_OR_HANDSHAKE_FAILED"
+                    }
                     publish(
                         state = DualPhoneLaptopUplinkState.RECONNECTING,
                         error = error.message ?: error.javaClass.simpleName,
@@ -557,6 +655,12 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         producer.stop()
         unregisterSensors()
         pendingFrame.set(null)
+        calibrationProfileId = null
+        hostCalibrationProfileId = null
+        calibrationAccepted = false
+        hostCalibrationReady = false
+        calibrationRevision = 0L
+        calibrationReason = "NOT_CONNECTED"
         if (publishStopped) {
             activeConfig = null
             sessionId = null
@@ -591,6 +695,12 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
                     ) / 1_000_000.0,
                 clockSamples = clockSamples.get(),
                 imuPacketsSent = imuPacketsSent.get(),
+                calibrationProfileId = calibrationProfileId,
+                hostCalibrationProfileId = hostCalibrationProfileId,
+                calibrationAccepted = calibrationAccepted,
+                hostCalibrationReady = hostCalibrationReady,
+                calibrationRevision = calibrationRevision,
+                calibrationReason = calibrationReason,
                 producer = producer.snapshot,
                 lastError = error,
             )

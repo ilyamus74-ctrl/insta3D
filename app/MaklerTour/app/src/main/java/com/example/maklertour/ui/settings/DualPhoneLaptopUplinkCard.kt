@@ -26,7 +26,7 @@ import com.example.maklertour.data.dualphone.DualPhoneLaptopUplinkConfig
 import com.example.maklertour.data.dualphone.DualPhoneLaptopUplinkRuntime
 import com.example.maklertour.data.dualphone.DualPhoneLaptopUplinkState
 import com.example.maklertour.data.dualphone.DualPhoneLaptopUplinkSettingsStore
-import com.maklertour.data.dualphone.DualPhoneRole
+import com.maklertour.data.dualphone.ApplicationCaptureMode
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
 import java.util.Locale
 
@@ -53,7 +53,7 @@ fun DualPhoneLaptopUplinkCard(
 
     HorizontalDivider()
     Text(
-        "CPU laptop stereo host (LM02.7B.5.4.2)",
+        "CPU laptop stereo host (LM02.7B.5.4.5)",
         style = MaterialTheme.typography.titleMedium,
     )
     Text(
@@ -106,15 +106,21 @@ fun DualPhoneLaptopUplinkCard(
         }
     }
 
-    val localRoleReady = settings.role == DualPhoneRole.SLAVE
-    if (!localRoleReady) {
+    val laptopModeReady =
+        settings.applicationMode == ApplicationCaptureMode.LAPTOP_STEREO_CLIENT
+    if (!laptopModeReady) {
         Text(
-            "Transitional requirement: select SLAVE for laptop transport. " +
-                "CAMERA_A remains the only calibration authority.",
+            "Select the application mode 'Two phones -> laptop/PC'. " +
+                "Phone-to-phone MASTER/SLAVE roles are not used by this transport.",
             color = Color.Red,
             style = MaterialTheme.typography.bodySmall,
         )
     }
+
+    Text(
+        "Local profile: ${settings.activeCalibrationProfileId ?: "missing"}",
+        style = MaterialTheme.typography.bodySmall,
+    )
 
     Button(
         onClick = {
@@ -131,7 +137,8 @@ fun DualPhoneLaptopUplinkCard(
             } else {
                 val parsedPort = port.toIntOrNull()
                 validationError = when {
-                    !localRoleReady -> "Local role must be SLAVE"
+                    !laptopModeReady ->
+                        "Application mode must be 'Two phones -> laptop/PC'"
                     host.isBlank() -> "Laptop address is required"
                     parsedPort == null || parsedPort !in 1..65535 ->
                         "Port must be 1–65535"
@@ -152,7 +159,7 @@ fun DualPhoneLaptopUplinkCard(
                 }
             }
         },
-        enabled = localRoleReady,
+        enabled = laptopModeReady,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
@@ -173,6 +180,19 @@ fun DualPhoneLaptopUplinkCard(
     snapshot.lastError?.let {
         Text(it, color = Color.Red, style = MaterialTheme.typography.bodySmall)
     }
+
+    Text(
+        "Calibration: ${if (snapshot.calibrationAccepted) "accepted" else "waiting"} · " +
+            "local=${snapshot.calibrationProfileId ?: "none"} · " +
+            "host=${snapshot.hostCalibrationProfileId ?: "none"}",
+        color = if (snapshot.calibrationAccepted) Color.Unspecified else Color.Red,
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text(
+        "Host calibration: ${if (snapshot.hostCalibrationReady) "READY" else "WAITING"} · " +
+            "revision=${snapshot.calibrationRevision} · ${snapshot.calibrationReason}",
+        style = MaterialTheme.typography.bodySmall,
+    )
 
     Text(
         "State: ${snapshot.state.name} · ${snapshot.slot.name} · " +

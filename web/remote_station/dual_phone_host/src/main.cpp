@@ -3,8 +3,10 @@
 #include "protocol.hpp"
 
 #include <arpa/inet.h>
+#include <array>
 #include <atomic>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <functional>
@@ -13,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <optional>
@@ -30,6 +33,158 @@ namespace {
 
 std::atomic<bool> running{true};
 std::atomic<int> ingest_server_fd{-1};
+
+struct CalibrationHandshakeDecision {
+    bool accepted = false;
+    std::string reason;
+    std::string reported_profile_id;
+    std::string host_profile_id;
+    bool calibration_accepted = false;
+    bool host_calibration_ready = false;
+    std::uint64_t calibration_revision = 0;
+    std::string calibration_reason = "NOT_VALIDATED";
+};
+
+struct CalibrationHandshakeState {
+    std::mutex mutex;
+    std::array<std::optional<std::string>, 2> reported_profile_ids;
+    std::string accepted_profile_id;
+    std::uint64_t revision = 0;
+};
+
+CalibrationHandshakeState calibration_handshake_state;
+
+std::size_t calibration_slot_index(const mdp::CameraSlot slot) {
+    return slot == mdp::CameraSlot::A ? 0U : 1U;
+}
+
+std::string json_string(const nlohmann::json& value, const char* key) {
+    if (!value.contains(key) || !value.at(key).is_string()) return {};
+    return value.at(key).get<std::string>();
+}
+
+CalibrationHandshakeDecision validate_calibration_hello_locked(
+    const mdp::CameraSlot slot,
+    const std::string& device_id,
+    const nlohmann::json& hello) {
+    CalibrationHandshakeDecision result;
+    result.reported_profile_id = json_string(hello, "calibration_profile_id");
+    result.host_profile_id = calibration_handshake_state.accepted_profile_id;
+    result.host_calibration_ready = !result.host_profile_id.empty();
+    result.calibration_revision = calibration_handshake_state.revision;
+
+    const auto reject = [&](std::string reason) {
+        result.reason = std::move(reason);
+        result.calibration_reason = "REJECTED";
+        return result;
+    };
+    const bool authority =
+        hello.contains("calibration_authority") &&
+        hello.at("calibration_authority").is_boolean() &&
+        hello.at("calibration_authority").get<bool>();
+    const bool has_profile_object =
+        hello.contains("calibration_profile") &&
+        hello.at("calibration_profile").is_object();
+
+    if (result.reported_profile_id.empty()) {
+        return reject("active calibration profile ID is required");
+    }
+    if (slot == mdp::CameraSlot::A) {
+        if (!authority) {
+            return reject("CAMERA_A must be calibration authority");
+        }
+        if (!has_profile_object) {
+            return reject("CAMERA_A must send the full calibration profile");
+        }
+        const auto& profile = hello.at("calibration_profile");
+        if (json_string(profile, "profile_id") != result.reported_profile_id) {
+            return reject("CAMERA_A calibration profile ID mismatch");
+        }
+        if (json_string(profile, "master_device_id") != device_id) {
+            return reject("CAMERA_A profile is not owned by this MASTER phone");
+        }
+        if (json_string(profile, "rig_id") != json_string(hello, "rig_id")) {
+            return reject("CAMERA_A rig ID does not match calibration profile");
+        }
+        if (json_string(profile, "rig_mount_revision") !=
+            json_string(hello, "rig_mount_revision")) {
+            return reject("CAMERA_A mount revision does not match calibration profile");
+        }
+        if (json_string(profile, "status") != "success") {
+            return reject("CAMERA_A calibration profile is not successful");
+        }
+    } else {
+        if (authority) {
+            return reject("CAMERA_B cannot be calibration authority");
+        }
+        if (has_profile_object) {
+            return reject("CAMERA_B must not send the full calibration profile");
+        }
+        if (calibration_handshake_state.accepted_profile_id.empty()) {
+            result.reason = "WAITING_FOR_CAMERA_A";
+            result.calibration_reason = "WAITING_FOR_CAMERA_A";
+            return result;
+        }
+        if (calibration_handshake_state.accepted_profile_id !=
+            result.reported_profile_id) {
+            return reject("CAMERA_B profile ID does not match CAMERA_A");
+        }
+    }
+
+    const auto other_index = 1U - calibration_slot_index(slot);
+    const auto& other_profile =
+        calibration_handshake_state.reported_profile_ids[other_index];
+    if (other_profile && *other_profile != result.reported_profile_id) {
+        return reject("calibration profile ID mismatch between CAMERA_A and CAMERA_B");
+    }
+
+    result.accepted = true;
+    result.calibration_accepted = true;
+    result.reason = "accepted";
+    return result;
+}
+
+void commit_calibration_hello_locked(
+    const mdp::CameraSlot slot,
+    CalibrationHandshakeDecision& decision) {
+    calibration_handshake_state.reported_profile_ids[
+        calibration_slot_index(slot)] = decision.reported_profile_id;
+    if (slot == mdp::CameraSlot::A) {
+        calibration_handshake_state.accepted_profile_id =
+            decision.reported_profile_id;
+        calibration_handshake_state.revision += 1;
+    }
+    decision.host_profile_id = calibration_handshake_state.accepted_profile_id;
+    decision.host_calibration_ready = !decision.host_profile_id.empty();
+    decision.calibration_revision = calibration_handshake_state.revision;
+    decision.calibration_reason = slot == mdp::CameraSlot::A
+        ? "PROFILE_ACCEPTED"
+        : "PROFILE_ID_MATCH";
+}
+
+void unregister_calibration_slot(const mdp::CameraSlot slot) {
+    std::scoped_lock lock(calibration_handshake_state.mutex);
+    calibration_handshake_state.reported_profile_ids[
+        calibration_slot_index(slot)].reset();
+}
+
+nlohmann::json calibration_ack_fields(
+    const CalibrationHandshakeDecision& decision) {
+    return {
+        {"calibration_accepted", decision.calibration_accepted},
+        {"reported_calibration_profile_id",
+         decision.reported_profile_id.empty()
+             ? nlohmann::json(nullptr)
+             : nlohmann::json(decision.reported_profile_id)},
+        {"host_calibration_profile_id",
+         decision.host_profile_id.empty()
+             ? nlohmann::json(nullptr)
+             : nlohmann::json(decision.host_profile_id)},
+        {"host_calibration_ready", decision.host_calibration_ready},
+        {"calibration_revision", decision.calibration_revision},
+        {"calibration_reason", decision.calibration_reason},
+    };
+}
 
 struct Options {
     std::string bind = "0.0.0.0";
@@ -112,25 +267,60 @@ void handle_camera(const int fd, mdp::HostState& state) {
         }
         const auto requested_slot = mdp::parse_slot(hello.at("slot").get<std::string>());
         const auto device_id = hello.at("device_id").get<std::string>();
-        if (!state.camera_connected(requested_slot, device_id, peer_address(fd), hello)) {
-            mdp::write_line(fd, nlohmann::json({
-                {"type", "hello_ack"}, {"schema_version", mdp::kProtocolSchema},
-                {"accepted", false}, {"reason", "slot already connected"},
-            }).dump());
-            return;
+        CalibrationHandshakeDecision calibration;
+        {
+            std::unique_lock calibration_lock(calibration_handshake_state.mutex);
+            calibration = validate_calibration_hello_locked(
+                requested_slot,
+                device_id,
+                hello);
+            if (!calibration.accepted) {
+                auto ack = nlohmann::json({
+                    {"type", "hello_ack"},
+                    {"schema_version", mdp::kProtocolSchema},
+                    {"accepted", false},
+                    {"reason", calibration.reason},
+                });
+                ack.update(calibration_ack_fields(calibration));
+                mdp::write_line(fd, ack.dump());
+                return;
+            }
+            if (!state.camera_connected(
+                    requested_slot,
+                    device_id,
+                    peer_address(fd),
+                    hello)) {
+                calibration.accepted = false;
+                calibration.calibration_accepted = false;
+                calibration.reason = "slot already connected";
+                calibration.calibration_reason = "REJECTED";
+                auto ack = nlohmann::json({
+                    {"type", "hello_ack"},
+                    {"schema_version", mdp::kProtocolSchema},
+                    {"accepted", false},
+                    {"reason", calibration.reason},
+                });
+                ack.update(calibration_ack_fields(calibration));
+                mdp::write_line(fd, ack.dump());
+                return;
+            }
+            commit_calibration_hello_locked(requested_slot, calibration);
         }
         slot = requested_slot;
         const auto server_hello_send_ns = mdp::monotonic_ns();
-        mdp::write_line(fd, nlohmann::json({
+        auto ack = nlohmann::json({
             {"type", "hello_ack"},
             {"schema_version", mdp::kProtocolSchema},
             {"accepted", true},
+            {"reason", "accepted"},
             {"slot", mdp::slot_name(*slot)},
             {"client_monotonic_ns", hello.value("client_monotonic_ns", 0LL)},
             {"server_monotonic_ns", server_hello_send_ns},
             {"server_receive_ns", server_hello_receive_ns},
             {"server_send_ns", server_hello_send_ns},
-        }).dump());
+        });
+        ack.update(calibration_ack_fields(calibration));
+        mdp::write_line(fd, ack.dump());
 
         while (running.load()) {
             auto message = mdp::read_message(fd);
@@ -177,7 +367,10 @@ void handle_camera(const int fd, mdp::HostState& state) {
             }
         }
     } catch (const std::exception& error) {
-        if (slot) state.camera_disconnected(*slot, error.what());
+        if (slot) {
+            state.camera_disconnected(*slot, error.what());
+            unregister_calibration_slot(*slot);
+        }
     }
     ::shutdown(fd, SHUT_RDWR);
     ::close(fd);
