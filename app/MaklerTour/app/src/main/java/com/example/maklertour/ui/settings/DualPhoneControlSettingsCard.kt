@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.maklertour.data.dualphone.ApplicationCaptureMode
 import com.maklertour.data.dualphone.DualPhoneClockSyncQuality
 import com.maklertour.data.dualphone.captureSchedulingAllowed
 import com.maklertour.data.dualphone.DualPhoneControlPhase
@@ -113,7 +114,35 @@ fun DualPhoneControlSettingsCard(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ApplicationCaptureModeSelector(settings = settings)
+            if (
+                settings.applicationMode ==
+                    ApplicationCaptureMode.LAPTOP_STEREO_CLIENT
+            ) {
+                Text(
+                    "Два телефона → ноутбук/ПК",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    "CAMERA_A автоматически передаёт профиль MASTER; " +
+                        "CAMERA_B передаёт кадры и IMU.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                DualPhoneLaptopUplinkCard(settings = settings)
+                return@Column
+            }
+
+            if (
+                settings.applicationMode !in setOf(
+                    ApplicationCaptureMode.DUAL_PHONE_MASTER,
+                    ApplicationCaptureMode.DUAL_PHONE_SLAVE,
+                )
+            ) {
+                Text(
+                    "Для выбранного режима dual-phone control скрыт.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                return@Column
+            }
 
             Text(
                 "Dual-phone Wi-Fi control + clock sync (DP03)",
@@ -128,17 +157,10 @@ fun DualPhoneControlSettingsCard(
                 Text(error, color = Color.Red, style = MaterialTheme.typography.bodySmall)
             }
 
-            DualPhoneLaptopUplinkCard(settings = settings)
-
-            if (settings.role == DualPhoneRole.STANDALONE) {
-                Text(
-                    "Select Master or Slave above to start the control channel.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                return@Column
-            }
-
-            if (settings.role == DualPhoneRole.MASTER) {
+            if (
+                settings.applicationMode ==
+                    ApplicationCaptureMode.DUAL_PHONE_MASTER
+            ) {
                 Text(
                     "Rigid dual-phone geometry",
                     style = MaterialTheme.typography.titleSmall,
@@ -409,7 +431,10 @@ fun DualPhoneControlSettingsCard(
                 }
             }
 
-            if (settings.role == DualPhoneRole.SLAVE) {
+            if (
+                settings.applicationMode ==
+                    ApplicationCaptureMode.DUAL_PHONE_SLAVE
+            ) {
                 OutlinedTextField(
                     value = masterHost,
                     onValueChange = onMasterHostChanged,
@@ -529,7 +554,11 @@ fun DualPhoneControlSettingsCard(
                 }
             }
 
-            if (settings.role == DualPhoneRole.MASTER && snapshot.connected) {
+            if (
+                settings.applicationMode ==
+                    ApplicationCaptureMode.DUAL_PHONE_MASTER &&
+                snapshot.connected
+            ) {
                 val canArm = snapshot.phase == DualPhoneControlPhase.CONNECTED &&
                     !snapshot.calibrationActive
                 val canStart = snapshot.phase == DualPhoneControlPhase.ARMED
@@ -670,7 +699,10 @@ fun DualPhoneControlSettingsCard(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        if (settings.role == DualPhoneRole.MASTER) {
+                        if (
+                            settings.applicationMode ==
+                                ApplicationCaptureMode.DUAL_PHONE_MASTER
+                        ) {
                             "Stop Master server"
                         } else {
                             "Disconnect"

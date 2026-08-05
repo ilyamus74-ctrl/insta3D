@@ -123,9 +123,11 @@ import com.maklertour.data.camera.Insta360OscProvider
 import com.maklertour.data.camera.MockCameraProvider
 import com.maklertour.data.camera.osc.OscHttpClient
 import com.maklertour.data.camera.osc.OscFileDownloader
+import com.maklertour.data.dualphone.ApplicationCaptureMode
 import com.maklertour.data.dualphone.DualPhoneCapabilityProbe
 import com.maklertour.data.dualphone.DualPhoneCalibrationBoardSettings
 import com.maklertour.data.dualphone.DualPhoneCalibrationMode
+import com.maklertour.data.dualphone.settingsVisibility
 import com.maklertour.data.dualphone.DualPhoneControlManager
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
@@ -155,6 +157,7 @@ import com.maklertour.i18n.DebugPreferences
 import com.maklertour.i18n.withAppLanguage
 import com.maklertour.ui.components.AppSectionCard
 import com.maklertour.ui.components.AppStorageStatusRow
+import com.maklertour.ui.settings.ApplicationCaptureModeSelector
 import com.maklertour.ui.settings.DualPhoneControlSettingsCard
 import com.example.maklertour.data.dualphone.DualPhoneApplicationMode
 import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntime
@@ -1355,18 +1358,81 @@ private fun SettingsScreen(
         )
     }
 
+    val settingsVisibility =
+        dualPhoneSettings.applicationMode.settingsVisibility
+    val onApplicationModeSelected: (DualPhoneStereoSettings) -> Unit =
+        { updatedSettings ->
+            dualPhoneControl.stop()
+            dualPhoneSettings = updatedSettings
+
+            val targetTopology = when (updatedSettings.applicationMode) {
+                ApplicationCaptureMode.PHONE_USB_STEREO ->
+                    StereoRigTopology.PHONE_USB
+                ApplicationCaptureMode.DUAL_PHONE_MASTER,
+                ApplicationCaptureMode.DUAL_PHONE_SLAVE,
+                ApplicationCaptureMode.LAPTOP_STEREO_CLIENT ->
+                    StereoRigTopology.DUAL_PHONE
+                ApplicationCaptureMode.STANDALONE_COLMAP ->
+                    activeProfile.topology
+            }
+            val topologyChanged = activeProfile.topology != targetTopology
+            refreshProfile(
+                activeProfile.copy(
+                    topology = targetTopology,
+                    cam0DeviceId = if (
+                        updatedSettings.applicationMode ==
+                            ApplicationCaptureMode.DUAL_PHONE_MASTER
+                    ) {
+                        updatedSettings.deviceId
+                    } else {
+                        activeProfile.cam0DeviceId
+                    },
+                    cam1DeviceId = if (
+                        updatedSettings.applicationMode ==
+                            ApplicationCaptureMode.DUAL_PHONE_SLAVE
+                    ) {
+                        updatedSettings.deviceId
+                    } else {
+                        activeProfile.cam1DeviceId
+                    },
+                    calibrationStatus = if (topologyChanged) {
+                        CalibrationStatus.NOT_CALIBRATED
+                    } else {
+                        activeProfile.calibrationStatus
+                    },
+                    calibrationResultPath = if (topologyChanged) {
+                        null
+                    } else {
+                        activeProfile.calibrationResultPath
+                    },
+                    calibrationResult = if (topologyChanged) {
+                        null
+                    } else {
+                        activeProfile.calibrationResult
+                    },
+                ),
+            )
+        }
+
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(stringResource(R.string.settings))
-        StereoRigSettingsSection(
+        ApplicationCaptureModeSelector(
+            settings = dualPhoneSettings,
+            onModeSelected = onApplicationModeSelected,
+        )
+        if (settingsVisibility.showStereoRigSettings) {
+            StereoRigSettingsSection(
             profile = activeProfile,
             onEditProfile = { dialog = "edit" },
             onCameraModes = { dialog = "modes" },
             onCalibrationSetup = { dialog = "calibration" },
         )
-        PhoneRecordingSettingsSection(
+        }
+        if (settingsVisibility.showPhoneRecordingSettings) {
+            PhoneRecordingSettingsSection(
             cameraLabel = selectedPhoneLens?.summary
                 ?: "Phone camera unavailable",
             modes = availablePhoneVideoModes,
@@ -1419,58 +1485,20 @@ private fun SettingsScreen(
                 }
             },
         )
-        DualPhoneStereoSettingsSection(
+        }
+        if (settingsVisibility.showDualPhoneIdentitySettings) {
+            DualPhoneStereoSettingsSection(
             settings = dualPhoneSettings,
             capabilityReportPath = capabilityReportPath,
-            onRoleSelected = { role ->
-                dualPhoneControl.stop()
-                val updatedSettings = dualPhoneSettings.copy(role = role)
-                dualPhoneStore.save(updatedSettings)
-                dualPhoneSettings = updatedSettings
-                val topology = if (role == DualPhoneRole.STANDALONE) {
-                    StereoRigTopology.PHONE_USB
-                } else {
-                    StereoRigTopology.DUAL_PHONE
-                }
-                val topologyChanged = activeProfile.topology != topology
-                refreshProfile(
-                    activeProfile.copy(
-                        topology = topology,
-                        cam0DeviceId = if (role == DualPhoneRole.MASTER) {
-                            updatedSettings.deviceId
-                        } else {
-                            activeProfile.cam0DeviceId
-                        },
-                        cam1DeviceId = if (role == DualPhoneRole.SLAVE) {
-                            updatedSettings.deviceId
-                        } else {
-                            activeProfile.cam1DeviceId
-                        },
-                        calibrationStatus = if (topologyChanged) {
-                            CalibrationStatus.NOT_CALIBRATED
-                        } else {
-                            activeProfile.calibrationStatus
-                        },
-                        calibrationResultPath = if (topologyChanged) {
-                            null
-                        } else {
-                            activeProfile.calibrationResultPath
-                        },
-                        calibrationResult = if (topologyChanged) {
-                            null
-                        } else {
-                            activeProfile.calibrationResult
-                        },
-                    ),
-                )
-            },
             onExportCapabilities = {
                 capabilityReportPath = DualPhoneCapabilityProbe(context)
                     .writeReport(dualPhoneSettings)
                     .absolutePath
             },
         )
-        DualPhoneControlSettingsCard(
+        }
+        if (settingsVisibility.showDualPhoneControlSettings) {
+            DualPhoneControlSettingsCard(
             settings = dualPhoneSettings,
             snapshot = dualPhoneControlState,
             masterHost = masterHostInput,
@@ -1583,6 +1611,7 @@ private fun SettingsScreen(
                 dualPhoneControl.exitCalibrationSession()
             },
         )
+        }
         Text("System", style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.app_language))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1663,7 +1692,6 @@ private fun PhoneRecordingSettingsSection(
 private fun DualPhoneStereoSettingsSection(
     settings: DualPhoneStereoSettings,
     capabilityReportPath: String?,
-    onRoleSelected: (DualPhoneRole) -> Unit,
     onExportCapabilities: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -1672,33 +1700,20 @@ private fun DualPhoneStereoSettingsSection(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                "Dual-phone stereo",
+                "Dual-phone stereo identity",
                 style = MaterialTheme.typography.titleMedium,
             )
             Text("Device ID: ${settings.deviceId}")
-            Text("Primary transport: Wi-Fi LAN")
+            Text("Application mode: ${settings.applicationMode.name}")
             Text(
-                "Bluetooth is reserved for optional discovery only; " +
-                    "video is always recorded locally.",
+                "Compatibility phone role: ${settings.role.name}. " +
+                    "It is derived automatically from the application mode.",
                 style = MaterialTheme.typography.bodySmall,
             )
-            DualPhoneRole.entries.forEach { role ->
-                Button(
-                    onClick = { onRoleSelected(role) },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        (if (settings.role == role) "✓ " else "") +
-                            role.name.lowercase().replaceFirstChar {
-                                it.uppercase()
-                            },
-                    )
-                }
-            }
+            Text("Primary transport: Wi-Fi LAN")
             Text(
-                "The Master owns the dual_capture_id and controls start, " +
-                    "stop, upload state and final bundle readiness for both " +
-                    "phones.",
+                "MASTER owns dual_capture_id, calibration and final bundle " +
+                    "readiness. CAMERA_A remains the laptop calibration authority.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(

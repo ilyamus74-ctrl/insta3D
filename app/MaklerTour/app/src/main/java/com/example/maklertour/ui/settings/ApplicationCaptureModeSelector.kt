@@ -2,7 +2,9 @@ package com.maklertour.ui.settings
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -14,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.maklertour.data.dualphone.ApplicationCaptureMode
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
 import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
@@ -21,53 +24,50 @@ import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 @Composable
 internal fun ApplicationCaptureModeSelector(
     settings: DualPhoneStereoSettings,
+    onModeSelected: (DualPhoneStereoSettings) -> Unit,
 ) {
     val context = LocalContext.current
     val settingsStore = remember(context.applicationContext) {
         DualPhoneStereoSettingsStore(context.applicationContext)
     }
-    var selectedMode by remember(settings.applicationMode) {
-        mutableStateOf(settings.applicationMode)
-    }
     var expanded by remember { mutableStateOf(false) }
+    val selectedMode = settings.applicationMode
 
-    Column {
-        Text(
-            "Режим работы приложения",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Button(
-            onClick = { expanded = true },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(selectedMode.displayNameRu())
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            ApplicationCaptureMode.entries.forEach { candidate ->
-                DropdownMenuItem(
-                    text = { Text(candidate.displayNameRu()) },
-                    onClick = {
-                        val current = settingsStore.load()
-                        settingsStore.save(
-                            current.withApplicationMode(candidate),
-                        )
-                        selectedMode = candidate
-                        expanded = false
-                    },
-                )
-            }
-        }
-        Text(
-            selectedMode.descriptionRu(),
-            style = MaterialTheme.typography.bodySmall,
-        )
-        if (selectedMode != settings.applicationMode) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Text(
-                "Режим сохранён. Полная фильтрация разделов настроек " +
-                    "включается следующим этапом рефакторинга.",
+                "Режим работы приложения",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Button(
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(selectedMode.displayNameRu())
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                ApplicationCaptureMode.entries.forEach { candidate ->
+                    DropdownMenuItem(
+                        text = { Text(candidate.displayNameRu()) },
+                        onClick = {
+                            val updated = settingsStore.load()
+                                .withApplicationMode(candidate)
+                            settingsStore.save(updated)
+                            onModeSelected(updated)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+            Text(
+                selectedMode.descriptionRu(),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "Показываются только настройки выбранного режима.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
