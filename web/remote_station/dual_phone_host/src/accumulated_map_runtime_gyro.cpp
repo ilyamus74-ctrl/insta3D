@@ -81,6 +81,8 @@ constexpr double kLocalSubmapPromotionMaximumTravelM = 2.0;
 constexpr int kLocalSubmapPromotionMinimumInliers = 16;
 constexpr double kLocalSubmapPromotionMinimumInlierRatio = 0.65;
 constexpr double kLocalSubmapPromotionMaximumResidualM = 0.08;
+constexpr bool kEnableUnanchoredLocalSubmapPromotion = false;
+constexpr double kMaximumRotationConfirmationStereoYawErrorDeg = 8.0;
 constexpr std::size_t kMaximumProvisionalGeometryFrames = 8;
 constexpr double kTripodPivotRadiusM = 0.12;
 constexpr double kTripodHorizontalSmoothing = 0.35;
@@ -1865,8 +1867,24 @@ struct AccumulatedMapRuntime::Impl {
         const PoseDecision& decision,
         const MapJob& job,
         std::string& rejection_reason) {
-        if (!decision.used_gyro || !decision.used_visual) {
-            rejection_reason = "ROTATION_REQUIRES_GYRO_VISUAL_AGREEMENT";
+        const bool homography_rotation_support =
+            decision.used_gyro && decision.used_visual;
+        const bool stereo_rotation_support =
+            decision.used_gyro &&
+            decision.visual.stereo_translation_attempted &&
+            decision.visual.stereo_gyro_yaw_checked &&
+            std::isfinite(
+                decision.visual.stereo_gyro_yaw_error_deg) &&
+            decision.visual.stereo_gyro_yaw_error_deg <=
+                kMaximumRotationConfirmationStereoYawErrorDeg &&
+            std::isfinite(decision.visual.stereo_rotation_deg) &&
+            decision.visual.stereo_rotation_deg >=
+                kMinimumConfirmedRotationYawDeg * 0.5;
+        if (!decision.used_gyro ||
+            (!homography_rotation_support &&
+             !stereo_rotation_support)) {
+            rejection_reason =
+                "ROTATION_REQUIRES_GYRO_VISUAL_OR_STEREO_AGREEMENT";
             return false;
         }
         if (std::abs(decision.fused_yaw_step_deg) <
@@ -1905,13 +1923,24 @@ struct AccumulatedMapRuntime::Impl {
         const bool inertial_walk = job.accelerometer_valid &&
             job.acceleration_motion_mps2 >= kMinimumAccelerationMotionMps2;
         if (inertial_walk) return MotionMode::Walk;
-        if (walk_safe && translation_m > pivot_limit * 1.6) {
-            return MotionMode::Walk;
-        }
+
         std::string rotation_rejection_reason;
         if (positive_rotation_evidence(
                 decision, job, rotation_rejection_reason)) {
             return MotionMode::Rotation;
+        }
+
+        std::string tripod_translation_reason;
+        const bool pnp_confirms_stationary_pivot =
+            job.accelerometer_valid &&
+            job.acceleration_motion_mps2 <
+                kMinimumAccelerationMotionMps2 &&
+            rotation_pnp_translation_safe(
+                decision.visual, decision.visual.translation_m,
+                pivot_limit, tripod_translation_reason);
+        if (walk_safe && translation_m > pivot_limit * 1.6 &&
+            !pnp_confirms_stationary_pivot) {
+            return MotionMode::Walk;
         }
         return MotionMode::Unknown;
     }
@@ -1938,6 +1967,11 @@ struct AccumulatedMapRuntime::Impl {
                 rotation_motion_votes = std::max(0, rotation_motion_votes - 1);
                 walk_motion_votes = std::max(0, walk_motion_votes - 1);
             }
+        }
+        if (evidence == MotionMode::Rotation &&
+            rotation_motion_votes >= kMotionVotesToSwitch &&
+            rotation_motion_votes > walk_motion_votes) {
+            walk_context_remaining_frames = 0;
         }
         if (walk_motion_votes >= kMotionVotesToSwitch &&
             walk_motion_votes > rotation_motion_votes) {
@@ -2201,21 +2235,30 @@ struct AccumulatedMapRuntime::Impl {
         pnp_confirms_stereo(decision.visual);
         const bool stereo_bridge_pose = stereo_bridge_pose_valid(
             reference, decision.visual);
-        const bool trusted_stereo_bridge =
-            reference.pose_trusted && stereo_bridge_pose;
-        const bool provisional_stereo_bridge =
-            !reference.pose_trusted && stereo_bridge_pose;
-        decision.trusted_stereo_bridge = trusted_stereo_bridge;
-        decision.provisional_stereo_bridge = provisional_stereo_bridge;
         decision.motion_evidence = classify_motion_evidence(decision, job);
         std::string rotation_confirmation_rejection_reason;
         const bool rotation_confirmed = positive_rotation_evidence(
             decision, job, rotation_confirmation_rejection_reason);
+        const bool trusted_stereo_bridge =
+            reference.pose_trusted && stereo_bridge_pose &&
+            !rotation_confirmed;
+        const bool provisional_stereo_bridge =
+            !reference.pose_trusted && stereo_bridge_pose &&
+            !rotation_confirmed;
+        decision.trusted_stereo_bridge = trusted_stereo_bridge;
+        decision.provisional_stereo_bridge = provisional_stereo_bridge;
         const bool recent_walk_context = decision.walk_context_active;
+        const bool fresh_rotation_override =
+            rotation_confirmed &&
+            decision.motion_evidence == MotionMode::Rotation;
+        const bool walk_context_support =
+            !fresh_rotation_override &&
+            (active_mode == MotionMode::Walk ||
+             recent_walk_context);
         const bool walk_safe = walk_translation_safe(decision.visual);
         const bool walk_candidate = walk_safe &&
             (decision.motion_evidence == MotionMode::Walk ||
-             active_mode == MotionMode::Walk || inertial_walk);
+             inertial_walk || walk_context_support);
 
         if (trusted_stereo_bridge) {
             decision.world_from_camera =
@@ -2300,8 +2343,7 @@ struct AccumulatedMapRuntime::Impl {
                     "PROVISIONAL_SE3_WAITING_FOR_TRUSTED_ANCHOR";
                 return decision;
             }
-        } else if (inertial_walk || active_mode == MotionMode::Walk ||
-                   recent_walk_context) {
+        } else if (inertial_walk || walk_context_support) {
             decision.rotation_publish_candidate = rotation_available;
             decision.rotation_publish_rejection_reason = recent_walk_context
                 ? "RECENT_WALK_CONTEXT"
@@ -2493,7 +2535,8 @@ struct AccumulatedMapRuntime::Impl {
             }
         }
         best.recovery_attempts = attempts;
-        if (best.valid && best.geometry_suppressed &&
+        if (kEnableUnanchoredLocalSubmapPromotion &&
+            best.valid && best.geometry_suppressed &&
             !best.reference_pose_trusted &&
             (best.visual.stereo_translation_valid ||
              best.provisional_stereo_bridge) &&

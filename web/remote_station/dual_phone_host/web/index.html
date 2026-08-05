@@ -143,7 +143,7 @@ pre { max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap;
       </label>
       <label>ORIENTATION
         <select id="mapOrientation">
-          <option value="upright" selected>UPRIGHT · 180° display roll</option>
+          <option value="upright" selected>UPRIGHT · preserve left/right</option>
           <option value="raw">RAW · stored Y-up</option>
         </select>
       </label>
@@ -669,10 +669,14 @@ function createMapRenderer(canvas) {
     attribute vec3 aPosition;
     attribute vec3 aColour;
     uniform mat4 uMvp;
+    uniform vec3 uDisplayCenter;
+    uniform vec3 uDisplayScale;
     uniform float uPointSize;
     varying vec3 vColour;
     void main() {
-      gl_Position = uMvp * vec4(aPosition, 1.0);
+      vec3 displayPosition =
+        uDisplayCenter + (aPosition - uDisplayCenter) * uDisplayScale;
+      gl_Position = uMvp * vec4(displayPosition, 1.0);
       gl_PointSize = uPointSize;
       vColour = pow(max(aColour, vec3(0.0)), vec3(0.72));
     }
@@ -696,6 +700,8 @@ function createMapRenderer(canvas) {
     positionLocation: gl.getAttribLocation(program, 'aPosition'),
     colourLocation: gl.getAttribLocation(program, 'aColour'),
     mvpLocation: gl.getUniformLocation(program, 'uMvp'),
+    displayCenterLocation: gl.getUniformLocation(program, 'uDisplayCenter'),
+    displayScaleLocation: gl.getUniformLocation(program, 'uDisplayScale'),
     pointSizeLocation: gl.getUniformLocation(program, 'uPointSize'),
     cloudPositionBuffer: gl.createBuffer(),
     cloudColourBuffer: gl.createBuffer(),
@@ -867,13 +873,19 @@ function drawMap() {
     near,
     far
   );
-  const displayUp = mapOrientation.value === 'upright'
-    ? [0, -1, 0]
-    : [0, 1, 0];
+  const upright = mapOrientation.value === 'upright';
+  const displayUp = upright ? [0, -1, 0] : [0, 1, 0];
+  const displayScale = upright ? [-1, 1, 1] : [1, 1, 1];
   const view = mat4LookAt(eye, renderer.target, displayUp);
   const mvp = mat4Multiply(projection, view);
   gl.useProgram(renderer.program);
   gl.uniformMatrix4fv(renderer.mvpLocation, false, mvp);
+  gl.uniform3f(
+    renderer.displayCenterLocation,
+    renderer.center[0], renderer.center[1], renderer.center[2]);
+  gl.uniform3f(
+    renderer.displayScaleLocation,
+    displayScale[0], displayScale[1], displayScale[2]);
   gl.uniform1f(renderer.pointSizeLocation, Number(mapPointSize.value));
   gl.bindBuffer(gl.ARRAY_BUFFER, renderer.cloudPositionBuffer);
   gl.enableVertexAttribArray(renderer.positionLocation);
