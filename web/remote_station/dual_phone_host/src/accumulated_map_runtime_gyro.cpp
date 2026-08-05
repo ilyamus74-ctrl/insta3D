@@ -75,6 +75,12 @@ constexpr double kMaximumStereoSe3VerticalStepM = 0.30;
 constexpr double kMaximumPnpStereoPoseDisagreementM = 0.22;
 constexpr double kMaximumPnpStereoYawDisagreementDeg = 18.0;
 constexpr std::uint32_t kProvisionalStepsToPromote = 2;
+constexpr std::uint32_t kLocalSubmapPromotionMinimumChain = 3;
+constexpr double kLocalSubmapPromotionMinimumTravelM = 0.12;
+constexpr double kLocalSubmapPromotionMaximumTravelM = 2.0;
+constexpr int kLocalSubmapPromotionMinimumInliers = 16;
+constexpr double kLocalSubmapPromotionMinimumInlierRatio = 0.65;
+constexpr double kLocalSubmapPromotionMaximumResidualM = 0.08;
 constexpr std::size_t kMaximumProvisionalGeometryFrames = 8;
 constexpr double kTripodPivotRadiusM = 0.12;
 constexpr double kTripodHorizontalSmoothing = 0.35;
@@ -238,6 +244,8 @@ struct PoseDecision {
     bool rotation_publish_candidate = false;
     bool rotation_publish_confirmed = false;
     bool trusted_stereo_bridge = false;
+    bool provisional_stereo_bridge = false;
+    bool local_submap_promoted = false;
     std::uint32_t walk_context_remaining_frames = 0;
     std::uint32_t provisional_chain_length = 0;
     std::uint32_t provisional_alignment_chain_length = 0;
@@ -1812,7 +1820,7 @@ struct AccumulatedMapRuntime::Impl {
         decision.method += "_PNP_TRANSLATION_XZ_CONSTRAINED";
     }
 
-    static bool trusted_stereo_bridge_pose_valid(
+    static bool stereo_bridge_pose_valid(
         const Keyframe& reference,
         const VisualEstimate& estimate) {
         if (!estimate.stereo_translation_attempted ||
@@ -1967,9 +1975,13 @@ struct AccumulatedMapRuntime::Impl {
 
     static bool provisional_geometry_cacheable(
         const PoseDecision& decision) {
+        const bool stereo_pose_available =
+            decision.visual.stereo_translation_valid ||
+            decision.provisional_stereo_bridge;
         return decision.geometry_suppressed &&
-            decision.visual.stereo_translation_valid &&
-            decision.method == "AUTO_WALK_STEREO_SE3_PROVISIONAL" &&
+            stereo_pose_available &&
+            (decision.method == "AUTO_WALK_STEREO_SE3_PROVISIONAL" ||
+             decision.method == "AUTO_STEREO_SE3_PROVISIONAL_BRIDGE") &&
             decision.provisional_chain_length > 0;
     }
 
@@ -2187,11 +2199,14 @@ struct AccumulatedMapRuntime::Impl {
                 decision.visual);
         }
         pnp_confirms_stereo(decision.visual);
+        const bool stereo_bridge_pose = stereo_bridge_pose_valid(
+            reference, decision.visual);
         const bool trusted_stereo_bridge =
-            reference.pose_trusted &&
-            trusted_stereo_bridge_pose_valid(
-                reference, decision.visual);
+            reference.pose_trusted && stereo_bridge_pose;
+        const bool provisional_stereo_bridge =
+            !reference.pose_trusted && stereo_bridge_pose;
         decision.trusted_stereo_bridge = trusted_stereo_bridge;
+        decision.provisional_stereo_bridge = provisional_stereo_bridge;
         decision.motion_evidence = classify_motion_evidence(decision, job);
         std::string rotation_confirmation_rejection_reason;
         const bool rotation_confirmed = positive_rotation_evidence(
@@ -2225,6 +2240,34 @@ struct AccumulatedMapRuntime::Impl {
             decision.method =
                 "AUTO_STEREO_SE3_TRUSTED_BRIDGE";
             decision.rejection_reason.clear();
+            return decision;
+        }
+
+        if (provisional_stereo_bridge) {
+            decision.world_from_camera =
+                decision.visual.stereo_world_from_camera;
+            decision.translation_m =
+                decision.visual.stereo_translation_m;
+            decision.rotation_deg =
+                decision.visual.stereo_rotation_deg;
+            decision.fused_yaw_step_deg = signed_yaw_delta_deg(
+                reference.world_from_camera,
+                decision.world_from_camera);
+            decision.rotation_only = false;
+            decision.used_visual = true;
+            decision.translation_trusted = false;
+            decision.translation_source =
+                "STEREO_SE3_PROVISIONAL_BRIDGE";
+            decision.geometry_suppressed = true;
+            decision.provisional_chain_length =
+                reference.provisional_chain_length + 1;
+            decision.valid = true;
+            decision.keyframe = false;
+            decision.state = "TRACKING_PROVISIONAL_SE3";
+            decision.method =
+                "AUTO_STEREO_SE3_PROVISIONAL_BRIDGE";
+            decision.rejection_reason =
+                "PROVISIONAL_SMALL_STEP_WAITING_FOR_LOCAL_SUBMAP_ANCHOR";
             return decision;
         }
 
@@ -2403,7 +2446,8 @@ struct AccumulatedMapRuntime::Impl {
             if (recovery_attempt) ++attempts;
             if (!reference.pose_trusted && candidate.valid &&
                 candidate.geometry_suppressed &&
-                candidate.visual.stereo_translation_valid) {
+                (candidate.visual.stereo_translation_valid ||
+                 candidate.provisional_stereo_bridge)) {
                 const double score = decision_score(candidate);
                 if (!provisional_current_pose || score > provisional_score) {
                     provisional_current_pose = candidate.world_from_camera;
@@ -2449,6 +2493,51 @@ struct AccumulatedMapRuntime::Impl {
             }
         }
         best.recovery_attempts = attempts;
+        if (best.valid && best.geometry_suppressed &&
+            !best.reference_pose_trusted &&
+            (best.visual.stereo_translation_valid ||
+             best.provisional_stereo_bridge) &&
+            best.provisional_chain_length >=
+                kLocalSubmapPromotionMinimumChain &&
+            !registration_keyframes.empty()) {
+            const double cumulative_travel_m = translation_delta_m(
+                registration_keyframes.back().world_from_camera,
+                best.world_from_camera);
+            const bool local_submap_quality =
+                best.visual.stereo_translation_inliers >=
+                    kLocalSubmapPromotionMinimumInliers &&
+                best.visual.stereo_translation_inlier_ratio >=
+                    kLocalSubmapPromotionMinimumInlierRatio &&
+                std::isfinite(
+                    best.visual.stereo_translation_residual_m) &&
+                best.visual.stereo_translation_residual_m <=
+                    kLocalSubmapPromotionMaximumResidualM &&
+                std::isfinite(cumulative_travel_m) &&
+                cumulative_travel_m >=
+                    kLocalSubmapPromotionMinimumTravelM &&
+                cumulative_travel_m <=
+                    kLocalSubmapPromotionMaximumTravelM;
+            if (local_submap_quality) {
+                best.translation_trusted = true;
+                best.geometry_suppressed = false;
+                best.provisional_promoted = true;
+                best.provisional_alignment_available = true;
+                best.local_submap_promoted = true;
+                best.provisional_alignment_chain_length =
+                    best.provisional_chain_length;
+                best.provisional_alignment_anchor_keyframe_id =
+                    best.reference_keyframe_id;
+                best.provisional_alignment_reference_pair_index =
+                    best.reference_pair_index;
+                best.provisional_alignment_world_from_provisional =
+                    cv::Matx44d::eye();
+                best.state = "TRACKING_WALK";
+                best.motion_evidence = MotionMode::Walk;
+                best.method =
+                    "AUTO_LOCAL_SUBMAP_STEREO_SE3_PROMOTED";
+                best.rejection_reason.clear();
+            }
+        }
         if (best.valid && best.translation_trusted &&
             best.reference_pose_trusted && provisional_current_pose &&
             provisional_chain_length >= kProvisionalStepsToPromote &&
@@ -2480,27 +2569,26 @@ struct AccumulatedMapRuntime::Impl {
             decision.geometry_suppressed) {
             return;
         }
-        if (decision.trusted_stereo_bridge) {
-            decision.keyframe = false;
-            decision.state = "TRACKING_STATIONARY";
-            return;
-        }
         const auto& last_keyframe_pose =
             registration_keyframes.back().world_from_camera;
         decision.translation_from_last_keyframe_m = translation_delta_m(
             last_keyframe_pose, decision.world_from_camera);
         decision.yaw_from_last_keyframe_deg = signed_yaw_delta_deg(
             last_keyframe_pose, decision.world_from_camera);
-        const bool forced_relocalization =
+        const bool forced_anchor =
+            decision.local_submap_promoted ||
             decision.method.find("RELOCALIZED") != std::string::npos;
         decision.keyframe =
-            forced_relocalization ||
+            forced_anchor ||
             decision.translation_from_last_keyframe_m >=
                 kMinimumKeyframeTranslationM ||
             std::abs(decision.yaw_from_last_keyframe_deg) >=
                 kMinimumKeyframeYawDeg;
         if (!decision.keyframe) {
             decision.state = "TRACKING_STATIONARY";
+        } else if (decision.trusted_stereo_bridge) {
+            decision.method += "_CUMULATIVE_KEYFRAME";
+            decision.state = "TRACKING_WALK";
         } else if (decision.method.find("APRILTAG") != std::string::npos) {
             decision.state = "TRACKING_APRILTAG";
         } else {
@@ -2678,6 +2766,10 @@ struct AccumulatedMapRuntime::Impl {
                          decision.rotation_publish_rejection_reason},
                         {"trusted_stereo_bridge",
                          decision.trusted_stereo_bridge},
+                        {"provisional_stereo_bridge",
+                         decision.provisional_stereo_bridge},
+                        {"local_submap_promoted",
+                         decision.local_submap_promoted},
                         {"accelerometer_motion_mps2", job.acceleration_motion_mps2},
                         {"method", decision.method},
                         {"recovered", decision.recovered},
