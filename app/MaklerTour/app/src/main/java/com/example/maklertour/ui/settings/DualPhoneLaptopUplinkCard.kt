@@ -53,11 +53,12 @@ fun DualPhoneLaptopUplinkCard(
 
     HorizontalDivider()
     Text(
-        "CPU laptop stereo host (LM02.7B.2)",
+        "CPU laptop stereo host (LM02.7B.5.4.2)",
         style = MaterialTheme.typography.titleMedium,
     )
     Text(
-        "Both phones use role SLAVE and connect independently as CAMERA_A or CAMERA_B.",
+        "Laptop mode uses two independent camera clients. CAMERA_A automatically " +
+            "sends the active MASTER calibration profile; CAMERA_B sends frames and IMU.",
         style = MaterialTheme.typography.bodySmall,
     )
 
@@ -108,7 +109,8 @@ fun DualPhoneLaptopUplinkCard(
     val localRoleReady = settings.role == DualPhoneRole.SLAVE
     if (!localRoleReady) {
         Text(
-            "Set this phone role to SLAVE above. The laptop is the only MASTER.",
+            "Transitional requirement: select SLAVE for laptop transport. " +
+                "CAMERA_A remains the only calibration authority.",
             color = Color.Red,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -142,7 +144,11 @@ fun DualPhoneLaptopUplinkCard(
                         slot = slot,
                     )
                     store.save(config)
-                    runtime.start(config, settings)
+                    validationError = runCatching {
+                        runtime.start(config)
+                    }.exceptionOrNull()?.let { error ->
+                        error.message ?: error.javaClass.simpleName
+                    }
                 }
             }
         },

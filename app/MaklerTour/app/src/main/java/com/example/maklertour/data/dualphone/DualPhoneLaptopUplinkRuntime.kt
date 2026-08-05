@@ -8,7 +8,7 @@ import android.hardware.SensorManager
 import android.os.SystemClock
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
 import com.maklertour.data.dualphone.DualPhoneRole
-import com.maklertour.data.dualphone.DualPhoneStereoSettings
+import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -70,10 +70,21 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         val z: Float,
     )
 
+    private data class LaptopHandshakeContext(
+        val deviceId: String,
+        val rigId: String,
+        val rigMountRevision: String,
+        val recordingModeIdentity: String,
+        val calibrationId: String?,
+        val calibrationProfile: JSONObject?,
+    )
+
     private val appContext = context.applicationContext
     private val producer = DualPhoneReducedFrameProducer(appContext)
     private val calibrationProfileStore =
         DualPhoneCalibrationProfileStore(appContext)
+    private val stereoSettingsStore =
+        DualPhoneStereoSettingsStore(appContext)
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "lm02-7b-laptop-uplink").apply { isDaemon = true }
     }
@@ -125,13 +136,10 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         get() = mutableState.value
 
     @Synchronized
-    fun start(
-        config: DualPhoneLaptopUplinkConfig,
-        stereoSettings: DualPhoneStereoSettings,
-    ) {
-        require(stereoSettings.role == DualPhoneRole.SLAVE) {
-            "Set this phone role to SLAVE before laptop capture"
-        }
+    fun start(config: DualPhoneLaptopUplinkConfig) {
+        // The UI can keep a stale Compose snapshot after calibration. The
+        // transport therefore resolves the current settings/profile itself.
+        val initialHandshake = loadHandshakeContext(config)
         stopInternal(publishStopped = false)
         activeConfig = config
         sessionId = UUID.randomUUID().toString()
@@ -159,16 +167,15 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         val currentSession = requireNotNull(sessionId)
         val owner = DualPhoneLiveStreamOwner(
             sessionUuid = currentSession,
-            dualCaptureId = stereoSettings.rigId.ifBlank { "laptop-rig" },
+            dualCaptureId = initialHandshake.rigId.ifBlank { "laptop-rig" },
             localRole = DualPhoneRole.SLAVE.name,
             peerIdentity = "CPU_LAPTOP_HOST",
             cameraIdentity = "SELECTED_PHONE_CAMERA",
-            recordingModeIdentity =
-                stereoSettings.preferredVideoModeId ?: "CAMERAX_960X540",
+            recordingModeIdentity = initialHandshake.recordingModeIdentity,
             calibrationIdentity =
-                stereoSettings.activeCalibrationProfileId ?: "UNSPECIFIED",
+                initialHandshake.calibrationId ?: "UNSPECIFIED",
             rigMountRevision =
-                stereoSettings.rigMountRevision.ifBlank { "unknown" },
+                initialHandshake.rigMountRevision.ifBlank { "unknown" },
             captureMode = DualPhoneLiveStreamMode.LIVE_METRIC,
             streamId = "laptop-${config.slot.name.lowercase()}-$currentSession",
         )
@@ -180,25 +187,10 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
             publish()
         }
 
-        val calibrationProfile = if (
-            config.slot == DualPhoneLaptopCameraSlot.CAMERA_A
-        ) {
-            stereoSettings.activeCalibrationProfileId?.let { profileId ->
-                calibrationProfileStore.load(profileId)?.toJson()
-            }
-        } else {
-            null
-        }
-
         worker.execute {
             connectionLoop(
                 token = token,
                 config = config,
-                deviceId = stereoSettings.deviceId,
-                rigId = stereoSettings.rigId,
-                rigMountRevision = stereoSettings.rigMountRevision,
-                calibrationId = stereoSettings.activeCalibrationProfileId,
-                calibrationProfile = calibrationProfile,
             )
         }
     }
@@ -208,14 +200,62 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
         stopInternal(publishStopped = true)
     }
 
+    private fun loadHandshakeContext(
+        config: DualPhoneLaptopUplinkConfig,
+    ): LaptopHandshakeContext {
+        val settings = stereoSettingsStore.load()
+        require(settings.role == DualPhoneRole.SLAVE) {
+            "Select the transitional SLAVE transport role before laptop capture"
+        }
+
+        val calibrationId = settings.activeCalibrationProfileId
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        val calibrationProfile = if (
+            config.slot == DualPhoneLaptopCameraSlot.CAMERA_A
+        ) {
+            val requiredProfileId = requireNotNull(calibrationId) {
+                "CAMERA_A requires an active calibration profile created on the MASTER phone"
+            }
+            val profile = requireNotNull(
+                calibrationProfileStore.load(requiredProfileId),
+            ) {
+                "CAMERA_A calibration profile $requiredProfileId was not found"
+            }
+            require(profile.successful) {
+                "CAMERA_A calibration profile $requiredProfileId is not successful"
+            }
+            require(profile.profileId == requiredProfileId) {
+                "CAMERA_A calibration profile ID mismatch"
+            }
+            require(profile.masterDeviceId == settings.deviceId) {
+                "CAMERA_A must use the profile created by this MASTER phone"
+            }
+            require(profile.rigId == settings.rigId) {
+                "CAMERA_A rig ID does not match the active calibration profile"
+            }
+            require(profile.rigMountRevision == settings.rigMountRevision) {
+                "CAMERA_A mount revision does not match the active calibration profile"
+            }
+            profile.toJson()
+        } else {
+            null
+        }
+
+        return LaptopHandshakeContext(
+            deviceId = settings.deviceId,
+            rigId = settings.rigId,
+            rigMountRevision = settings.rigMountRevision,
+            recordingModeIdentity =
+                settings.preferredVideoModeId ?: "CAMERAX_960X540",
+            calibrationId = calibrationId,
+            calibrationProfile = calibrationProfile,
+        )
+    }
+
     private fun connectionLoop(
         token: Long,
         config: DualPhoneLaptopUplinkConfig,
-        deviceId: String,
-        rigId: String,
-        rigMountRevision: String,
-        calibrationId: String?,
-        calibrationProfile: JSONObject?,
     ) {
         var firstAttempt = true
         while (active.get() && generation.get() == token) {
@@ -235,6 +275,9 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
                     state = DualPhoneLaptopUplinkState.CONNECTING,
                     error = null,
                 )
+                // Re-read the authoritative settings/profile on every
+                // handshake and reconnect instead of reusing a UI snapshot.
+                val handshake = loadHandshakeContext(config)
                 val socket = Socket()
                 socket.tcpNoDelay = true
                 socket.keepAlive = true
@@ -261,14 +304,17 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
                         .put("type", "hello")
                         .put("schema_version", PROTOCOL_SCHEMA)
                         .put("slot", config.slot.name)
-                        .put("device_id", deviceId)
+                        .put("device_id", handshake.deviceId)
                         .put("session_id", sessionId)
                         .put("capture_mode", "ANDROID_CAMERAX")
-                        .put("rig_id", rigId)
-                        .put("rig_mount_revision", rigMountRevision)
+                        .put("rig_id", handshake.rigId)
+                        .put(
+                            "rig_mount_revision",
+                            handshake.rigMountRevision,
+                        )
                         .put(
                             "calibration_profile_id",
-                            calibrationId ?: JSONObject.NULL,
+                            handshake.calibrationId ?: JSONObject.NULL,
                         )
                         .put(
                             "calibration_authority",
@@ -276,7 +322,7 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
                         )
                         .put(
                             "calibration_profile",
-                            calibrationProfile ?: JSONObject.NULL,
+                            handshake.calibrationProfile ?: JSONObject.NULL,
                         )
                         .put("client_monotonic_ns", helloClientNs)
                         .toString(),
