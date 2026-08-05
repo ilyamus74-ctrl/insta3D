@@ -95,6 +95,13 @@ constexpr double kMinimumConfirmedRotationYawDeg = 0.75;
 constexpr std::uint32_t kWalkContextHoldFrames = 18;
 constexpr int kMotionVotesToSwitch = 3;
 constexpr std::uint64_t kGyroBiasCalibrationSamples = 80;
+constexpr std::size_t kGyroBiasMaximumWindowSamples = 160;
+constexpr std::size_t kGyroBiasMinimumRobustSamples = 12;
+constexpr double kGyroBiasMaximumMadRadS = 0.010;
+constexpr double kStationaryTruthMaximumGyroStepDeg = 0.45;
+constexpr double kStationaryTruthMaximumAccelerationMps2 = 0.08;
+constexpr double kStationaryTruthMaximumTranslationM = 0.025;
+constexpr double kStationaryTruthMaximumVisualYawDeg = 0.75;
 constexpr double kGyroBiasCalibrationMaximumRateRadS = 0.06;
 constexpr double kGyroBiasCalibrationMaximumAccelerationDeltaMps2 = 0.25;
 constexpr double kGyroMaximumDtSeconds = 0.15;
@@ -110,6 +117,32 @@ constexpr std::uint32_t kMinimumBridgeConfirmedSteps = 2;
 std::int64_t unix_time_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+struct RobustBiasEstimate {
+    double median = 0.0;
+    double mad = 0.0;
+    double confidence = 0.0;
+};
+
+RobustBiasEstimate robust_bias_estimate(const std::deque<double>& samples) {
+    RobustBiasEstimate result;
+    if (samples.empty()) return result;
+    std::vector<double> values(samples.begin(), samples.end());
+    const auto middle = values.begin() +
+        static_cast<std::ptrdiff_t>(values.size() / 2);
+    std::nth_element(values.begin(), middle, values.end());
+    result.median = *middle;
+    for (auto& value : values) value = std::abs(value - result.median);
+    std::nth_element(values.begin(), middle, values.end());
+    result.mad = *middle;
+    const double sample_confidence = std::min(
+        1.0, static_cast<double>(samples.size()) /
+            static_cast<double>(kGyroBiasCalibrationSamples));
+    const double spread_confidence = std::clamp(
+        1.0 - result.mad / kGyroBiasMaximumMadRadS, 0.0, 1.0);
+    result.confidence = sample_confidence * spread_confidence;
+    return result;
 }
 
 struct MapJob {
@@ -132,6 +165,9 @@ struct MapJob {
     double gyro_yaw_uncalibrated_deg = 0.0;
     double gyro_yaw_raw_deg = 0.0;
     std::uint64_t gyro_bias_calibration_samples = 0;
+    std::uint64_t gyro_bias_rejected_samples = 0;
+    double gyro_bias_mad_rad_s = 0.0;
+    double gyro_bias_confidence = 0.0;
     std::uint64_t gyro_samples = 0;
     bool accelerometer_valid = false;
     double acceleration_motion_mps2 = 0.0;
@@ -259,6 +295,10 @@ struct PoseDecision {
     bool local_submap_promoted = false;
     bool trusted_bridge_pnp_confirmed = false;
     bool trusted_bridge_publish_ready = false;
+    bool stationary_truth = false;
+    bool stationary_gyro_evidence = false;
+    bool stationary_acceleration_evidence = false;
+    bool stationary_visual_evidence = false;
     std::uint32_t walk_context_remaining_frames = 0;
     std::uint32_t trusted_bridge_chain_length = 0;
     std::uint32_t trusted_bridge_confirmed_steps = 0;
@@ -272,6 +312,7 @@ struct PoseDecision {
     std::string method = "NONE";
     std::string translation_source = "NONE";
     std::string rotation_publish_rejection_reason = "NOT_EVALUATED";
+    std::string stationary_rejection_reason = "NOT_EVALUATED";
     std::string rejection_reason;
     cv::Matx44d world_from_camera = cv::Matx44d::eye();
     cv::Matx44d reference_world_from_camera = cv::Matx44d::eye();
@@ -1184,8 +1225,11 @@ struct AccumulatedMapRuntime::Impl {
                 last_imu_timestamp_ns = 0;
                 imu_ready = false;
                 gyro_bias_ready = false;
-                gyro_bias_calibration_sum_rad_s = 0.0;
+                gyro_bias_samples.clear();
                 gyro_bias_calibration_samples = 0;
+                gyro_bias_rejected_samples = 0;
+                gyro_bias_mad_rad_s = 0.0;
+                gyro_bias_confidence = 0.0;
                 gyro_bias_rad_s = 0.0;
                 ++imu_session_changes;
             }
@@ -1199,17 +1243,39 @@ struct AccumulatedMapRuntime::Impl {
                     !acceleration_delta_mps2 ||
                     *acceleration_delta_mps2 <=
                         kGyroBiasCalibrationMaximumAccelerationDeltaMps2;
-                if (acceleration_safe &&
-                    std::abs(rate) <= kGyroBiasCalibrationMaximumRateRadS) {
-                    gyro_bias_calibration_sum_rad_s += rate;
+                const bool rate_safe =
+                    std::abs(rate) <= kGyroBiasCalibrationMaximumRateRadS;
+                bool robust_safe = true;
+                if (gyro_bias_samples.size() >=
+                    kGyroBiasMinimumRobustSamples) {
+                    const auto current = robust_bias_estimate(gyro_bias_samples);
+                    const double robust_limit = std::max(
+                        0.0025, current.mad * 1.4826 * 4.0);
+                    robust_safe =
+                        std::abs(rate - current.median) <= robust_limit;
+                }
+                if (acceleration_safe && rate_safe && robust_safe) {
+                    gyro_bias_samples.push_back(rate);
+                    while (gyro_bias_samples.size() >
+                           kGyroBiasMaximumWindowSamples) {
+                        gyro_bias_samples.pop_front();
+                    }
                     ++gyro_bias_calibration_samples;
-                    gyro_bias_rad_s = gyro_bias_calibration_sum_rad_s /
-                        static_cast<double>(gyro_bias_calibration_samples);
-                    if (gyro_bias_calibration_samples >=
-                        kGyroBiasCalibrationSamples) {
+                    const auto estimate =
+                        robust_bias_estimate(gyro_bias_samples);
+                    gyro_bias_rad_s = estimate.median;
+                    gyro_bias_mad_rad_s = estimate.mad;
+                    gyro_bias_confidence = estimate.confidence;
+                    if (gyro_bias_samples.size() >=
+                            kGyroBiasCalibrationSamples &&
+                        gyro_bias_mad_rad_s <=
+                            kGyroBiasMaximumMadRadS &&
+                        gyro_bias_confidence >= 0.55) {
                         gyro_bias_ready = true;
                         imu_ready = true;
                     }
+                } else {
+                    ++gyro_bias_rejected_samples;
                 }
                 last_imu_timestamp_ns = timestamp;
                 last_gyro_rate_rad_s = rate;
@@ -1321,6 +1387,9 @@ struct AccumulatedMapRuntime::Impl {
         job.gyro_yaw_raw_deg = gyro_yaw_raw_deg;
         job.gyro_bias_calibration_samples =
             gyro_bias_calibration_samples;
+        job.gyro_bias_rejected_samples = gyro_bias_rejected_samples;
+        job.gyro_bias_mad_rad_s = gyro_bias_mad_rad_s;
+        job.gyro_bias_confidence = gyro_bias_confidence;
         job.gyro_samples = imu_samples;
         job.accelerometer_valid = accelerometer_valid;
         job.acceleration_motion_mps2 = acceleration_motion_mps2;
@@ -1426,13 +1495,18 @@ struct AccumulatedMapRuntime::Impl {
             {"gyro_samples", imu_samples},
             {"gyro_invalid_samples", imu_invalid_samples},
             {"gyro_session_changes", imu_session_changes},
-            {"gyro_bias_mode", "INITIAL_STILLNESS_FREEZE"},
+            {"gyro_bias_mode", "ROBUST_INITIAL_STILLNESS_FREEZE"},
             {"gyro_bias_ready", gyro_bias_ready},
             {"gyro_bias_calibration_samples",
              gyro_bias_calibration_samples},
             {"gyro_bias_calibration_required_samples",
              kGyroBiasCalibrationSamples},
             {"gyro_bias_rad_s", gyro_bias_rad_s},
+            {"gyro_bias_accepted_samples",
+             gyro_bias_calibration_samples},
+            {"gyro_bias_rejected_samples", gyro_bias_rejected_samples},
+            {"gyro_bias_mad_rad_s", gyro_bias_mad_rad_s},
+            {"gyro_bias_confidence", gyro_bias_confidence},
             {"gyro_yaw_uncalibrated_deg",
              gyro_yaw_uncalibrated_deg},
             {"gyro_yaw_raw_deg", gyro_yaw_raw_deg},
@@ -1455,6 +1529,7 @@ struct AccumulatedMapRuntime::Impl {
             {"failed_frames", failed_frames},
             {"lost_frames", lost_frames},
             {"stationary_frames", stationary_frames},
+            {"stationary_truth_frames", stationary_truth_frames},
             {"gyro_only_keyframes", gyro_only_keyframes},
             {"gyro_visual_keyframes", gyro_visual_keyframes},
             {"segment_resume_keyframes", segment_resume_keyframes},
@@ -1537,6 +1612,7 @@ struct AccumulatedMapRuntime::Impl {
             provisional_geometry_discarded_frames = 0;
             provisional_geometry_raw_voxels_added = 0;
             provisional_geometry_strict_voxels_added = 0;
+            stationary_truth_frames = 0;
         }
         segment_id = 1;
         segment_resume_pending = false;
@@ -2014,6 +2090,52 @@ struct AccumulatedMapRuntime::Impl {
         return true;
     }
 
+    static bool apply_stationary_truth_guard(
+        PoseDecision& decision,
+        const MapJob& job,
+        const bool gyro_pair_valid) {
+        decision.stationary_gyro_evidence =
+            gyro_pair_valid &&
+            std::abs(decision.gyro_yaw_step_deg) <=
+                kStationaryTruthMaximumGyroStepDeg;
+        decision.stationary_acceleration_evidence =
+            job.accelerometer_valid &&
+            job.acceleration_motion_mps2 <=
+                kStationaryTruthMaximumAccelerationMps2;
+        const bool safe_translation = walk_translation_safe(decision.visual);
+        const double translation_m = safe_translation
+            ? walk_translation_m(decision.visual) : 0.0;
+        const bool confirmed_translation =
+            decision.visual.pnp_stereo_confirmed ||
+            (decision.visual.stereo_translation_valid &&
+             decision.visual.stereo_translation_inlier_ratio >= 0.50 &&
+             translation_m > kStationaryTruthMaximumTranslationM);
+        const bool visual_rotation_small =
+            !decision.visual.homography_valid ||
+            std::abs(decision.visual_yaw_step_deg) <=
+                kStationaryTruthMaximumVisualYawDeg;
+        decision.stationary_visual_evidence =
+            !confirmed_translation && visual_rotation_small &&
+            (!safe_translation ||
+             translation_m <= kStationaryTruthMaximumTranslationM);
+        decision.stationary_truth =
+            decision.stationary_gyro_evidence &&
+            decision.stationary_acceleration_evidence &&
+            decision.stationary_visual_evidence;
+        if (decision.stationary_truth) {
+            decision.stationary_rejection_reason.clear();
+            return true;
+        }
+        if (!decision.stationary_gyro_evidence) {
+            decision.stationary_rejection_reason = "GYRO_NOT_STATIONARY";
+        } else if (!decision.stationary_acceleration_evidence) {
+            decision.stationary_rejection_reason = "ACCELERATION_NOT_STATIONARY";
+        } else {
+            decision.stationary_rejection_reason = "VISUAL_TRANSLATION_CONFIRMED";
+        }
+        return false;
+    }
+
     static MotionMode classify_motion_evidence(const PoseDecision& decision,
                                                 const MapJob& job) {
         const bool walk_safe = walk_translation_safe(decision.visual);
@@ -2341,6 +2463,23 @@ struct AccumulatedMapRuntime::Impl {
                 decision.visual);
         }
         pnp_confirms_stereo(decision.visual);
+        if (apply_stationary_truth_guard(decision, job, gyro_valid)) {
+            decision.world_from_camera = reference.world_from_camera;
+            decision.translation_m = 0.0;
+            decision.rotation_deg = 0.0;
+            decision.fused_yaw_step_deg = 0.0;
+            decision.rotation_only = false;
+            decision.translation_trusted = true;
+            decision.geometry_suppressed = false;
+            decision.valid = true;
+            decision.keyframe = false;
+            decision.state = "TRACKING_STATIONARY";
+            decision.method = "AUTO_STATIONARY_TRUTH_GUARD";
+            decision.translation_source = "STATIONARY_TRUTH";
+            decision.motion_evidence = MotionMode::Unknown;
+            decision.rejection_reason.clear();
+            return decision;
+        }
         const bool stereo_bridge_pose = stereo_bridge_pose_valid(
             reference, decision.visual);
         decision.motion_evidence = classify_motion_evidence(decision, job);
@@ -2894,6 +3033,21 @@ struct AccumulatedMapRuntime::Impl {
                          decision.gyro_uncalibrated_yaw_step_deg},
                         {"gyro_bias_removed_step_deg",
                          decision.gyro_bias_removed_step_deg},
+                        {"gyro_bias_rejected_samples",
+                         job.gyro_bias_rejected_samples},
+                        {"gyro_bias_mad_rad_s",
+                         job.gyro_bias_mad_rad_s},
+                        {"gyro_bias_confidence",
+                         job.gyro_bias_confidence},
+                        {"stationary_truth", decision.stationary_truth},
+                        {"stationary_gyro_evidence",
+                         decision.stationary_gyro_evidence},
+                        {"stationary_acceleration_evidence",
+                         decision.stationary_acceleration_evidence},
+                        {"stationary_visual_evidence",
+                         decision.stationary_visual_evidence},
+                        {"stationary_rejection_reason",
+                         decision.stationary_rejection_reason},
                         {"visual_yaw_step_deg", decision.visual_yaw_step_deg},
                         {"fused_yaw_step_deg", decision.fused_yaw_step_deg},
                         {"rotation_translation_applied",
@@ -3119,6 +3273,9 @@ struct AccumulatedMapRuntime::Impl {
                                 ++coasting_frames;
                             } else {
                                 ++stationary_frames;
+                                if (decision.stationary_truth) {
+                                    ++stationary_truth_frames;
+                                }
                             }
                             provisional_geometry_pending_frames =
                                 static_cast<std::uint64_t>(
@@ -3474,8 +3631,11 @@ struct AccumulatedMapRuntime::Impl {
     int imu_axis = 1;
     double last_gyro_rate_rad_s = 0.0;
     bool gyro_bias_ready = false;
-    double gyro_bias_calibration_sum_rad_s = 0.0;
+    std::deque<double> gyro_bias_samples;
     std::uint64_t gyro_bias_calibration_samples = 0;
+    std::uint64_t gyro_bias_rejected_samples = 0;
+    double gyro_bias_mad_rad_s = 0.0;
+    double gyro_bias_confidence = 0.0;
     double gyro_bias_rad_s = 0.0;
     double gyro_yaw_uncalibrated_deg = 0.0;
     double gyro_yaw_raw_deg = 0.0;
@@ -3546,6 +3706,7 @@ struct AccumulatedMapRuntime::Impl {
     std::uint64_t failed_frames = 0;
     std::uint64_t lost_frames = 0;
     std::uint64_t stationary_frames = 0;
+    std::uint64_t stationary_truth_frames = 0;
     std::uint64_t gyro_only_keyframes = 0;
     std::uint64_t gyro_visual_keyframes = 0;
     std::uint64_t segment_resume_keyframes = 0;

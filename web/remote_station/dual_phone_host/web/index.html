@@ -1067,7 +1067,11 @@ function updateStereo(stereo) {
     live.sequence || previews.selected_sequence || 0);
   const errorLine = (live.last_error || processing.last_error)
     ? `\n${live.last_error || processing.last_error}`
-    : '';
+    : ((live.health_reason && live.health_reason !== 'READY')
+      ? `\n${live.health_reason}`
+      : '');
+  const liveHealthState = live.health_state ||
+    (selectedReady ? 'READY' : 'WAITING');
   const liveMetrics = live.ready
     ? `live ${fmt(live.actual_fps)} FPS · ${fmt(live.compute_ms)} ms · ` +
       `valid ${percent(live.valid_ratio)} · median ` +
@@ -1076,12 +1080,17 @@ function updateStereo(stereo) {
       `${live.input_replayed ? 'REPLAY' : (live.input_sync_mode || 'STRICT')} · ` +
       `Δ ${fmt(live.last_pair_delta_ms)} ms · ` +
       `age ${live.publish_age_ms == null ? '—' : Number(live.publish_age_ms).toFixed(0) + ' ms'}`
-    : selectedMetrics(selectedMode, depth, processing);
+    : `${selectedMetrics(selectedMode, depth, processing)}\n` +
+      `health ${liveHealthState} · ${live.health_reason || 'WAITING_FOR_FRESH_PAIR'} · ` +
+      `fresh ${live.fresh_pairs_since_reset || 0} · ` +
+      `failures ${live.consecutive_failures || 0}`;
   selectedLabel.textContent =
-    `${title} · ${selectedReady ? 'READY' : 'WAITING'}\n` +
+    `${title} · ${liveHealthState}\n` +
     `${liveMetrics}${errorLine}`;
   selectedLabel.className =
-    `label ${selectedReady ? 'ok' : ((live.last_error || processing.last_error) ? 'bad' : 'warn')}`;
+    `label ${selectedReady && liveHealthState === 'READY'
+      ? 'ok'
+      : (liveHealthState === 'ERROR' ? 'bad' : 'warn')}`;
 
   if (selectedReady && sequence > 0) {
     requestSelectedPreview(sequence);

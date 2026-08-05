@@ -30,6 +30,8 @@ constexpr std::chrono::seconds kFpsWindow{5};
 constexpr double kMinimumDisparity = 0.5;
 constexpr double kNearMeters = 0.5;
 constexpr double kFarMeters = 8.0;
+constexpr double kMinimumHeatmapNonBlackRatio = 0.0005;
+constexpr std::uint64_t kLiveRecoveryFailureThreshold = 2;
 
 struct LiveProfileSpec {
     const char* name;
@@ -89,6 +91,18 @@ struct PendingLivePair {
     StereoPreviewPair pair;
     ResolvedCalibration calibration;
     std::int64_t received_unix_ms = 0;
+};
+
+class LivePreviewFailure final : public std::runtime_error {
+public:
+    LivePreviewFailure(std::string reason, std::string message)
+        : std::runtime_error(std::move(message)),
+          reason_(std::move(reason)) {}
+
+    const std::string& reason() const noexcept { return reason_; }
+
+private:
+    std::string reason_;
 };
 
 struct MetricStop {
@@ -227,6 +241,28 @@ double mask_ratio(const cv::Mat& mask) {
            static_cast<double>(mask.total());
 }
 
+double non_black_ratio(const cv::Mat& image) {
+    if (image.empty() || image.total() == 0) return 0.0;
+    cv::Mat gray;
+    if (image.channels() == 1) {
+        gray = image;
+    } else {
+        cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    }
+    return static_cast<double>(cv::countNonZero(gray)) /
+           static_cast<double>(gray.total());
+}
+
+double usable_baseline_mm(const ResolvedCalibration& calibration) {
+    if (std::isfinite(calibration.measured_baseline_mm) &&
+        calibration.measured_baseline_mm > 0.0) {
+        return calibration.measured_baseline_mm;
+    }
+    const auto& value = calibration.translation_mm;
+    return std::sqrt(value[0] * value[0] + value[1] * value[1] +
+                     value[2] * value[2]);
+}
+
 int normalize_degrees(const int value) {
     return ((value % 360) + 360) % 360;
 }
@@ -301,6 +337,14 @@ struct LivePreviewRuntime::Impl {
         {
             std::scoped_lock lock(mutex);
             submitted_pairs += 1;
+            if (minimum_calibration_revision > 0 &&
+                calibration.revision < minimum_calibration_revision) {
+                ++stale_calibration_pairs;
+                health_state = "WAITING";
+                health_reason = "STALE_CALIBRATION_PAIR_REJECTED";
+                return;
+            }
+            ++fresh_pairs_since_reset;
             if (pending) dropped_pending_pairs += 1;
             pending = PendingLivePair{
                 std::move(pair),
@@ -331,8 +375,11 @@ struct LivePreviewRuntime::Impl {
     }
 
     void reset() {
+        std::uint64_t next_minimum_calibration_revision = 0;
         {
             std::scoped_lock lock(mutex);
+            next_minimum_calibration_revision = active_calibration_revision > 0
+                ? active_calibration_revision + 1 : 0;
             pending.reset();
             selected_jpeg.clear();
             probe_disparity.release();
@@ -362,8 +409,32 @@ struct LivePreviewRuntime::Impl {
             last_pair_delta_ms = 0.0;
             last_error.clear();
             success_times.clear();
+            minimum_calibration_revision =
+                next_minimum_calibration_revision;
+            active_calibration_revision = 0;
+            active_map_revision = 0;
+            fresh_pairs_since_reset = 0;
+            processed_pairs_since_reset = 0;
+            successful_publishes_since_reset = 0;
+            consecutive_failures = 0;
+            selected_jpeg_bytes = 0;
+            last_focal_px = 0.0;
+            last_baseline_mm = 0.0;
+            raw_mask_ratio = 0.0;
+            dense_mask_ratio = 0.0;
+            strict_mask_ratio = 0.0;
+            metric_valid_ratio = 0.0;
+            non_black_heatmap_ratio = 0.0;
+            last_success_pair_index = 0;
+            last_failure_pair_index = 0;
+            health_state = "WAITING";
+            health_reason = "WAITING_FOR_FRESH_PAIR";
             reset_revision += 1;
         }
+        std::error_code remove_error;
+        std::filesystem::remove(
+            session_directory / "selected_preview_latest.jpg",
+            remove_error);
         condition.notify_all();
     }
 
@@ -494,7 +565,9 @@ struct LivePreviewRuntime::Impl {
         const auto& profile = live_profile_spec(requested_profile_mode);
         const auto now_ms = unix_time_ms();
         nlohmann::json result = {
-            {"state", ready ? "READY" : (last_error.empty() ? "WAITING" : "ERROR")},
+            {"state", health_state},
+            {"health_state", health_state},
+            {"health_reason", health_reason},
             {"ready", ready},
             {"selected_mode",
              operator_preview_mode_name(current_operator_preview_mode())},
@@ -518,6 +591,28 @@ struct LivePreviewRuntime::Impl {
             {"jpeg_encode_ms", last_encode_ms},
             {"total_ms", last_total_ms},
             {"valid_ratio", valid_ratio},
+            {"calibration_revision", active_calibration_revision},
+            {"active_map_revision", active_map_revision},
+            {"minimum_calibration_revision", minimum_calibration_revision},
+            {"fresh_pairs_since_reset", fresh_pairs_since_reset},
+            {"processed_pairs_since_reset", processed_pairs_since_reset},
+            {"successful_publishes_since_reset",
+             successful_publishes_since_reset},
+            {"consecutive_failures", consecutive_failures},
+            {"selected_jpeg_bytes", selected_jpeg_bytes},
+            {"focal_px", last_focal_px},
+            {"baseline_mm", last_baseline_mm},
+            {"disparity_valid_ratio", raw_mask_ratio},
+            {"raw_mask_ratio", raw_mask_ratio},
+            {"dense_mask_ratio", dense_mask_ratio},
+            {"strict_mask_ratio", strict_mask_ratio},
+            {"metric_valid_ratio", metric_valid_ratio},
+            {"non_black_heatmap_ratio", non_black_heatmap_ratio},
+            {"last_success_pair_index", last_success_pair_index},
+            {"last_failure_pair_index", last_failure_pair_index},
+            {"stale_calibration_pairs", stale_calibration_pairs},
+            {"recovery_attempts", recovery_attempts},
+            {"recovery_successes", recovery_successes},
             {"depth_probe_ready", !probe_disparity.empty()},
             {"depth_probe_sequence", probe_sequence},
             {"input_replayed", input_replayed},
@@ -539,6 +634,7 @@ struct LivePreviewRuntime::Impl {
             ? nlohmann::json(std::max<std::int64_t>(
                   0, now_ms - last_publish_unix_ms))
             : nlohmann::json(nullptr);
+        result["last_publish_age_ms"] = result["publish_age_ms"];
         result["source_age_ms"] = last_source_unix_ms > 0
             ? nlohmann::json(std::max<std::int64_t>(
                   0, now_ms - last_source_unix_ms))
@@ -571,11 +667,14 @@ struct LivePreviewRuntime::Impl {
         std::optional<PendingLivePair> last_job;
         std::uint64_t observed_profile_revision = 0;
         std::uint64_t observed_reset_revision = 0;
+        std::uint64_t recovery_attempted_calibration_revision = 0;
+        std::uint64_t recovery_succeeded_calibration_revision = 0;
 
         while (true) {
             PendingLivePair job;
             LiveProfileSpec live_profile{"HIGH_640", 360, 640, 200};
             std::uint64_t job_profile_revision = 0;
+            std::uint64_t job_reset_revision = 0;
             bool replayed_input_for_job = false;
             {
                 std::unique_lock lock(mutex);
@@ -584,6 +683,8 @@ struct LivePreviewRuntime::Impl {
                     map_revision = 0;
                     map_size = {};
                     last_started = {};
+                    recovery_attempted_calibration_revision = 0;
+                    recovery_succeeded_calibration_revision = 0;
                     observed_reset_revision = reset_revision;
                 }
                 if (!pending && !last_job) {
@@ -640,6 +741,7 @@ struct LivePreviewRuntime::Impl {
                 job = *last_job;
                 live_profile = live_profile_spec(requested_profile_mode);
                 job_profile_revision = profile_revision;
+                job_reset_revision = reset_revision;
             }
 
             last_started = std::chrono::steady_clock::now();
@@ -704,7 +806,8 @@ struct LivePreviewRuntime::Impl {
                             frame_b.intrinsics.fy,
                         });
                         if (!std::isfinite(focal) || focal <= 1.0) {
-                            throw std::runtime_error(
+                            throw LivePreviewFailure(
+                                "INVALID_FOCAL",
                                 "live rectification focal is unavailable");
                         }
                         const double cx =
@@ -753,7 +856,8 @@ struct LivePreviewRuntime::Impl {
                             : projection_a.at<double>(0, 0));
                     if (!std::isfinite(cached_focal_px) ||
                         cached_focal_px <= 1.0) {
-                        throw std::runtime_error(
+                        throw LivePreviewFailure(
+                            "INVALID_FOCAL",
                             "live rectified focal length is unavailable");
                     }
 
@@ -851,6 +955,12 @@ struct LivePreviewRuntime::Impl {
                     cached_focal_px *
                     static_cast<double>(work_a.cols) /
                     static_cast<double>(oriented_a.cols);
+                const double baseline_mm =
+                    usable_baseline_mm(job.calibration);
+                if (!std::isfinite(baseline_mm) || baseline_mm <= 0.0) {
+                    throw LivePreviewFailure(
+                        "INVALID_BASELINE", "live metric baseline is unavailable");
+                }
 
                 const auto compute_started =
                     std::chrono::steady_clock::now();
@@ -980,17 +1090,17 @@ struct LivePreviewRuntime::Impl {
                     disparity,
                     raw_mask,
                     focal_px,
-                    job.calibration.measured_baseline_mm);
+                    baseline_mm);
                 const auto filtered_depth = metric_heatmap(
                     spatial,
                     dense_mask,
                     focal_px,
-                    job.calibration.measured_baseline_mm);
+                    baseline_mm);
                 const auto strict_depth = metric_heatmap(
                     spatial,
                     strict_mask,
                     focal_px,
-                    job.calibration.measured_baseline_mm);
+                    baseline_mm);
 
                 cv::Mat confidence(
                     disparity.size(),
@@ -1031,6 +1141,31 @@ struct LivePreviewRuntime::Impl {
                         selected = &confidence;
                         selected_mask = &strict_mask;
                         break;
+                }
+
+                const double current_raw_mask_ratio = mask_ratio(raw_mask);
+                const double current_dense_mask_ratio = mask_ratio(dense_mask);
+                const double current_strict_mask_ratio = mask_ratio(strict_mask);
+                const double filtered_non_black_ratio =
+                    non_black_ratio(filtered_depth);
+                const bool selected_metric_mode =
+                    mode == OperatorPreviewMode::DepthRaw ||
+                    mode == OperatorPreviewMode::DepthFiltered ||
+                    mode == OperatorPreviewMode::DepthStrict;
+                const double selected_metric_ratio = mask_ratio(*selected_mask);
+                const double selected_non_black_ratio = non_black_ratio(*selected);
+                if (current_raw_mask_ratio <= 0.0) {
+                    throw LivePreviewFailure(
+                        "NO_VALID_DISPARITY", "live disparity contains no valid pixels");
+                }
+                if (selected_metric_mode && selected_metric_ratio <= 0.0) {
+                    throw LivePreviewFailure(
+                        "DEPTH_MASK_EMPTY", "selected metric depth mask is empty");
+                }
+                if (selected_metric_mode &&
+                    selected_non_black_ratio < kMinimumHeatmapNonBlackRatio) {
+                    throw LivePreviewFailure(
+                        "HEATMAP_EMPTY", "selected metric depth heatmap is empty");
                 }
 
                 const auto compute_finished =
@@ -1087,13 +1222,6 @@ struct LivePreviewRuntime::Impl {
                 auto jpeg = encode_jpeg(display);
                 const auto finished =
                     std::chrono::steady_clock::now();
-                if (last_disk_write.time_since_epoch().count() == 0 ||
-                    finished - last_disk_write >= std::chrono::seconds{1}) {
-                    write_binary_atomic(
-                        session_directory / "selected_preview_latest.jpg",
-                        jpeg);
-                    last_disk_write = finished;
-                }
 
                 const double compute_ms =
                     std::chrono::duration<double, std::milli>(
@@ -1109,28 +1237,42 @@ struct LivePreviewRuntime::Impl {
                     spatial,
                     *selected_mask,
                     focal_px,
-                    job.calibration.measured_baseline_mm);
+                    baseline_mm);
 
                 nlohmann::json diagnostic;
                 bool stale_profile_result = false;
                 {
                     std::scoped_lock lock(mutex);
-                    if (job_profile_revision != profile_revision) {
+                    if (job_profile_revision != profile_revision ||
+                        job_reset_revision != reset_revision ||
+                        (minimum_calibration_revision > 0 &&
+                         job.calibration.revision < minimum_calibration_revision)) {
                         stale_profile_results += 1;
                         stale_profile_result = true;
                         diagnostic = {
-                            {"event", "LIVE_PREVIEW_STALE_PROFILE_DISCARDED"},
+                            {"event", "LIVE_PREVIEW_STALE_RESULT_DISCARDED"},
                             {"pair_index", job.pair.pair_index},
                             {"job_profile_revision", job_profile_revision},
                             {"current_profile_revision", profile_revision},
+                            {"job_reset_revision", job_reset_revision},
+                            {"current_reset_revision", reset_revision},
+                            {"job_calibration_revision", job.calibration.revision},
+                            {"minimum_calibration_revision",
+                             minimum_calibration_revision},
                         };
                     } else {
+                        if (last_disk_write.time_since_epoch().count() == 0 ||
+                            finished - last_disk_write >= std::chrono::seconds{1}) {
+                            write_binary_atomic(
+                                session_directory / "selected_preview_latest.jpg",
+                                jpeg);
+                            last_disk_write = finished;
+                        }
                         selected_jpeg = std::move(jpeg);
                         probe_disparity = probe_disparity_source->clone();
                         probe_mask = selected_mask->clone();
                         probe_focal_px = focal_px;
-                        probe_baseline_mm =
-                            job.calibration.measured_baseline_mm;
+                        probe_baseline_mm = baseline_mm;
                         probe_display_rotation_degrees = display_rotation;
                         probe_selected_mode =
                             operator_preview_mode_name(mode);
@@ -1154,6 +1296,32 @@ struct LivePreviewRuntime::Impl {
                         input_sync_mode = job.pair.sync_mode;
                         last_pair_delta_ms = job.pair.delta_ms;
                         last_error.clear();
+                        active_calibration_revision = job.calibration.revision;
+                        active_map_revision = map_revision;
+                        minimum_calibration_revision =
+                            job.calibration.revision;
+                        ++processed_pairs_since_reset;
+                        ++successful_publishes_since_reset;
+                        consecutive_failures = 0;
+                        selected_jpeg_bytes = selected_jpeg.size();
+                        last_focal_px = focal_px;
+                        last_baseline_mm = baseline_mm;
+                        raw_mask_ratio = current_raw_mask_ratio;
+                        dense_mask_ratio = current_dense_mask_ratio;
+                        strict_mask_ratio = current_strict_mask_ratio;
+                        metric_valid_ratio = current_dense_mask_ratio;
+                        non_black_heatmap_ratio = filtered_non_black_ratio;
+                        last_success_pair_index = pair_index;
+                        health_state = "READY";
+                        health_reason = "READY";
+                        if (recovery_attempted_calibration_revision ==
+                                job.calibration.revision &&
+                            recovery_succeeded_calibration_revision !=
+                                job.calibration.revision) {
+                            ++recovery_successes;
+                            recovery_succeeded_calibration_revision =
+                                job.calibration.revision;
+                        }
                         processed_pairs += 1;
                         success_times.push_back(finished);
                         while (!success_times.empty() &&
@@ -1200,6 +1368,14 @@ struct LivePreviewRuntime::Impl {
                             {"jpeg_encode_ms", encode_ms},
                             {"total_ms", total_ms},
                             {"valid_ratio", ratio},
+                            {"raw_mask_ratio", current_raw_mask_ratio},
+                            {"dense_mask_ratio", current_dense_mask_ratio},
+                            {"strict_mask_ratio", current_strict_mask_ratio},
+                            {"metric_valid_ratio", current_dense_mask_ratio},
+                            {"non_black_heatmap_ratio",
+                             filtered_non_black_ratio},
+                            {"baseline_mm", baseline_mm},
+                            {"health_reason", health_reason},
                             {"median_depth_m",
                              median
                                  ? nlohmann::json(*median)
@@ -1213,11 +1389,43 @@ struct LivePreviewRuntime::Impl {
                 if (stale_profile_result) continue;
             } catch (const std::exception& error) {
                 nlohmann::json diagnostic;
+                bool schedule_recovery = false;
+                std::string failure_reason = "PROCESSING_ERROR";
+                if (const auto* failure =
+                        dynamic_cast<const LivePreviewFailure*>(&error)) {
+                    failure_reason = failure->reason();
+                } else {
+                    const std::string message = error.what();
+                    if (message.find("rectif") != std::string::npos) {
+                        failure_reason = "RECTIFICATION_INVALID";
+                    } else if (message.find("focal") != std::string::npos) {
+                        failure_reason = "INVALID_FOCAL";
+                    } else if (message.find("baseline") != std::string::npos) {
+                        failure_reason = "INVALID_BASELINE";
+                    } else if (message.find("JPEG") != std::string::npos ||
+                               message.find("jpeg") != std::string::npos) {
+                        failure_reason = "JPEG_ENCODE_FAILED";
+                    }
+                }
                 {
                     std::scoped_lock lock(mutex);
+                    if (job_reset_revision != reset_revision) {
+                        diagnostic = {
+                            {"event", "LIVE_PREVIEW_STALE_FAILURE_DISCARDED"},
+                            {"pair_index", job.pair.pair_index},
+                            {"job_reset_revision", job_reset_revision},
+                            {"current_reset_revision", reset_revision},
+                            {"error", error.what()},
+                        };
+                    } else {
                     ready = false;
                     failed_pairs += 1;
+                    ++processed_pairs_since_reset;
+                    ++consecutive_failures;
+                    last_failure_pair_index = job.pair.pair_index;
                     last_error = error.what();
+                    health_state = "ERROR";
+                    health_reason = failure_reason;
                     last_total_ms =
                         std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() -
@@ -1225,11 +1433,40 @@ struct LivePreviewRuntime::Impl {
                     diagnostic = {
                         {"event", "LIVE_PREVIEW_FAILED"},
                         {"pair_index", job.pair.pair_index},
+                        {"calibration_revision", job.calibration.revision},
+                        {"reset_revision", job_reset_revision},
+                        {"health_reason", failure_reason},
+                        {"consecutive_failures", consecutive_failures},
                         {"error", last_error},
                         {"total_ms", last_total_ms},
                     };
+                    const bool recoverable =
+                        failure_reason == "RECTIFICATION_INVALID" ||
+                        failure_reason == "NO_VALID_DISPARITY" ||
+                        failure_reason == "DEPTH_MASK_EMPTY" ||
+                        failure_reason == "HEATMAP_EMPTY";
+                    schedule_recovery = recoverable &&
+                        consecutive_failures >= kLiveRecoveryFailureThreshold &&
+                        recovery_attempted_calibration_revision !=
+                            job.calibration.revision;
+                    if (schedule_recovery) {
+                        recovery_attempted_calibration_revision =
+                            job.calibration.revision;
+                        ++recovery_attempts;
+                        diagnostic["recovery_scheduled"] = true;
+                    }
+                    }
                 }
                 append_diagnostic(std::move(diagnostic));
+                if (schedule_recovery) {
+                    map_revision = 0;
+                    map_size = {};
+                    map_a_x.release();
+                    map_a_y.release();
+                    map_b_x.release();
+                    map_b_y.release();
+                    last_started = {};
+                }
             }
         }
     }
@@ -1279,6 +1516,28 @@ struct LivePreviewRuntime::Impl {
     std::uint64_t stale_profile_results = 0;
     std::uint64_t profile_revision = 1;
     std::uint64_t reset_revision = 0;
+    std::uint64_t minimum_calibration_revision = 0;
+    std::uint64_t active_calibration_revision = 0;
+    std::uint64_t active_map_revision = 0;
+    std::uint64_t fresh_pairs_since_reset = 0;
+    std::uint64_t processed_pairs_since_reset = 0;
+    std::uint64_t successful_publishes_since_reset = 0;
+    std::uint64_t consecutive_failures = 0;
+    std::uint64_t selected_jpeg_bytes = 0;
+    double last_focal_px = 0.0;
+    double last_baseline_mm = 0.0;
+    double raw_mask_ratio = 0.0;
+    double dense_mask_ratio = 0.0;
+    double strict_mask_ratio = 0.0;
+    double metric_valid_ratio = 0.0;
+    double non_black_heatmap_ratio = 0.0;
+    std::uint64_t last_success_pair_index = 0;
+    std::uint64_t last_failure_pair_index = 0;
+    std::uint64_t stale_calibration_pairs = 0;
+    std::uint64_t recovery_attempts = 0;
+    std::uint64_t recovery_successes = 0;
+    std::string health_state = "WAITING";
+    std::string health_reason = "WAITING_FOR_FRESH_PAIR";
     std::deque<std::chrono::steady_clock::time_point> success_times;
 };
 
