@@ -4,6 +4,8 @@ import android.content.Context
 import org.json.JSONObject
 import java.util.UUID
 
+private const val DUAL_PHONE_SETTINGS_SCHEMA_VERSION = 7
+
 enum class DualPhoneRole {
     STANDALONE,
     MASTER,
@@ -38,11 +40,11 @@ data class DualPhoneStereoSettings(
         mode: ApplicationCaptureMode,
     ): DualPhoneStereoSettings = copy(
         applicationMode = mode,
-        role = mode.compatibilityRole,
+        role = mode.phoneToPhoneRoleOrNull ?: DualPhoneRole.STANDALONE,
     )
 
     fun toJson(): JSONObject = JSONObject()
-        .put("schema_version", 6)
+        .put("schema_version", DUAL_PHONE_SETTINGS_SCHEMA_VERSION)
         .put("device_id", deviceId)
         .put("role", role.name)
         .put("application_mode", applicationMode.name)
@@ -81,6 +83,7 @@ class DualPhoneStereoSettingsStore(context: Context) {
             prefs.getString(KEY_ROLE, null),
             DualPhoneRole.STANDALONE,
         )
+        val storedSchemaVersion = prefs.getInt(KEY_SCHEMA_VERSION, 0)
         val rawApplicationMode = prefs.getString(
             KEY_APPLICATION_MODE,
             null,
@@ -92,20 +95,23 @@ class DualPhoneStereoSettingsStore(context: Context) {
                 }.getOrNull()
             }
             ?: ApplicationCaptureMode.migrateFromLegacyRole(storedRole)
-        val compatibilityRole = applicationMode.compatibilityRole
+        val derivedRole =
+            applicationMode.phoneToPhoneRoleOrNull ?: DualPhoneRole.STANDALONE
         if (
+            storedSchemaVersion < DUAL_PHONE_SETTINGS_SCHEMA_VERSION ||
             rawApplicationMode != applicationMode.name ||
-            prefs.getString(KEY_ROLE, null) != compatibilityRole.name
+            prefs.getString(KEY_ROLE, null) != derivedRole.name
         ) {
             prefs.edit()
+                .putInt(KEY_SCHEMA_VERSION, DUAL_PHONE_SETTINGS_SCHEMA_VERSION)
                 .putString(KEY_APPLICATION_MODE, applicationMode.name)
-                .putString(KEY_ROLE, compatibilityRole.name)
+                .putString(KEY_ROLE, derivedRole.name)
                 .apply()
         }
 
         return DualPhoneStereoSettings(
             deviceId = deviceId,
-            role = compatibilityRole,
+            role = derivedRole,
             applicationMode = applicationMode,
             transport = enumValueOrDefault(
                 prefs.getString(KEY_TRANSPORT, null),
@@ -151,19 +157,13 @@ class DualPhoneStereoSettingsStore(context: Context) {
     }
 
     fun save(settings: DualPhoneStereoSettings) {
-        // Old callers still mutate only role. Preserve them until the role UI
-        // is removed by deriving a matching top-level mode on mismatch.
-        val applicationMode = if (
-            settings.role == settings.applicationMode.compatibilityRole
-        ) {
-            settings.applicationMode
-        } else {
-            ApplicationCaptureMode.migrateFromLegacyRole(settings.role)
-        }
-        val compatibilityRole = applicationMode.compatibilityRole
+        val applicationMode = settings.applicationMode
+        val derivedRole =
+            applicationMode.phoneToPhoneRoleOrNull ?: DualPhoneRole.STANDALONE
         prefs.edit()
+            .putInt(KEY_SCHEMA_VERSION, DUAL_PHONE_SETTINGS_SCHEMA_VERSION)
             .putString(KEY_DEVICE_ID, settings.deviceId)
-            .putString(KEY_ROLE, compatibilityRole.name)
+            .putString(KEY_ROLE, derivedRole.name)
             .putString(KEY_APPLICATION_MODE, applicationMode.name)
             .putString(KEY_TRANSPORT, DualPhoneTransport.WIFI_LAN.name)
             .putString(KEY_PEER_DEVICE_ID, settings.peerDeviceId)
@@ -196,6 +196,7 @@ class DualPhoneStereoSettingsStore(context: Context) {
 
     companion object {
         private const val PREFS = "dual_phone_stereo"
+        private const val KEY_SCHEMA_VERSION = "settings_schema_version"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_ROLE = "role"
         private const val KEY_APPLICATION_MODE = "application_capture_mode"

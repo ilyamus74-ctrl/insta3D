@@ -18,6 +18,9 @@ $controlCard = (string) file_get_contents(
     $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/ui/settings/' .
     'DualPhoneControlSettingsCard.kt',
 );
+$main = (string) file_get_contents(
+    $root . '/app/MaklerTour/app/src/main/java/com/example/maklertour/MainActivity.kt',
+);
 $uplink = (string) file_get_contents(
     $android . '/data/dualphone/DualPhoneLaptopUplinkRuntime.kt',
 );
@@ -45,37 +48,37 @@ $checks = [
                 $ok && str_contains($mode, $token),
             true,
         ),
-    'compatibility role bridge is explicit' =>
-        str_contains($mode, 'val compatibilityRole') &&
+    'phone-to-phone role derivation is explicit' =>
+        str_contains($mode, 'val phoneToPhoneRoleOrNull') &&
         str_contains($mode, 'LAPTOP_STEREO_CLIENT') &&
-        str_contains($mode, 'DualPhoneRole.SLAVE') &&
+        str_contains($mode, '-> null') &&
         str_contains($mode, 'PHONE_USB_STEREO') &&
-        str_contains($mode, 'DualPhoneRole.STANDALONE'),
+        str_contains($mode, 'DUAL_PHONE_MASTER -> DualPhoneRole.MASTER'),
     'legacy role migration is explicit' =>
         str_contains($mode, 'migrateFromLegacyRole') &&
         str_contains($mode, 'DualPhoneRole.MASTER -> DUAL_PHONE_MASTER') &&
         str_contains($mode, 'DualPhoneRole.SLAVE -> DUAL_PHONE_SLAVE'),
     'settings schema stores application mode' =>
-        str_contains($settings, '.put("schema_version", 6)') &&
+        str_contains($settings, 'DUAL_PHONE_SETTINGS_SCHEMA_VERSION = 7') &&
         str_contains($settings, 'KEY_APPLICATION_MODE') &&
         str_contains($settings, 'application_capture_mode'),
-    'settings migration persists compatibility pair' =>
+    'settings migration persists mode and derived role once' =>
         str_contains($settings, 'rawApplicationMode') &&
-        str_contains($settings, 'applicationMode.compatibilityRole') &&
+        str_contains($settings, 'applicationMode.phoneToPhoneRoleOrNull') &&
         str_contains($settings, '.putString(KEY_APPLICATION_MODE, applicationMode.name)') &&
-        str_contains($settings, '.putString(KEY_ROLE, compatibilityRole.name)'),
-    'old role-only callers remain bridged' =>
-        str_contains($settings, 'settings.role == settings.applicationMode.compatibilityRole') &&
-        str_contains($settings, 'ApplicationCaptureMode.migrateFromLegacyRole(settings.role)'),
+        str_contains($settings, '.putString(KEY_ROLE, derivedRole.name)'),
+    'save path never derives mode backwards from role' =>
+        str_contains($settings, 'val applicationMode = settings.applicationMode') &&
+        !str_contains($settings, 'migrateFromLegacyRole(settings.role)'),
     'top settings selector exposes all entries' =>
         str_contains($selector, 'Режим работы приложения') &&
         str_contains($selector, 'ApplicationCaptureMode.entries.forEach') &&
-        str_contains($selector, 'current.withApplicationMode(candidate)') &&
-        str_contains($selector, 'settingsStore.save'),
-    'selector is rendered before legacy controls' =>
-        ($selectorPosition = strpos($controlCard, 'ApplicationCaptureModeSelector')) !== false &&
-        ($legacyPosition = strpos($controlCard, 'DualPhoneLaptopUplinkCard')) !== false &&
-        $selectorPosition < $legacyPosition,
+        str_contains($selector, 'onModeSelected(candidate)') &&
+        !str_contains($selector, 'DualPhoneStereoSettingsStore'),
+    'selector is rendered before mode-scoped controls' =>
+        ($selectorPosition = strpos($main, 'ApplicationCaptureModeSelector(')) !== false &&
+        ($controlsPosition = strpos($main, 'DualPhoneControlSettingsCard(')) !== false &&
+        $selectorPosition < $controlsPosition,
     'CAMERA_A automatic calibration authority remains strict' =>
         str_contains($uplink, 'CAMERA_A requires an active calibration profile') &&
         str_contains($uplink, 'CAMERA_A must use the profile created by this MASTER phone') &&

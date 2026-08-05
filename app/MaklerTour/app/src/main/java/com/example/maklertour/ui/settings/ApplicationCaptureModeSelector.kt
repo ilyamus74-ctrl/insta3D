@@ -15,21 +15,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.maklertour.data.dualphone.ApplicationCaptureMode
 import com.maklertour.data.dualphone.DualPhoneStereoSettings
-import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 
 @Composable
 internal fun ApplicationCaptureModeSelector(
     settings: DualPhoneStereoSettings,
-    onModeSelected: (DualPhoneStereoSettings) -> Unit,
+    onModeSelected: (ApplicationCaptureMode) -> Unit,
 ) {
-    val context = LocalContext.current
-    val settingsStore = remember(context.applicationContext) {
-        DualPhoneStereoSettingsStore(context.applicationContext)
-    }
     var expanded by remember { mutableStateOf(false) }
     val selectedMode = settings.applicationMode
 
@@ -53,10 +47,7 @@ internal fun ApplicationCaptureModeSelector(
                     DropdownMenuItem(
                         text = { Text(candidate.displayNameRu()) },
                         onClick = {
-                            val updated = settingsStore.load()
-                                .withApplicationMode(candidate)
-                            settingsStore.save(updated)
-                            onModeSelected(updated)
+                            onModeSelected(candidate)
                             expanded = false
                         },
                     )

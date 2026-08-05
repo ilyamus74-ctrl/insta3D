@@ -17,12 +17,10 @@ $contract = (string) file_get_contents(
 );
 
 $checks = [
-    'laptop compatibility role is neutral' =>
-        preg_match(
-            '/STANDALONE_COLMAP, LAPTOP_STEREO_CLIENT, PHONE_USB_STEREO\s*->\s*' .
-            'DualPhoneRole\.STANDALONE/s',
-            $mode,
-        ) === 1,
+    'laptop has no phone-to-phone role' =>
+        str_contains($mode, 'val phoneToPhoneRoleOrNull') &&
+        str_contains($mode, 'LAPTOP_STEREO_CLIENT') &&
+        str_contains($mode, 'PHONE_USB_STEREO -> null'),
     'runtime gates on application mode' =>
         str_contains($runtime, 'ApplicationCaptureMode.LAPTOP_STEREO_CLIENT') &&
         str_contains($runtime, "Select the application mode 'Two phones -> laptop/PC'"),
@@ -35,9 +33,9 @@ $checks = [
             $runtime,
             'Select the transitional SLAVE transport role',
         ),
-    'legacy frame role is derived only from laptop slot' =>
-        str_contains($runtime, 'val producerRole = if') &&
-        str_contains($runtime, 'DualPhoneLaptopCameraSlot.CAMERA_A') &&
+    'laptop producer no longer maps camera slot to phone role' =>
+        str_contains($runtime, 'producer.startLaptop(owner)') &&
+        !str_contains($runtime, 'val producerRole = if') &&
         str_contains($runtime, 'localRole = "LAPTOP_${config.slot.name}"'),
     'both slots require an active profile id' =>
         str_contains(

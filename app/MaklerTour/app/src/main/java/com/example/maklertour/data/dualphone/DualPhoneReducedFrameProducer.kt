@@ -118,6 +118,24 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         onFrame: (DualPhoneReducedFrame) -> Unit,
     ) {
         require(role == DualPhoneRole.MASTER || role == DualPhoneRole.SLAVE)
+        startInternal(owner, role, onFrame)
+    }
+
+    @Synchronized
+    fun startLaptop(
+        owner: DualPhoneLiveStreamOwner,
+        onFrame: (DualPhoneReducedFrame) -> Unit,
+    ) {
+        // The laptop protocol owns CAMERA_A/CAMERA_B in hello.slot. The shared
+        // frame object keeps a neutral value that is never sent to the host.
+        startInternal(owner, DualPhoneRole.STANDALONE, onFrame)
+    }
+
+    private fun startInternal(
+        owner: DualPhoneLiveStreamOwner,
+        role: DualPhoneRole,
+        onFrame: (DualPhoneReducedFrame) -> Unit,
+    ) {
         stopInternal(publishStopped = false)
         this.owner = owner
         this.role = role

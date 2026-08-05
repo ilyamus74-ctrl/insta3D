@@ -8,7 +8,6 @@ import android.hardware.SensorManager
 import android.os.SystemClock
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
 import com.maklertour.data.dualphone.ApplicationCaptureMode
-import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -203,17 +202,7 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
             captureMode = DualPhoneLiveStreamMode.LIVE_METRIC,
             streamId = "laptop-${config.slot.name.lowercase()}-$currentSession",
         )
-        // DualPhoneReducedFrame still carries the legacy role enum in its frame
-        // metadata. Derive it from the laptop camera slot; never read or mutate
-        // the persisted phone-to-phone role for laptop transport.
-        val producerRole = if (
-            config.slot == DualPhoneLaptopCameraSlot.CAMERA_A
-        ) {
-            DualPhoneRole.MASTER
-        } else {
-            DualPhoneRole.SLAVE
-        }
-        producer.start(owner, producerRole) { frame ->
+        producer.startLaptop(owner) { frame ->
             offered.incrementAndGet()
             if (pendingFrame.getAndSet(frame) != null) {
                 replaced.incrementAndGet()

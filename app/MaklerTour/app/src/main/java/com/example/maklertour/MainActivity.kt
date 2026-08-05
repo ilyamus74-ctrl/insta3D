@@ -161,6 +161,7 @@ import com.maklertour.ui.settings.ApplicationCaptureModeSelector
 import com.maklertour.ui.settings.DualPhoneControlSettingsCard
 import com.example.maklertour.data.dualphone.DualPhoneApplicationMode
 import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntime
+import com.example.maklertour.data.dualphone.DualPhoneLaptopUplinkRuntime
 import com.example.maklertour.ui.session.DualPhoneSlaveWorkScreen
 import com.example.maklertour.auth.AuthStorage
 import com.example.maklertour.auth.LoginResult
@@ -1360,12 +1361,27 @@ private fun SettingsScreen(
 
     val settingsVisibility =
         dualPhoneSettings.applicationMode.settingsVisibility
-    val onApplicationModeSelected: (DualPhoneStereoSettings) -> Unit =
-        { updatedSettings ->
-            dualPhoneControl.stop()
-            dualPhoneSettings = updatedSettings
+    val onApplicationModeSelected: (ApplicationCaptureMode) -> Unit =
+        modeChange@{ targetMode ->
+            if (targetMode == dualPhoneSettings.applicationMode) {
+                return@modeChange
+            }
 
-            val targetTopology = when (updatedSettings.applicationMode) {
+            // Stop every mutually exclusive runtime before the new mode is
+            // persisted. No runtime can observe half-switched settings.
+            DualPhoneApplicationRuntime.get(context.applicationContext)
+                .exitWorkMode()
+            DualPhoneLaptopUplinkRuntime.get(context.applicationContext)
+                .stop()
+            dualPhoneControl.stop()
+
+            val updatedSettings = dualPhoneStore.load()
+                .withApplicationMode(targetMode)
+            dualPhoneStore.save(updatedSettings)
+            val persistedSettings = dualPhoneStore.load()
+            dualPhoneSettings = persistedSettings
+
+            val targetTopology = when (persistedSettings.applicationMode) {
                 ApplicationCaptureMode.PHONE_USB_STEREO ->
                     StereoRigTopology.PHONE_USB
                 ApplicationCaptureMode.DUAL_PHONE_MASTER,
@@ -1380,18 +1396,18 @@ private fun SettingsScreen(
                 activeProfile.copy(
                     topology = targetTopology,
                     cam0DeviceId = if (
-                        updatedSettings.applicationMode ==
+                        persistedSettings.applicationMode ==
                             ApplicationCaptureMode.DUAL_PHONE_MASTER
                     ) {
-                        updatedSettings.deviceId
+                        persistedSettings.deviceId
                     } else {
                         activeProfile.cam0DeviceId
                     },
                     cam1DeviceId = if (
-                        updatedSettings.applicationMode ==
+                        persistedSettings.applicationMode ==
                             ApplicationCaptureMode.DUAL_PHONE_SLAVE
                     ) {
-                        updatedSettings.deviceId
+                        persistedSettings.deviceId
                     } else {
                         activeProfile.cam1DeviceId
                     },

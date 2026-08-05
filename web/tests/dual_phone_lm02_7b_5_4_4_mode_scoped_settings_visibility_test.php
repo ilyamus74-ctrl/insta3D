@@ -51,8 +51,8 @@ $checks = [
             $visibility,
         ) === 1,
     'selector reports complete settings to parent' =>
-        str_contains($selector, 'onModeSelected: (DualPhoneStereoSettings) -> Unit') &&
-        str_contains($selector, 'onModeSelected(updated)'),
+        str_contains($selector, 'onModeSelected: (ApplicationCaptureMode) -> Unit') &&
+        str_contains($selector, 'onModeSelected(candidate)'),
     'settings screen renders selector before scoped blocks' =>
         strpos($main, 'ApplicationCaptureModeSelector(') !== false &&
         strpos($main, 'ApplicationCaptureModeSelector(') <
@@ -67,7 +67,7 @@ $checks = [
     'mode selection updates compose state immediately' =>
         str_contains(
             $main,
-            'dualPhoneSettings = updatedSettings',
+            'dualPhoneSettings = persistedSettings',
         ) &&
         str_contains(
             $main,
