@@ -1,5 +1,6 @@
 #include "live_preview_runtime.hpp"
 
+#include "metric_depth_accuracy.hpp"
 #include "operator_preview_state.hpp"
 
 #include <algorithm>
@@ -190,7 +191,8 @@ cv::Vec3b metric_colour(const double meters) {
 cv::Mat metric_heatmap(const cv::Mat& disparity,
                        const cv::Mat& mask,
                        const double focal_px,
-                       const double baseline_mm) {
+                       const double baseline_mm,
+                       const double zero_offset_px) {
     cv::Mat output(disparity.size(), CV_8UC3, cv::Scalar(0, 0, 0));
     for (int row = 0; row < disparity.rows; ++row) {
         const auto* disparity_row = disparity.ptr<float>(row);
@@ -198,7 +200,9 @@ cv::Mat metric_heatmap(const cv::Mat& disparity,
         auto* output_row = output.ptr<cv::Vec3b>(row);
         for (int column = 0; column < disparity.cols; ++column) {
             if (mask_row[column] == 0) continue;
-            const double value = disparity_row[column];
+            const double value =
+                metric_depth_accuracy::effective_disparity(
+                    disparity_row[column], zero_offset_px);
             if (value <= kMinimumDisparity) continue;
             const double meters = focal_px * baseline_mm / value / 1000.0;
             if (std::isfinite(meters)) {
@@ -212,7 +216,8 @@ cv::Mat metric_heatmap(const cv::Mat& disparity,
 std::optional<double> median_depth(const cv::Mat& disparity,
                                    const cv::Mat& mask,
                                    const double focal_px,
-                                   const double baseline_mm) {
+                                   const double baseline_mm,
+                                   const double zero_offset_px) {
     std::vector<double> values;
     values.reserve(disparity.total() / 8);
     for (int row = 0; row < disparity.rows; row += 2) {
@@ -220,7 +225,9 @@ std::optional<double> median_depth(const cv::Mat& disparity,
         const auto* mask_row = mask.ptr<std::uint8_t>(row);
         for (int column = 0; column < disparity.cols; column += 2) {
             if (mask_row[column] == 0) continue;
-            const double value = disparity_row[column];
+            const double value =
+                metric_depth_accuracy::effective_disparity(
+                    disparity_row[column], zero_offset_px);
             if (value <= kMinimumDisparity) continue;
             const double meters = focal_px * baseline_mm / value / 1000.0;
             if (std::isfinite(meters) && meters >= 0.2 && meters <= 20.0) {
@@ -287,26 +294,12 @@ cv::Mat rotate_for_display(const cv::Mat& source, const int degrees) {
     return result;
 }
 
-int live_num_disparities(const int width) {
-    const int desired = std::clamp(width / 3, 64, 128);
-    return ((desired + 15) / 16) * 16;
-}
-
-cv::Ptr<cv::StereoSGBM> live_matcher(const int num_disparities) {
-    constexpr int block_size = 5;
-    auto matcher = cv::StereoSGBM::create(
-        0,
-        num_disparities,
-        block_size,
-        8 * 3 * block_size * block_size,
-        32 * 3 * block_size * block_size,
-        1,
-        31,
-        8,
-        50,
-        2,
-        cv::StereoSGBM::MODE_SGBM_3WAY);
-    return matcher;
+int live_num_disparities(const int width,
+                         const double focal_px,
+                         const double baseline_mm,
+                         const double zero_offset_px) {
+    return metric_depth_accuracy::num_disparities(
+        width, focal_px, baseline_mm, zero_offset_px);
 }
 
 }  // namespace
@@ -390,6 +383,7 @@ struct LivePreviewRuntime::Impl {
             probe_sequence = 0;
             probe_pair_index = 0;
             probe_selected_mode = "WAITING";
+            probe_metric.reset();
             ready = false;
             pair_index = 0;
             work_width = 0;
@@ -420,6 +414,9 @@ struct LivePreviewRuntime::Impl {
             selected_jpeg_bytes = 0;
             last_focal_px = 0.0;
             last_baseline_mm = 0.0;
+            last_disparity_zero_offset_px = 0.0;
+            last_num_disparities = 0;
+            last_left_right_consistent_ratio = 0.0;
             raw_mask_ratio = 0.0;
             dense_mask_ratio = 0.0;
             strict_mask_ratio = 0.0;
@@ -448,6 +445,10 @@ struct LivePreviewRuntime::Impl {
         const double normalized_x,
         const double normalized_y) const {
         std::scoped_lock lock(mutex);
+        if (ready && probe_metric.ready) {
+            return probe_metric.query(normalized_x, normalized_y);
+        }
+
         nlohmann::json result = {
             {"schema_version", 1},
             {"valid", false},
@@ -602,6 +603,11 @@ struct LivePreviewRuntime::Impl {
             {"selected_jpeg_bytes", selected_jpeg_bytes},
             {"focal_px", last_focal_px},
             {"baseline_mm", last_baseline_mm},
+            {"disparity_zero_offset_px",
+             last_disparity_zero_offset_px},
+            {"num_disparities", last_num_disparities},
+            {"left_right_consistent_ratio",
+             last_left_right_consistent_ratio},
             {"disparity_valid_ratio", raw_mask_ratio},
             {"raw_mask_ratio", raw_mask_ratio},
             {"dense_mask_ratio", dense_mask_ratio},
@@ -662,6 +668,7 @@ struct LivePreviewRuntime::Impl {
         RectificationAxis cached_axis = RectificationAxis::Horizontal;
         double cached_projection_shift = 0.0;
         double cached_focal_px = 0.0;
+        double cached_disparity_zero_offset_px = 0.0;
         auto last_started = std::chrono::steady_clock::time_point{};
         auto last_disk_write = std::chrono::steady_clock::time_point{};
         std::optional<PendingLivePair> last_job;
@@ -860,6 +867,25 @@ struct LivePreviewRuntime::Impl {
                             "INVALID_FOCAL",
                             "live rectified focal length is unavailable");
                     }
+                    if (cached_axis == RectificationAxis::Horizontal) {
+                        cached_disparity_zero_offset_px =
+                            projection_a.at<double>(0, 2) -
+                            projection_b.at<double>(0, 2);
+                    } else {
+                        const double vertical_offset =
+                            projection_a.at<double>(1, 2) -
+                            projection_b.at<double>(1, 2);
+                        cached_disparity_zero_offset_px =
+                            cached_projection_shift < 0.0
+                                ? vertical_offset
+                                : -vertical_offset;
+                    }
+                    if (!std::isfinite(
+                            cached_disparity_zero_offset_px)) {
+                        throw LivePreviewFailure(
+                            "INVALID_DISPARITY_ZERO_OFFSET",
+                            "rectified principal-point disparity offset is invalid");
+                    }
 
                     cv::initUndistortRectifyMap(
                         k_a,
@@ -951,10 +977,12 @@ struct LivePreviewRuntime::Impl {
                     0.0,
                     resize_interpolation);
 
-                const double focal_px =
-                    cached_focal_px *
+                const double work_scale_x =
                     static_cast<double>(work_a.cols) /
                     static_cast<double>(oriented_a.cols);
+                const double focal_px = cached_focal_px * work_scale_x;
+                const double disparity_zero_offset_px =
+                    cached_disparity_zero_offset_px * work_scale_x;
                 const double baseline_mm =
                     usable_baseline_mm(job.calibration);
                 if (!std::isfinite(baseline_mm) || baseline_mm <= 0.0) {
@@ -975,144 +1003,43 @@ struct LivePreviewRuntime::Impl {
                 clahe->apply(gray_b, normalized_b);
 
                 const int num_disparities =
-                    live_num_disparities(work_a.cols);
-                auto matcher = live_matcher(num_disparities);
-                cv::Mat disparity_16;
-                matcher->compute(
+                    live_num_disparities(
+                        work_a.cols,
+                        focal_px,
+                        baseline_mm,
+                        disparity_zero_offset_px);
+                auto metric_frame = metric_depth_accuracy::process(
                     normalized_a,
                     normalized_b,
-                    disparity_16);
-                cv::Mat disparity;
-                disparity_16.convertTo(
-                    disparity,
-                    CV_32F,
-                    1.0 / 16.0);
-
-                cv::Mat minimum_mask;
-                cv::Mat maximum_mask;
-                cv::Mat raw_mask;
-                cv::compare(
-                    disparity,
-                    cv::Scalar(kMinimumDisparity),
-                    minimum_mask,
-                    cv::CMP_GT);
-                cv::compare(
-                    disparity,
-                    cv::Scalar(num_disparities - 1),
-                    maximum_mask,
-                    cv::CMP_LT);
-                cv::bitwise_and(
-                    minimum_mask,
-                    maximum_mask,
-                    raw_mask);
-
-                cv::Mat spatial;
-                cv::medianBlur(disparity, spatial, 5);
-                cv::Mat gradient_x_16;
-                cv::Mat gradient_y_16;
-                cv::Mat gradient_x;
-                cv::Mat gradient_y;
-                cv::Mat texture;
-                cv::Sobel(
-                    normalized_a,
-                    gradient_x_16,
-                    CV_16S,
-                    1,
-                    0,
-                    3);
-                cv::Sobel(
-                    normalized_a,
-                    gradient_y_16,
-                    CV_16S,
-                    0,
-                    1,
-                    3);
-                cv::convertScaleAbs(gradient_x_16, gradient_x);
-                cv::convertScaleAbs(gradient_y_16, gradient_y);
-                cv::addWeighted(
-                    gradient_x,
-                    0.5,
-                    gradient_y,
-                    0.5,
-                    0.0,
-                    texture);
-
-                cv::Mat dense_texture;
-                cv::Mat strict_texture;
-                cv::compare(
-                    texture,
-                    cv::Scalar(5),
-                    dense_texture,
-                    cv::CMP_GT);
-                cv::compare(
-                    texture,
-                    cv::Scalar(12),
-                    strict_texture,
-                    cv::CMP_GT);
-
-                cv::Mat dense_mask;
-                cv::Mat strict_mask;
-                cv::bitwise_and(raw_mask, dense_texture, dense_mask);
-                cv::bitwise_and(raw_mask, strict_texture, strict_mask);
-                const auto kernel = cv::getStructuringElement(
-                    cv::MORPH_ELLIPSE,
-                    {3, 3});
-                cv::morphologyEx(
-                    dense_mask,
-                    dense_mask,
-                    cv::MORPH_CLOSE,
-                    kernel);
-                cv::morphologyEx(
-                    strict_mask,
-                    strict_mask,
-                    cv::MORPH_OPEN,
-                    kernel);
-
-                cv::Mat disparity_colour;
-                cv::Mat normalized_disparity;
-                disparity.convertTo(
-                    normalized_disparity,
-                    CV_8U,
-                    255.0 /
-                        static_cast<double>(
-                            std::max(1, num_disparities)));
-                cv::applyColorMap(
-                    normalized_disparity,
-                    disparity_colour,
-                    cv::COLORMAP_TURBO);
-                cv::Mat invalid_raw;
-                cv::bitwise_not(raw_mask, invalid_raw);
-                disparity_colour.setTo(
-                    cv::Scalar(0, 0, 0),
-                    invalid_raw);
+                    num_disparities,
+                    disparity_zero_offset_px);
+                const auto& disparity = metric_frame.disparity;
+                const auto& spatial = metric_frame.spatial;
+                const auto& raw_mask = metric_frame.raw_mask;
+                const auto& dense_mask = metric_frame.dense_mask;
+                const auto& strict_mask = metric_frame.strict_mask;
+                const auto& disparity_colour =
+                    metric_frame.disparity_colour;
 
                 const auto raw_depth = metric_heatmap(
                     disparity,
                     raw_mask,
                     focal_px,
-                    baseline_mm);
+                    baseline_mm,
+                    disparity_zero_offset_px);
                 const auto filtered_depth = metric_heatmap(
                     spatial,
                     dense_mask,
                     focal_px,
-                    baseline_mm);
+                    baseline_mm,
+                    disparity_zero_offset_px);
                 const auto strict_depth = metric_heatmap(
                     spatial,
                     strict_mask,
                     focal_px,
-                    baseline_mm);
-
-                cv::Mat confidence(
-                    disparity.size(),
-                    CV_8UC3,
-                    cv::Scalar(0, 0, 0));
-                confidence.setTo(cv::Scalar(0, 0, 255), raw_mask);
-                confidence.setTo(
-                    cv::Scalar(0, 165, 255),
-                    dense_mask);
-                confidence.setTo(
-                    cv::Scalar(0, 255, 0),
-                    strict_mask);
+                    baseline_mm,
+                    disparity_zero_offset_px);
+                const auto& confidence = metric_frame.confidence;
 
                 const auto mode = current_operator_preview_mode();
                 const cv::Mat* selected = &filtered_depth;
@@ -1237,7 +1164,8 @@ struct LivePreviewRuntime::Impl {
                     spatial,
                     *selected_mask,
                     focal_px,
-                    baseline_mm);
+                    baseline_mm,
+                    disparity_zero_offset_px);
 
                 nlohmann::json diagnostic;
                 bool stale_profile_result = false;
@@ -1281,6 +1209,19 @@ struct LivePreviewRuntime::Impl {
                         probe_sequence = sequence;
                         pair_index = job.pair.pair_index;
                         probe_pair_index = pair_index;
+                        probe_metric.publish(
+                            *probe_disparity_source,
+                            *selected_mask,
+                            metric_frame.left_right_mask,
+                            metric_frame.left_right_error,
+                            focal_px,
+                            baseline_mm,
+                            disparity_zero_offset_px,
+                            num_disparities,
+                            display_rotation,
+                            probe_sequence,
+                            probe_pair_index,
+                            operator_preview_mode_name(mode));
                         work_width = display.cols;
                         work_height = display.rows;
                         valid_ratio = ratio;
@@ -1306,6 +1247,13 @@ struct LivePreviewRuntime::Impl {
                         selected_jpeg_bytes = selected_jpeg.size();
                         last_focal_px = focal_px;
                         last_baseline_mm = baseline_mm;
+                        last_disparity_zero_offset_px =
+                            disparity_zero_offset_px;
+                        last_num_disparities = num_disparities;
+                        last_left_right_consistent_ratio =
+                            metric_depth_accuracy::consistency_ratio(
+                                metric_frame.left_right_mask,
+                                raw_mask);
                         raw_mask_ratio = current_raw_mask_ratio;
                         dense_mask_ratio = current_dense_mask_ratio;
                         strict_mask_ratio = current_strict_mask_ratio;
@@ -1374,7 +1322,15 @@ struct LivePreviewRuntime::Impl {
                             {"metric_valid_ratio", current_dense_mask_ratio},
                             {"non_black_heatmap_ratio",
                              filtered_non_black_ratio},
+                            {"focal_px", focal_px},
                             {"baseline_mm", baseline_mm},
+                            {"disparity_zero_offset_px",
+                             disparity_zero_offset_px},
+                            {"num_disparities", num_disparities},
+                            {"left_right_consistent_ratio",
+                             metric_depth_accuracy::consistency_ratio(
+                                 metric_frame.left_right_mask,
+                                 raw_mask)},
                             {"health_reason", health_reason},
                             {"median_depth_m",
                              median
@@ -1487,6 +1443,7 @@ struct LivePreviewRuntime::Impl {
     std::uint64_t probe_sequence = 0;
     std::uint64_t probe_pair_index = 0;
     std::string probe_selected_mode = "WAITING";
+    metric_depth_accuracy::ProbeSnapshot probe_metric;
     bool ready = false;
     std::uint64_t sequence = 0;
     std::uint64_t pair_index = 0;
@@ -1526,6 +1483,9 @@ struct LivePreviewRuntime::Impl {
     std::uint64_t selected_jpeg_bytes = 0;
     double last_focal_px = 0.0;
     double last_baseline_mm = 0.0;
+    double last_disparity_zero_offset_px = 0.0;
+    int last_num_disparities = 0;
+    double last_left_right_consistent_ratio = 0.0;
     double raw_mask_ratio = 0.0;
     double dense_mask_ratio = 0.0;
     double strict_mask_ratio = 0.0;
