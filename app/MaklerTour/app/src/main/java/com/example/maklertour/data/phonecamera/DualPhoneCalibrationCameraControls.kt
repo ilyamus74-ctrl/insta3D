@@ -77,6 +77,14 @@ internal object DualPhoneCalibrationCameraControls {
         val info = Camera2CameraInfo.from(camera.cameraInfo)
         val statuses = mutableListOf<String>()
 
+        val zoomLocked = runCatching {
+            awaitCompletion(
+                camera.cameraControl.setZoomRatio(METRIC_STEREO_ZOOM_RATIO),
+                OPTIONS_TIMEOUT_MS,
+            )
+        }.getOrDefault(false)
+        statuses += if (zoomLocked) "ZOOM_1X_LOCKED" else "ZOOM_1X_LOCK_FAILED"
+
         var layoutWaits = 0
         while (
             (previewView.width <= 1 || previewView.height <= 1) &&
@@ -237,6 +245,7 @@ internal object DualPhoneCalibrationCameraControls {
     } ?: false
 
     private const val TAG = "DualPhoneCalibration"
+    private const val METRIC_STEREO_ZOOM_RATIO = 1.0f
     private const val FOCUS_TIMEOUT_MS = 2_500L
     private const val OPTIONS_TIMEOUT_MS = 1_500L
     private const val SETTLE_DELAY_MS = 250L

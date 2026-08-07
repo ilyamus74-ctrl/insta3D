@@ -6,10 +6,16 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
 import android.os.SystemClock
+import android.util.Log
 import android.util.Size
+import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -102,6 +108,10 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
     private var role: DualPhoneRole = DualPhoneRole.STANDALONE
     @Volatile
     private var onFrame: ((DualPhoneReducedFrame) -> Unit)? = null
+    @Volatile
+    private var requestedNativeWidth: Int = 0
+    @Volatile
+    private var requestedNativeHeight: Int = 0
 
     private val mutableState = MutableStateFlow(
         DualPhoneReducedFrameProducerSnapshot(),
@@ -169,7 +179,24 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
 
     private fun bind(provider: ProcessCameraProvider, token: Long) {
         check(active.get() && generation.get() == token)
-        val cameraId = lensRepository.selectedOrDefault().first.cameraId
+        val lens = lensRepository.selectedOrDefault().first
+        val cameraId = lens.cameraId
+        val selectedMode = lensRepository.getSelectedVideoMode(
+            cameraId,
+            lens.supportedVideoModes,
+        ) ?: throw IllegalStateException(
+            "STREAM_UNAVAILABLE: no selected video mode for camera $cameraId",
+        )
+        require(
+            selectedMode.width <= MAX_NATIVE_STEREO_WIDTH &&
+                selectedMode.height <= MAX_NATIVE_STEREO_HEIGHT,
+        ) {
+            "STREAM_UNAVAILABLE: laptop stereo supports up to " +
+                "${MAX_NATIVE_STEREO_WIDTH}x${MAX_NATIVE_STEREO_HEIGHT}; " +
+                "selected ${selectedMode.width}x${selectedMode.height}"
+        }
+        requestedNativeWidth = selectedMode.width
+        requestedNativeHeight = selectedMode.height
         val selector = CameraSelector.Builder()
             .addCameraFilter { cameraInfos ->
                 cameraInfos.filter { cameraInfo ->
@@ -190,7 +217,7 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
             )
             .setResolutionStrategy(
                 ResolutionStrategy(
-                    Size(CAPTURE_TARGET_WIDTH, CAPTURE_TARGET_HEIGHT),
+                    Size(selectedMode.width, selectedMode.height),
                     ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
                 ),
             )
@@ -202,7 +229,8 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         imageAnalysis.setAnalyzer(analyzerExecutor) { image ->
             analyze(image, token)
         }
-        provider.bindToLifecycle(lifecycle, selector, imageAnalysis)
+        val camera = provider.bindToLifecycle(lifecycle, selector, imageAnalysis)
+        applyMetricStereoControls(camera)
         cameraProvider = provider
         lifecycleOwner = lifecycle
         analysis = imageAnalysis
@@ -219,6 +247,16 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
             if (!active.get() || generation.get() != token) return
             update { current ->
                 current.copy(framesObserved = current.framesObserved + 1L)
+            }
+            if (
+                image.width != requestedNativeWidth ||
+                image.height != requestedNativeHeight
+            ) {
+                throw IllegalStateException(
+                    "STREAM_UNAVAILABLE: native stereo resolution mismatch; " +
+                        "requested ${requestedNativeWidth}x${requestedNativeHeight}, " +
+                        "actual ${image.width}x${image.height}",
+                )
             }
             val sensorTimestampNs = image.imageInfo.timestamp
             val analysisReceivedElapsedRealtimeNs = SystemClock.elapsedRealtimeNanos()
@@ -298,51 +336,15 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         val sourceWidth = image.width
         val sourceHeight = image.height
         val sourceNv21 = image.toNv21()
-        val crop = centerCrop16By9(sourceWidth, sourceHeight)
-        val croppedNv21 = if (
-            crop.left == 0 &&
-            crop.top == 0 &&
-            crop.width == sourceWidth &&
-            crop.height == sourceHeight
-        ) {
-            sourceNv21
-        } else {
-            cropNv21(
-                source = sourceNv21,
-                sourceWidth = sourceWidth,
-                sourceHeight = sourceHeight,
-                crop = crop,
-            )
-        }
-        val scale = minOf(
-            1.0,
-            DualPhoneReducedFrame.MAX_WIDTH.toDouble() / crop.width,
-            DualPhoneReducedFrame.MAX_HEIGHT.toDouble() / crop.height,
-        )
-        val targetWidth = evenDimension((crop.width * scale).toInt())
-        val targetHeight = evenDimension((crop.height * scale).toInt())
-        val encodedNv21 = if (
-            targetWidth == crop.width && targetHeight == crop.height
-        ) {
-            croppedNv21
-        } else {
-            downscaleNv21(
-                source = croppedNv21,
-                sourceWidth = crop.width,
-                sourceHeight = crop.height,
-                targetWidth = targetWidth,
-                targetHeight = targetHeight,
-            )
-        }
         val bytes = ByteArrayOutputStream().use { output ->
             val success = YuvImage(
-                encodedNv21,
+                sourceNv21,
                 ImageFormat.NV21,
-                targetWidth,
-                targetHeight,
+                sourceWidth,
+                sourceHeight,
                 null,
             ).compressToJpeg(
-                Rect(0, 0, targetWidth, targetHeight),
+                Rect(0, 0, sourceWidth, sourceHeight),
                 JPEG_QUALITY,
                 output,
             )
@@ -350,13 +352,12 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
             output.toByteArray()
         }
         return EncodedJpeg(
-            width = targetWidth,
-            height = targetHeight,
+            width = sourceWidth,
+            height = sourceHeight,
             bytes = bytes,
             sourceWidth = sourceWidth,
             sourceHeight = sourceHeight,
-            sourceAspectCropped =
-                crop.width != sourceWidth || crop.height != sourceHeight,
+            sourceAspectCropped = false,
         )
     }
 
@@ -516,6 +517,51 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         }
     }
 
+    private fun applyMetricStereoControls(camera: Camera) {
+        val zoomFuture = camera.cameraControl.setZoomRatio(METRIC_STEREO_ZOOM_RATIO)
+        zoomFuture.addListener(
+            {
+                runCatching { zoomFuture.get() }
+                    .onFailure { error ->
+                        Log.e(TAG, "failed to lock metric stereo zoom at 1.0x", error)
+                    }
+            },
+            mainExecutor,
+        )
+
+        val info = Camera2CameraInfo.from(camera.cameraInfo)
+        val options = CaptureRequestOptions.Builder()
+        val videoModes = info.getCameraCharacteristic(
+            CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES,
+        ) ?: intArrayOf()
+        if (videoModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)) {
+            options.setCaptureRequestOption(
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF,
+            )
+        }
+        val opticalModes = info.getCameraCharacteristic(
+            CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION,
+        ) ?: intArrayOf()
+        if (opticalModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)) {
+            options.setCaptureRequestOption(
+                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
+                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF,
+            )
+        }
+        val optionsFuture = Camera2CameraControl.from(camera.cameraControl)
+            .setCaptureRequestOptions(options.build())
+        optionsFuture.addListener(
+            {
+                runCatching { optionsFuture.get() }
+                    .onFailure { error ->
+                        Log.e(TAG, "failed to disable stereo stabilization", error)
+                    }
+            },
+            mainExecutor,
+        )
+    }
+
     @Synchronized
     private fun fail(token: Long, error: Throwable) {
         if (generation.get() != token) return
@@ -541,6 +587,8 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         onFrame = null
         owner = null
         role = DualPhoneRole.STANDALONE
+        requestedNativeWidth = 0
+        requestedNativeHeight = 0
         val oldAnalysis = analysis
         val oldProvider = cameraProvider
         val oldLifecycle = lifecycleOwner
@@ -597,10 +645,12 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
     }
 
     companion object {
-        private const val CAPTURE_TARGET_WIDTH = 1_280
-        private const val CAPTURE_TARGET_HEIGHT = 720
-        private const val TARGET_FPS = 20L
+        private const val TAG = "DualPhoneReducedFrame"
+        private const val MAX_NATIVE_STEREO_WIDTH = 1_920
+        private const val MAX_NATIVE_STEREO_HEIGHT = 1_080
+        private const val METRIC_STEREO_ZOOM_RATIO = 1.0f
+        private const val TARGET_FPS = 15L
         private const val FRAME_INTERVAL_NS = 1_000_000_000L / TARGET_FPS
-        private const val JPEG_QUALITY = 65
+        private const val JPEG_QUALITY = 85
     }
 }

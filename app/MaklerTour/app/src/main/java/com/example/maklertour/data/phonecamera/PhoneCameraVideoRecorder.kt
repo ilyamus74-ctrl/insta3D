@@ -203,10 +203,20 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         requestedProfileWidth = calibrationWidth
         requestedProfileHeight = calibrationHeight
         val profileRequestedSize = requestedSize(calibrationWidth, calibrationHeight)
-        val requestedSize = cappedCalibrationAnalysisSize(profileRequestedSize)
+        if (enableCalibrationAnalysis && profileRequestedSize != null) {
+            require(
+                profileRequestedSize.width <= METRIC_STEREO_MAX_WIDTH &&
+                    profileRequestedSize.height <= METRIC_STEREO_MAX_HEIGHT,
+            ) {
+                "Metric stereo calibration supports up to " +
+                    "${METRIC_STEREO_MAX_WIDTH}x${METRIC_STEREO_MAX_HEIGHT}; " +
+                    "requested ${profileRequestedSize.width}x${profileRequestedSize.height}"
+            }
+        }
+        val requestedSize = profileRequestedSize
         requestedCalibrationWidth = requestedSize?.width
         requestedCalibrationHeight = requestedSize?.height
-        calibrationResolutionReason = if (profileRequestedSize != null && requestedSize != null && (requestedSize.width != profileRequestedSize.width || requestedSize.height != profileRequestedSize.height)) CALIBRATION_CAP_REASON else null
+        calibrationResolutionReason = null
         actualCalibrationWidth = null
         actualCalibrationHeight = null
         loggedCalibrationAnalysisFrames = 0L
@@ -326,6 +336,11 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     )
                 }.getOrElse { error ->
                     "PREPARE_FAILED:${error.message ?: error.javaClass.simpleName}"
+                }
+                if (calibrationCameraControlStatus.contains("ZOOM_1X_LOCKED")) {
+                    requestedZoomRatio = 1.0f
+                    effectiveZoomRatio =
+                        calibrationCamera.cameraInfo.zoomState.value?.zoomRatio ?: 1.0f
                 }
                 Log.i(
                     TAG,
@@ -473,11 +488,11 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 )
             }
         }
-        val sizes = buildList {
-            requestedSize?.let { add(it) }
-            add(Size(1280, 720))
-            add(Size(640, 480))
-        }.distinctBy { it.width to it.height }
+        val sizes = if (requestedSize != null) {
+            listOf(requestedSize)
+        } else {
+            listOf(Size(1280, 720), Size(640, 480))
+        }
         var lastError: Throwable? = null
         for (size in sizes) {
             val analysis = buildCalibrationAnalysis(size.width, size.height)
@@ -541,6 +556,26 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             lastAcceptedCalibrationAnalysisNs = callbackElapsedRealtimeNs
             actualCalibrationWidth = imageProxy.width
             actualCalibrationHeight = imageProxy.height
+            val expectedWidth = requestedCalibrationWidth
+            val expectedHeight = requestedCalibrationHeight
+            if (
+                expectedWidth != null &&
+                expectedHeight != null &&
+                (imageProxy.width != expectedWidth || imageProxy.height != expectedHeight)
+            ) {
+                calibrationResolutionReason =
+                    "actual_resolution_mismatch:" +
+                        "${imageProxy.width}x${imageProxy.height}!=" +
+                        "${expectedWidth}x${expectedHeight}"
+                if (!loggedOversizedCalibrationFrameWarning) {
+                    loggedOversizedCalibrationFrameWarning = true
+                    Log.e(
+                        TAG,
+                        "cam0 calibration frame rejected: ${calibrationResolutionReason}",
+                    )
+                }
+                return
+            }
             if (imageProxy.width * imageProxy.height > CALIBRATION_ANALYSIS_MAX_PIXELS_FOR_CONVERSION) {
                 if (!loggedOversizedCalibrationFrameWarning) {
                     loggedOversizedCalibrationFrameWarning = true
@@ -1337,12 +1372,13 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
 
     private companion object {
         const val TAG = "PhoneCameraVideoRecorder"
-        private const val CALIBRATION_ANALYSIS_MAX_WIDTH = 1280
-        private const val CALIBRATION_ANALYSIS_MAX_HEIGHT = 720
+        private const val METRIC_STEREO_MAX_WIDTH = 1920
+        private const val METRIC_STEREO_MAX_HEIGHT = 1080
+        private const val CALIBRATION_ANALYSIS_MAX_WIDTH = METRIC_STEREO_MAX_WIDTH
+        private const val CALIBRATION_ANALYSIS_MAX_HEIGHT = METRIC_STEREO_MAX_HEIGHT
         private const val CALIBRATION_ANALYSIS_MAX_FPS = 8L
         private const val CALIBRATION_ANALYSIS_MAX_PIXELS_FOR_CONVERSION = CALIBRATION_ANALYSIS_MAX_WIDTH * CALIBRATION_ANALYSIS_MAX_HEIGHT * 2
         private const val CALIBRATION_ANALYSIS_MIN_INTERVAL_NS = 1_000_000_000L / CALIBRATION_ANALYSIS_MAX_FPS
-        private const val CALIBRATION_CAP_REASON = "calibration_analysis_capped_for_latency"
         private const val CAMERA_PROVIDER_TIMEOUT_MS = 5_000L
         private const val ZOOM_APPLY_TIMEOUT_MS = 2_000L
         private const val ZOOM_RATIO_TOLERANCE = 0.01f
