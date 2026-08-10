@@ -45,17 +45,62 @@ data class DualPhoneStereoEstimate(
                     normalizedEpi <= MAX_MEAN_EPIPOLAR_ERROR_PX)
         }
 
+    fun rejectionMetricRu(): String? {
+        val normalizedRms = normalizedRmsPx
+        val normalizedEpi = normalizedMeanEpipolarErrorPx
+        return when {
+            !solved -> status
+            normalizedRms != null && normalizedRms > MAX_STEREO_RMS_PX ->
+                "RMS quality-equivalent ${String.format(Locale.US, "%.3f", normalizedRms)} px > ${String.format(Locale.US, "%.2f", MAX_STEREO_RMS_PX)} px"
+            normalizedEpi != null && normalizedEpi > MAX_MEAN_EPIPOLAR_ERROR_PX ->
+                "EPI quality-equivalent ${String.format(Locale.US, "%.2f", normalizedEpi)} px > ${String.format(Locale.US, "%.2f", MAX_MEAN_EPIPOLAR_ERROR_PX)} px"ф
+            else -> null
+        }
+    }
+
+    fun geometryAuditHintRu(): String? {
+        val normalizedRms = normalizedRmsPx ?: return null
+        val normalizedEpi = normalizedMeanEpipolarErrorPx ?: return null
+        if (normalizedEpi <= MAX_MEAN_EPIPOLAR_ERROR_PX) return null
+        val expectedBaseline = operatorBaselineMm
+        val baselineClose = if (expectedBaseline != null && baselineDeltaMm != null) {
+            abs(baselineDeltaMm) <= maxOf(15.0, expectedBaseline * 0.12)
+        } else {
+            false
+        }
+        val maxDelta = maxFrameDeltaMs
+        return when {
+            maxDelta != null && maxDelta > 30.0 ->
+                "SYNC_SUSPECT: EPI высокая, max frame Δ=${String.format(Locale.US, "%.1f", maxDelta)} ms; сначала проверить временную синхронизацию stereo-пар."
+            normalizedRms <= MAX_STEREO_RMS_PX && baselineClose ->
+                "SYSTEMATIC_EPI: RMS и базис согласованы, но rectified EPI остаётся высокой; искать постоянную несогласованность stereo-пар/оптики/rectification, а не повышать порог."
+            normalizedRms <= MAX_STEREO_RMS_PX ->
+                "EPI_ONLY_FAILURE: общий stereo RMS проходит, но rectified соответствия не проходят EPI-критерий."
+            else ->
+                "STEREO_GEOMETRY_UNSTABLE: одновременно повышены RMS и EPI."
+        }
+    }
+
     fun summary(): String = if (solved && rms != null && baselineMm != null) {
         buildString {
-            append("STEREO RMS ")
+            append("STEREO ${imageWidth}×${imageHeight}")
+            append("\nRAW @${imageWidth}×${imageHeight}: RMS ")
             append(String.format(Locale.US, "%.3f", rms))
             append(" px")
-            normalizedRmsPx?.takeIf { imageWidth != ERROR_REFERENCE_WIDTH_PX.toInt() }?.let {
-                append(" · RMS@1280 ")
-                append(String.format(Locale.US, "%.3f", it))
+            meanEpipolarErrorPx?.let {
+                append(" · EPI mean ")
+                append(String.format(Locale.US, "%.2f", it))
                 append(" px")
             }
-            append(" · базис ")
+            append("\nQUALITY EQUIV @1280 (только шкала): RMS ")
+            append(String.format(Locale.US, "%.3f", normalizedRmsPx ?: Double.NaN))
+            append(" px")
+            normalizedMeanEpipolarErrorPx?.let {
+                append(" · EPI mean ")
+                append(String.format(Locale.US, "%.2f", it))
+                append(" px")
+            }
+            append("\nБазис ")
             append(String.format(Locale.US, "%.1f", baselineMm))
             append(" мм")
             baselineDeltaMm?.let {
@@ -63,19 +108,20 @@ data class DualPhoneStereoEstimate(
                 append(String.format(Locale.US, "%+.1f", it))
                 append(" мм")
             }
-            meanEpipolarErrorPx?.let {
-                append(" · epi ")
-                append(String.format(Locale.US, "%.2f", it))
-                append(" px")
+            if (pairsRejected > 0) append(" · отброшено пар: $pairsRejected")
+            maxFrameDeltaMs?.let {
+                append(" · max frame Δ ")
+                append(String.format(Locale.US, "%.1f", it))
+                append(" ms")
             }
-            normalizedMeanEpipolarErrorPx
-                ?.takeIf { imageWidth != ERROR_REFERENCE_WIDTH_PX.toInt() }
-                ?.let {
-                    append(" · epi@1280 ")
-                    append(String.format(Locale.US, "%.2f", it))
-                    append(" px")
-                }
-            if (pairsRejected > 0) append(" · отброшено $pairsRejected")
+            rejectionMetricRu()?.let {
+                append("\nПричина отказа: ")
+                append(it)
+            }
+            geometryAuditHintRu()?.let {
+                append("\nAUDIT: ")
+                append(it)
+            }
         }
     } else {
         status

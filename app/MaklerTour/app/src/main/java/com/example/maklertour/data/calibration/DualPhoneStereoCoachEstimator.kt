@@ -22,8 +22,12 @@ import kotlin.math.sqrt
 
 data class DualPhoneStereoCoachSnapshot(
     val collectedPairs: Int = 0,
+    val imageWidth: Int = 0,
+    val imageHeight: Int = 0,
+    val rawLiveRmsPx: Double? = null,
     val liveRmsPx: Double? = null,
     val liveBaselineMm: Double? = null,
+    val rawMeanEpipolarErrorPx: Double? = null,
     val meanEpipolarErrorPx: Double? = null,
     val commonCorners: Int = 0,
     val frameDeltaMs: Double? = null,
@@ -33,17 +37,28 @@ data class DualPhoneStereoCoachSnapshot(
 ) {
     fun summaryRu(): String = buildString {
         append("Пар: $collectedPairs")
-        liveRmsPx?.let {
-            append(" · live RMS@1280 ")
+        if (imageWidth > 0 && imageHeight > 0) {
+            append(" · solve ${imageWidth}×${imageHeight}")
+        }
+        rawLiveRmsPx?.let {
+            append(" · RAW RMS ")
             append(String.format(Locale.US, "%.3f px", it))
+        }
+        rawMeanEpipolarErrorPx?.let {
+            append(" · RAW EPI ")
+            append(String.format(Locale.US, "%.2f px", it))
+        }
+        liveRmsPx?.let {
+            append(" · QUALITY EQUIV@1280 RMS ")
+            append(String.format(Locale.US, "%.3f px", it))
+        }
+        meanEpipolarErrorPx?.let {
+            append(" · EPI ")
+            append(String.format(Locale.US, "%.2f px", it))
         }
         liveBaselineMm?.let {
             append(" · базис ")
             append(String.format(Locale.US, "%.1f мм", it))
-        }
-        meanEpipolarErrorPx?.let {
-            append(" · epi@1280 ")
-            append(String.format(Locale.US, "%.2f px", it))
         }
     }
 }
@@ -155,8 +170,12 @@ class DualPhoneStereoCoachEstimator : Closeable {
         }
         return DualPhoneStereoCoachSnapshot(
             collectedPairs = samples.size,
+            imageWidth = model?.imageWidth ?: samples.lastOrNull()?.imageSize?.width?.toInt() ?: 0,
+            imageHeight = model?.imageHeight ?: samples.lastOrNull()?.imageSize?.height?.toInt() ?: 0,
+            rawLiveRmsPx = model?.rms,
             liveRmsPx = model?.let { normalizeError(it.rms, it.imageWidth) },
             liveBaselineMm = model?.baselineMm,
+            rawMeanEpipolarErrorPx = model?.perPairEpipolarErrors?.averageOrNull(),
             meanEpipolarErrorPx = model?.let { current ->
                 current.perPairEpipolarErrors.averageOrNull()?.let {
                     normalizeError(it, current.imageWidth)

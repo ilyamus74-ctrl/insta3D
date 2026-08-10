@@ -800,6 +800,14 @@ internal fun DualPhoneCalibrationFullscreen(
                                 finalResult.stereo.summary(),
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                            Text(
+                                "RAW @${finalResult.stereo.imageWidth}×${finalResult.stereo.imageHeight} " +
+                                    "= фактическая калибровка и solve. " +
+                                    "QUALITY EQUIV @1280 = только нормализованная шкала качества; " +
+                                    "кадры до 1280 не уменьшаются.",
+                                color = Color(0xFFB0BEC5),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                             finalResult.stereo.operatorBaselineMm?.let {
                                 Text(
                                     "Заданный базис: ${formatOne(it)} мм · " +
@@ -811,7 +819,7 @@ internal fun DualPhoneCalibrationFullscreen(
                             Text(
                                 if (finalResult.successful) {
                                     val marginalEpipolar =
-                                        finalResult.stereo.meanEpipolarErrorPx?.let {
+                                        finalResult.stereo.normalizedMeanEpipolarErrorPx?.let {
                                             it > DualPhoneStereoEstimate
                                                 .RECOMMENDED_MEAN_EPIPOLAR_ERROR_PX
                                         } == true
