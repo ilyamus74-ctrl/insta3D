@@ -187,6 +187,47 @@ internal object DualPhoneCalibrationCameraControls {
         }
     }
 
+    suspend fun refocusOnBoard(
+        camera: Camera,
+        previewView: PreviewView,
+        normalizedX: Double,
+        normalizedY: Double,
+    ): String = withContext(Dispatchers.Main.immediate) {
+        if (previewView.width <= 1 || previewView.height <= 1) {
+            return@withContext "AF_BOARD_PREVIEW_NOT_READY"
+        }
+        val safeX = normalizedX.coerceIn(0.05, 0.95)
+        val safeY = normalizedY.coerceIn(0.05, 0.95)
+        val meteringPoint = previewView.meteringPointFactory.createPoint(
+            (safeX * previewView.width.toDouble()).toFloat(),
+            (safeY * previewView.height.toDouble()).toFloat(),
+        )
+        val focusAction = FocusMeteringAction.Builder(
+            meteringPoint,
+            FocusMeteringAction.FLAG_AF,
+        )
+            .disableAutoCancel()
+            .build()
+        val focusResult = awaitFuture(
+            camera.cameraControl.startFocusAndMetering(focusAction),
+            FOCUS_TIMEOUT_MS,
+        )
+        val focused = focusResult?.isFocusSuccessful == true
+        if (focused) {
+            delay(BOARD_REFOCUS_SETTLE_MS)
+        }
+        val status = if (focused) {
+            "AF_BOARD_LOCKED"
+        } else {
+            "AF_BOARD_LOCK_FAILED"
+        }
+        Log.i(
+            TAG,
+            "calibration board autofocus: $status x=$safeX y=$safeY",
+        )
+        status
+    }
+
     suspend fun release(camera: Camera): String =
         withContext(Dispatchers.Main.immediate) {
             val statuses = mutableListOf<String>()
@@ -252,6 +293,7 @@ internal object DualPhoneCalibrationCameraControls {
     private const val FOCUS_TIMEOUT_MS = 2_500L
     private const val OPTIONS_TIMEOUT_MS = 1_500L
     private const val SETTLE_DELAY_MS = 250L
+    private const val BOARD_REFOCUS_SETTLE_MS = 220L
     private const val PREVIEW_LAYOUT_WAIT_STEPS = 20
     private const val PREVIEW_LAYOUT_WAIT_STEP_MS = 50L
 }

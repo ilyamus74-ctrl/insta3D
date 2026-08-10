@@ -115,5 +115,13 @@ object DualPhonePreviewBindingRuntime {
         recorder?.getRecentCalibrationFrames()
             ?.firstOrNull { it.sequence == sequence }
 
+    suspend fun refreshCalibrationFocus(
+        normalizedX: Double,
+        normalizedY: Double,
+    ): String = recorder?.refreshCalibrationFocus(
+        normalizedX = normalizedX,
+        normalizedY = normalizedY,
+    ) ?: "AF_BOARD_RECORDER_UNAVAILABLE"
+
     private const val PREVIEW_ATTACH_TIMEOUT_MS = 5_000L
 }

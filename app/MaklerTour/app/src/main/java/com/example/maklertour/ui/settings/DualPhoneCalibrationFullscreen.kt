@@ -270,6 +270,7 @@ internal fun DualPhoneCalibrationFullscreen(
         localAnalysis = null
         if (!localAnalyzerActive) return@LaunchedEffect
         var lastSequence = -1L
+        var autofocusPoseId: String? = null
         while (isActive && currentSnapshot.calibrationActive && localAnalyzerActive) {
             val frame = DualPhonePreviewBindingRuntime.latestCalibrationFrame()
             if (frame != null && frame.sequence != lastSequence) {
@@ -282,6 +283,31 @@ internal fun DualPhoneCalibrationFullscreen(
                         target = activeTarget,
                         settings = boardSettings,
                     )
+                }
+                if (
+                    autofocusPoseId != activeTarget.id &&
+                    result.cameraControlStatus.startsWith("METRIC_READY") &&
+                    result.detection.found &&
+                    !result.boardClipped
+                ) {
+                    previewStatus = "Автофокус по центру ChArUco…"
+                    val focusStatus =
+                        DualPhonePreviewBindingRuntime.refreshCalibrationFocus(
+                            normalizedX = result.centreX,
+                            normalizedY = result.centreY,
+                        )
+                    if (focusStatus.startsWith("METRIC_READY")) {
+                        autofocusPoseId = activeTarget.id
+                        previewStatus =
+                            "Фокус обновлён для ${activeTarget.id}"
+                    } else {
+                        previewStatus =
+                            "Автофокус не готов: $focusStatus"
+                    }
+                    analyzer.reset()
+                    localAnalysis = null
+                    delay(100L)
+                    continue
                 }
                 localAnalysis = result
                 activeSnapshot.calibrationRunId?.let { runId ->

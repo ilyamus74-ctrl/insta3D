@@ -723,6 +723,50 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         reason = calibrationResolutionReason,
     )
 
+    suspend fun refreshCalibrationFocus(
+        normalizedX: Double,
+        normalizedY: Double,
+    ): String = withContext(Dispatchers.Main.immediate) {
+        val camera = boundCamera
+            ?: return@withContext "AF_BOARD_NO_BOUND_CAMERA"
+        val previewView = boundPreviewView
+            ?: return@withContext "AF_BOARD_NO_PREVIEW"
+        val previousStatus = calibrationCameraControlStatus
+        if (!previousStatus.startsWith("METRIC_READY")) {
+            return@withContext previousStatus
+        }
+
+        calibrationCameraControlStatus = "AF_REFRESHING"
+        calibrationMetricReadyAfterElapsedRealtimeNs = Long.MAX_VALUE
+        synchronized(latestFrameLock) {
+            latestCalibrationFrame = null
+        }
+
+        val focusStatus = runCatching {
+            DualPhoneCalibrationCameraControls.refocusOnBoard(
+                camera = camera,
+                previewView = previewView,
+                normalizedX = normalizedX,
+                normalizedY = normalizedY,
+            )
+        }.getOrElse { error ->
+            "AF_BOARD_ERROR:${error.message ?: error.javaClass.simpleName}"
+        }
+
+        val preservedMetricStatus = previousStatus
+            .split(',')
+            .filterNot { it.startsWith("AF_") }
+            .joinToString(",")
+        synchronized(latestFrameLock) {
+            latestCalibrationFrame = null
+        }
+        calibrationMetricReadyAfterElapsedRealtimeNs =
+            SystemClock.elapsedRealtimeNanos()
+        calibrationCameraControlStatus =
+            "$preservedMetricStatus,$focusStatus"
+        calibrationCameraControlStatus
+    }
+
     fun getSelectedLensOption(): PhoneCameraLensOption? = selectedLensOption
 
     fun getSelectedZoomRatio(): Float = effectiveZoomRatio
