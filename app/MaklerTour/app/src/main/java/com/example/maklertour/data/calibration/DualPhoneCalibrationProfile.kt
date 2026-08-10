@@ -9,6 +9,8 @@ data class DualPhoneStereoEstimate(
     val solved: Boolean,
     val pairsUsed: Int,
     val rms: Double? = null,
+    val imageWidth: Int = 1280,
+    val imageHeight: Int = 720,
     val rotation: List<Double> = emptyList(),
     val translationMm: List<Double> = emptyList(),
     val baselineMm: Double? = null,
@@ -20,24 +22,40 @@ data class DualPhoneStereoEstimate(
     val coveragePercent: Int = 0,
     val status: String,
 ) {
+    val normalizedRmsPx: Double?
+        get() = rms?.let { normalizePixelError(it, imageWidth) }
+
+    val normalizedMeanEpipolarErrorPx: Double?
+        get() = meanEpipolarErrorPx?.let { normalizePixelError(it, imageWidth) }
+
     val acceptable: Boolean
-        get() = solved &&
-            rms != null &&
-            rms.isFinite() &&
-            rms <= MAX_STEREO_RMS_PX &&
-            rotation.size == 9 &&
-            translationMm.size == 3 &&
-            baselineMm != null &&
-            baselineMm.isFinite() &&
-            baselineMm > 0.0 &&
-            (meanEpipolarErrorPx == null ||
-                meanEpipolarErrorPx <= MAX_MEAN_EPIPOLAR_ERROR_PX)
+        get() {
+            val normalizedRms = normalizedRmsPx
+            val normalizedEpi = normalizedMeanEpipolarErrorPx
+            return solved &&
+                normalizedRms != null &&
+                normalizedRms.isFinite() &&
+                normalizedRms <= MAX_STEREO_RMS_PX &&
+                rotation.size == 9 &&
+                translationMm.size == 3 &&
+                baselineMm != null &&
+                baselineMm.isFinite() &&
+                baselineMm > 0.0 &&
+                (normalizedEpi == null ||
+                    normalizedEpi <= MAX_MEAN_EPIPOLAR_ERROR_PX)
+        }
 
     fun summary(): String = if (solved && rms != null && baselineMm != null) {
         buildString {
             append("STEREO RMS ")
             append(String.format(Locale.US, "%.3f", rms))
-            append(" px · базис ")
+            append(" px")
+            normalizedRmsPx?.takeIf { imageWidth != ERROR_REFERENCE_WIDTH_PX.toInt() }?.let {
+                append(" · RMS@1280 ")
+                append(String.format(Locale.US, "%.3f", it))
+                append(" px")
+            }
+            append(" · базис ")
             append(String.format(Locale.US, "%.1f", baselineMm))
             append(" мм")
             baselineDeltaMm?.let {
@@ -50,6 +68,13 @@ data class DualPhoneStereoEstimate(
                 append(String.format(Locale.US, "%.2f", it))
                 append(" px")
             }
+            normalizedMeanEpipolarErrorPx
+                ?.takeIf { imageWidth != ERROR_REFERENCE_WIDTH_PX.toInt() }
+                ?.let {
+                    append(" · epi@1280 ")
+                    append(String.format(Locale.US, "%.2f", it))
+                    append(" px")
+                }
             if (pairsRejected > 0) append(" · отброшено $pairsRejected")
         }
     } else {
@@ -60,6 +85,11 @@ data class DualPhoneStereoEstimate(
         .put("solved", solved)
         .put("pairs_used", pairsUsed)
         .put("rms", rms ?: JSONObject.NULL)
+        .put("image_width", imageWidth)
+        .put("image_height", imageHeight)
+        .put("error_reference_width_px", ERROR_REFERENCE_WIDTH_PX)
+        .put("normalized_rms_px", normalizedRmsPx ?: JSONObject.NULL)
+        .put("normalized_mean_epipolar_error_px", normalizedMeanEpipolarErrorPx ?: JSONObject.NULL)
         .put("rotation", rotation.toJsonArray())
         .put("translation_mm", translationMm.toJsonArray())
         .put("baseline_mm", baselineMm ?: JSONObject.NULL)
@@ -72,15 +102,23 @@ data class DualPhoneStereoEstimate(
         .put("status", status)
 
     companion object {
+        const val ERROR_REFERENCE_WIDTH_PX = 1280.0
         const val MAX_STEREO_RMS_PX = 2.0
         const val RECOMMENDED_MEAN_EPIPOLAR_ERROR_PX = 1.5
         const val MAX_MEAN_EPIPOLAR_ERROR_PX = 1.75
+
+        fun normalizePixelError(valuePx: Double, imageWidth: Int): Double {
+            if (!valuePx.isFinite() || imageWidth <= 0) return valuePx
+            return valuePx * ERROR_REFERENCE_WIDTH_PX / imageWidth.toDouble()
+        }
 
         fun fromJson(json: JSONObject): DualPhoneStereoEstimate =
             DualPhoneStereoEstimate(
                 solved = json.optBoolean("solved", false),
                 pairsUsed = json.optInt("pairs_used", 0),
                 rms = json.optNullableDouble("rms"),
+                imageWidth = json.optInt("image_width", ERROR_REFERENCE_WIDTH_PX.toInt()).coerceAtLeast(1),
+                imageHeight = json.optInt("image_height", 720).coerceAtLeast(1),
                 rotation = json.optJSONArray("rotation").toDoubleList(),
                 translationMm = json.optJSONArray("translation_mm").toDoubleList(),
                 baselineMm = json.optNullableDouble("baseline_mm"),

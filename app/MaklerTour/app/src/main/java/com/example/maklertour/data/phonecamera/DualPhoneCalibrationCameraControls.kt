@@ -179,6 +179,9 @@ internal object DualPhoneCalibrationCameraControls {
         statuses += if (applied) "CAMERA2_OPTIONS_APPLIED" else
             "CAMERA2_OPTIONS_FAILED"
 
+        val metricReady = zoomLocked && applied
+        statuses.add(0, if (metricReady) "METRIC_READY" else "METRIC_NOT_READY")
+
         statuses.joinToString(",").also {
             Log.i(TAG, "calibration camera controls: $it")
         }

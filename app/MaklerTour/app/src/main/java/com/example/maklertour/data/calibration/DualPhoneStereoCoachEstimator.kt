@@ -34,7 +34,7 @@ data class DualPhoneStereoCoachSnapshot(
     fun summaryRu(): String = buildString {
         append("Пар: $collectedPairs")
         liveRmsPx?.let {
-            append(" · live RMS ")
+            append(" · live RMS@1280 ")
             append(String.format(Locale.US, "%.3f px", it))
         }
         liveBaselineMm?.let {
@@ -42,7 +42,7 @@ data class DualPhoneStereoCoachSnapshot(
             append(String.format(Locale.US, "%.1f мм", it))
         }
         meanEpipolarErrorPx?.let {
-            append(" · epi ")
+            append(" · epi@1280 ")
             append(String.format(Locale.US, "%.2f px", it))
         }
     }
@@ -64,6 +64,8 @@ class DualPhoneStereoCoachEstimator : Closeable {
 
     private data class SolveModel(
         val rms: Double,
+        val imageWidth: Int,
+        val imageHeight: Int,
         val rotation: List<Double>,
         val translation: List<Double>,
         val fundamental: List<Double>,
@@ -153,9 +155,13 @@ class DualPhoneStereoCoachEstimator : Closeable {
         }
         return DualPhoneStereoCoachSnapshot(
             collectedPairs = samples.size,
-            liveRmsPx = model?.rms,
+            liveRmsPx = model?.let { normalizeError(it.rms, it.imageWidth) },
             liveBaselineMm = model?.baselineMm,
-            meanEpipolarErrorPx = model?.perPairEpipolarErrors?.averageOrNull(),
+            meanEpipolarErrorPx = model?.let { current ->
+                current.perPairEpipolarErrors.averageOrNull()?.let {
+                    normalizeError(it, current.imageWidth)
+                }
+            },
             commonCorners = samples.lastOrNull()?.commonIds ?: 0,
             frameDeltaMs = samples.lastOrNull()?.frameDeltaMs,
             coveragePercent = (bins.size * 100 / 9).coerceIn(0, 100),
@@ -173,6 +179,7 @@ class DualPhoneStereoCoachEstimator : Closeable {
         if (!master.acceptable || !slave.acceptable) {
             return failed("Сначала нужны корректные intrinsics MASTER и SLAVE")
         }
+        calibrationGeometryError(master, slave)?.let { return failed(it) }
         if (samples.size < MIN_PAIRS_FOR_FINAL_SOLVE) {
             return failed("Недостаточно стереопар: ${samples.size}/$MIN_PAIRS_FOR_FINAL_SOLVE")
         }
@@ -181,7 +188,9 @@ class DualPhoneStereoCoachEstimator : Closeable {
         var rejected = 0
         var model = solveIndices(active, master, slave)
         while (active.size > MIN_PAIRS_AFTER_REJECTION && rejected < MAX_REJECTED_PAIRS) {
-            val errors = model.perPairEpipolarErrors
+            val errors = model.perPairEpipolarErrors.map {
+                normalizeError(it, model.imageWidth)
+            }
             val invalidIndex = errors.indexOfFirst { !it.isFinite() }
             if (invalidIndex >= 0) {
                 active.removeAt(invalidIndex)
@@ -208,17 +217,20 @@ class DualPhoneStereoCoachEstimator : Closeable {
         }
         val coverage = (coverageBins(active).size * 100 / 9).coerceIn(0, 100)
         val meanEpi = model.perPairEpipolarErrors.averageOrNull()
+        val normalizedRms = normalizeError(model.rms, model.imageWidth)
+        val normalizedMeanEpi = meanEpi?.let { normalizeError(it, model.imageWidth) }
         val maxDelta = active.mapNotNull { samples[it].frameDeltaMs }.maxOrNull()
         val status = when {
-            model.rms > DualPhoneStereoEstimate.MAX_STEREO_RMS_PX ->
-                "Stereo RMS ${format3(model.rms)} px выше допустимых " +
-                    "${DualPhoneStereoEstimate.MAX_STEREO_RMS_PX} px"
-            meanEpi != null && meanEpi > MAX_FINAL_MEAN_EPIPOLAR_ERROR_PX ->
-                "Средняя эпиполярная ошибка ${format2(meanEpi)} px слишком высокая"
-            meanEpi != null &&
-                meanEpi > DualPhoneStereoEstimate.RECOMMENDED_MEAN_EPIPOLAR_ERROR_PX ->
-                "Stereo R/T рассчитаны с предупреждением: средняя эпиполярная ошибка " +
-                    "${format2(meanEpi)} px"
+            normalizedRms > DualPhoneStereoEstimate.MAX_STEREO_RMS_PX ->
+                "Stereo RMS@1280 ${format3(normalizedRms)} px " +
+                    "(raw ${format3(model.rms)} px @ ${model.imageWidth}x${model.imageHeight}) " +
+                    "выше допустимых ${DualPhoneStereoEstimate.MAX_STEREO_RMS_PX} px"
+            normalizedMeanEpi != null && normalizedMeanEpi > MAX_FINAL_MEAN_EPIPOLAR_ERROR_PX ->
+                "Средняя эпиполярная ошибка@1280 ${format2(normalizedMeanEpi)} px слишком высокая"
+            normalizedMeanEpi != null &&
+                normalizedMeanEpi > DualPhoneStereoEstimate.RECOMMENDED_MEAN_EPIPOLAR_ERROR_PX ->
+                "Stereo R/T рассчитаны с предупреждением: средняя эпиполярная ошибка@1280 " +
+                    "${format2(normalizedMeanEpi)} px"
             delta != null && abs(delta) > max(15.0, (operatorBaselineMm ?: 0.0) * 0.12) ->
                 "Базис отличается от введённого на ${format1(delta)} мм"
             else -> "Stereo R/T рассчитаны; автоматически отброшено пар: $rejected"
@@ -227,6 +239,8 @@ class DualPhoneStereoCoachEstimator : Closeable {
             solved = true,
             pairsUsed = active.size,
             rms = model.rms,
+            imageWidth = model.imageWidth,
+            imageHeight = model.imageHeight,
             rotation = model.rotation,
             translationMm = model.translation,
             baselineMm = model.baselineMm,
@@ -245,7 +259,10 @@ class DualPhoneStereoCoachEstimator : Closeable {
         master: DualPhoneLiveIntrinsicsEstimate,
         slave: DualPhoneLiveIntrinsicsEstimate,
     ): SolveModel {
+        require(indices.isNotEmpty()) { "Stereo solve requires at least one pair" }
         val selected = indices.map(samples::get)
+        val geometryError = calibrationGeometryError(master, slave, selected)
+        require(geometryError == null) { requireNotNull(geometryError) }
         val imageSize = selected.last().imageSize
         val masterMatrix = cameraMatrix(master)
         val slaveMatrix = cameraMatrix(slave)
@@ -303,6 +320,8 @@ class DualPhoneStereoCoachEstimator : Closeable {
             val fundamentalValues = fundamental.toFlatList()
             SolveModel(
                 rms = rms,
+                imageWidth = imageSize.width.toInt(),
+                imageHeight = imageSize.height.toInt(),
                 rotation = rotation.toFlatList(),
                 translation = translationValues,
                 fundamental = fundamentalValues,
@@ -455,7 +474,8 @@ class DualPhoneStereoCoachEstimator : Closeable {
             model == null -> "Наберите ещё несколько неподвижных синхронных пар"
             operatorBaselineMm != null && abs(model.baselineMm - operatorBaselineMm) > 30.0 ->
                 "Базис пока нестабилен: держите доску неподвижно и меняйте дистанцию"
-            model.rms > 2.0 -> "Live RMS высокий: добавьте другой угол и не двигайте доску в момент снимка"
+            normalizeError(model.rms, model.imageWidth) > DualPhoneStereoEstimate.MAX_STEREO_RMS_PX ->
+                "Live RMS@1280 высокий: добавьте другой угол и не двигайте доску в момент снимка"
             else -> "Хорошее покрытие; добавьте 2–3 контрольных ракурса"
         }
     }
@@ -473,6 +493,35 @@ class DualPhoneStereoCoachEstimator : Closeable {
             put(0, 0, estimate.k1!!)
             put(1, 0, estimate.k2!!)
         }
+
+    private fun calibrationGeometryError(
+        master: DualPhoneLiveIntrinsicsEstimate,
+        slave: DualPhoneLiveIntrinsicsEstimate,
+        selected: List<PairSample> = samples,
+    ): String? {
+        if (master.imageWidth <= 0 || master.imageHeight <= 0 ||
+            slave.imageWidth <= 0 || slave.imageHeight <= 0
+        ) {
+            return "CALIBRATION_GEOMETRY_MISMATCH: intrinsics image size is missing"
+        }
+        if (master.imageWidth != slave.imageWidth || master.imageHeight != slave.imageHeight) {
+            return "CALIBRATION_GEOMETRY_MISMATCH: MASTER intrinsics " +
+                "${master.imageWidth}x${master.imageHeight} != SLAVE intrinsics " +
+                "${slave.imageWidth}x${slave.imageHeight}"
+        }
+        val mismatch = selected.firstOrNull { sample ->
+            sample.imageSize.width.toInt() != master.imageWidth ||
+                sample.imageSize.height.toInt() != master.imageHeight
+        }
+        return mismatch?.let { sample ->
+            "CALIBRATION_GEOMETRY_MISMATCH: stereo pair " +
+                "${sample.imageSize.width.toInt()}x${sample.imageSize.height.toInt()} != intrinsics " +
+                "${master.imageWidth}x${master.imageHeight}"
+        }
+    }
+
+    private fun normalizeError(valuePx: Double, imageWidth: Int): Double =
+        DualPhoneStereoEstimate.normalizePixelError(valuePx, imageWidth)
 
     private fun failed(message: String): DualPhoneStereoEstimate =
         DualPhoneStereoEstimate(solved = false, pairsUsed = samples.size, status = message)

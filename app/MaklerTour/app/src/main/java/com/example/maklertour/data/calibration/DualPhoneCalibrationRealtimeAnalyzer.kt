@@ -150,6 +150,7 @@ class DualPhoneCalibrationRealtimeAnalyzer(
             activePoseId = target.id
         }
 
+        val cameraControlsReady = frame.cameraControlStatus.startsWith("METRIC_READY")
         val detection = detector.detect(frame.bitmap, settings)
         val geometry = boardGeometry(detection, settings)
         val light = sampleLightAndSharpness(frame.bitmap)
@@ -160,13 +161,13 @@ class DualPhoneCalibrationRealtimeAnalyzer(
             null
         }
 
-        if (geometry != null && motion != null && motion <= MAX_MOTION_SCORE) {
+        if (cameraControlsReady && geometry != null && motion != null && motion <= MAX_MOTION_SCORE) {
             if (stableSinceElapsedMs == null) stableSinceElapsedMs = nowMs
         } else {
             stableSinceElapsedMs = null
         }
         val stableMs = stableSinceElapsedMs?.let { (nowMs - it).coerceAtLeast(0L) } ?: 0L
-        previousGeometry = geometry
+        previousGeometry = if (cameraControlsReady) geometry else null
 
         val boardFound = detection.found && geometry != null
         val boardClipped = geometry?.clipped ?: false
@@ -177,7 +178,8 @@ class DualPhoneCalibrationRealtimeAnalyzer(
         val stable = stableMs >= REQUIRED_STABLE_MS
         val noveltyScore = geometry?.noveltyAgainst(acceptedGeometries) ?: 0.0
         val novel = acceptedGeometries.isEmpty() || noveltyScore >= MIN_NOVELTY_SCORE
-        val qualityReady = boardFound &&
+        val qualityReady = cameraControlsReady &&
+            boardFound &&
             !boardClipped &&
             exposureOk &&
             sharpnessOk &&
@@ -198,6 +200,8 @@ class DualPhoneCalibrationRealtimeAnalyzer(
             .coerceIn(0f, 1f)
 
         val status = when {
+            !cameraControlsReady ->
+                "Ожидание фиксации metric camera controls: 1x, EIS/OIS и Camera2 options"
             !boardFound -> "Покажите камере всю калибровочную доску"
             boardClipped -> "Отодвиньте доску от края — все углы должны быть в кадре"
             !exposureOk -> "Измените освещение — уберите тень или блики"

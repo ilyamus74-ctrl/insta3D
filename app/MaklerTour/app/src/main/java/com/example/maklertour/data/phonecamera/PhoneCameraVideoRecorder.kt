@@ -154,6 +154,8 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     private val calibrationTimestampMapper = DualPhoneCalibrationTimestampMapper()
     @Volatile
     private var calibrationCameraControlStatus: String = "NOT_PREPARED"
+    @Volatile
+    private var calibrationMetricReadyAfterElapsedRealtimeNs: Long = Long.MAX_VALUE
     private var latestCalibrationSequence = 0L
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "Cam0CalibrationAnalysis").apply { isDaemon = true }
@@ -199,7 +201,14 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         enableVideoCapture: Boolean = true,
         enableCalibrationAnalysis: Boolean = true,
     ): PhoneCameraBindResult {
-        requestedZoomRatio = zoomRatio
+        requestedZoomRatio = if (enableCalibrationAnalysis) 1.0f else zoomRatio
+        if (enableCalibrationAnalysis) {
+            calibrationCameraControlStatus = "PREPARING_METRIC_CONTROLS"
+            calibrationMetricReadyAfterElapsedRealtimeNs = Long.MAX_VALUE
+            synchronized(latestFrameLock) {
+                latestCalibrationFrame = null
+            }
+        }
         requestedProfileWidth = calibrationWidth
         requestedProfileHeight = calibrationHeight
         val profileRequestedSize = requestedSize(calibrationWidth, calibrationHeight)
@@ -329,7 +338,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 val timestampSource =
                     DualPhoneCalibrationCameraControls.timestampSource(calibrationCamera)
                 calibrationTimestampMapper.reset(timestampSource)
-                calibrationCameraControlStatus = runCatching {
+                val preparedControlStatus = runCatching {
                     DualPhoneCalibrationCameraControls.prepare(
                         camera = calibrationCamera,
                         previewView = previewView,
@@ -337,6 +346,22 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 }.getOrElse { error ->
                     "PREPARE_FAILED:${error.message ?: error.javaClass.simpleName}"
                 }
+                if (preparedControlStatus.startsWith("METRIC_READY")) {
+                    // Frames produced while zoom/stabilization options were changing must never
+                    // enter intrinsics or stereo calibration. Keep the gate PREPARING during
+                    // this settle interval, then drop the last pre-ready frame.
+                    delay(300L)
+                    synchronized(latestFrameLock) {
+                        latestCalibrationFrame = null
+                    }
+                }
+                calibrationMetricReadyAfterElapsedRealtimeNs =
+                    if (preparedControlStatus.startsWith("METRIC_READY")) {
+                        SystemClock.elapsedRealtimeNanos()
+                    } else {
+                        Long.MAX_VALUE
+                    }
+                calibrationCameraControlStatus = preparedControlStatus
                 if (calibrationCameraControlStatus.contains("ZOOM_1X_LOCKED")) {
                     requestedZoomRatio = 1.0f
                     effectiveZoomRatio =
@@ -602,6 +627,15 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             val ageMs = (
                 android.os.SystemClock.elapsedRealtimeNanos() - captureElapsedRealtimeNs
             ) / 1_000_000L
+            val currentControlStatus = calibrationCameraControlStatus
+            val frameControlStatus = if (
+                currentControlStatus.startsWith("METRIC_READY") &&
+                captureElapsedRealtimeNs >= calibrationMetricReadyAfterElapsedRealtimeNs
+            ) {
+                currentControlStatus
+            } else {
+                "PREPARING_METRIC_CONTROLS"
+            }
             loggedCalibrationAnalysisFrames += 1L
             if (loggedCalibrationAnalysisFrames <= 10L || loggedCalibrationAnalysisFrames % 30L == 0L) {
                 Log.d(TAG, "cam0 analysis actual=${imageProxy.width}x${imageProxy.height} imageProxyRotationDegrees=$imageProxyRotationDegrees targetRotation=$currentTargetRotation before=${rawBitmap.width}x${rawBitmap.height} after=${bitmap.width}x${bitmap.height} requested=${requestedCalibrationWidth}x${requestedCalibrationHeight} age=${ageMs}ms conversion_ms=$conversionMs saved frame cam0=${bitmap.width}x${bitmap.height} rotationApplied=$rotationDegrees")
@@ -614,7 +648,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                     sequence = latestCalibrationSequence,
                     captureElapsedRealtimeNs = captureElapsedRealtimeNs,
                     timestampSource = calibrationTimestampMapper.sourceName,
-                    cameraControlStatus = calibrationCameraControlStatus,
+                    cameraControlStatus = frameControlStatus,
                     rotationDegreesApplied = rotationDegrees,
                     imageProxyRotationDegrees = imageProxyRotationDegrees,
                     rawWidth = imageProxy.width,
