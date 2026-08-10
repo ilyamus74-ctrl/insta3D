@@ -87,6 +87,9 @@ internal data class DualPhoneStereoPairSelection(
     val commonCorners: Int,
     val timestampSources: String,
     val usedCaptureTimeline: Boolean,
+    val bufferAgeMs: Long,
+    val masterCandidateCount: Int,
+    val slaveCandidateCount: Int,
 )
 
 internal class DualPhoneStereoObservationBuffer(
@@ -124,7 +127,7 @@ internal class DualPhoneStereoObservationBuffer(
         poseId: String,
         mode: DualPhoneCalibrationMode,
         manualRequest: DualPhoneManualStereoCaptureRequest?,
-        slaveMinusMasterOffsetNs: Long?,
+        masterToSlaveNs: ((Long) -> Long?)?,
         nowMasterElapsedMs: Long,
     ): DualPhoneStereoPairSelection? {
         trimExpired(nowMasterElapsedMs)
@@ -148,6 +151,12 @@ internal class DualPhoneStereoObservationBuffer(
                     request = manualRequest,
                 )
         }
+        val oldestCandidateReceivedAtMs = (masterCandidates + slaveCandidates)
+            .minOfOrNull { it.receivedAtMasterElapsedMs }
+        val bufferAgeMs = oldestCandidateReceivedAtMs
+            ?.let { (nowMasterElapsedMs - it).coerceAtLeast(0L) }
+            ?: 0L
+
         var best: DualPhoneStereoPairSelection? = null
         for (masterEntry in masterCandidates) {
             for (slaveEntry in slaveCandidates) {
@@ -160,6 +169,17 @@ internal class DualPhoneStereoObservationBuffer(
                     .size
                 if (commonCorners < MIN_COMMON_CORNERS) continue
 
+                val mappedSlaveCaptureNs = if (
+                    mode != DualPhoneCalibrationMode.MANUAL_STEREO &&
+                    masterObservation.captureElapsedRealtimeNs > 0L &&
+                    slaveObservation.captureElapsedRealtimeNs > 0L
+                ) {
+                    masterToSlaveNs?.invoke(
+                        masterObservation.captureElapsedRealtimeNs,
+                    )
+                } else {
+                    null
+                }
                 val delta = if (
                     mode == DualPhoneCalibrationMode.MANUAL_STEREO &&
                     manualRequest != null
@@ -169,17 +189,10 @@ internal class DualPhoneStereoObservationBuffer(
                         slaveObservation = slaveObservation,
                         request = manualRequest,
                     )
-                } else if (
-                    slaveMinusMasterOffsetNs != null &&
-                    masterObservation.captureElapsedRealtimeNs > 0L &&
-                    slaveObservation.captureElapsedRealtimeNs > 0L
-                ) {
+                } else if (mappedSlaveCaptureNs != null) {
                     abs(
-                        masterObservation.captureElapsedRealtimeNs -
-                            (
-                                slaveObservation.captureElapsedRealtimeNs -
-                                    slaveMinusMasterOffsetNs
-                                ),
+                        slaveObservation.captureElapsedRealtimeNs -
+                            mappedSlaveCaptureNs,
                     ) / 1_000_000.0
                 } else {
                     abs(
@@ -198,7 +211,10 @@ internal class DualPhoneStereoObservationBuffer(
                             slaveObservation.timestampSource,
                     usedCaptureTimeline =
                         mode == DualPhoneCalibrationMode.MANUAL_STEREO ||
-                            slaveMinusMasterOffsetNs != null,
+                            mappedSlaveCaptureNs != null,
+                    bufferAgeMs = bufferAgeMs,
+                    masterCandidateCount = masterCandidates.size,
+                    slaveCandidateCount = slaveCandidates.size,
                 )
                 if (
                     best == null ||

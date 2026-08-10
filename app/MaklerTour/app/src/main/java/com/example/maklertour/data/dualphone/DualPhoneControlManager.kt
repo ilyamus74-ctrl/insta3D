@@ -1014,14 +1014,20 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         if (stage == DualPhoneCalibrationStage.COMPLETE) return null
 
         val nowMs = SystemClock.elapsedRealtime()
-        val clockOffsetNs = clockSyncController.currentSnapshot().offsetNs
+        val clockSnapshot = clockSyncController.currentSnapshot()
+        val stereoClockMapper: ((Long) -> Long?)? =
+            if (clockSnapshot.captureSchedulingAllowed) {
+                clockSyncController::masterToSlaveNs
+            } else {
+                null
+            }
         val stereoSelection = if (stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS) {
             stereoObservationBuffer.bestPair(
                 calibrationRunId = current.calibrationRunId ?: return null,
                 poseId = current.calibrationTargetPoseId,
                 mode = current.calibrationMode,
                 manualRequest = manualStereoCaptureRequest,
-                slaveMinusMasterOffsetNs = clockOffsetNs,
+                masterToSlaveNs = stereoClockMapper,
                 nowMasterElapsedMs = nowMs,
             )
         } else {
@@ -1081,18 +1087,51 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             }
             val selectedPair = stereoSelection ?: return null
             val frameDeltaMs = selectedPair.deltaMs
-            val maxDeltaMs = when {
-                current.calibrationMode == DualPhoneCalibrationMode.MANUAL_STEREO ->
-                    CALIBRATION_MANUAL_STEREO_MAX_FRAME_DELTA_MS
-                selectedPair.usedCaptureTimeline ->
-                    CALIBRATION_STEREO_MAX_FRAME_DELTA_MS
-                else -> CALIBRATION_STEREO_FALLBACK_MAX_DELTA_MS
-            }
-            if (frameDeltaMs > maxDeltaMs) {
+            if (
+                current.calibrationMode != DualPhoneCalibrationMode.MANUAL_STEREO &&
+                !selectedPair.usedCaptureTimeline
+            ) {
                 mutableState.value = current.copy(
-                    lastMessage = "STEREO COACH: кадры разошлись на " +
+                    lastMessage = "STEREO SYNC: ждём стабильную clock sync; " +
+                        "arrival-time pairing для метрической калибровки запрещён",
+                )
+                return null
+            }
+            val hardMaxDeltaMs =
+                if (current.calibrationMode == DualPhoneCalibrationMode.MANUAL_STEREO) {
+                    CALIBRATION_MANUAL_STEREO_MAX_FRAME_DELTA_MS
+                } else {
+                    CALIBRATION_STEREO_HARD_MAX_FRAME_DELTA_MS
+                }
+            if (frameDeltaMs > hardMaxDeltaMs) {
+                mutableState.value = current.copy(
+                    lastMessage = "STEREO SYNC: лучший pair Δ=" +
                         String.format(java.util.Locale.US, "%.1f", frameDeltaMs) +
-                        " мс — держите доску неподвижно",
+                        " мс > " +
+                        String.format(java.util.Locale.US, "%.1f", hardMaxDeltaMs) +
+                        " мс; буфер M/S=" +
+                        "${selectedPair.masterCandidateCount}/" +
+                        "${selectedPair.slaveCandidateCount} — ждём более близкие кадры",
+                )
+                return null
+            }
+            if (
+                current.calibrationMode != DualPhoneCalibrationMode.MANUAL_STEREO &&
+                frameDeltaMs > CALIBRATION_STEREO_TARGET_FRAME_DELTA_MS &&
+                selectedPair.bufferAgeMs < CALIBRATION_STEREO_BEST_PAIR_WAIT_MS
+            ) {
+                mutableState.value = current.copy(
+                    lastMessage = "STEREO SYNC: лучший Δ=" +
+                        String.format(java.util.Locale.US, "%.1f", frameDeltaMs) +
+                        " мс; целевой ≤" +
+                        String.format(
+                            java.util.Locale.US,
+                            "%.1f",
+                            CALIBRATION_STEREO_TARGET_FRAME_DELTA_MS,
+                        ) +
+                        " мс; буфер ${selectedPair.bufferAgeMs} мс M/S=" +
+                        "${selectedPair.masterCandidateCount}/" +
+                        "${selectedPair.slaveCandidateCount} — ищем лучшую пару",
                 )
                 return null
             }
@@ -2975,9 +3014,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         private const val CALIBRATION_OBSERVATION_MAX_AGE_MS = 1_500L
         private const val CALIBRATION_MIN_COMMON_BOARD_CORNERS = 20
         private const val CALIBRATION_STEREO_REQUIRED_STABLE_MS = 450L
-        private const val CALIBRATION_STEREO_MAX_FRAME_DELTA_MS = 80.0
-        private const val CALIBRATION_MANUAL_STEREO_MAX_FRAME_DELTA_MS = 50.0
-        private const val CALIBRATION_STEREO_FALLBACK_MAX_DELTA_MS = 150.0
+        private const val CALIBRATION_STEREO_TARGET_FRAME_DELTA_MS = 20.0
+        private const val CALIBRATION_STEREO_HARD_MAX_FRAME_DELTA_MS = 30.0
+        private const val CALIBRATION_STEREO_BEST_PAIR_WAIT_MS = 1_500L
+        private const val CALIBRATION_MANUAL_STEREO_MAX_FRAME_DELTA_MS = 30.0
         private const val MANUAL_STEREO_CAPTURE_LEAD_NS = 900_000_000L
         private const val MANUAL_STEREO_CAPTURE_WINDOW_NS = 900_000_000L
         private const val MANUAL_STEREO_CAPTURE_TIMEOUT_MS = 3_000L
