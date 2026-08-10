@@ -53,7 +53,7 @@ data class DualPhoneStereoEstimate(
             normalizedRms != null && normalizedRms > MAX_STEREO_RMS_PX ->
                 "RMS quality-equivalent ${String.format(Locale.US, "%.3f", normalizedRms)} px > ${String.format(Locale.US, "%.2f", MAX_STEREO_RMS_PX)} px"
             normalizedEpi != null && normalizedEpi > MAX_MEAN_EPIPOLAR_ERROR_PX ->
-                "EPI quality-equivalent ${String.format(Locale.US, "%.2f", normalizedEpi)} px > ${String.format(Locale.US, "%.2f", MAX_MEAN_EPIPOLAR_ERROR_PX)} px"ф
+                "EPI quality-equivalent ${String.format(Locale.US, "%.2f", normalizedEpi)} px > ${String.format(Locale.US, "%.2f", MAX_MEAN_EPIPOLAR_ERROR_PX)} px"
             else -> null
         }
     }
