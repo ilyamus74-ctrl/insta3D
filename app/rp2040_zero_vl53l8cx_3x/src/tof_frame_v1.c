@@ -1,7 +1,8 @@
 #include "tof_frame_v1.h"
 
 #include <stddef.h>
-#include <stdio.h>
+
+#include "pico/stdio.h"
 
 #define TOF_V1_MAX_ZONES 64U
 #define TOF_V1_HEADER_BYTES 28U
@@ -94,6 +95,11 @@ void tof_frame_v1_write(
     const uint32_t crc = crc32_ieee(frame, off);
     put_u32_le(frame, &off, crc);
 
-    (void)fwrite(frame, 1, off, stdout);
-    (void)fflush(stdout);
+    /*
+     * Do not send binary frames through fwrite()/newlib stdout:
+     * Pico newlib _write() enables CR/LF translation, which can turn a raw
+     * 0x0A payload byte into 0x0D 0x0A and invalidate the frame CRC.
+     * stdio_put_string(..., cr_translation=false) preserves bytes exactly.
+     */
+    (void)stdio_put_string((const char *)frame, (int)off, false, false);
 }
