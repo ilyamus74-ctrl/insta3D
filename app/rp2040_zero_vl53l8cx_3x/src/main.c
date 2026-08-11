@@ -9,6 +9,7 @@
 
 #include "vl53l8cx_api.h"
 #include "vl53l8cx_pico_platform.h"
+#include "tof_frame_v1.h"
 
 #define SENSOR_MAX 3
 #define I2C_SDA_PIN 4
@@ -37,6 +38,7 @@ typedef struct {
 
 static tof_slot_t sensors[SENSOR_MAX];
 static int print_slot = 0;
+static int stream_slot = -1;
 static uint64_t next_print_us = 0;
 
 static bool raw_i2c_ack(uint8_t addr7) {
@@ -251,8 +253,19 @@ static void poll_sensor(tof_slot_t *s) {
     s->sequence++;
     s->last_frame_us = s->last_irq_us ? s->last_irq_us : time_us_64();
 
+    if (stream_slot == s->slot) {
+        tof_frame_v1_write(
+            s->slot,
+            s->resolution,
+            s->hz,
+            s->sequence,
+            s->last_frame_us,
+            s->last_irq_us != 0,
+            &s->results);
+    }
+
     const uint64_t now = time_us_64();
-    if (print_slot == s->slot && now >= next_print_us) {
+    if (stream_slot < 0 && print_slot == s->slot && now >= next_print_us) {
         print_matrix(s);
         next_print_us = now + 500000ULL;
     }
@@ -278,6 +291,7 @@ static void help(void) {
         "  help\n"
         "  list\n"
         "  print 0|1|2|off\n"
+        "  stream 0|1|2|off   (TOF_FRAME_V1 binary over USB CDC)\n"
         "  start 0|1|2|all\n"
         "  stop 0|1|2|all\n"
         "  mode SLOT 8 HZ    (8x8 max 15Hz)\n"
@@ -304,6 +318,25 @@ static void handle_line(char *line) {
         } else {
             int n = atoi(arg);
             if (n >= 0 && n < SENSOR_MAX) print_slot = n;
+        }
+        return;
+    }
+    if (strncmp(line, "stream ", 7) == 0) {
+        char *arg = line + 7;
+        if (strcmp(arg, "off") == 0) {
+            stream_slot = -1;
+            printf("binary stream OFF\n");
+        } else {
+            int n = atoi(arg);
+            if (n < 0 || n >= SENSOR_MAX || !sensors[n].initialized) {
+                printf("bad stream slot\n");
+            } else {
+                print_slot = -1;
+                printf("binary stream slot=%d protocol=TOF_FRAME_V1\n", n);
+                fflush(stdout);
+                sleep_ms(10);
+                stream_slot = n;
+            }
         }
         return;
     }

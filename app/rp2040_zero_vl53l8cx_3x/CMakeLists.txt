@@ -16,6 +16,7 @@ set(VL53_DIR ${CMAKE_CURRENT_LIST_DIR}/vendor/VL53L8CX/src)
 
 add_executable(tof_rig
   src/main.c
+  src/tof_frame_v1.c
   src/vl53l8cx_pico_platform.c
   ${VL53_DIR}/vl53l8cx_api.c
   ${VL53_DIR}/vl53l8cx_platform.c
