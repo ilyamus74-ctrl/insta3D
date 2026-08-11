@@ -40,6 +40,8 @@ h1 { margin: 0 0 6px; font-size: 20px; }
 }
 .selected-preview { margin: 12px auto; width: min(900px, calc(100% - 24px)); min-height: 420px; aspect-ratio: 9 / 16; cursor: crosshair; }
 .selected-preview img { min-height: 420px; }
+.registered-preview { outline: 1px solid rgba(114,245,154,.22); }
+.registered-preview .label { max-width: calc(100% - 80px); }
 .depth-probe { position: absolute; z-index: 4; display: none; min-width: 145px; max-width: 230px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.28); border-radius: 9px; background: rgba(0,0,0,.88); color: #f5f5f7; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.35; white-space: pre-line; pointer-events: none; box-shadow: 0 8px 28px rgba(0,0,0,.35); }
 .depth-probe.visible { display: block; }
 .depth-probe.invalid { color: #ffd66e; }
@@ -110,7 +112,17 @@ pre { max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap;
 </div>
 
 <div class="block-title">
-  <h2>Live depth preview</h2>
+  <h2>Registered RGB + metric distance</h2>
+  <span id="registeredStatus">waiting for registered CAMERA_A</span>
+</div>
+<div id="registeredPreviewCard" class="camera selected-preview registered-preview">
+  <img id="registeredPreview" decoding="async">
+  <div id="registeredDepthProbe" class="depth-probe">move cursor over the RGB image</div>
+  <div id="registeredLabel" class="label warn">CAMERA_A · REGISTERED DEPTH · WAITING</div>
+</div>
+
+<div class="block-title">
+  <h2>Depth diagnostic preview</h2>
   <span id="depthStatus">AUTO profile waiting</span>
 </div>
 <div id="selectedPreviewCard" class="camera selected-preview">
@@ -179,6 +191,11 @@ const labelB = document.getElementById('labelB');
 const cameraA = document.getElementById('cameraA');
 const cameraB = document.getElementById('cameraB');
 const depthStatus = document.getElementById('depthStatus');
+const registeredStatus = document.getElementById('registeredStatus');
+const registeredPreviewCard = document.getElementById('registeredPreviewCard');
+const registeredPreview = document.getElementById('registeredPreview');
+const registeredDepthProbe = document.getElementById('registeredDepthProbe');
+const registeredLabel = document.getElementById('registeredLabel');
 const selectedPreviewCard = document.getElementById('selectedPreviewCard');
 const selectedPreview = document.getElementById('selectedPreview');
 const depthProbe = document.getElementById('depthProbe');
@@ -210,6 +227,11 @@ let selectedLoadToken = 0;
 let selectedLoadTimer = null;
 let depthProbeTimer = null;
 let depthProbeRequest = 0;
+let lastRegisteredSequence = -1;
+let wantedRegisteredSequence = -1;
+let registeredImageLoading = false;
+let registeredProbeRequest = 0;
+let registeredProbeTimer = null;
 let lastRawASequence = -1;
 let lastRawBSequence = -1;
 let refreshInFlight = false;
@@ -384,6 +406,128 @@ function requestSelectedPreview(sequence) {
   wantedSelectedSequence = Math.max(wantedSelectedSequence, sequence);
   pumpSelectedPreview();
 }
+
+function pumpRegisteredPreview() {
+  if (registeredImageLoading ||
+      wantedRegisteredSequence <= lastRegisteredSequence) return;
+  const sequence = wantedRegisteredSequence;
+  registeredImageLoading = true;
+  const loader = new Image();
+  const finish = success => {
+    if (success) {
+      registeredPreview.src = loader.src;
+      lastRegisteredSequence = sequence;
+    }
+    registeredImageLoading = false;
+    if (wantedRegisteredSequence > lastRegisteredSequence) {
+      window.setTimeout(pumpRegisteredPreview, success ? 0 : 120);
+    }
+  };
+  loader.decoding = 'async';
+  loader.onload = () => finish(true);
+  loader.onerror = () => finish(false);
+  loader.src =
+    `/stereo/registered_a.jpg?v=${sequence}&heartbeat=${Date.now()}`;
+}
+
+function requestRegisteredPreview(sequence) {
+  if (!Number.isFinite(sequence) || sequence <= 0) return;
+  wantedRegisteredSequence = Math.max(wantedRegisteredSequence, sequence);
+  pumpRegisteredPreview();
+}
+
+function hideRegisteredDepthProbe() {
+  registeredProbeRequest += 1;
+  if (registeredProbeTimer !== null) {
+    window.clearTimeout(registeredProbeTimer);
+    registeredProbeTimer = null;
+  }
+  registeredDepthProbe.className = 'depth-probe';
+}
+
+function registeredPreviewPoint(event) {
+  if (!registeredPreview.naturalWidth || !registeredPreview.naturalHeight) return null;
+  const imageBounds = registeredPreview.getBoundingClientRect();
+  const cardBounds = registeredPreviewCard.getBoundingClientRect();
+  const scale = Math.min(
+    imageBounds.width / registeredPreview.naturalWidth,
+    imageBounds.height / registeredPreview.naturalHeight
+  );
+  const renderedWidth = registeredPreview.naturalWidth * scale;
+  const renderedHeight = registeredPreview.naturalHeight * scale;
+  const left = imageBounds.left + (imageBounds.width - renderedWidth) * 0.5;
+  const top = imageBounds.top + (imageBounds.height - renderedHeight) * 0.5;
+  if (event.clientX < left || event.clientX > left + renderedWidth ||
+      event.clientY < top || event.clientY > top + renderedHeight) return null;
+  return {
+    x: Math.max(0, Math.min(1, (event.clientX - left) / renderedWidth)),
+    y: Math.max(0, Math.min(1, (event.clientY - top) / renderedHeight)),
+    cardX: event.clientX - cardBounds.left,
+    cardY: event.clientY - cardBounds.top,
+  };
+}
+
+async function requestRegisteredDepthProbe(point) {
+  const request = ++registeredProbeRequest;
+  const sequence = lastRegisteredSequence;
+  if (sequence <= 0) return;
+  const left = Math.max(6, Math.min(
+    registeredPreviewCard.clientWidth - 180, point.cardX + 14));
+  const top = Math.max(6, Math.min(
+    registeredPreviewCard.clientHeight - 90, point.cardY + 14));
+  registeredDepthProbe.style.left = `${left}px`;
+  registeredDepthProbe.style.top = `${top}px`;
+  registeredDepthProbe.className = 'depth-probe visible';
+  registeredDepthProbe.textContent = 'measuring registered depth…';
+  try {
+    const response = await fetch(
+      `/api/depth/probe?x=${point.x.toFixed(6)}&y=${point.y.toFixed(6)}`,
+      {cache: 'no-store'}
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    if (request !== registeredProbeRequest ||
+        Number(result.registered_rgb_sequence || result.sequence) !== sequence ||
+        sequence !== lastRegisteredSequence) return;
+    if (!result.valid) {
+      registeredDepthProbe.className = 'depth-probe visible invalid';
+      registeredDepthProbe.textContent =
+        `NO VALID DEPTH\n${result.reason || 'invalid pixel'}\n` +
+        `RGB ${result.registered_width || '—'}×${result.registered_height || '—'} · ` +
+        `n ${result.sample_count || 0}`;
+      return;
+    }
+    registeredDepthProbe.className = 'depth-probe visible';
+    registeredDepthProbe.textContent =
+      `${Number(result.distance_m).toFixed(3)} m\n` +
+      `${Number(result.minimum_m).toFixed(3)}–${Number(result.maximum_m).toFixed(3)} m ` +
+      `(Δ ${Number(result.spread_m).toFixed(3)})\n` +
+      `${result.selected_mode} · n ${result.sample_count}\n` +
+      `${result.coordinate_space || 'REGISTERED_CAMERA_A_DEPTH_V1'}`;
+  } catch (error) {
+    if (request !== registeredProbeRequest) return;
+    registeredDepthProbe.className = 'depth-probe visible invalid';
+    registeredDepthProbe.textContent = `probe failed\n${error}`;
+  }
+}
+
+function scheduleRegisteredDepthProbe(event) {
+  const point = registeredPreviewPoint(event);
+  if (!point) {
+    hideRegisteredDepthProbe();
+    return;
+  }
+  if (registeredProbeTimer !== null) {
+    window.clearTimeout(registeredProbeTimer);
+  }
+  registeredProbeTimer = window.setTimeout(() => {
+    registeredProbeTimer = null;
+    requestRegisteredDepthProbe(point);
+  }, 75);
+}
+
+registeredPreview.addEventListener('mousemove', scheduleRegisteredDepthProbe);
+registeredPreview.addEventListener('mouseleave', hideRegisteredDepthProbe);
 
 function hideDepthProbe() {
   depthProbeRequest += 1;
@@ -1092,8 +1236,25 @@ function updateStereo(stereo) {
       ? 'ok'
       : (liveHealthState === 'ERROR' ? 'bad' : 'warn')}`;
 
+  const registeredReady =
+    selectedReady && Boolean(live.registered_rgb_ready);
+  const registeredSpace =
+    live.coordinate_space || 'REGISTERED_CAMERA_A_DEPTH_V1';
+  registeredStatus.textContent = registeredReady
+    ? `${registeredSpace} · seq ${sequence} · ${liveWork}`
+    : `${registeredSpace} · waiting`;
+  registeredLabel.textContent = registeredReady
+    ? `CAMERA_A RECTIFIED · ${live.active_profile || 'DEPTH'}\n` +
+      `RGB + depth share ${liveWork} · move mouse for distance`
+    : 'CAMERA_A · REGISTERED DEPTH · WAITING';
+  registeredLabel.className =
+    `label ${registeredReady ? 'ok' : 'warn'}`;
+
   if (selectedReady && sequence > 0) {
     requestSelectedPreview(sequence);
+  }
+  if (registeredReady && sequence > 0) {
+    requestRegisteredPreview(sequence);
   }
 }
 
@@ -1108,6 +1269,9 @@ async function refreshLivePreview() {
     const sequence = Number(live.sequence || 0);
     if (live.ready && sequence > 0) {
       requestSelectedPreview(sequence);
+      if (live.registered_rgb_ready) {
+        requestRegisteredPreview(sequence);
+      }
     }
     if (Object.keys(latestStereoStatus).length > 0) {
       updateStereo({

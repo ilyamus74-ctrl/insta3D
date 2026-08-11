@@ -375,6 +375,7 @@ struct LivePreviewRuntime::Impl {
                 ? active_calibration_revision + 1 : 0;
             pending.reset();
             selected_jpeg.clear();
+            registered_jpeg.clear();
             probe_disparity.release();
             probe_mask.release();
             probe_focal_px = 0.0;
@@ -412,6 +413,7 @@ struct LivePreviewRuntime::Impl {
             successful_publishes_since_reset = 0;
             consecutive_failures = 0;
             selected_jpeg_bytes = 0;
+            registered_jpeg_bytes = 0;
             last_focal_px = 0.0;
             last_baseline_mm = 0.0;
             last_disparity_zero_offset_px = 0.0;
@@ -432,6 +434,10 @@ struct LivePreviewRuntime::Impl {
         std::filesystem::remove(
             session_directory / "selected_preview_latest.jpg",
             remove_error);
+        remove_error.clear();
+        std::filesystem::remove(
+            session_directory / "registered_a_latest.jpg",
+            remove_error);
         condition.notify_all();
     }
 
@@ -441,12 +447,23 @@ struct LivePreviewRuntime::Impl {
         return selected_jpeg;
     }
 
+    std::optional<std::vector<std::uint8_t>> registered_image() const {
+        std::scoped_lock lock(mutex);
+        if (registered_jpeg.empty()) return std::nullopt;
+        return registered_jpeg;
+    }
+
     nlohmann::json depth_probe(
         const double normalized_x,
         const double normalized_y) const {
         std::scoped_lock lock(mutex);
         if (ready && probe_metric.ready) {
-            return probe_metric.query(normalized_x, normalized_y);
+            auto result = probe_metric.query(normalized_x, normalized_y);
+            result["coordinate_space"] = "REGISTERED_CAMERA_A_DEPTH_V1";
+            result["registered_rgb_sequence"] = sequence;
+            result["registered_width"] = work_width;
+            result["registered_height"] = work_height;
+            return result;
         }
 
         nlohmann::json result = {
@@ -457,6 +474,10 @@ struct LivePreviewRuntime::Impl {
             {"selected_mode", probe_selected_mode},
             {"normalized_x", normalized_x},
             {"normalized_y", normalized_y},
+            {"coordinate_space", "REGISTERED_CAMERA_A_DEPTH_V1"},
+            {"registered_rgb_sequence", sequence},
+            {"registered_width", work_width},
+            {"registered_height", work_height},
         };
         if (!ready || probe_disparity.empty() || probe_mask.empty() ||
             probe_disparity.type() != CV_32F || probe_mask.type() != CV_8U ||
@@ -601,6 +622,14 @@ struct LivePreviewRuntime::Impl {
              successful_publishes_since_reset},
             {"consecutive_failures", consecutive_failures},
             {"selected_jpeg_bytes", selected_jpeg_bytes},
+            {"registered_rgb_ready", !registered_jpeg.empty()},
+            {"registered_rgb_sequence", sequence},
+            {"registered_jpeg_bytes", registered_jpeg_bytes},
+            {"registered_rgb_width", work_width},
+            {"registered_rgb_height", work_height},
+            {"coordinate_space", "REGISTERED_CAMERA_A_DEPTH_V1"},
+            {"tof_anchor_space", "REGISTERED_CAMERA_A_DEPTH_V1"},
+            {"registration_contract", "RECTIFIED_A_WORKSPACE_SAME_SEQUENCE_AS_DEPTH"},
             {"focal_px", last_focal_px},
             {"baseline_mm", last_baseline_mm},
             {"disparity_zero_offset_px",
@@ -1104,8 +1133,15 @@ struct LivePreviewRuntime::Impl {
                 const int display_rotation = normalize_degrees(
                     job.pair.camera_a.rotation_degrees -
                     processing_rotation);
+                auto registered_display =
+                    rotate_for_display(work_a, display_rotation);
                 auto display =
                     rotate_for_display(*selected, display_rotation);
+                if (registered_display.size() != display.size()) {
+                    throw LivePreviewFailure(
+                        "REGISTERED_RGB_SIZE_MISMATCH",
+                        "registered CAMERA_A and depth display dimensions differ");
+                }
                 const auto heartbeat_tick =
                     static_cast<std::uint64_t>(
                         std::max<std::int64_t>(0, unix_time_ms()) / 200);
@@ -1147,6 +1183,7 @@ struct LivePreviewRuntime::Impl {
                 const auto encode_started =
                     std::chrono::steady_clock::now();
                 auto jpeg = encode_jpeg(display);
+                auto registered_rgb_jpeg = encode_jpeg(registered_display);
                 const auto finished =
                     std::chrono::steady_clock::now();
 
@@ -1194,9 +1231,13 @@ struct LivePreviewRuntime::Impl {
                             write_binary_atomic(
                                 session_directory / "selected_preview_latest.jpg",
                                 jpeg);
+                            write_binary_atomic(
+                                session_directory / "registered_a_latest.jpg",
+                                registered_rgb_jpeg);
                             last_disk_write = finished;
                         }
                         selected_jpeg = std::move(jpeg);
+                        registered_jpeg = std::move(registered_rgb_jpeg);
                         probe_disparity = probe_disparity_source->clone();
                         probe_mask = selected_mask->clone();
                         probe_focal_px = focal_px;
@@ -1245,6 +1286,7 @@ struct LivePreviewRuntime::Impl {
                         ++successful_publishes_since_reset;
                         consecutive_failures = 0;
                         selected_jpeg_bytes = selected_jpeg.size();
+                        registered_jpeg_bytes = registered_jpeg.size();
                         last_focal_px = focal_px;
                         last_baseline_mm = baseline_mm;
                         last_disparity_zero_offset_px =
@@ -1435,6 +1477,7 @@ struct LivePreviewRuntime::Impl {
     std::ofstream diagnostics;
     std::thread worker;
     std::vector<std::uint8_t> selected_jpeg;
+    std::vector<std::uint8_t> registered_jpeg;
     cv::Mat probe_disparity;
     cv::Mat probe_mask;
     double probe_focal_px = 0.0;
@@ -1481,6 +1524,7 @@ struct LivePreviewRuntime::Impl {
     std::uint64_t successful_publishes_since_reset = 0;
     std::uint64_t consecutive_failures = 0;
     std::uint64_t selected_jpeg_bytes = 0;
+    std::uint64_t registered_jpeg_bytes = 0;
     double last_focal_px = 0.0;
     double last_baseline_mm = 0.0;
     double last_disparity_zero_offset_px = 0.0;
@@ -1534,6 +1578,11 @@ nlohmann::json LivePreviewRuntime::depth_probe(
 std::optional<std::vector<std::uint8_t>>
 LivePreviewRuntime::image() const {
     return impl_->image();
+}
+
+std::optional<std::vector<std::uint8_t>>
+LivePreviewRuntime::registered_image() const {
+    return impl_->registered_image();
 }
 
 }  // namespace maklertour::dual_phone::detail

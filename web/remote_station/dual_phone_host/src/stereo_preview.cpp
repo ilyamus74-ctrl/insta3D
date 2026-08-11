@@ -246,10 +246,14 @@ struct StereoPreview::Impl {
         if (kind == StereoPreviewImage::Selected) {
             return live_runtime.image();
         }
+        if (kind == StereoPreviewImage::RegisteredA) {
+            return live_runtime.registered_image();
+        }
         std::scoped_lock lock(mutex);
         const std::vector<std::uint8_t>* source = nullptr;
         switch (kind) {
             case StereoPreviewImage::Selected: return std::nullopt;
+            case StereoPreviewImage::RegisteredA: return std::nullopt;
             case StereoPreviewImage::RectifiedA: source = &rectified_a_jpeg; break;
             case StereoPreviewImage::RectifiedB: source = &rectified_b_jpeg; break;
             case StereoPreviewImage::Disparity: source = &disparity_jpeg; break;
@@ -390,6 +394,10 @@ struct StereoPreview::Impl {
                 {"selected_pair_index", live.value(
                     "pair_index", std::uint64_t{0})},
                 {"selected_interval_ms", 200},
+                {"registered_a_ready", live.value("registered_rgb_ready", false)},
+                {"registered_a_sequence", live.value(
+                    "registered_rgb_sequence", std::uint64_t{0})},
+                {"registered_a_latest", "registered_a_latest.jpg"},
                 {"selected_latest", "selected_preview_latest.jpg"},
                 {"raw_a_latest", "raw_a_latest.jpg"},
                 {"raw_b_latest", "raw_b_latest.jpg"},

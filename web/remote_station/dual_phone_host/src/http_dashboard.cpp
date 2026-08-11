@@ -263,6 +263,7 @@ void HttpDashboard::handle_client(const int client_fd) {
         return;
     }
     if (path == "/stereo/selected.jpg" ||
+        path == "/stereo/registered_a.jpg" ||
         path == "/stereo/rectified_a.jpg" ||
         path == "/stereo/rectified_b.jpg" ||
         path == "/stereo/disparity.jpg" ||
@@ -272,6 +273,7 @@ void HttpDashboard::handle_client(const int client_fd) {
         path == "/stereo/confidence.jpg") {
         StereoPreviewImage kind = StereoPreviewImage::Disparity;
         if (path == "/stereo/selected.jpg") kind = StereoPreviewImage::Selected;
+        if (path == "/stereo/registered_a.jpg") kind = StereoPreviewImage::RegisteredA;
         if (path == "/stereo/rectified_a.jpg") kind = StereoPreviewImage::RectifiedA;
         if (path == "/stereo/rectified_b.jpg") kind = StereoPreviewImage::RectifiedB;
         if (path == "/stereo/depth_raw.jpg") kind = StereoPreviewImage::DepthRaw;
