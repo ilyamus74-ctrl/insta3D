@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,6 +70,7 @@ import com.maklertour.data.rig.StereoRigProfileStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.abs
@@ -81,6 +83,7 @@ internal fun DualPhoneCalibrationFullscreen(
     onExit: () -> Unit,
 ) {
     val context = LocalContext.current
+    val focusScope = rememberCoroutineScope()
     val activity = remember(context) { context.findActivity() }
     val controlManager = remember(context) {
         DualPhoneControlManager.get(context.applicationContext)
@@ -140,6 +143,9 @@ internal fun DualPhoneCalibrationFullscreen(
             !snapshot.calibrationCollectionComplete
     var previewStatus by remember(snapshot.calibrationRunId) {
         mutableStateOf("Opening selected camera…")
+    }
+    var manualFocusBusy by remember(snapshot.calibrationRunId) {
+        mutableStateOf(false)
     }
     var localAnalysis by remember(snapshot.calibrationRunId) {
         mutableStateOf<DualPhoneCalibrationRealtimeResult?>(null)
@@ -270,7 +276,6 @@ internal fun DualPhoneCalibrationFullscreen(
         localAnalysis = null
         if (!localAnalyzerActive) return@LaunchedEffect
         var lastSequence = -1L
-        var autofocusPoseId: String? = null
         while (isActive && currentSnapshot.calibrationActive && localAnalyzerActive) {
             val frame = DualPhonePreviewBindingRuntime.latestCalibrationFrame()
             if (frame != null && frame.sequence != lastSequence) {
@@ -283,31 +288,6 @@ internal fun DualPhoneCalibrationFullscreen(
                         target = activeTarget,
                         settings = boardSettings,
                     )
-                }
-                if (
-                    autofocusPoseId != activeTarget.id &&
-                    result.cameraControlStatus.startsWith("METRIC_READY") &&
-                    result.detection.found &&
-                    !result.boardClipped
-                ) {
-                    previewStatus = "Автофокус по центру ChArUco…"
-                    val focusStatus =
-                        DualPhonePreviewBindingRuntime.refreshCalibrationFocus(
-                            normalizedX = result.centreX,
-                            normalizedY = result.centreY,
-                        )
-                    if (focusStatus.startsWith("METRIC_READY")) {
-                        autofocusPoseId = activeTarget.id
-                        previewStatus =
-                            "Фокус обновлён для ${activeTarget.id}"
-                    } else {
-                        previewStatus =
-                            "Автофокус не готов: $focusStatus"
-                    }
-                    analyzer.reset()
-                    localAnalysis = null
-                    delay(100L)
-                    continue
                 }
                 localAnalysis = result
                 activeSnapshot.calibrationRunId?.let { runId ->
@@ -940,37 +920,86 @@ internal fun DualPhoneCalibrationFullscreen(
                 }
             }
 
-            Row(
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .safeDrawingPadding()
                     .padding(20.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .background(
-                            if (snapshot.connected) Color.Green else Color.Red,
-                        ),
-                )
-                Text(
-                    if (snapshot.connected) "Peer connected" else "Peer disconnected",
-                    color = Color.White,
-                )
                 Button(
-                    onClick = onExit,
-                    enabled = !snapshot.calibrationCollectionComplete ||
-                        snapshot.calibrationFinalResult != null,
+                    onClick = {
+                        val detectedBoard = localAnalysis?.takeIf { analysis ->
+                            analysis.detection.found && !analysis.boardClipped
+                        }
+                        val focusX = detectedBoard?.centreX ?: 0.5
+                        val focusY = detectedBoard?.centreY ?: 0.5
+                        focusScope.launch {
+                            manualFocusBusy = true
+                            try {
+                                previewStatus = "Ручной автофокус…"
+                                val focusStatus =
+                                    DualPhonePreviewBindingRuntime.refreshCalibrationFocus(
+                                        normalizedX = focusX,
+                                        normalizedY = focusY,
+                                    )
+                                analyzer.reset()
+                                localAnalysis = null
+                                previewStatus = if (
+                                    focusStatus.contains("AF_BOARD_LOCKED")
+                                ) {
+                                    "Автофокус зафиксирован"
+                                } else {
+                                    "Автофокус: $focusStatus"
+                                }
+                            } finally {
+                                manualFocusBusy = false
+                            }
+                        }
+                    },
+                    enabled = snapshot.calibrationActive &&
+                        localAnalyzerActive &&
+                        !snapshot.calibrationCollectionComplete &&
+                        !manualFocusBusy,
                 ) {
                     Text(
-                        if (snapshot.calibrationCollectionComplete) {
-                            "ГОТОВО"
+                        if (manualFocusBusy) {
+                            "ФОКУСИРОВКА…"
                         } else {
-                            "ПРЕРВАТЬ"
+                            "АВТОФОКУС"
                         },
                     )
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .background(
+                                if (snapshot.connected) Color.Green else Color.Red,
+                            ),
+                    )
+                    Text(
+                        if (snapshot.connected) "Peer connected" else "Peer disconnected",
+                        color = Color.White,
+                    )
+                    Button(
+                        onClick = onExit,
+                        enabled = !snapshot.calibrationCollectionComplete ||
+                            snapshot.calibrationFinalResult != null,
+                    ) {
+                        Text(
+                            if (snapshot.calibrationCollectionComplete) {
+                                "ГОТОВО"
+                            } else {
+                                "ПРЕРВАТЬ"
+                            },
+                        )
+                    }
                 }
             }
         }
