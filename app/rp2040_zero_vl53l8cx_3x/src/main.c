@@ -39,6 +39,13 @@ static tof_slot_t sensors[SENSOR_MAX];
 static int print_slot = 0;
 static uint64_t next_print_us = 0;
 
+static bool raw_i2c_ack(uint8_t addr7) {
+    uint8_t byte = 0;
+    const int ret = i2c_read_timeout_us(
+        i2c0, addr7, &byte, 1, false, 3000);
+    return ret >= 0;
+}
+
 static int slot_from_int_pin(uint gpio) {
     for (int i = 0; i < SENSOR_MAX; ++i) {
         if (INT_PIN[i] == gpio) return i;
@@ -82,6 +89,15 @@ static bool probe_default_and_assign(tof_slot_t *s) {
 
     gpio_put(LP_PIN[s->slot], 1);
     sleep_ms(20);
+
+    if (!raw_i2c_ack(0x29)) {
+        printf("SENSOR %u RAW I2C NO ACK at 0x29 "
+               "(expected GP4=SDA/MOSI, GP5=SCL/MCLK)\n",
+               s->slot);
+        gpio_put(LP_PIN[s->slot], 0);
+        return false;
+    }
+    printf("SENSOR %u raw I2C ACK at default 0x29\n", s->slot);
 
     uint8_t alive = 0;
     uint8_t st = vl53l8cx_is_alive(&s->cfg, &alive);
@@ -349,6 +365,8 @@ int main(void) {
 
     printf("\nRP2040-Zero VL53L8CX 3x bring-up\n");
     printf("I2C0 SDA=GP4 SCL=GP5 @ %u Hz\n", I2C_BAUD_HZ);
+    printf("HW: SPI_I2C_N=GND, NCS=NC, MISO=NC\n");
+    printf("Expected default 7-bit address: 0x29\n");
 
     memset(sensors, 0, sizeof(sensors));
     for (int i = 0; i < SENSOR_MAX; ++i) sensors[i].slot = (uint8_t)i;

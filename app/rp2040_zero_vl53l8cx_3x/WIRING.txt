@@ -23,7 +23,13 @@ SENSOR 2:
 EACH SENSOR:
   MISO       -> NC
   SPI_I2C_N  -> GND
-  NCS        -> GND
+  NCS        -> NC
+
+IMPORTANT:
+  GP4 -> SDA/MOSI
+  GP5 -> SCL/MCLK
+  If SDA and SCL are swapped, both lines can still read HIGH at idle,
+  but the sensor will not ACK its default 7-bit address 0x29.
 
 I2C addresses after boot:
   sensor 0: ST 0x54 / 7-bit 0x2A
