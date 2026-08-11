@@ -13,17 +13,19 @@
 #define INT0_PIN 3
 #define LP1_PIN 6
 #define LP2_PIN 8
+#define SPI_I2C_RESET_PIN 10
 
 static bool reserved_addr(uint8_t addr) {
     return ((addr & 0x78u) == 0u) || ((addr & 0x78u) == 0x78u);
 }
 
 static void scan_bus(void) {
-    printf("\nI2C scan: SDA=%d SCL=%d LP0=%d INT0=%d\n",
+    printf("\nI2C scan: SDA=%d SCL=%d LP0=%d INT0=%d SPI_I2C_N=%d\n",
            gpio_get(SDA_PIN),
            gpio_get(SCL_PIN),
            gpio_get(LP0_PIN),
-           gpio_get(INT0_PIN));
+           gpio_get(INT0_PIN),
+           gpio_get(SPI_I2C_RESET_PIN));
 
     printf("    0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
 
@@ -71,12 +73,16 @@ int main(void) {
     stdio_init_all();
     sleep_ms(1800);
 
-    printf("\nRP2040-Zero VL53L8CX RAW I2C SCANNER\n");
-    printf("I2C0 SDA=GP4 SCL=GP5 @100kHz\n");
+    printf("\nRP2040-Zero VL53L8CX RAW I2C SCANNER V2\n");
+    printf("I2C0 SDA=GP4 SCL=GP5 @100kHz, SPI_I2C_N reset=GP10\n");
+
+    gpio_init(SPI_I2C_RESET_PIN);
+    gpio_set_dir(SPI_I2C_RESET_PIN, GPIO_OUT);
+    gpio_put(SPI_I2C_RESET_PIN, 0);
 
     gpio_init(LP0_PIN);
     gpio_set_dir(LP0_PIN, GPIO_OUT);
-    gpio_put(LP0_PIN, 1);
+    gpio_put(LP0_PIN, 0);
 
     gpio_init(LP1_PIN);
     gpio_set_dir(LP1_PIN, GPIO_OUT);
@@ -95,7 +101,22 @@ int main(void) {
     gpio_pull_up(SDA_PIN);
     gpio_pull_up(SCL_PIN);
 
+    sleep_ms(20);
+    gpio_put(LP0_PIN, 1);
+    sleep_ms(20);
+
+    printf("I2C target reset on GP10: 0 -> 1 -> 0\n");
+    gpio_put(SPI_I2C_RESET_PIN, 1);
+    sleep_ms(5);
+    gpio_put(SPI_I2C_RESET_PIN, 0);
     sleep_ms(100);
+
+    printf("POST-RESET: SDA=%d SCL=%d LP0=%d INT0=%d SPI_I2C_N=%d\n",
+           gpio_get(SDA_PIN),
+           gpio_get(SCL_PIN),
+           gpio_get(LP0_PIN),
+           gpio_get(INT0_PIN),
+           gpio_get(SPI_I2C_RESET_PIN));
 
     while (true) {
         scan_bus();

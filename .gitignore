@@ -1,3 +1,6 @@
 # Python generated files
 __pycache__/
 *.py[cod]
+
+# RP2040/Pico SDK local build output
+app/rp2040_zero_vl53l8cx_3x/build/
