@@ -1,0 +1,34 @@
+RP2040-Zero -> 1..3 x VL53L8CX (I2C)
+
+Board orientation: USB-C at top, as on the user's photo.
+
+COMMON:
+  pad 3V3  -> VIN    sensor 0,1,2
+  pad GND  -> GND    sensor 0,1,2
+  pad GP4  -> SDA/MOSI sensor 0,1,2
+  pad GP5  -> SCL/MCLK sensor 0,1,2
+
+SENSOR 0:
+  pad GP2  -> LPn
+  pad GP3  <- INT
+
+SENSOR 1:
+  pad GP6  -> LPn
+  pad GP7  <- INT
+
+SENSOR 2:
+  pad GP8  -> LPn
+  pad GP9  <- INT
+
+EACH SENSOR:
+  MISO       -> NC
+  SPI_I2C_N  -> GND
+  NCS        -> GND
+
+I2C addresses after boot:
+  sensor 0: ST 0x54 / 7-bit 0x2A
+  sensor 1: ST 0x56 / 7-bit 0x2B
+  sensor 2: ST 0x58 / 7-bit 0x2C
+
+Default before readdress:
+  ST 0x52 / 7-bit 0x29

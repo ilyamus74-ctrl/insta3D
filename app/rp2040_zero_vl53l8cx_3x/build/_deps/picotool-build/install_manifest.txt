@@ -1,0 +1,7 @@
+/home/ilyamus/Документы/Insta3D/app/rp2040_zero_vl53l8cx_3x/build/_deps/picotool/picotool
+/home/ilyamus/Документы/Insta3D/app/rp2040_zero_vl53l8cx_3x/build/_deps/picotool/picotoolTargets.cmake
+/home/ilyamus/Документы/Insta3D/app/rp2040_zero_vl53l8cx_3x/build/_deps/picotool/picotoolTargets-release.cmake
+/home/ilyamus/Документы/Insta3D/app/rp2040_zero_vl53l8cx_3x/build/_deps/picotool/picotoolConfig.cmake
+/home/ilyamus/Документы/Insta3D/app/rp2040_zero_vl53l8cx_3x/build/_deps/picotool/picotoolConfigVersion.cmake
+/home/ilyamus/Документы/Insta3D/app/rp2040_zero_vl53l8cx_3x/build/_deps/picotool/enc_bootloader.elf
+/home/ilyamus/Документы/Insta3D/app/rp2040_zero_vl53l8cx_3x/build/_deps/picotool/enc_bootloader_mbedtls.elf
