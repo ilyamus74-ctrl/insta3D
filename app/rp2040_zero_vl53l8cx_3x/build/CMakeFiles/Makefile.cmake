@@ -401,6 +401,7 @@ set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/tof_rig.dir/DependInfo.cmake"
   "CMakeFiles/picotoolForceReconfigure.dir/DependInfo.cmake"
   "CMakeFiles/picotoolBuild.dir/DependInfo.cmake"
+  "CMakeFiles/tof_scan.dir/DependInfo.cmake"
   "pico-sdk/src/rp2040/boot_stage2/CMakeFiles/bs2_default.dir/DependInfo.cmake"
   "pico-sdk/src/rp2040/boot_stage2/CMakeFiles/bs2_default_bin.dir/DependInfo.cmake"
   "pico-sdk/src/rp2040/boot_stage2/CMakeFiles/bs2_default_library.dir/DependInfo.cmake"

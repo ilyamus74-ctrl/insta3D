@@ -156,6 +156,19 @@ picotoolBuild/fast:
 .PHONY : picotoolBuild/fast
 
 #=============================================================================
+# Target rules for targets named tof_scan
+
+# Build rule for target.
+tof_scan: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tof_scan
+.PHONY : tof_scan
+
+# fast build rule for target.
+tof_scan/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/build
+.PHONY : tof_scan/fast
+
+#=============================================================================
 # Target rules for targets named bs2_default
 
 # Build rule for target.
@@ -233,6 +246,30 @@ pico_status_led_ws2812_pio_h/fast:
 	$(MAKE) $(MAKESILENT) -f pico-sdk/src/rp2_common/pico_status_led/CMakeFiles/pico_status_led_ws2812_pio_h.dir/build.make pico-sdk/src/rp2_common/pico_status_led/CMakeFiles/pico_status_led_ws2812_pio_h.dir/build
 .PHONY : pico_status_led_ws2812_pio_h/fast
 
+src/i2c_scan.o: src/i2c_scan.c.o
+.PHONY : src/i2c_scan.o
+
+# target to build an object file
+src/i2c_scan.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/src/i2c_scan.c.o
+.PHONY : src/i2c_scan.c.o
+
+src/i2c_scan.i: src/i2c_scan.c.i
+.PHONY : src/i2c_scan.i
+
+# target to preprocess a source file
+src/i2c_scan.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/src/i2c_scan.c.i
+.PHONY : src/i2c_scan.c.i
+
+src/i2c_scan.s: src/i2c_scan.c.s
+.PHONY : src/i2c_scan.s
+
+# target to generate assembly for a file
+src/i2c_scan.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/src/i2c_scan.c.s
+.PHONY : src/i2c_scan.c.s
+
 src/main.o: src/main.c.o
 .PHONY : src/main.o
 
@@ -287,6 +324,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.o: third_party/pic
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.i: third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.i
@@ -295,6 +333,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.i: third_party/pic
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.s: third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.s
@@ -303,6 +342,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.s: third_party/pic
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/audio/audio_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.o: third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.o
@@ -311,6 +351,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.o: third_party/pico-sd
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.i: third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.i
@@ -319,6 +360,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.i: third_party/pico-sd
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.s: third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.s
@@ -327,6 +369,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.s: third_party/pico-sd
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.o: third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.o
@@ -335,6 +378,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.o: third_party/pico-sd
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.i: third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.i
@@ -343,6 +387,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.i: third_party/pico-sd
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.s: third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.s
@@ -351,6 +396,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.s: third_party/pico-sd
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.o: third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.o
@@ -359,6 +405,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.o: third_party/pico
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.i: third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.i
@@ -367,6 +414,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.i: third_party/pico
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.s: third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.s
@@ -375,6 +423,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.s: third_party/pico
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/dfu/dfu_rt_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.o: third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.o
@@ -383,6 +432,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.o: third_party/pico-sd
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.i: third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.i
@@ -391,6 +441,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.i: third_party/pico-sd
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.s: third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.s
@@ -399,6 +450,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.s: third_party/pico-sd
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/hid/hid_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.o: third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.o
@@ -407,6 +459,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.o: third_party/pico-
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.i: third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.i
@@ -415,6 +468,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.i: third_party/pico-
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.s: third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.s
@@ -423,6 +477,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.s: third_party/pico-
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/midi/midi_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.o: third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.o
@@ -431,6 +486,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.o: third_party/pico-sd
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.i: third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.i
@@ -439,6 +495,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.i: third_party/pico-sd
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.s: third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.s
@@ -447,6 +504,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.s: third_party/pico-sd
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/msc/msc_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.o: third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.o
@@ -455,6 +513,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.o: third_party/p
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.i: third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.i
@@ -463,6 +522,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.i: third_party/p
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.s: third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.s
@@ -471,6 +531,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.s: third_party/p
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/net/ecm_rndis_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.o: third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.o
@@ -479,6 +540,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.o: third_party/pico-sd
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.i: third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.i
@@ -487,6 +549,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.i: third_party/pico-sd
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.s: third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.s
@@ -495,6 +558,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.s: third_party/pico-sd
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/net/ncm_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.o: third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.o
@@ -503,6 +567,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.o: third_party/p
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.i: third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.i
@@ -511,6 +576,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.i: third_party/p
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.s: third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.s
@@ -519,6 +585,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.s: third_party/p
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/usbtmc/usbtmc_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.o: third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.o
@@ -527,6 +594,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.o: third_party/p
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.i: third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.i
@@ -535,6 +603,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.i: third_party/p
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.s: third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.s
@@ -543,6 +612,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.s: third_party/p
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/vendor/vendor_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.o: third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.o
@@ -551,6 +621,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.o: third_party/pic
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.i: third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.i
@@ -559,6 +630,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.i: third_party/pic
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.s: third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.s
@@ -567,6 +639,7 @@ third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.s: third_party/pic
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/class/video/video_device.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.o: third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.o
@@ -575,6 +648,7 @@ third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.o: third_party/pico-sdk/li
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.i: third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.i
@@ -583,6 +657,7 @@ third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.i: third_party/pico-sdk/li
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.s: third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.s
@@ -591,6 +666,7 @@ third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.s: third_party/pico-sdk/li
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/common/tusb_fifo.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/device/usbd.o: third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.o
@@ -599,6 +675,7 @@ third_party/pico-sdk/lib/tinyusb/src/device/usbd.o: third_party/pico-sdk/lib/tin
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/device/usbd.i: third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.i
@@ -607,6 +684,7 @@ third_party/pico-sdk/lib/tinyusb/src/device/usbd.i: third_party/pico-sdk/lib/tin
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/device/usbd.s: third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.s
@@ -615,6 +693,7 @@ third_party/pico-sdk/lib/tinyusb/src/device/usbd.s: third_party/pico-sdk/lib/tin
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/device/usbd.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.o: third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.o
@@ -623,6 +702,7 @@ third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.o: third_party/pico-sdk
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.i: third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.i
@@ -631,6 +711,7 @@ third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.i: third_party/pico-sdk
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.s: third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.s
@@ -639,6 +720,7 @@ third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.s: third_party/pico-sdk
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/device/usbd_control.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.o: third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
@@ -647,6 +729,7 @@ third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.o: t
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.i: third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.i
@@ -655,6 +738,7 @@ third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.i: t
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.s: third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.s
@@ -663,6 +747,7 @@ third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.s: t
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.o: third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
@@ -671,6 +756,7 @@ third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.o: t
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.i: third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.i
@@ -679,6 +765,7 @@ third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.i: t
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.s: third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.s
@@ -687,6 +774,7 @@ third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.s: t
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c.s
 
 third_party/pico-sdk/lib/tinyusb/src/tusb.o: third_party/pico-sdk/lib/tinyusb/src/tusb.c.o
@@ -695,6 +783,7 @@ third_party/pico-sdk/lib/tinyusb/src/tusb.o: third_party/pico-sdk/lib/tinyusb/sr
 # target to build an object file
 third_party/pico-sdk/lib/tinyusb/src/tusb.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/tusb.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/tusb.c.o
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/tusb.c.o
 
 third_party/pico-sdk/lib/tinyusb/src/tusb.i: third_party/pico-sdk/lib/tinyusb/src/tusb.c.i
@@ -703,6 +792,7 @@ third_party/pico-sdk/lib/tinyusb/src/tusb.i: third_party/pico-sdk/lib/tinyusb/sr
 # target to preprocess a source file
 third_party/pico-sdk/lib/tinyusb/src/tusb.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/tusb.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/tusb.c.i
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/tusb.c.i
 
 third_party/pico-sdk/lib/tinyusb/src/tusb.s: third_party/pico-sdk/lib/tinyusb/src/tusb.c.s
@@ -711,6 +801,7 @@ third_party/pico-sdk/lib/tinyusb/src/tusb.s: third_party/pico-sdk/lib/tinyusb/sr
 # target to generate assembly for a file
 third_party/pico-sdk/lib/tinyusb/src/tusb.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/lib/tinyusb/src/tusb.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/lib/tinyusb/src/tusb.c.s
 .PHONY : third_party/pico-sdk/lib/tinyusb/src/tusb.c.s
 
 third_party/pico-sdk/src/common/hardware_claim/claim.o: third_party/pico-sdk/src/common/hardware_claim/claim.c.o
@@ -719,6 +810,7 @@ third_party/pico-sdk/src/common/hardware_claim/claim.o: third_party/pico-sdk/src
 # target to build an object file
 third_party/pico-sdk/src/common/hardware_claim/claim.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/hardware_claim/claim.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/hardware_claim/claim.c.o
 .PHONY : third_party/pico-sdk/src/common/hardware_claim/claim.c.o
 
 third_party/pico-sdk/src/common/hardware_claim/claim.i: third_party/pico-sdk/src/common/hardware_claim/claim.c.i
@@ -727,6 +819,7 @@ third_party/pico-sdk/src/common/hardware_claim/claim.i: third_party/pico-sdk/src
 # target to preprocess a source file
 third_party/pico-sdk/src/common/hardware_claim/claim.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/hardware_claim/claim.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/hardware_claim/claim.c.i
 .PHONY : third_party/pico-sdk/src/common/hardware_claim/claim.c.i
 
 third_party/pico-sdk/src/common/hardware_claim/claim.s: third_party/pico-sdk/src/common/hardware_claim/claim.c.s
@@ -735,6 +828,7 @@ third_party/pico-sdk/src/common/hardware_claim/claim.s: third_party/pico-sdk/src
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/hardware_claim/claim.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/hardware_claim/claim.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/hardware_claim/claim.c.s
 .PHONY : third_party/pico-sdk/src/common/hardware_claim/claim.c.s
 
 third_party/pico-sdk/src/common/pico_sync/critical_section.o: third_party/pico-sdk/src/common/pico_sync/critical_section.c.o
@@ -743,6 +837,7 @@ third_party/pico-sdk/src/common/pico_sync/critical_section.o: third_party/pico-s
 # target to build an object file
 third_party/pico-sdk/src/common/pico_sync/critical_section.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/critical_section.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/critical_section.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_sync/critical_section.c.o
 
 third_party/pico-sdk/src/common/pico_sync/critical_section.i: third_party/pico-sdk/src/common/pico_sync/critical_section.c.i
@@ -751,6 +846,7 @@ third_party/pico-sdk/src/common/pico_sync/critical_section.i: third_party/pico-s
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_sync/critical_section.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/critical_section.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/critical_section.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_sync/critical_section.c.i
 
 third_party/pico-sdk/src/common/pico_sync/critical_section.s: third_party/pico-sdk/src/common/pico_sync/critical_section.c.s
@@ -759,6 +855,7 @@ third_party/pico-sdk/src/common/pico_sync/critical_section.s: third_party/pico-s
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_sync/critical_section.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/critical_section.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/critical_section.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_sync/critical_section.c.s
 
 third_party/pico-sdk/src/common/pico_sync/lock_core.o: third_party/pico-sdk/src/common/pico_sync/lock_core.c.o
@@ -767,6 +864,7 @@ third_party/pico-sdk/src/common/pico_sync/lock_core.o: third_party/pico-sdk/src/
 # target to build an object file
 third_party/pico-sdk/src/common/pico_sync/lock_core.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/lock_core.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/lock_core.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_sync/lock_core.c.o
 
 third_party/pico-sdk/src/common/pico_sync/lock_core.i: third_party/pico-sdk/src/common/pico_sync/lock_core.c.i
@@ -775,6 +873,7 @@ third_party/pico-sdk/src/common/pico_sync/lock_core.i: third_party/pico-sdk/src/
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_sync/lock_core.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/lock_core.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/lock_core.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_sync/lock_core.c.i
 
 third_party/pico-sdk/src/common/pico_sync/lock_core.s: third_party/pico-sdk/src/common/pico_sync/lock_core.c.s
@@ -783,6 +882,7 @@ third_party/pico-sdk/src/common/pico_sync/lock_core.s: third_party/pico-sdk/src/
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_sync/lock_core.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/lock_core.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/lock_core.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_sync/lock_core.c.s
 
 third_party/pico-sdk/src/common/pico_sync/mutex.o: third_party/pico-sdk/src/common/pico_sync/mutex.c.o
@@ -791,6 +891,7 @@ third_party/pico-sdk/src/common/pico_sync/mutex.o: third_party/pico-sdk/src/comm
 # target to build an object file
 third_party/pico-sdk/src/common/pico_sync/mutex.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/mutex.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/mutex.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_sync/mutex.c.o
 
 third_party/pico-sdk/src/common/pico_sync/mutex.i: third_party/pico-sdk/src/common/pico_sync/mutex.c.i
@@ -799,6 +900,7 @@ third_party/pico-sdk/src/common/pico_sync/mutex.i: third_party/pico-sdk/src/comm
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_sync/mutex.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/mutex.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/mutex.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_sync/mutex.c.i
 
 third_party/pico-sdk/src/common/pico_sync/mutex.s: third_party/pico-sdk/src/common/pico_sync/mutex.c.s
@@ -807,6 +909,7 @@ third_party/pico-sdk/src/common/pico_sync/mutex.s: third_party/pico-sdk/src/comm
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_sync/mutex.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/mutex.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/mutex.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_sync/mutex.c.s
 
 third_party/pico-sdk/src/common/pico_sync/sem.o: third_party/pico-sdk/src/common/pico_sync/sem.c.o
@@ -815,6 +918,7 @@ third_party/pico-sdk/src/common/pico_sync/sem.o: third_party/pico-sdk/src/common
 # target to build an object file
 third_party/pico-sdk/src/common/pico_sync/sem.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/sem.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/sem.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_sync/sem.c.o
 
 third_party/pico-sdk/src/common/pico_sync/sem.i: third_party/pico-sdk/src/common/pico_sync/sem.c.i
@@ -823,6 +927,7 @@ third_party/pico-sdk/src/common/pico_sync/sem.i: third_party/pico-sdk/src/common
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_sync/sem.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/sem.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/sem.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_sync/sem.c.i
 
 third_party/pico-sdk/src/common/pico_sync/sem.s: third_party/pico-sdk/src/common/pico_sync/sem.c.s
@@ -831,6 +936,7 @@ third_party/pico-sdk/src/common/pico_sync/sem.s: third_party/pico-sdk/src/common
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_sync/sem.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_sync/sem.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_sync/sem.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_sync/sem.c.s
 
 third_party/pico-sdk/src/common/pico_time/time.o: third_party/pico-sdk/src/common/pico_time/time.c.o
@@ -839,6 +945,7 @@ third_party/pico-sdk/src/common/pico_time/time.o: third_party/pico-sdk/src/commo
 # target to build an object file
 third_party/pico-sdk/src/common/pico_time/time.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_time/time.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_time/time.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_time/time.c.o
 
 third_party/pico-sdk/src/common/pico_time/time.i: third_party/pico-sdk/src/common/pico_time/time.c.i
@@ -847,6 +954,7 @@ third_party/pico-sdk/src/common/pico_time/time.i: third_party/pico-sdk/src/commo
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_time/time.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_time/time.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_time/time.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_time/time.c.i
 
 third_party/pico-sdk/src/common/pico_time/time.s: third_party/pico-sdk/src/common/pico_time/time.c.s
@@ -855,6 +963,7 @@ third_party/pico-sdk/src/common/pico_time/time.s: third_party/pico-sdk/src/commo
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_time/time.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_time/time.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_time/time.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_time/time.c.s
 
 third_party/pico-sdk/src/common/pico_time/timeout_helper.o: third_party/pico-sdk/src/common/pico_time/timeout_helper.c.o
@@ -863,6 +972,7 @@ third_party/pico-sdk/src/common/pico_time/timeout_helper.o: third_party/pico-sdk
 # target to build an object file
 third_party/pico-sdk/src/common/pico_time/timeout_helper.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_time/timeout_helper.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_time/timeout_helper.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_time/timeout_helper.c.o
 
 third_party/pico-sdk/src/common/pico_time/timeout_helper.i: third_party/pico-sdk/src/common/pico_time/timeout_helper.c.i
@@ -871,6 +981,7 @@ third_party/pico-sdk/src/common/pico_time/timeout_helper.i: third_party/pico-sdk
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_time/timeout_helper.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_time/timeout_helper.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_time/timeout_helper.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_time/timeout_helper.c.i
 
 third_party/pico-sdk/src/common/pico_time/timeout_helper.s: third_party/pico-sdk/src/common/pico_time/timeout_helper.c.s
@@ -879,6 +990,7 @@ third_party/pico-sdk/src/common/pico_time/timeout_helper.s: third_party/pico-sdk
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_time/timeout_helper.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_time/timeout_helper.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_time/timeout_helper.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_time/timeout_helper.c.s
 
 third_party/pico-sdk/src/common/pico_util/datetime.o: third_party/pico-sdk/src/common/pico_util/datetime.c.o
@@ -887,6 +999,7 @@ third_party/pico-sdk/src/common/pico_util/datetime.o: third_party/pico-sdk/src/c
 # target to build an object file
 third_party/pico-sdk/src/common/pico_util/datetime.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/datetime.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/datetime.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_util/datetime.c.o
 
 third_party/pico-sdk/src/common/pico_util/datetime.i: third_party/pico-sdk/src/common/pico_util/datetime.c.i
@@ -895,6 +1008,7 @@ third_party/pico-sdk/src/common/pico_util/datetime.i: third_party/pico-sdk/src/c
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_util/datetime.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/datetime.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/datetime.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_util/datetime.c.i
 
 third_party/pico-sdk/src/common/pico_util/datetime.s: third_party/pico-sdk/src/common/pico_util/datetime.c.s
@@ -903,6 +1017,7 @@ third_party/pico-sdk/src/common/pico_util/datetime.s: third_party/pico-sdk/src/c
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_util/datetime.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/datetime.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/datetime.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_util/datetime.c.s
 
 third_party/pico-sdk/src/common/pico_util/fixed_bitset.o: third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.o
@@ -911,6 +1026,7 @@ third_party/pico-sdk/src/common/pico_util/fixed_bitset.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.o
 
 third_party/pico-sdk/src/common/pico_util/fixed_bitset.i: third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.i
@@ -919,6 +1035,7 @@ third_party/pico-sdk/src/common/pico_util/fixed_bitset.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.i
 
 third_party/pico-sdk/src/common/pico_util/fixed_bitset.s: third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.s
@@ -927,6 +1044,7 @@ third_party/pico-sdk/src/common/pico_util/fixed_bitset.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_util/fixed_bitset.c.s
 
 third_party/pico-sdk/src/common/pico_util/pheap.o: third_party/pico-sdk/src/common/pico_util/pheap.c.o
@@ -935,6 +1053,7 @@ third_party/pico-sdk/src/common/pico_util/pheap.o: third_party/pico-sdk/src/comm
 # target to build an object file
 third_party/pico-sdk/src/common/pico_util/pheap.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/pheap.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/pheap.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_util/pheap.c.o
 
 third_party/pico-sdk/src/common/pico_util/pheap.i: third_party/pico-sdk/src/common/pico_util/pheap.c.i
@@ -943,6 +1062,7 @@ third_party/pico-sdk/src/common/pico_util/pheap.i: third_party/pico-sdk/src/comm
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_util/pheap.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/pheap.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/pheap.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_util/pheap.c.i
 
 third_party/pico-sdk/src/common/pico_util/pheap.s: third_party/pico-sdk/src/common/pico_util/pheap.c.s
@@ -951,6 +1071,7 @@ third_party/pico-sdk/src/common/pico_util/pheap.s: third_party/pico-sdk/src/comm
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_util/pheap.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/pheap.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/pheap.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_util/pheap.c.s
 
 third_party/pico-sdk/src/common/pico_util/queue.o: third_party/pico-sdk/src/common/pico_util/queue.c.o
@@ -959,6 +1080,7 @@ third_party/pico-sdk/src/common/pico_util/queue.o: third_party/pico-sdk/src/comm
 # target to build an object file
 third_party/pico-sdk/src/common/pico_util/queue.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/queue.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/queue.c.o
 .PHONY : third_party/pico-sdk/src/common/pico_util/queue.c.o
 
 third_party/pico-sdk/src/common/pico_util/queue.i: third_party/pico-sdk/src/common/pico_util/queue.c.i
@@ -967,6 +1089,7 @@ third_party/pico-sdk/src/common/pico_util/queue.i: third_party/pico-sdk/src/comm
 # target to preprocess a source file
 third_party/pico-sdk/src/common/pico_util/queue.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/queue.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/queue.c.i
 .PHONY : third_party/pico-sdk/src/common/pico_util/queue.c.i
 
 third_party/pico-sdk/src/common/pico_util/queue.s: third_party/pico-sdk/src/common/pico_util/queue.c.s
@@ -975,6 +1098,7 @@ third_party/pico-sdk/src/common/pico_util/queue.s: third_party/pico-sdk/src/comm
 # target to generate assembly for a file
 third_party/pico-sdk/src/common/pico_util/queue.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/common/pico_util/queue.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/common/pico_util/queue.c.s
 .PHONY : third_party/pico-sdk/src/common/pico_util/queue.c.s
 
 third_party/pico-sdk/src/rp2040/pico_platform/platform.o: third_party/pico-sdk/src/rp2040/pico_platform/platform.c.o
@@ -983,6 +1107,7 @@ third_party/pico-sdk/src/rp2040/pico_platform/platform.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2040/pico_platform/platform.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2040/pico_platform/platform.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2040/pico_platform/platform.c.o
 .PHONY : third_party/pico-sdk/src/rp2040/pico_platform/platform.c.o
 
 third_party/pico-sdk/src/rp2040/pico_platform/platform.i: third_party/pico-sdk/src/rp2040/pico_platform/platform.c.i
@@ -991,6 +1116,7 @@ third_party/pico-sdk/src/rp2040/pico_platform/platform.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2040/pico_platform/platform.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2040/pico_platform/platform.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2040/pico_platform/platform.c.i
 .PHONY : third_party/pico-sdk/src/rp2040/pico_platform/platform.c.i
 
 third_party/pico-sdk/src/rp2040/pico_platform/platform.s: third_party/pico-sdk/src/rp2040/pico_platform/platform.c.s
@@ -999,6 +1125,7 @@ third_party/pico-sdk/src/rp2040/pico_platform/platform.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2040/pico_platform/platform.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2040/pico_platform/platform.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2040/pico_platform/platform.c.s
 .PHONY : third_party/pico-sdk/src/rp2040/pico_platform/platform.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.o: third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.o
@@ -1007,6 +1134,7 @@ third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.o: third_party/
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.i: third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.i
@@ -1015,6 +1143,7 @@ third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.i: third_party/
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.s: third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.s
@@ -1023,6 +1152,7 @@ third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.s: third_party/
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.o: third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.o
@@ -1031,6 +1161,7 @@ third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.o: third_party/pico-s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.i: third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.i
@@ -1039,6 +1170,7 @@ third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.i: third_party/pico-s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.s: third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.s
@@ -1047,6 +1179,7 @@ third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.s: third_party/pico-s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_divider/divider.o: third_party/pico-sdk/src/rp2_common/hardware_divider/divider.S.o
@@ -1055,6 +1188,7 @@ third_party/pico-sdk/src/rp2_common/hardware_divider/divider.o: third_party/pico
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_divider/divider.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_divider/divider.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_divider/divider.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_divider/divider.S.o
 
 third_party/pico-sdk/src/rp2_common/hardware_flash/flash.o: third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.o
@@ -1063,6 +1197,7 @@ third_party/pico-sdk/src/rp2_common/hardware_flash/flash.o: third_party/pico-sdk
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_flash/flash.i: third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.i
@@ -1071,6 +1206,7 @@ third_party/pico-sdk/src/rp2_common/hardware_flash/flash.i: third_party/pico-sdk
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_flash/flash.s: third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.s
@@ -1079,6 +1215,7 @@ third_party/pico-sdk/src/rp2_common/hardware_flash/flash.s: third_party/pico-sdk
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_flash/flash.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.o: third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.o
@@ -1087,6 +1224,7 @@ third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.i: third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.i
@@ -1095,6 +1233,7 @@ third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.s: third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.s
@@ -1103,6 +1242,7 @@ third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.o: third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.o
@@ -1111,6 +1251,7 @@ third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.o: third_party/pico-sdk/src
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.i: third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.i
@@ -1119,6 +1260,7 @@ third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.i: third_party/pico-sdk/src
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.s: third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.s
@@ -1127,6 +1269,7 @@ third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.s: third_party/pico-sdk/src
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_irq/irq.o: third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.o
@@ -1135,6 +1278,7 @@ third_party/pico-sdk/src/rp2_common/hardware_irq/irq.o: third_party/pico-sdk/src
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_irq/irq.i: third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.i
@@ -1143,6 +1287,7 @@ third_party/pico-sdk/src/rp2_common/hardware_irq/irq.i: third_party/pico-sdk/src
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_irq/irq.s: third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.s
@@ -1151,6 +1296,7 @@ third_party/pico-sdk/src/rp2_common/hardware_irq/irq.s: third_party/pico-sdk/src
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_irq/irq.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_irq/irq_handler_chain.o: third_party/pico-sdk/src/rp2_common/hardware_irq/irq_handler_chain.S.o
@@ -1159,6 +1305,7 @@ third_party/pico-sdk/src/rp2_common/hardware_irq/irq_handler_chain.o: third_part
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_irq/irq_handler_chain.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_irq/irq_handler_chain.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_irq/irq_handler_chain.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_irq/irq_handler_chain.S.o
 
 third_party/pico-sdk/src/rp2_common/hardware_pll/pll.o: third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.o
@@ -1167,6 +1314,7 @@ third_party/pico-sdk/src/rp2_common/hardware_pll/pll.o: third_party/pico-sdk/src
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_pll/pll.i: third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.i
@@ -1175,6 +1323,7 @@ third_party/pico-sdk/src/rp2_common/hardware_pll/pll.i: third_party/pico-sdk/src
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_pll/pll.s: third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.s
@@ -1183,6 +1332,7 @@ third_party/pico-sdk/src/rp2_common/hardware_pll/pll.s: third_party/pico-sdk/src
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_pll/pll.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.o: third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.o
@@ -1191,6 +1341,7 @@ third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.o: third_party/pico-sdk/src
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.i: third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.i
@@ -1199,6 +1350,7 @@ third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.i: third_party/pico-sdk/src
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.s: third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.s
@@ -1207,6 +1359,7 @@ third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.s: third_party/pico-sdk/src
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_rtc/rtc.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_sync/sync.o: third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.o
@@ -1215,6 +1368,7 @@ third_party/pico-sdk/src/rp2_common/hardware_sync/sync.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_sync/sync.i: third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.i
@@ -1223,6 +1377,7 @@ third_party/pico-sdk/src/rp2_common/hardware_sync/sync.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_sync/sync.s: third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.s
@@ -1231,6 +1386,7 @@ third_party/pico-sdk/src/rp2_common/hardware_sync/sync.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_sync/sync.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.o: third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
@@ -1239,6 +1395,7 @@ third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.o: th
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.i: third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.i
@@ -1247,6 +1404,7 @@ third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.i: th
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.s: third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.s
@@ -1255,6 +1413,7 @@ third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.s: th
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_sync_spin_lock/sync_spin_lock.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.o: third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.o
@@ -1263,6 +1422,7 @@ third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.o: third_party/pico-sdk
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.i: third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.i
@@ -1271,6 +1431,7 @@ third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.i: third_party/pico-sdk
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.s: third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.s
@@ -1279,6 +1440,7 @@ third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.s: third_party/pico-sdk
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_ticks/ticks.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_timer/timer.o: third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.o
@@ -1287,6 +1449,7 @@ third_party/pico-sdk/src/rp2_common/hardware_timer/timer.o: third_party/pico-sdk
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_timer/timer.i: third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.i
@@ -1295,6 +1458,7 @@ third_party/pico-sdk/src/rp2_common/hardware_timer/timer.i: third_party/pico-sdk
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_timer/timer.s: third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.s
@@ -1303,6 +1467,7 @@ third_party/pico-sdk/src/rp2_common/hardware_timer/timer.s: third_party/pico-sdk
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_timer/timer.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_uart/uart.o: third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.o
@@ -1311,6 +1476,7 @@ third_party/pico-sdk/src/rp2_common/hardware_uart/uart.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_uart/uart.i: third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.i
@@ -1319,6 +1485,7 @@ third_party/pico-sdk/src/rp2_common/hardware_uart/uart.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_uart/uart.s: third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.s
@@ -1327,6 +1494,7 @@ third_party/pico-sdk/src/rp2_common/hardware_uart/uart.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_uart/uart.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.o: third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.o
@@ -1335,6 +1503,7 @@ third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.i: third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.i
@@ -1343,6 +1512,7 @@ third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.s: third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.s
@@ -1351,6 +1521,7 @@ third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_vreg/vreg.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.o: third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.o
@@ -1359,6 +1530,7 @@ third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.o: third_party/pi
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.i: third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.i
@@ -1367,6 +1539,7 @@ third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.i: third_party/pi
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.s: third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.s
@@ -1375,6 +1548,7 @@ third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.s: third_party/pi
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_watchdog/watchdog.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.o: third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.o
@@ -1383,6 +1557,7 @@ third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.o: third_party/
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.i: third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.i
@@ -1391,6 +1566,7 @@ third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.i: third_party/
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.s: third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.s
@@ -1399,6 +1575,7 @@ third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.s: third_party/
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_xip_cache/xip_cache.c.s
 
 third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.o: third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.o
@@ -1407,6 +1584,7 @@ third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.o
 
 third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.i: third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.i
@@ -1415,6 +1593,7 @@ third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.i
 
 third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.s: third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.s
@@ -1423,6 +1602,7 @@ third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/hardware_xosc/xosc.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.o: third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.o
@@ -1431,6 +1611,7 @@ third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.i: third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.i
@@ -1439,6 +1620,7 @@ third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.s: third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.s
@@ -1447,6 +1629,7 @@ third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_atomic/atomic.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_bit_ops/bit_ops_aeabi.o: third_party/pico-sdk/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
@@ -1455,6 +1638,7 @@ third_party/pico-sdk/src/rp2_common/pico_bit_ops/bit_ops_aeabi.o: third_party/pi
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_bit_ops/bit_ops_aeabi.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.o: third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.o
@@ -1463,6 +1647,7 @@ third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.o: third_party/pico-sdk
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.i: third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.i
@@ -1471,6 +1656,7 @@ third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.i: third_party/pico-sdk
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.s: third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.s
@@ -1479,6 +1665,7 @@ third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.s: third_party/pico-sdk
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.o: third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.o
@@ -1487,6 +1674,7 @@ third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.o: third_party/pic
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.i: third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.i
@@ -1495,6 +1683,7 @@ third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.i: third_party/pic
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.s: third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.s
@@ -1503,6 +1692,7 @@ third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.s: third_party/pic
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_bootrom/bootrom_lock.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.o: third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.o
@@ -1511,6 +1701,7 @@ third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.o: third_party
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.i: third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.i
@@ -1519,6 +1710,7 @@ third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.i: third_party
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.s: third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.s
@@ -1527,6 +1719,7 @@ third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.s: third_party
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_clib_interface/cxa_guard.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.o: third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.o
@@ -1535,6 +1728,7 @@ third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.o: thir
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.i: third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.i
@@ -1543,6 +1737,7 @@ third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.i: thir
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.s: third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.s
@@ -1551,6 +1746,7 @@ third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.s: thir
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_clib_interface/newlib_interface.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_crt0/crt0.o: third_party/pico-sdk/src/rp2_common/pico_crt0/crt0.S.o
@@ -1559,6 +1755,7 @@ third_party/pico-sdk/src/rp2_common/pico_crt0/crt0.o: third_party/pico-sdk/src/r
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_crt0/crt0.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_crt0/crt0.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_crt0/crt0.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_crt0/crt0.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.o: third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.o
@@ -1567,6 +1764,7 @@ third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.o: third_party/p
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.o
 
 third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.i: third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.i
@@ -1575,6 +1773,7 @@ third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.i: third_party/p
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.i
 
 third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.s: third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.s
@@ -1583,6 +1782,7 @@ third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.s: third_party/p
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.s
 
 third_party/pico-sdk/src/rp2_common/pico_divider/divider_hardware.o: third_party/pico-sdk/src/rp2_common/pico_divider/divider_hardware.S.o
@@ -1591,6 +1791,7 @@ third_party/pico-sdk/src/rp2_common/pico_divider/divider_hardware.o: third_party
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_divider/divider_hardware.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_divider/divider_hardware.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_divider/divider_hardware.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_divider/divider_hardware.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_double/double_aeabi_rp2040.o: third_party/pico-sdk/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
@@ -1599,6 +1800,7 @@ third_party/pico-sdk/src/rp2_common/pico_double/double_aeabi_rp2040.o: third_par
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_double/double_aeabi_rp2040.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_double/double_aeabi_rp2040.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.o: third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
@@ -1607,6 +1809,7 @@ third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.o: third_
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.i: third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.i
@@ -1615,6 +1818,7 @@ third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.i: third_
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.s: third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.s
@@ -1623,6 +1827,7 @@ third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.s: third_
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_double/double_init_rom_rp2040.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_double/double_math.o: third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.o
@@ -1631,6 +1836,7 @@ third_party/pico-sdk/src/rp2_common/pico_double/double_math.o: third_party/pico-
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_double/double_math.i: third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.i
@@ -1639,6 +1845,7 @@ third_party/pico-sdk/src/rp2_common/pico_double/double_math.i: third_party/pico-
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_double/double_math.s: third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.s
@@ -1647,6 +1854,7 @@ third_party/pico-sdk/src/rp2_common/pico_double/double_math.s: third_party/pico-
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_double/double_math.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.o: third_party/pico-sdk/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
@@ -1655,6 +1863,7 @@ third_party/pico-sdk/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.o: thi
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_double/double_v1_rom_shim_rp2040.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.o: third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.o
@@ -1663,6 +1872,7 @@ third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp204
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.i: third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.i
@@ -1671,6 +1881,7 @@ third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp204
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.s: third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.s
@@ -1679,6 +1890,7 @@ third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp204
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/rp2040_usb_device_enumeration.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_flash/flash.o: third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.o
@@ -1687,6 +1899,7 @@ third_party/pico-sdk/src/rp2_common/pico_flash/flash.o: third_party/pico-sdk/src
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_flash/flash.i: third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.i
@@ -1695,6 +1908,7 @@ third_party/pico-sdk/src/rp2_common/pico_flash/flash.i: third_party/pico-sdk/src
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_flash/flash.s: third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.s
@@ -1703,6 +1917,7 @@ third_party/pico-sdk/src/rp2_common/pico_flash/flash.s: third_party/pico-sdk/src
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_flash/flash.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_float/float_aeabi_rp2040.o: third_party/pico-sdk/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
@@ -1711,6 +1926,7 @@ third_party/pico-sdk/src/rp2_common/pico_float/float_aeabi_rp2040.o: third_party
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_float/float_aeabi_rp2040.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_float/float_aeabi_rp2040.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.o: third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
@@ -1719,6 +1935,7 @@ third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.o: third_pa
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.i: third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.i
@@ -1727,6 +1944,7 @@ third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.i: third_pa
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.s: third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.s
@@ -1735,6 +1953,7 @@ third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.s: third_pa
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_float/float_init_rom_rp2040.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_float/float_math.o: third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.o
@@ -1743,6 +1962,7 @@ third_party/pico-sdk/src/rp2_common/pico_float/float_math.o: third_party/pico-sd
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_float/float_math.i: third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.i
@@ -1751,6 +1971,7 @@ third_party/pico-sdk/src/rp2_common/pico_float/float_math.i: third_party/pico-sd
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_float/float_math.s: third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.s
@@ -1759,6 +1980,7 @@ third_party/pico-sdk/src/rp2_common/pico_float/float_math.s: third_party/pico-sd
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_float/float_math.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.o: third_party/pico-sdk/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
@@ -1767,6 +1989,7 @@ third_party/pico-sdk/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.o: third
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_float/float_v1_rom_shim_rp2040.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.o: third_party/pico-sdk/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
@@ -1775,6 +1998,7 @@ third_party/pico-sdk/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.o: third
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_int64_ops/pico_int64_ops_aeabi.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.o: third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.o
@@ -1783,6 +2007,7 @@ third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.i: third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.i
@@ -1791,6 +2016,7 @@ third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.s: third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.s
@@ -1799,6 +2025,7 @@ third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_malloc/malloc.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_mem_ops/mem_ops_aeabi.o: third_party/pico-sdk/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
@@ -1807,6 +2034,7 @@ third_party/pico-sdk/src/rp2_common/pico_mem_ops/mem_ops_aeabi.o: third_party/pi
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_mem_ops/mem_ops_aeabi.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_platform_common/common.o: third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.o
@@ -1815,6 +2043,7 @@ third_party/pico-sdk/src/rp2_common/pico_platform_common/common.o: third_party/p
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_platform_common/common.i: third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.i
@@ -1823,6 +2052,7 @@ third_party/pico-sdk/src/rp2_common/pico_platform_common/common.i: third_party/p
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_platform_common/common.s: third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.s
@@ -1831,6 +2061,7 @@ third_party/pico-sdk/src/rp2_common/pico_platform_common/common.s: third_party/p
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_platform_common/common.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_platform_panic/custom_panic_function.o: third_party/pico-sdk/src/rp2_common/pico_platform_panic/custom_panic_function.S.o
@@ -1839,6 +2070,7 @@ third_party/pico-sdk/src/rp2_common/pico_platform_panic/custom_panic_function.o:
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_platform_panic/custom_panic_function.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_platform_panic/custom_panic_function.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_platform_panic/custom_panic_function.S.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_platform_panic/custom_panic_function.S.o
 
 third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.o: third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.o
@@ -1847,6 +2079,7 @@ third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.o: third_party/pic
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.i: third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.i
@@ -1855,6 +2088,7 @@ third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.i: third_party/pic
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.s: third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.s
@@ -1863,6 +2097,7 @@ third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.s: third_party/pic
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_platform_panic/panic.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_printf/printf.o: third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.o
@@ -1871,6 +2106,7 @@ third_party/pico-sdk/src/rp2_common/pico_printf/printf.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_printf/printf.i: third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.i
@@ -1879,6 +2115,7 @@ third_party/pico-sdk/src/rp2_common/pico_printf/printf.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_printf/printf.s: third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.s
@@ -1887,6 +2124,7 @@ third_party/pico-sdk/src/rp2_common/pico_printf/printf.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_printf/printf.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.o: third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.o
@@ -1895,6 +2133,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.o: third_party/pico-sdk
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.i: third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.i
@@ -1903,6 +2142,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.i: third_party/pico-sdk
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.s: third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.s
@@ -1911,6 +2151,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.s: third_party/pico-sdk
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime/runtime.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.o: third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.o
@@ -1919,6 +2160,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.o: third_part
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.i: third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.i
@@ -1927,6 +2169,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.i: third_part
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.s: third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.s
@@ -1935,6 +2178,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.s: third_part
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.o: third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
@@ -1943,6 +2187,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.o: thi
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.i: third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.i
@@ -1951,6 +2196,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.i: thi
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.s: third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.s
@@ -1959,6 +2205,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.s: thi
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_clocks.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.o: third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.o
@@ -1967,6 +2214,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.o
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.i: third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.i
@@ -1975,6 +2223,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.i
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.s: third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.s
@@ -1983,6 +2232,7 @@ third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_runtime_init/runtime_init_stack_guard.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.o: third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
@@ -1991,6 +2241,7 @@ third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_in
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.i: third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.i
@@ -1999,6 +2250,7 @@ third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_in
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.s: third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.s
@@ -2007,6 +2259,7 @@ third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_in
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_standard_binary_info/standard_binary_info.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.o: third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.o
@@ -2015,6 +2268,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.o: third_party/pico-sdk/src
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.i: third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.i
@@ -2023,6 +2277,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.i: third_party/pico-sdk/src
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.s: third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.s
@@ -2031,6 +2286,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.s: third_party/pico-sdk/src
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdio/stdio.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.o: third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
@@ -2039,6 +2295,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.o: third_party/pico
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.i: third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.i
@@ -2047,6 +2304,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.i: third_party/pico
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.s: third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.s
@@ -2055,6 +2313,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.s: third_party/pico
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.o: third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.o
@@ -2063,6 +2322,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.o: thir
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.i: third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.i
@@ -2071,6 +2331,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.i: thir
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.s: third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.s
@@ -2079,6 +2340,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.s: thir
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdio_usb/stdio_usb_descriptors.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.o: third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.o
@@ -2087,6 +2349,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.o: third_party/pico-sdk/s
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.i: third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.i
@@ -2095,6 +2358,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.i: third_party/pico-sdk/s
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.s: third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.s
@@ -2103,6 +2367,7 @@ third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.s: third_party/pico-sdk/s
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_stdlib/stdlib.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.o: third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.o
@@ -2111,6 +2376,7 @@ third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.o: third_part
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.i: third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.i
@@ -2119,6 +2385,7 @@ third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.i: third_part
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.s: third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.s
@@ -2127,6 +2394,7 @@ third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.s: third_part
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_thread_local/thread_local.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.o: third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.o
@@ -2135,6 +2403,7 @@ third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.o: third_party/pico
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.i: third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.i
@@ -2143,6 +2412,7 @@ third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.i: third_party/pico
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.s: third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.s
@@ -2151,6 +2421,7 @@ third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.s: third_party/pico
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_unique_id/unique_id.c.s
 
 third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.o: third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.o
@@ -2159,6 +2430,7 @@ third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.o: third_party/pico
 # target to build an object file
 third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.o
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.o
 
 third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.i: third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.i
@@ -2167,6 +2439,7 @@ third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.i: third_party/pico
 # target to preprocess a source file
 third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.i
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.i
 
 third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.s: third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.s
@@ -2175,6 +2448,7 @@ third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.s: third_party/pico
 # target to generate assembly for a file
 third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_rig.dir/build.make CMakeFiles/tof_rig.dir/third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/tof_scan.dir/build.make CMakeFiles/tof_scan.dir/third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.s
 .PHONY : third_party/pico-sdk/src/rp2_common/pico_usb_reset/usb_reset.c.s
 
 vendor/VL53L8CX/src/vl53l8cx_api.o: vendor/VL53L8CX/src/vl53l8cx_api.c.o
@@ -2242,6 +2516,10 @@ help:
 	@echo "... bs2_default"
 	@echo "... bs2_default_library"
 	@echo "... tof_rig"
+	@echo "... tof_scan"
+	@echo "... src/i2c_scan.o"
+	@echo "... src/i2c_scan.i"
+	@echo "... src/i2c_scan.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
