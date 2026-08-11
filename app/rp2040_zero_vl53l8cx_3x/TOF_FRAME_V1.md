@@ -47,3 +47,33 @@ stream off
 ```
 
 The receiver resynchronizes on the `TOF1` magic.
+
+## Accepted LM03.2A runtime evidence
+
+Accepted on 2026-08-11 with one VL53L8CX on RP2040-Zero:
+
+```text
+mode: 8x8@15Hz
+irq timestamp: true
+frames_ok: 169
+crc_bad: 0
+silicon temperature observed: 61 C
+```
+
+The accepted path is:
+
+```text
+VL53L8CX
+  -> I2C
+RP2040-Zero
+  -> TOF_FRAME_V1
+USB CDC
+  -> host parser
+```
+
+A transport bug was found and fixed during acceptance: binary frames must not pass
+through newline translation. RP2040 firmware therefore writes the binary packet with
+CR/LF translation disabled. Any future transport implementation must preserve every
+frame byte exactly.
+
+LM03.2A is CLOSED. The next consumer is the Android USB Host runtime in LM03.2B.

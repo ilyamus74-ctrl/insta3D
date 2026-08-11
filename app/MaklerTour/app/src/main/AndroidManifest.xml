@@ -16,6 +16,10 @@
         android:usesCleartextTraffic="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.MaklerTour">
+        <receiver
+            android:name="com.maklertour.data.tof.TofUsbPermissionReceiver"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">

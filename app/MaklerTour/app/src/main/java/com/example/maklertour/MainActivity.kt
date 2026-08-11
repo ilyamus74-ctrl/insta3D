@@ -189,6 +189,7 @@ import com.maklertour.data.rig.StereoRigTopology
 import com.maklertour.data.rig.StereoRigProfile
 import com.maklertour.data.rig.StereoRigProfileStore
 import com.maklertour.data.rig.toJson
+import com.maklertour.data.tof.TofUsbRuntime
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -210,6 +211,7 @@ import android.content.pm.ActivityInfo
 
 class MainActivity : ComponentActivity() {
     private lateinit var deviceOrientationTracker: DeviceOrientationTracker
+    private lateinit var tofUsbRuntime: TofUsbRuntime
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -217,6 +219,10 @@ class MainActivity : ComponentActivity() {
         RoomDatabaseProvider.get(this)
         deviceOrientationTracker = DeviceOrientationTracker(this)
         appDeviceOrientationTracker = deviceOrientationTracker
+
+        tofUsbRuntime = TofUsbRuntime.get(applicationContext)
+        tofUsbRuntime.start()
+
         setContent {
             MaklerTourApp()
         }
@@ -225,6 +231,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         deviceOrientationTracker.start()
+        tofUsbRuntime.refreshAttachedDevices()
     }
 
     override fun onPause() {
@@ -234,6 +241,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         deviceOrientationTracker.stop()
+        tofUsbRuntime.stop()
         if (appDeviceOrientationTracker === deviceOrientationTracker) appDeviceOrientationTracker = null
         super.onDestroy()
     }
