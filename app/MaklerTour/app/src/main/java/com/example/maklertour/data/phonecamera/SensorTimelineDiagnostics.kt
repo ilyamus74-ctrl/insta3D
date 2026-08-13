@@ -26,6 +26,7 @@ object SensorTimelineDiagnostics {
     private const val LOG_EVERY_CAMERA_FRAMES = 30L
     private const val MAX_IMU_SAMPLES = 128
     private const val MAX_PAIRING_SAMPLES = 512
+    private const val PAIRING_MARGIN_US = 2_000L
 
     private val lock = Any()
     private val gyroTimestampsNs = ArrayDeque<Long>()
@@ -33,6 +34,7 @@ object SensorTimelineDiagnostics {
     private val pairingAbsDeltaUs = ArrayDeque<Long>()
     private var cameraFrames = 0L
     private var pairedCameraFrames = 0L
+    private var rejectedCameraFrames = 0L
     private var unpairedCameraFrames = 0L
 
     fun observeImu(event: SensorEvent) {
@@ -116,15 +118,25 @@ object SensorTimelineDiagnostics {
             frames = tofHistory,
             cameraElapsedRealtimeNs = cameraElapsedRealtimeNs,
         )
+        val tofPairThresholdUs = pairingThresholdUs(tofPair)
+        val tofAccepted =
+            tofPair != null &&
+                tofPairThresholdUs != null &&
+                tofPair.absDeltaUs <= tofPairThresholdUs
 
         val snapshot = synchronized(lock) {
             cameraFrames += 1L
 
             if (tofPair != null) {
-                pairedCameraFrames += 1L
                 pairingAbsDeltaUs.addLast(tofPair.absDeltaUs)
                 while (pairingAbsDeltaUs.size > MAX_PAIRING_SAMPLES) {
                     pairingAbsDeltaUs.removeFirst()
+                }
+
+                if (tofAccepted) {
+                    pairedCameraFrames += 1L
+                } else {
+                    rejectedCameraFrames += 1L
                 }
             } else {
                 unpairedCameraFrames += 1L
@@ -149,6 +161,7 @@ object SensorTimelineDiagnostics {
                     cameraElapsedRealtimeNs,
                 ),
                 pairedCount = pairedCameraFrames,
+                rejectedCount = rejectedCameraFrames,
                 unpairedCount = unpairedCameraFrames,
                 pairingP50Us = percentileOrNull(sortedPairingUs, 0.50),
                 pairingP95Us = percentileOrNull(sortedPairingUs, 0.95),
@@ -168,7 +181,9 @@ object SensorTimelineDiagnostics {
                 "tofAbsDeltaUs=${tofPair?.absDeltaUs ?: "-"} " +
                 "tofSeq=${tofPair?.sequence ?: "-"} " +
                 "tofHistory=${tofHistory.size} " +
+                "tofAccepted=$tofAccepted " +
                 "paired=${snapshot.pairedCount} " +
+                "rejected=${snapshot.rejectedCount} " +
                 "unpaired=${snapshot.unpairedCount} " +
                 "tofP50Us=${snapshot.pairingP50Us ?: "-"} " +
                 "tofP95Us=${snapshot.pairingP95Us ?: "-"} " +
@@ -178,7 +193,7 @@ object SensorTimelineDiagnostics {
                 "accel=${snapshot.accelTimestampNs ?: "-"} " +
                 "accelDeltaUs=${deltaUsOrDash(snapshot.accelTimestampNs, cameraElapsedRealtimeNs)} " +
                 "tofClock=${if (tofPair != null) "READY" else "WARMING_UP"} " +
-                "tofPairThreshold=UNSET",
+                "tofPairThresholdUs=${tofPairThresholdUs ?: "-"}",
         )
     }
 
@@ -203,11 +218,17 @@ object SensorTimelineDiagnostics {
                     mappedElapsedRealtimeNs = mappedNs,
                     signedDeltaNs = signedDeltaNs,
                     absDeltaNs = absDeltaNs,
+                    frequencyHz = frame.frequencyHz,
                 )
             }
         }
 
         return best
+    }
+
+    private fun pairingThresholdUs(pair: TofPair?): Long? {
+        val frequencyHz = pair?.frequencyHz?.takeIf { it > 0 } ?: return null
+        return 500_000L / frequencyHz + PAIRING_MARGIN_US
     }
 
     private fun nearestTimestamp(
@@ -252,6 +273,7 @@ object SensorTimelineDiagnostics {
         val mappedElapsedRealtimeNs: Long,
         val signedDeltaNs: Long,
         val absDeltaNs: Long,
+        val frequencyHz: Int,
     ) {
         val signedDeltaUs: Long
             get() = signedDeltaNs / 1000L
@@ -264,6 +286,7 @@ object SensorTimelineDiagnostics {
         val gyroTimestampNs: Long?,
         val accelTimestampNs: Long?,
         val pairedCount: Long = 0L,
+        val rejectedCount: Long = 0L,
         val unpairedCount: Long = 0L,
         val pairingP50Us: Long? = null,
         val pairingP95Us: Long? = null,
