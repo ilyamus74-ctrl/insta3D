@@ -31,8 +31,17 @@ data class TofFrameV1(
     }
 }
 
+data class TofSyncReplyV1(
+    val protocolVersion: Int,
+    val nonce: Long,
+    val rp2040RxTimestampUs: Long,
+    val rp2040TxTimestampUs: Long,
+    val hostReceivedElapsedRealtimeNs: Long,
+)
+
 data class TofParseBatch(
     val frames: List<TofFrameV1>,
+    val syncReplies: List<TofSyncReplyV1> = emptyList(),
     val crcErrors: Int,
     val malformedHeaders: Int,
 )

@@ -274,6 +274,7 @@ class TofUsbRuntime private constructor(context: Context) {
             }
 
             parser.reset()
+            TofActiveClockSync.reset()
             _state.value = _state.value.copy(
                 status = TofUsbStatus.STREAMING,
                 lastError = null,
@@ -288,6 +289,7 @@ class TofUsbRuntime private constructor(context: Context) {
             )
 
             val readBuffer = ByteArray(USB_READ_BUFFER_BYTES)
+            var nextSyncNs = SystemClock.elapsedRealtimeNanos() + ACTIVE_SYNC_INITIAL_DELAY_NS
 
             while (started && scope?.isActive == true) {
                 val read = connection.bulkTransfer(
@@ -301,25 +303,50 @@ class TofUsbRuntime private constructor(context: Context) {
                     if (!usbManager.deviceList.containsKey(device.deviceName)) {
                         throw IllegalStateException("USB device detached")
                     }
-                    continue
-                }
-
-                val hostReceivedNs = SystemClock.elapsedRealtimeNanos()
-                val batch = parser.feed(
-                    chunk = readBuffer,
-                    length = read,
-                    hostReceivedElapsedRealtimeNs = hostReceivedNs,
-                )
-
-                if (batch.crcErrors != 0 || batch.malformedHeaders != 0) {
-                    _state.value = _state.value.copy(
-                        crcErrors = _state.value.crcErrors + batch.crcErrors,
-                        malformedHeaders = _state.value.malformedHeaders + batch.malformedHeaders,
+                } else {
+                    val hostReceivedNs = SystemClock.elapsedRealtimeNanos()
+                    val batch = parser.feed(
+                        chunk = readBuffer,
+                        length = read,
+                        hostReceivedElapsedRealtimeNs = hostReceivedNs,
                     )
+
+                    if (batch.crcErrors != 0 || batch.malformedHeaders != 0) {
+                        _state.value = _state.value.copy(
+                            crcErrors = _state.value.crcErrors + batch.crcErrors,
+                            malformedHeaders = _state.value.malformedHeaders + batch.malformedHeaders,
+                        )
+                    }
+
+                    for (frame in batch.frames) {
+                        publishFrame(frame)
+                    }
+
+                    for (reply in batch.syncReplies) {
+                        val sync = TofActiveClockSync.observe(reply) ?: continue
+                        if (sync.sampleCount <= 3 || sync.sampleCount % 5 == 0) {
+                            Log.i(
+                                TAG,
+                                "TOF_SYNC_V1 phase=${sync.phase} syncN=${sync.sampleCount} " +
+                                    "lastRttUs=${sync.lastRttUs ?: "-"} " +
+                                    "bestRttUs=${sync.bestRttUs ?: "-"} " +
+                                    "rttP50Us=${sync.rttP50Us ?: "-"} " +
+                                    "rttP95Us=${sync.rttP95Us ?: "-"} " +
+                                    "driftPpm=${sync.driftPpm?.toLong() ?: "-"} " +
+                                    "modelRmsUs=${sync.modelRmsUs?.toLong() ?: "-"}",
+                            )
+                        }
+                    }
                 }
 
-                for (frame in batch.frames) {
-                    publishFrame(frame)
+                val nowNs = SystemClock.elapsedRealtimeNanos()
+                if (nowNs >= nextSyncNs) {
+                    val nonce = TofActiveClockSync.beginRequest(nowNs)
+                    if (!bulkWrite(connection, port.outEndpoint, "sync $nonce\n")) {
+                        TofActiveClockSync.cancelRequest(nonce)
+                        Log.w(TAG, "TOF_SYNC_V1 request write failed nonce=$nonce")
+                    }
+                    nextSyncNs = nowNs + ACTIVE_SYNC_INTERVAL_NS
                 }
             }
         } catch (t: Throwable) {
@@ -507,6 +534,9 @@ class TofUsbRuntime private constructor(context: Context) {
         private const val USB_WRITE_TIMEOUT_MS = 1000
         private const val USB_CONTROL_TIMEOUT_MS = 1000
         private const val LOG_EVERY_FRAMES = 30L
+
+        private const val ACTIVE_SYNC_INITIAL_DELAY_NS = 500_000_000L
+        private const val ACTIVE_SYNC_INTERVAL_NS = 1_000_000_000L
 
         private const val CDC_CLASS_INTERFACE_OUT = 0x21
         private const val CDC_SET_LINE_CODING = 0x20

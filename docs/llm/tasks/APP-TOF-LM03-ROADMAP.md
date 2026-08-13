@@ -3,13 +3,13 @@
 ## Status
 
 ```text
-REPOSITORY BASELINE: ec4ec5d2d95f509d1ca4157cc2d5ad90dc6c3522
+REPOSITORY BASELINE: 45cdef2feeb33c2ad9c225f2deafe52a32c39250
 
 LM03.1    RP2040 + VL53L8CX bring-up              CLOSED
 LM03.2A   TOF_FRAME_V1 over USB CDC               CLOSED
 LM03.2B   Android USB Host + parser               CLOSED
-LM03.3.0  RP2040/Android arrival-clock baseline   IN PROGRESS
-LM03.3.1  active RP2040 <-> Android clock sync    PLANNED
+LM03.3.0  RP2040/Android arrival-clock baseline   CLOSED
+LM03.3.1  active RP2040 <-> Android clock sync    IN PROGRESS
 LM03.3.2  ToF + Camera2 + IMU time alignment      PLANNED
 LM03.4    CAMERA_A <-> ToF extrinsics             PLANNED
 LM03.5   64 ToF anchors on Registered RGB   PLANNED
@@ -118,7 +118,12 @@ Android IMU timestamps
 The arrival timestamp is not a substitute for the RP2040 event timestamp. Both must
 be retained.
 
-LM03.3.0 characterizes relative clock rate and USB arrival jitter only.
+LM03.3.0 is CLOSED by the real MASTER run: 1350 frames, crc=0, drops=0,
+clockGen=0. Passive USB-arrival P95 varied from roughly 2 ms to above 8 ms, so
+arrival time is not accepted as the final ToF event timestamp.
 
-LM03.3.1 adds active round-trip synchronization. LM03.3.2 then aligns ToF with
-Camera2 and Android IMU timestamps.
+LM03.3.1 adds `TOF_SYNC_V1` active round-trip synchronization while the 15 Hz ToF
+stream remains running.
+
+LM03.3.2 then aligns the accepted active ToF mapping with Camera2 and Android IMU
+timestamps.

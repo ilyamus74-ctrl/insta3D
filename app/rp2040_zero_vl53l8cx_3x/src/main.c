@@ -10,6 +10,7 @@
 #include "vl53l8cx_api.h"
 #include "vl53l8cx_pico_platform.h"
 #include "tof_frame_v1.h"
+#include "tof_sync_v1.h"
 
 #define SENSOR_MAX 3
 #define I2C_SDA_PIN 4
@@ -292,6 +293,7 @@ static void help(void) {
         "  list\n"
         "  print 0|1|2|off\n"
         "  stream 0|1|2|off   (TOF_FRAME_V1 binary over USB CDC)\n"
+        "  sync NONCE         (TOF_SYNC_V1 binary clock reply)\n"
         "  start 0|1|2|all\n"
         "  stop 0|1|2|all\n"
         "  mode SLOT 8 HZ    (8x8 max 15Hz)\n"
@@ -337,6 +339,17 @@ static void handle_line(char *line) {
                 sleep_ms(10);
                 stream_slot = n;
             }
+        }
+        return;
+    }
+    if (strncmp(line, "sync ", 5) == 0) {
+        char *end = NULL;
+        const unsigned long nonce = strtoul(line + 5, &end, 10);
+        if (end != line + 5 && *end == '\0') {
+            const uint64_t rx_timestamp_us = time_us_64();
+            tof_sync_v1_write((uint32_t)nonce, rx_timestamp_us);
+        } else if (stream_slot < 0) {
+            printf("bad sync nonce\n");
         }
         return;
     }
