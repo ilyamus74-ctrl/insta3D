@@ -326,10 +326,25 @@ class TofUsbRuntime private constructor(context: Context) {
                 return
             }
 
-            if (!bulkWrite(connection, port.outEndpoint, "print off\n")) {
+            if (!bulkWriteWithRetry(
+                    connection = connection,
+                    endpoint = port.outEndpoint,
+                    text = "print off\n",
+                    generation = generation,
+                )
+            ) {
                 error("failed to send 'print off'")
             }
-            if (!bulkWrite(connection, port.outEndpoint, "stream 0\n")) {
+
+            delay(CDC_COMMAND_GAP_MS)
+
+            if (!bulkWriteWithRetry(
+                    connection = connection,
+                    endpoint = port.outEndpoint,
+                    text = "stream 0\n",
+                    generation = generation,
+                )
+            ) {
                 error("failed to send 'stream 0'")
             }
 
@@ -564,6 +579,63 @@ class TofUsbRuntime private constructor(context: Context) {
         return written == bytes.size
     }
 
+    private suspend fun bulkWriteWithRetry(
+        connection: UsbDeviceConnection,
+        endpoint: UsbEndpoint,
+        text: String,
+        generation: Long,
+    ): Boolean {
+        val bytes = text.toByteArray(Charsets.US_ASCII)
+        val command = text.trim()
+
+        repeat(CDC_WRITE_ATTEMPTS) { attempt ->
+            if (
+                !isSessionCurrent(generation) ||
+                !currentCoroutineContext().isActive
+            ) {
+                return false
+            }
+
+            val written = connection.bulkTransfer(
+                endpoint,
+                bytes,
+                bytes.size,
+                USB_WRITE_TIMEOUT_MS,
+            )
+
+            if (written == bytes.size) {
+                if (attempt > 0) {
+                    Log.i(
+                        TAG,
+                        "CDC write recovered command='$command' " +
+                            "attempt=${attempt + 1}/$CDC_WRITE_ATTEMPTS",
+                    )
+                }
+                return true
+            }
+
+            Log.w(
+                TAG,
+                "CDC write failed command='$command' " +
+                    "attempt=${attempt + 1}/$CDC_WRITE_ATTEMPTS " +
+                    "written=$written expected=${bytes.size}",
+            )
+
+            if (written > 0) {
+                // Do not replay a partially delivered line: duplicating the prefix
+                // could turn it into a different RP2040 command. Let the session
+                // reconnect instead.
+                return false
+            }
+
+            if (attempt + 1 < CDC_WRITE_ATTEMPTS) {
+                delay(CDC_WRITE_RETRY_DELAY_MS)
+            }
+        }
+
+        return false
+    }
+
     private fun findPort(device: UsbDevice): UsbPort? {
         val communicationInterface =
             (0 until device.interfaceCount)
@@ -631,7 +703,10 @@ class TofUsbRuntime private constructor(context: Context) {
 
         private const val RASPBERRY_PI_USB_VID = 0x2E8A
         private const val SCAN_INTERVAL_MS = 1000L
-        private const val CDC_SETTLE_MS = 100L
+        private const val CDC_SETTLE_MS = 250L
+        private const val CDC_COMMAND_GAP_MS = 50L
+        private const val CDC_WRITE_RETRY_DELAY_MS = 100L
+        private const val CDC_WRITE_ATTEMPTS = 3
         private const val USB_READ_BUFFER_BYTES = 4096
         private const val USB_READ_TIMEOUT_MS = 250
         private const val USB_WRITE_TIMEOUT_MS = 1000
