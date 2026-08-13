@@ -364,6 +364,7 @@ class TofUsbRuntime private constructor(context: Context) {
 
             val readBuffer = ByteArray(USB_READ_BUFFER_BYTES)
             var nextSyncNs = SystemClock.elapsedRealtimeNanos() + ACTIVE_SYNC_INITIAL_DELAY_NS
+            var syncRepliesObserved = 0L
 
             while (
                 isSessionCurrent(generation) &&
@@ -412,10 +413,12 @@ class TofUsbRuntime private constructor(context: Context) {
                         if (!isSessionCurrent(generation)) break
 
                         val sync = TofActiveClockSync.observe(reply) ?: continue
-                        if (sync.sampleCount <= 3 || sync.sampleCount % 5 == 0) {
+                        syncRepliesObserved++
+                        if (syncRepliesObserved <= 3L || syncRepliesObserved % 5L == 0L) {
                             Log.i(
                                 TAG,
                                 "TOF_SYNC_V1 phase=${sync.phase} syncN=${sync.sampleCount} " +
+                                    "syncObs=$syncRepliesObserved " +
                                     "lastRttUs=${sync.lastRttUs ?: "-"} " +
                                     "bestRttUs=${sync.bestRttUs ?: "-"} " +
                                     "rttP50Us=${sync.rttP50Us ?: "-"} " +
