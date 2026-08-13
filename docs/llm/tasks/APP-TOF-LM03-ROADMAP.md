@@ -3,14 +3,15 @@
 ## Status
 
 ```text
-REPOSITORY BASELINE: 45cdef2feeb33c2ad9c225f2deafe52a32c39250
+REPOSITORY BASELINE: 6f4fbf3
 
-LM03.1    RP2040 + VL53L8CX bring-up              CLOSED
-LM03.2A   TOF_FRAME_V1 over USB CDC               CLOSED
-LM03.2B   Android USB Host + parser               CLOSED
-LM03.3.0  RP2040/Android arrival-clock baseline   CLOSED
-LM03.3.1  active RP2040 <-> Android clock sync    IN PROGRESS
-LM03.3.2  ToF + Camera2 + IMU time alignment      PLANNED
+LM03.1     RP2040 + VL53L8CX bring-up              CLOSED
+LM03.2A    TOF_FRAME_V1 over USB CDC               CLOSED
+LM03.2B    Android USB Host + parser               CLOSED
+LM03.3.0   RP2040/Android arrival-clock baseline   CLOSED
+LM03.3.1   active RP2040 <-> Android clock sync    IN PROGRESS
+LM03.3.1a  USB session lifecycle fence             IN PROGRESS
+LM03.3.2   ToF + Camera2 + IMU time alignment      PLANNED
 LM03.4    CAMERA_A <-> ToF extrinsics             PLANNED
 LM03.5   64 ToF anchors on Registered RGB   PLANNED
 LM03.6   STEREO / TOF / FUSED cursor        PLANNED
@@ -124,6 +125,27 @@ arrival time is not accepted as the final ToF event timestamp.
 
 LM03.3.1 adds `TOF_SYNC_V1` active round-trip synchronization while the 15 Hz ToF
 stream remains running.
+
+A camera/live-stereo concurrency run exposed a lifecycle race: an Activity
+recreation could cancel the old USB coroutine, set the shared `readJob` to null,
+start a replacement session, and then let the old coroutine continue because its
+loop checked the new global `scope`. The observed result was a second
+`CDC streaming started`, repeated stale-session sync write failures, one CRC error
+and one sequence drop.
+
+LM03.3.1a hardens that boundary with:
+
+```text
+per-session lifecycle generation
+session-local parser state
+synchronous UsbDeviceConnection close on stop()
+coroutine-local isActive checks
+stale-session publish/sync/state fences
+configuration-change preservation of the process-scoped ToF runtime
+```
+
+LM03.3.2 starts only after a repeated live-stereo run shows no stale-session writes
+and no growth of CRC/drop counters.
 
 LM03.3.2 then aligns the accepted active ToF mapping with Camera2 and Android IMU
 timestamps.

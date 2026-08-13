@@ -20,6 +20,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -49,7 +50,6 @@ data class TofUsbState(
 class TofUsbRuntime private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val usbManager = appContext.getSystemService(Context.USB_SERVICE) as UsbManager
-    private val parser = TofFrameV1Parser()
 
     private val _state = MutableStateFlow(TofUsbState())
     val state: StateFlow<TofUsbState> = _state
@@ -59,6 +59,8 @@ class TofUsbRuntime private constructor(context: Context) {
 
     private val lifecycleLock = Any()
     private var started = false
+    private var lifecycleGeneration = 0L
+    private var activeConnection: UsbDeviceConnection? = null
     private var scope: CoroutineScope? = null
     private var monitorJob: Job? = null
     private var readJob: Job? = null
@@ -99,7 +101,7 @@ class TofUsbRuntime private constructor(context: Context) {
         synchronized(lifecycleLock) {
             if (started) return
             started = true
-            parser.reset()
+            lifecycleGeneration++
 
             val newScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             scope = newScope
@@ -107,6 +109,8 @@ class TofUsbRuntime private constructor(context: Context) {
                 status = TofUsbStatus.SEARCHING,
                 lastError = null,
             )
+
+            Log.i(TAG, "USB runtime start generation=$lifecycleGeneration")
 
             monitorJob = newScope.launch {
                 while (isActive) {
@@ -122,9 +126,15 @@ class TofUsbRuntime private constructor(context: Context) {
     }
 
     fun stop() {
+        var connectionToClose: UsbDeviceConnection? = null
+
         synchronized(lifecycleLock) {
             if (!started) return
             started = false
+
+            // Invalidate the current session before cancelling its coroutine.
+            // A restarted Activity must never make an old loop current again.
+            lifecycleGeneration++
 
             monitorJob?.cancel()
             readJob?.cancel()
@@ -135,9 +145,18 @@ class TofUsbRuntime private constructor(context: Context) {
             scope?.cancel()
             scope = null
 
-            parser.reset()
+            // UsbDeviceConnection.close() unblocks an outstanding bulkTransfer().
+            // Close it before stop() returns so a replacement session cannot overlap it.
+            connectionToClose = activeConnection
+            activeConnection = null
+
             _latestFrame.value = null
             _state.value = _state.value.copy(status = TofUsbStatus.STOPPED)
+        }
+
+        connectionToClose?.let { connection ->
+            runCatching { connection.close() }
+            Log.i(TAG, "USB session connection force-closed on stop")
         }
     }
 
@@ -212,20 +231,37 @@ class TofUsbRuntime private constructor(context: Context) {
     }
 
     private fun launchConnection(device: UsbDevice) {
-        val activeScope = scope ?: return
-        if (readJob?.isActive == true) return
+        synchronized(lifecycleLock) {
+            if (!started) return
+            val activeScope = scope ?: return
+            if (readJob?.isActive == true || activeConnection != null) return
 
-        readJob = activeScope.launch {
-            runDeviceSession(device)
+            val generation = lifecycleGeneration
+            readJob = activeScope.launch {
+                runDeviceSession(device, generation)
+            }
         }
     }
 
-    private suspend fun runDeviceSession(device: UsbDevice) {
+    private suspend fun runDeviceSession(
+        device: UsbDevice,
+        generation: Long,
+    ) {
+        if (!isSessionCurrent(generation)) return
+
+        // Parser state belongs to exactly one USB connection. A stale session must
+        // never reset or feed the parser used by its replacement.
+        val parser = TofFrameV1Parser()
+
         val port = findPort(device)
         if (port == null) {
-            setError("USB device has no CDC bulk IN/OUT interface")
+            if (isSessionCurrent(generation)) {
+                setError("USB device has no CDC bulk IN/OUT interface")
+            }
             return
         }
+
+        if (!isSessionCurrent(generation)) return
 
         _state.value = _state.value.copy(
             status = TofUsbStatus.CONNECTING,
@@ -237,7 +273,27 @@ class TofUsbRuntime private constructor(context: Context) {
 
         val connection = usbManager.openDevice(device)
         if (connection == null) {
-            setError("UsbManager.openDevice() returned null")
+            if (isSessionCurrent(generation)) {
+                setError("UsbManager.openDevice() returned null")
+            }
+            return
+        }
+
+        val accepted = synchronized(lifecycleLock) {
+            if (
+                started &&
+                lifecycleGeneration == generation &&
+                activeConnection == null
+            ) {
+                activeConnection = connection
+                true
+            } else {
+                false
+            }
+        }
+
+        if (!accepted) {
+            runCatching { connection.close() }
             return
         }
 
@@ -266,6 +322,10 @@ class TofUsbRuntime private constructor(context: Context) {
 
             delay(CDC_SETTLE_MS)
 
+            if (!isSessionCurrent(generation) || !currentCoroutineContext().isActive) {
+                return
+            }
+
             if (!bulkWrite(connection, port.outEndpoint, "print off\n")) {
                 error("failed to send 'print off'")
             }
@@ -273,7 +333,6 @@ class TofUsbRuntime private constructor(context: Context) {
                 error("failed to send 'stream 0'")
             }
 
-            parser.reset()
             TofActiveClockSync.reset()
             _state.value = _state.value.copy(
                 status = TofUsbStatus.STREAMING,
@@ -282,7 +341,7 @@ class TofUsbRuntime private constructor(context: Context) {
 
             Log.i(
                 TAG,
-                "CDC streaming started deviceId=${device.deviceId} " +
+                "CDC streaming started generation=$generation deviceId=${device.deviceId} " +
                     "dataIf=${port.dataInterface.id} " +
                     "in=0x${port.inEndpoint.address.toString(16)} " +
                     "out=0x${port.outEndpoint.address.toString(16)}",
@@ -291,13 +350,25 @@ class TofUsbRuntime private constructor(context: Context) {
             val readBuffer = ByteArray(USB_READ_BUFFER_BYTES)
             var nextSyncNs = SystemClock.elapsedRealtimeNanos() + ACTIVE_SYNC_INITIAL_DELAY_NS
 
-            while (started && scope?.isActive == true) {
+            while (
+                isSessionCurrent(generation) &&
+                currentCoroutineContext().isActive
+            ) {
                 val read = connection.bulkTransfer(
                     port.inEndpoint,
                     readBuffer,
                     readBuffer.size,
                     USB_READ_TIMEOUT_MS,
                 )
+
+                // stop()/restart may have invalidated this generation while
+                // bulkTransfer() was blocked.
+                if (
+                    !isSessionCurrent(generation) ||
+                    !currentCoroutineContext().isActive
+                ) {
+                    break
+                }
 
                 if (read <= 0) {
                     if (!usbManager.deviceList.containsKey(device.deviceName)) {
@@ -319,10 +390,12 @@ class TofUsbRuntime private constructor(context: Context) {
                     }
 
                     for (frame in batch.frames) {
-                        publishFrame(frame)
+                        publishFrame(frame, generation)
                     }
 
                     for (reply in batch.syncReplies) {
+                        if (!isSessionCurrent(generation)) break
+
                         val sync = TofActiveClockSync.observe(reply) ?: continue
                         if (sync.sampleCount <= 3 || sync.sampleCount % 5 == 0) {
                             Log.i(
@@ -339,23 +412,34 @@ class TofUsbRuntime private constructor(context: Context) {
                     }
                 }
 
+                if (!isSessionCurrent(generation)) break
+
                 val nowNs = SystemClock.elapsedRealtimeNanos()
                 if (nowNs >= nextSyncNs) {
                     val nonce = TofActiveClockSync.beginRequest(nowNs)
                     if (!bulkWrite(connection, port.outEndpoint, "sync $nonce\n")) {
                         TofActiveClockSync.cancelRequest(nonce)
-                        Log.w(TAG, "TOF_SYNC_V1 request write failed nonce=$nonce")
+                        if (isSessionCurrent(generation)) {
+                            Log.w(
+                                TAG,
+                                "TOF_SYNC_V1 request write failed generation=$generation nonce=$nonce",
+                            )
+                        }
                     }
                     nextSyncNs = nowNs + ACTIVE_SYNC_INTERVAL_NS
                 }
             }
         } catch (t: Throwable) {
-            if (started) {
-                Log.e(TAG, "USB session failed", t)
+            if (isSessionCurrent(generation)) {
+                Log.e(TAG, "USB session failed generation=$generation", t)
                 setError(t.message ?: t::class.java.simpleName)
             }
         } finally {
-            runCatching { bulkWrite(connection, port.outEndpoint, "stream off\n") }
+            // A stale session must never send "stream off": the replacement session
+            // may already be streaming on the same RP2040.
+            if (isSessionCurrent(generation)) {
+                runCatching { bulkWrite(connection, port.outEndpoint, "stream off\n") }
+            }
 
             if (dataClaimed) {
                 runCatching { connection.releaseInterface(port.dataInterface) }
@@ -365,15 +449,34 @@ class TofUsbRuntime private constructor(context: Context) {
             }
             runCatching { connection.close() }
 
-            parser.reset()
+            synchronized(lifecycleLock) {
+                if (activeConnection === connection) {
+                    activeConnection = null
+                }
+            }
 
-            if (started) {
+            if (isSessionCurrent(generation)) {
                 _state.value = _state.value.copy(status = TofUsbStatus.SEARCHING)
             }
+
+            Log.i(
+                TAG,
+                "USB session closed generation=$generation current=${isSessionCurrent(generation)}",
+            )
         }
     }
 
-    private fun publishFrame(frame: TofFrameV1) {
+    private fun isSessionCurrent(generation: Long): Boolean =
+        synchronized(lifecycleLock) {
+            started && lifecycleGeneration == generation
+        }
+
+    private fun publishFrame(
+        frame: TofFrameV1,
+        generation: Long,
+    ) {
+        if (!isSessionCurrent(generation)) return
+
         val before = _state.value
         val dropped = sequenceGap(before.lastSequence, frame.sequence)
         val frameCount = before.framesOk + 1

@@ -241,7 +241,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         deviceOrientationTracker.stop()
-        tofUsbRuntime.stop()
+
+        // TofUsbRuntime is process-scoped. Configuration recreation (for example,
+        // entering a camera mode with another requested orientation) must not tear
+        // down and immediately reopen the same USB CDC device.
+        if (!isChangingConfigurations) {
+            tofUsbRuntime.stop()
+        }
+
         if (appDeviceOrientationTracker === deviceOrientationTracker) appDeviceOrientationTracker = null
         super.onDestroy()
     }
