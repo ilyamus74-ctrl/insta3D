@@ -3,9 +3,9 @@
 ## Status
 
 ```text
-REPOSITORY BASELINE: 45cdef2feeb33c2ad9c225f2deafe52a32c39250
+REPOSITORY BASELINE: b8c70f46a89cf336961adc7ebf6aa2656fbd11e1
 LM03.3.0: CLOSED
-LM03.3.1: IN PROGRESS
+LM03.3.1: CLOSED
 ```
 
 ## LM03.3.0 closeout
@@ -87,15 +87,38 @@ driftPpm
 modelRmsUs
 ```
 
-No hard threshold is invented before the real-device measurement.
+No hard threshold was invented before the real-device measurement.
+
+## Closeout
+
+Integrated CAMERA_A / MASTER live-stereo evidence on 2026-08-13 keeps the ToF
+transport clean while CameraX and IMU are active:
+
+```text
+frames >= 1290
+crc=0
+drops=0
+TOF_SYNC_V1 phase=READY
+driftPpm roughly -35..-37
+steady modelRmsUs roughly 61..77
+```
+
+The accepted active mapping is therefore the event-time mapping used by LM03.3.2.
+The older passive `ARRIVAL_MODEL_READY` telemetry remains diagnostic only.
 
 ## Next
 
-LM03.3.2 will consume the accepted active clock mapping for:
+LM03.3.2 consumes the accepted active clock mapping for:
 
 ```text
 Camera2 sensor timestamps
 Android IMU timestamps
 video ToF timeline
 live stereo ToF timeline
+```
+
+LM03.3.2A local timeline diagnostics are CLOSED. See:
+
+```text
+docs/llm/tasks/APP-TOF-LM03.3.2-SENSOR-TIMELINE.md
 ```

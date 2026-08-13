@@ -3,16 +3,18 @@
 ## Status
 
 ```text
-REPOSITORY BASELINE: 6f4fbf3
+REPOSITORY BASELINE: b8c70f46a89cf336961adc7ebf6aa2656fbd11e1
 
-LM03.1     RP2040 + VL53L8CX bring-up              CLOSED
-LM03.2A    TOF_FRAME_V1 over USB CDC               CLOSED
-LM03.2B    Android USB Host + parser               CLOSED
-LM03.3.0   RP2040/Android arrival-clock baseline   CLOSED
-LM03.3.1   active RP2040 <-> Android clock sync    IN PROGRESS
-LM03.3.1a  USB session lifecycle fence             IN PROGRESS
-LM03.3.2   ToF + Camera2 + IMU time alignment      PLANNED
-LM03.4    CAMERA_A <-> ToF extrinsics             PLANNED
+LM03.1      RP2040 + VL53L8CX bring-up               CLOSED
+LM03.2A     TOF_FRAME_V1 over USB CDC                CLOSED
+LM03.2B     Android USB Host + parser                CLOSED
+LM03.3.0    RP2040/Android arrival-clock baseline    CLOSED
+LM03.3.1    active RP2040 <-> Android clock sync     CLOSED
+LM03.3.1a   USB session lifecycle fence              CLOSED
+LM03.3.2    ToF + Camera2 + IMU time alignment       IN PROGRESS
+LM03.3.2A   local CAMERA_A sensor timeline           CLOSED
+LM03.3.2B   nearest event-time ToF pairing           PLANNED
+LM03.4     CAMERA_A <-> ToF extrinsics              PLANNED
 LM03.5   64 ToF anchors on Registered RGB   PLANNED
 LM03.6   STEREO / TOF / FUSED cursor        PLANNED
 LM03.7   VIO + ToF metric trajectory        PLANNED
@@ -144,8 +146,54 @@ stale-session publish/sync/state fences
 configuration-change preservation of the process-scoped ToF runtime
 ```
 
-LM03.3.2 starts only after a repeated live-stereo run shows no stale-session writes
-and no growth of CRC/drop counters.
+LM03.3.1 and LM03.3.1a are CLOSED by repeated real CAMERA_A / MASTER runs with
+one active USB generation, no stale-session writes and no growth of CRC/drop
+counters. The accepted active model settles around `-35 ppm` drift and tens of
+microseconds RMS under live camera/IMU load.
 
-LM03.3.2 then aligns the accepted active ToF mapping with Camera2 and Android IMU
-timestamps.
+## LM03.3.2A closeout
+
+The authoritative CAMERA_A laptop/live-stereo frame path is:
+
+```text
+DualPhoneLaptopUplinkRuntime
+  -> DualPhoneReducedFrameProducer
+  -> CameraX ImageAnalysis
+  -> ImageProxy.imageInfo.timestamp
+```
+
+`PhoneCameraVideoRecorder` is a separate recording/calibration runtime and must
+not be used to diagnose laptop/live-stereo frame flow.
+
+Accepted real-device evidence on 2026-08-13:
+
+```text
+source=IMAGE_ANALYSIS
+camSource=REALTIME
+camRaw == mapped cam timestamp
+gyro present
+accel present
+tofClock=READY
+ToF transport crc=0
+ToF transport drops=0
+active-sync drift roughly -35..-37 ppm
+steady active-sync model RMS roughly 61..77 us
+```
+
+Camera `camRecvDeltaUs` is roughly 82..118 ms in this run. It is ImageAnalysis
+callback latency and is not camera exposure/event time.
+
+The diagnostic currently compares each camera event with the latest published ToF
+frame. Consequently observed `tofDeltaUs` values of roughly 20..81 ms are not a
+final pairing-quality metric and must not be interpreted as clock-sync error.
+
+LM03.3.2B must retain mapped ToF event timestamps in a bounded history and choose
+the nearest ToF event to each camera event by event time. A pairing acceptance
+threshold is not invented before measuring the resulting nearest-event
+distribution.
+
+Canonical LM03.3.2 task:
+
+```text
+docs/llm/tasks/APP-TOF-LM03.3.2-SENSOR-TIMELINE.md
+```

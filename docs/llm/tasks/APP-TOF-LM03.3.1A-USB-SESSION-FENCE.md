@@ -1,9 +1,10 @@
 # LM03.3.1a — USB session lifecycle fence
 
-## Baseline
+## Status
 
 ```text
-6f4fbf3
+REPOSITORY BASELINE: b8c70f46a89cf336961adc7ebf6aa2656fbd11e1
+LM03.3.1a: CLOSED
 ```
 
 ## Incident
@@ -84,4 +85,17 @@ sequenceDrops counter does not increase
 A pre-existing cumulative CRC/drop count is acceptable only if it does not increase
 during the test.
 
-After LM03.3.1a passes, proceed to LM03.3.2 Camera2 + IMU + ToF timeline alignment.
+## Closeout
+
+Repeated CAMERA_A / MASTER runs reached live CameraX + IMU + ToF operation with a
+single current USB generation, no stale-generation write pattern and clean
+transport counters:
+
+```text
+crc=0
+drops=0
+TOF_SYNC_V1 phase=READY
+```
+
+LM03.3.1a is therefore CLOSED. LM03.3.2 may rely on the process-scoped ToF
+runtime and its active clock mapping.
