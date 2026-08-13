@@ -185,6 +185,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 result: TotalCaptureResult,
             ) {
                 frameTelemetryRecorder.record(result)
+                SensorTimelineDiagnostics.onCameraCapture(context, result)
             }
         }
 

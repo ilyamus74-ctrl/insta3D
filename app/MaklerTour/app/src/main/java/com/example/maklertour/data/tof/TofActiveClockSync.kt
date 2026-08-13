@@ -2,6 +2,7 @@ package com.maklertour.data.tof
 
 import java.util.ArrayDeque
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlin.math.sqrt
 
 enum class TofActiveSyncPhase { EMPTY, WARMING_UP, READY }
@@ -20,15 +21,23 @@ data class TofActiveSyncState(
 object TofActiveClockSync {
     private data class Pending(val hostSendNs: Long)
     private data class Sample(val rpMidNs: Long, val hostMidNs: Long, val rttNs: Long)
+    private data class Mapping(
+        val rpOriginNs: Long,
+        val hostOriginNs: Long,
+        val slope: Double,
+        val interceptNs: Double,
+    )
 
     private val pending = LinkedHashMap<Long, Pending>()
     private val samples = ArrayDeque<Sample>()
     private var nextNonce = 1L
+    private var mapping: Mapping? = null
 
     @Synchronized
     fun reset() {
         pending.clear()
         samples.clear()
+        mapping = null
     }
 
     @Synchronized
@@ -43,6 +52,16 @@ object TofActiveClockSync {
     @Synchronized
     fun cancelRequest(nonce: Long) {
         pending.remove(nonce and 0xffff_ffffL)
+    }
+
+    @Synchronized
+    fun mapRp2040TimestampUsToHostElapsedNs(timestampUs: Long): Long? {
+        val current = mapping ?: return null
+        val rpNs = timestampUs.toDouble() * 1000.0
+        val mapped = current.hostOriginNs.toDouble() +
+            current.interceptNs +
+            current.slope * (rpNs - current.rpOriginNs.toDouble())
+        return mapped.roundToLong()
     }
 
     @Synchronized
@@ -105,6 +124,13 @@ object TofActiveClockSync {
 
         val slope = cov / varX
         val intercept = meanY - slope * meanX
+        mapping = Mapping(
+            rpOriginNs = x0,
+            hostOriginNs = y0,
+            slope = slope,
+            interceptNs = intercept,
+        )
+
         var sumSq = 0.0
         for (s in selected) {
             val x = (s.rpMidNs - x0).toDouble()

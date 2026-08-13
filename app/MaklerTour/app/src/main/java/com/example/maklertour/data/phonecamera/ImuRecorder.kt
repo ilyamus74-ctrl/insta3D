@@ -89,6 +89,8 @@ class ImuRecorder(context: Context) : SensorEventListener {
             else -> return
         }
 
+        SensorTimelineDiagnostics.observeImu(event)
+
         val values = JSONArray()
         event.values.forEach { value ->
             values.put(value.toDouble())
