@@ -97,6 +97,60 @@ object SensorTimelineDiagnostics {
         )
     }
 
+    fun onMappedCameraFrame(
+        context: Context,
+        cameraElapsedRealtimeNs: Long,
+        rawCameraTimestampNs: Long,
+        cameraTimestampSource: String,
+        receiveElapsedRealtimeNs: Long,
+    ) {
+        val snapshot = synchronized(lock) {
+            cameraFrames += 1L
+            if (
+                cameraFrames != 1L &&
+                cameraFrames % LOG_EVERY_CAMERA_FRAMES != 0L
+            ) {
+                return
+            }
+
+            Snapshot(
+                frameIndex = cameraFrames,
+                gyroTimestampNs = nearestTimestamp(
+                    gyroTimestampsNs,
+                    cameraElapsedRealtimeNs,
+                ),
+                accelTimestampNs = nearestTimestamp(
+                    accelTimestampsNs,
+                    cameraElapsedRealtimeNs,
+                ),
+            )
+        }
+
+        val tofFrame = TofUsbRuntime.get(context).latestFrame.value
+        val tofElapsedNs = tofFrame?.let { frame ->
+            TofActiveClockSync.mapRp2040TimestampUsToHostElapsedNs(
+                frame.rp2040TimestampUs,
+            )
+        }
+
+        Log.i(
+            TAG,
+            "SENSOR_TIMELINE source=IMAGE_ANALYSIS frame=${snapshot.frameIndex} " +
+                "cam=$cameraElapsedRealtimeNs " +
+                "camRaw=$rawCameraTimestampNs " +
+                "camSource=$cameraTimestampSource " +
+                "camRecvDeltaUs=${deltaUs(receiveElapsedRealtimeNs, cameraElapsedRealtimeNs)} " +
+                "tof=${tofElapsedNs ?: "-"} " +
+                "tofDeltaUs=${deltaUsOrDash(tofElapsedNs, cameraElapsedRealtimeNs)} " +
+                "tofSeq=${tofFrame?.sequence ?: "-"} " +
+                "gyro=${snapshot.gyroTimestampNs ?: "-"} " +
+                "gyroDeltaUs=${deltaUsOrDash(snapshot.gyroTimestampNs, cameraElapsedRealtimeNs)} " +
+                "accel=${snapshot.accelTimestampNs ?: "-"} " +
+                "accelDeltaUs=${deltaUsOrDash(snapshot.accelTimestampNs, cameraElapsedRealtimeNs)} " +
+                "tofClock=${if (tofElapsedNs != null) "READY" else "WARMING_UP"}",
+        )
+    }
+
     private fun nearestTimestamp(
         samples: ArrayDeque<Long>,
         targetNs: Long,

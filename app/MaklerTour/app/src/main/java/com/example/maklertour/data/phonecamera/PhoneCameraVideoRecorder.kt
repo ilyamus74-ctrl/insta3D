@@ -641,6 +641,13 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 cameraTimestampNs = timestampNs,
                 observedElapsedRealtimeNs = callbackElapsedRealtimeNs,
             )
+            SensorTimelineDiagnostics.onMappedCameraFrame(
+                context = context,
+                cameraElapsedRealtimeNs = captureElapsedRealtimeNs,
+                rawCameraTimestampNs = timestampNs,
+                cameraTimestampSource = calibrationTimestampMapper.sourceName,
+                receiveElapsedRealtimeNs = callbackElapsedRealtimeNs,
+            )
             val ageMs = (
                 android.os.SystemClock.elapsedRealtimeNanos() - captureElapsedRealtimeNs
             ) / 1_000_000L
