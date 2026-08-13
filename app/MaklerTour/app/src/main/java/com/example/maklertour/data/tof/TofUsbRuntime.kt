@@ -57,6 +57,9 @@ class TofUsbRuntime private constructor(context: Context) {
     private val _latestFrame = MutableStateFlow<TofFrameV1?>(null)
     val latestFrame: StateFlow<TofFrameV1?> = _latestFrame
 
+    private val frameHistoryLock = Any()
+    private val recentFrames = java.util.ArrayDeque<TofFrameV1>(96)
+
     private val lifecycleLock = Any()
     private var started = false
     private var lifecycleGeneration = 0L
@@ -151,6 +154,7 @@ class TofUsbRuntime private constructor(context: Context) {
             activeConnection = null
 
             _latestFrame.value = null
+            clearRecentFrames()
             _state.value = _state.value.copy(status = TofUsbStatus.STOPPED)
         }
 
@@ -163,6 +167,17 @@ class TofUsbRuntime private constructor(context: Context) {
     fun lastFrameAgeMs(nowElapsedRealtimeNs: Long = SystemClock.elapsedRealtimeNanos()): Long? {
         val last = _state.value.lastFrameHostElapsedRealtimeNs ?: return null
         return ((nowElapsedRealtimeNs - last).coerceAtLeast(0L)) / 1_000_000L
+    }
+
+    fun recentFramesSnapshot(): List<TofFrameV1> =
+        synchronized(frameHistoryLock) {
+            recentFrames.toList()
+        }
+
+    private fun clearRecentFrames() {
+        synchronized(frameHistoryLock) {
+            recentFrames.clear()
+        }
     }
 
     private fun scanAttachedDevices() {
@@ -349,6 +364,7 @@ class TofUsbRuntime private constructor(context: Context) {
             }
 
             TofActiveClockSync.reset()
+            clearRecentFrames()
             _state.value = _state.value.copy(
                 status = TofUsbStatus.STREAMING,
                 lastError = null,
@@ -499,6 +515,13 @@ class TofUsbRuntime private constructor(context: Context) {
         val dropped = sequenceGap(before.lastSequence, frame.sequence)
         val frameCount = before.framesOk + 1
         val clock = TofClockDiagnostics.observe(frame)
+
+        synchronized(frameHistoryLock) {
+            while (recentFrames.size >= 96) {
+                recentFrames.removeFirst()
+            }
+            recentFrames.addLast(frame)
+        }
 
         _latestFrame.value = frame
         _state.value = before.copy(
