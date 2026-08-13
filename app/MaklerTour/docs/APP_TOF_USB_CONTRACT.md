@@ -227,3 +227,74 @@ LM03.3.2  Camera2 + Android IMU time alignment
 ```
 
 LM03.3.0 is diagnostic only. Its fitted offset still contains one-way USB latency.
+
+## 12. LM03.3.2 authoritative CAMERA_A timeline path
+
+For laptop/live-stereo mode, the authoritative Android CAMERA_A frame path is:
+
+```text
+DualPhoneLaptopUplinkRuntime
+  -> DualPhoneReducedFrameProducer
+  -> CameraX ImageAnalysis
+  -> ImageProxy.imageInfo.timestamp
+```
+
+`PhoneCameraVideoRecorder` is a separate recording/calibration path. Its callbacks
+must not be used to infer whether laptop/live-stereo CAMERA_A frames are flowing.
+
+Camera event time and callback-arrival time have different meanings:
+
+```text
+ImageProxy.imageInfo.timestamp
+    camera frame/event timestamp
+
+SystemClock.elapsedRealtimeNanos() in the ImageAnalysis callback
+    callback receive/arrival timestamp
+```
+
+The camera timestamp source must be resolved from
+`CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE`.
+
+Mapping rule:
+
+```text
+SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
+    the ImageProxy timestamp is already usable in the Android
+    elapsed-realtime/boot-time monotonic domain
+
+UNKNOWN / non-REALTIME
+    map the ImageProxy timestamp to elapsed-realtime with
+    DualPhoneCalibrationTimestampMapper using observed callback-arrival offsets
+```
+
+Callback arrival itself is not camera exposure/event time.
+
+The laptop frame transport currently keeps:
+
+```text
+sensor_timestamp_ns
+    raw ImageProxy.imageInfo.timestamp
+
+capture_elapsed_ns
+    ImageAnalysis callback receive time
+```
+
+`capture_elapsed_ns` must not silently be reinterpreted as exposure time.
+LM03.3.2 local fusion/diagnostics uses the mapped camera event timestamp.
+
+For laptop/live-stereo, IMU collection is owned by
+`DualPhoneLaptopUplinkRuntime`. Accelerometer and gyroscope listeners are
+registered when the uplink starts. Video recording is not required.
+`SensorEvent.timestamp` is the IMU event timestamp.
+
+ToF is physically attached only to `CAMERA_A` / MASTER. Its
+`rp2040TimestampUs` is mapped into Android elapsed-realtime by the active
+RP2040 <-> Android clock model. CAMERA_B has no local ToF mapping and is aligned
+through the dual-phone/host clock model.
+
+Therefore LM03.3.2 live acceptance does not require starting video recording.
+Starting laptop/live-stereo on CAMERA_A is sufficient to exercise:
+
+```text
+CAMERA_A ImageAnalysis <-> CAMERA_A IMU <-> ToF active-clock mapping
+```

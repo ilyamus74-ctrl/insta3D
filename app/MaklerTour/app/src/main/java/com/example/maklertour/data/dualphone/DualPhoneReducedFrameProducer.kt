@@ -28,7 +28,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import com.maklertour.data.dualphone.DualPhoneRole
+import com.maklertour.data.phonecamera.DualPhoneCalibrationCameraControls
+import com.maklertour.data.phonecamera.DualPhoneCalibrationTimestampMapper
 import com.maklertour.data.phonecamera.PhoneCameraLensRepository
+import com.maklertour.data.phonecamera.SensorTimelineDiagnostics
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.util.concurrent.ExecutorService
@@ -86,6 +89,7 @@ data class DualPhoneReducedFrameProducerSnapshot(
 class DualPhoneReducedFrameProducer(context: Context) : Closeable {
     private val appContext = context.applicationContext
     private val lensRepository = PhoneCameraLensRepository(appContext)
+    private val cameraTimestampMapper = DualPhoneCalibrationTimestampMapper()
     private val mainExecutor = ContextCompat.getMainExecutor(appContext)
     private val analyzerExecutor: ExecutorService =
         Executors.newSingleThreadExecutor { runnable ->
@@ -230,6 +234,9 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
             analyze(image, token)
         }
         val camera = provider.bindToLifecycle(lifecycle, selector, imageAnalysis)
+        cameraTimestampMapper.reset(
+            DualPhoneCalibrationCameraControls.timestampSource(camera),
+        )
         applyMetricStereoControls(camera)
         cameraProvider = provider
         lifecycleOwner = lifecycle
@@ -260,6 +267,19 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
             }
             val sensorTimestampNs = image.imageInfo.timestamp
             val analysisReceivedElapsedRealtimeNs = SystemClock.elapsedRealtimeNanos()
+            val cameraElapsedRealtimeNs =
+                cameraTimestampMapper.toElapsedRealtimeNs(
+                    cameraTimestampNs = sensorTimestampNs,
+                    observedElapsedRealtimeNs =
+                        analysisReceivedElapsedRealtimeNs,
+                )
+            SensorTimelineDiagnostics.onMappedCameraFrame(
+                context = appContext,
+                cameraElapsedRealtimeNs = cameraElapsedRealtimeNs,
+                rawCameraTimestampNs = sensorTimestampNs,
+                cameraTimestampSource = cameraTimestampMapper.sourceName,
+                receiveElapsedRealtimeNs = analysisReceivedElapsedRealtimeNs,
+            )
             val previousTimestampNs = lastAcceptedTimestampNs.get()
             if (
                 previousTimestampNs > 0L &&

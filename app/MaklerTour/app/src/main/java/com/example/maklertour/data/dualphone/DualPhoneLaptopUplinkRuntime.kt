@@ -9,6 +9,7 @@ import android.os.SystemClock
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
 import com.maklertour.data.dualphone.ApplicationCaptureMode
 import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
+import com.maklertour.data.phonecamera.SensorTimelineDiagnostics
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -133,6 +134,7 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
     private val sensorListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             if (!active.get() || event.values.size < 3) return
+            SensorTimelineDiagnostics.observeImu(event)
             val value = SensorVector(
                 timestampNs = event.timestamp,
                 x = event.values[0],

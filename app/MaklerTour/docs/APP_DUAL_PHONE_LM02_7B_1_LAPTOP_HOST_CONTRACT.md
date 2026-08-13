@@ -46,6 +46,29 @@ A frame header contains:
 An IMU message uses `type=imu`, zero payload, sensor timestamp, sensor type and
 three-axis values. The first implementation records IMU without fusion.
 
+### Android CAMERA_A/CAMERA_B timestamp semantics
+
+In laptop/live-stereo mode Android frames are produced by
+`DualPhoneReducedFrameProducer` from CameraX `ImageAnalysis`.
+
+```text
+sensor_timestamp_ns
+    raw ImageProxy.imageInfo.timestamp
+
+capture_elapsed_ns
+    SystemClock.elapsedRealtimeNanos() observed when ImageAnalysis receives
+    the frame
+```
+
+These fields are not interchangeable. `capture_elapsed_ns` is callback receive
+time, not camera exposure/event time. Local Android fusion must resolve
+`SENSOR_INFO_TIMESTAMP_SOURCE`; REALTIME timestamps may be used directly,
+otherwise the camera event timestamp must be mapped into elapsed-realtime before
+comparison with Android IMU or locally attached ToF.
+
+Laptop/live-stereo IMU is collected by `DualPhoneLaptopUplinkRuntime` as soon as
+the uplink starts; starting video recording is not required.
+
 ## Pairing
 
 The host keeps a latest-frame queue per camera. Pair delta uses `host_aligned_timestamp_ns` when available and provisional receive time before the Android clock-sync client is added. It never builds an unbounded
