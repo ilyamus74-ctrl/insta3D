@@ -3,13 +3,13 @@
 ## Status
 
 ```text
-REPOSITORY BASELINE: b8c70f46a89cf336961adc7ebf6aa2656fbd11e1
+REPOSITORY BASELINE: e125fcc11ed3db9d3a361b8cb13d704f5b7b584c
 
 LM03.3.1:  CLOSED
 LM03.3.1a: CLOSED
-LM03.3.2:  IN PROGRESS
+LM03.3.2:  CLOSED
 LM03.3.2A: CLOSED
-LM03.3.2B: PLANNED
+LM03.3.2B: CLOSED
 ```
 
 ## Purpose
@@ -203,35 +203,59 @@ quality.
 
 Do not set or tune a fusion threshold from this `latestFrame` diagnostic.
 
-## LM03.3.2B — next
+## LM03.3.2B — CLOSED
 
-Implement a bounded history of mapped ToF event timestamps and pair each CAMERA_A
-event with the nearest ToF event by mapped event time:
-
-```text
-cameraElapsedRealtimeNs
-        |
-        +--> nearest(tofHistory.mappedElapsedRealtimeNs)
-                  |
-                  +--> signed delta
-                  +--> absolute delta
-                  +--> pairing telemetry
-```
-
-Required telemetry:
+Implementation:
 
 ```text
-paired count
-unpaired count
-signed delta us
-absolute delta us
-p50 / p95 / p99
-stale/rejected count
-active ToF clock phase
+TofUsbRuntime
+    -> bounded raw TofFrameV1 history
+    -> current TofActiveClockSync mapping
+    -> nearest mapped event by absolute CAMERA_A event-time delta
 ```
 
-No hard pairing threshold is accepted until the nearest-event distribution is
-measured on the real device.
+Raw RP2040 timestamps are retained in history and mapped at pairing time so the
+current accepted active clock fit is applied consistently.
+
+Acceptance rule:
+
+```text
+threshold_us = 500,000 / tof_frequency_hz + 2,000
+```
+
+For the accepted 15 Hz run:
+
+```text
+threshold_us = 35,333
+```
+
+Accepted low-light/night live-stereo evidence on 2026-08-13:
+
+```text
+frame=450
+paired=407
+rejected=0
+unpaired=43
+
+tofP50Us=16873
+tofP95Us=31901
+tofP99Us=32683
+tofPairThresholdUs=35333
+
+crc=0
+drops=0
+```
+
+`unpaired=43` is a startup-only active-clock warm-up population. It stopped
+growing once the clock model became usable. No nearest candidate was rejected
+after the acceptance threshold became active.
+
+This run was intentionally performed in a poorly illuminated room. The
+ImageAnalysis callback delay remained variable, but pairing by event timestamp was
+stable. This validates the separation between camera event time and callback
+arrival time.
+
+LM03.3.2 is CLOSED. The next spatial milestone is LM03.4.
 
 ## Canonical contracts
 

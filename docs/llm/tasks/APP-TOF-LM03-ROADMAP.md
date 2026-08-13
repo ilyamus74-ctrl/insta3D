@@ -3,7 +3,7 @@
 ## Status
 
 ```text
-REPOSITORY BASELINE: b8c70f46a89cf336961adc7ebf6aa2656fbd11e1
+REPOSITORY BASELINE: e125fcc11ed3db9d3a361b8cb13d704f5b7b584c
 
 LM03.1      RP2040 + VL53L8CX bring-up               CLOSED
 LM03.2A     TOF_FRAME_V1 over USB CDC                CLOSED
@@ -11,11 +11,13 @@ LM03.2B     Android USB Host + parser                CLOSED
 LM03.3.0    RP2040/Android arrival-clock baseline    CLOSED
 LM03.3.1    active RP2040 <-> Android clock sync     CLOSED
 LM03.3.1a   USB session lifecycle fence              CLOSED
-LM03.3.2    ToF + Camera2 + IMU time alignment       IN PROGRESS
+LM03.3.2    ToF + Camera2 + IMU time alignment       CLOSED
 LM03.3.2A   local CAMERA_A sensor timeline           CLOSED
-LM03.3.2B   nearest event-time ToF pairing           PLANNED
-LM03.4     CAMERA_A <-> ToF extrinsics              PLANNED
-LM03.5   64 ToF anchors on Registered RGB   PLANNED
+LM03.3.2B   nearest event-time ToF pairing           CLOSED
+LM03.4      CAMERA_A <-> ToF extrinsics              IN PROGRESS
+LM03.4A     extrinsics profile + projection model    IN PROGRESS
+LM03.4B     ChArUco + ToF planar solver              PLANNED
+LM03.5      64 ToF anchors on Registered RGB         PLANNED
 LM03.6   STEREO / TOF / FUSED cursor        PLANNED
 LM03.7   VIO + ToF metric trajectory        PLANNED
 LM03.8   accumulated metric live 3D          PLANNED
