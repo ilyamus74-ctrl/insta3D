@@ -3,13 +3,15 @@
 ## Status
 
 ```text
-REPOSITORY BASELINE: 39aa78d3c5c6b5b0ddbe9c504c200ddb1f433543
+REPOSITORY BASELINE: ec4ec5d2d95f509d1ca4157cc2d5ad90dc6c3522
 
-LM03.1   RP2040 + VL53L8CX bring-up        CLOSED
-LM03.2A  TOF_FRAME_V1 over USB CDC         CLOSED
-LM03.2B  Android USB Host + parser          IN PROGRESS
-LM03.3   Camera + IMU + ToF clock mapping   PLANNED
-LM03.4   CAMERA_A <-> ToF extrinsics        PLANNED
+LM03.1    RP2040 + VL53L8CX bring-up              CLOSED
+LM03.2A   TOF_FRAME_V1 over USB CDC               CLOSED
+LM03.2B   Android USB Host + parser               CLOSED
+LM03.3.0  RP2040/Android arrival-clock baseline   IN PROGRESS
+LM03.3.1  active RP2040 <-> Android clock sync    PLANNED
+LM03.3.2  ToF + Camera2 + IMU time alignment      PLANNED
+LM03.4    CAMERA_A <-> ToF extrinsics             PLANNED
 LM03.5   64 ToF anchors on Registered RGB   PLANNED
 LM03.6   STEREO / TOF / FUSED cursor        PLANNED
 LM03.7   VIO + ToF metric trajectory        PLANNED
@@ -67,10 +69,10 @@ Canonical Android boundary:
 app/MaklerTour/docs/APP_TOF_USB_CONTRACT.md
 ```
 
-## LM03.2B implementation target
+## LM03.2B closeout
 
-LM03.2B moves the already accepted binary consumer from a Linux diagnostic host into
-CAMERA_A Android.
+LM03.2B moved the binary consumer into CAMERA_A Android and is CLOSED by
+real-device evidence.
 
 Architecture:
 
@@ -87,21 +89,19 @@ TofUsbRuntime
        +--> StateFlow<TofFrameV1?>
 ```
 
-Acceptance requires a real Android device run showing:
+Accepted MASTER run:
 
 ```text
-USB permission granted
-CDC interface claimed
-TOF_FRAME_V1 stream started
-framesOk continuously increasing
-crcErrors == 0
-irqTimestampValid == true
-sequenceDrops == 0 during a stable cable test
+frames=390
+crc=0
+drops=0
+8x8@15Hz
+irq=true
 ```
 
-No RGB fusion is permitted in this milestone.
+No RGB fusion was added in this milestone.
 
-## LM03.3 boundary
+## LM03.3.0 boundary
 
 Only after LM03.2B passes on CAMERA_A do we estimate:
 
@@ -117,3 +117,8 @@ Android IMU timestamps
 
 The arrival timestamp is not a substitute for the RP2040 event timestamp. Both must
 be retained.
+
+LM03.3.0 characterizes relative clock rate and USB arrival jitter only.
+
+LM03.3.1 adds active round-trip synchronization. LM03.3.2 then aligns ToF with
+Camera2 and Android IMU timestamps.

@@ -203,3 +203,27 @@ VIO
 metric world accumulation
 multi-ToF optical scheduling
 ```
+
+## 11. LM03.2B closeout and LM03.3 timing split
+
+LM03.2B is CLOSED on real CAMERA_A / MASTER.
+
+Accepted Android evidence:
+
+```text
+frames >= 390
+crcErrors = 0
+sequenceDrops = 0
+8x8@15Hz
+irqTimestampValid = true
+```
+
+Timing work is split into:
+
+```text
+LM03.3.0  relative clock-rate + USB arrival-jitter characterization
+LM03.3.1  active RP2040 <-> Android round-trip synchronization
+LM03.3.2  Camera2 + Android IMU time alignment
+```
+
+LM03.3.0 is diagnostic only. Its fitted offset still contains one-way USB latency.

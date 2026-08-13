@@ -350,6 +350,7 @@ class TofUsbRuntime private constructor(context: Context) {
         val before = _state.value
         val dropped = sequenceGap(before.lastSequence, frame.sequence)
         val frameCount = before.framesOk + 1
+        val clock = TofClockDiagnostics.observe(frame)
 
         _latestFrame.value = frame
         _state.value = before.copy(
@@ -367,7 +368,8 @@ class TofUsbRuntime private constructor(context: Context) {
                 "TOF_FRAME_V1 frames=$frameCount crc=${_state.value.crcErrors} " +
                     "drops=${_state.value.sequenceDrops} seq=${frame.sequence} " +
                     "${frame.width}x${frame.height}@${frame.frequencyHz}Hz " +
-                    "temp=${frame.siliconTemperatureC}C irq=${frame.irqTimestampValid}",
+                    "temp=${frame.siliconTemperatureC}C irq=${frame.irqTimestampValid} " +
+                    TofClockDiagnostics.logSuffix(clock),
             )
         }
     }
