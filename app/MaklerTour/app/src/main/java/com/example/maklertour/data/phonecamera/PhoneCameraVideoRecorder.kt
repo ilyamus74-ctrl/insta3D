@@ -185,10 +185,21 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 result: TotalCaptureResult,
             ) {
                 frameTelemetryRecorder.record(result)
+            }
+        }
+
+    private val sensorTimelineCaptureCallback =
+        object : CameraCaptureSession.CaptureCallback() {
+            override fun onCaptureCompleted(
+                session: CameraCaptureSession,
+                request: CaptureRequest,
+                result: TotalCaptureResult,
+            ) {
                 SensorTimelineDiagnostics.onCameraCapture(context, result)
             }
         }
 
+    @OptIn(ExperimentalCamera2Interop::class)
     suspend fun bindPreview(
         previewView: PreviewView,
         cameraId: String?,
@@ -235,7 +246,12 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         currentTargetRotation = previewView.display?.rotation ?: Surface.ROTATION_0
         Log.d(TAG, "bindPreview(): start selected_camera_id=$cameraId zoom=$zoomRatio video_capture=$enableVideoCapture target_rotation=$currentTargetRotation requested_profile=${profileRequestedSize?.width}x${profileRequestedSize?.height} requested_calibration=${requestedSize?.width}x${requestedSize?.height} reason=${calibrationResolutionReason ?: "none"}")
         val cameraProvider = getCameraProvider()
-        val preview = Preview.Builder().setTargetRotation(currentTargetRotation).build()
+        val previewBuilder =
+            Preview.Builder().setTargetRotation(currentTargetRotation)
+        Camera2Interop.Extender(previewBuilder)
+            .setSessionCaptureCallback(sensorTimelineCaptureCallback)
+        val preview = previewBuilder.build()
+        Log.i(TAG, "SensorTimeline Camera2 callback attached to Preview")
         val options = lensRepository.listBackCameras()
         val requestedLens = cameraId?.let { id -> options.firstOrNull { it.cameraId == id } }
         val fallbackLens = lensRepository.selectedOrDefault().first
