@@ -33,6 +33,7 @@ import com.maklertour.data.phonecamera.DualPhoneCalibrationTimestampMapper
 import com.maklertour.data.phonecamera.PhoneCameraFocusMode
 import com.maklertour.data.phonecamera.PhoneCameraLensRepository
 import com.maklertour.data.phonecamera.SensorTimelineDiagnostics
+import com.maklertour.data.tof.TofRegisteredRgbAnchorRuntime
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.util.concurrent.ExecutorService
@@ -91,6 +92,7 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
     private val appContext = context.applicationContext
     private val lensRepository = PhoneCameraLensRepository(appContext)
     private val cameraTimestampMapper = DualPhoneCalibrationTimestampMapper()
+    private val registeredTofRuntime = TofRegisteredRgbAnchorRuntime.get(appContext)
     private val mainExecutor = ContextCompat.getMainExecutor(appContext)
     private val analyzerExecutor: ExecutorService =
         Executors.newSingleThreadExecutor { runnable ->
@@ -300,6 +302,20 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
                 )
             ) {
                 return
+            }
+
+            // LM03.5A consumes the same authoritative mapped CAMERA_A event time
+            // as LM03.3.2. SLAVE never registers ToF directly.
+            if (role != DualPhoneRole.SLAVE) {
+                val boundCameraId = mutableState.value.cameraId
+                if (!boundCameraId.isNullOrBlank()) {
+                    registeredTofRuntime.onCameraAFrame(
+                        cameraElapsedRealtimeNs = cameraElapsedRealtimeNs,
+                        cameraWidth = image.width,
+                        cameraHeight = image.height,
+                        cameraId = boundCameraId,
+                    )
+                }
             }
 
             val encoded = encodeJpeg(image)

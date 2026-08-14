@@ -174,6 +174,16 @@ class TofUsbRuntime private constructor(context: Context) {
             recentFrames.toList()
         }
 
+    fun recentFramesSnapshot(tofSlot: Int): List<TofFrameV1> =
+        synchronized(frameHistoryLock) {
+            recentFrames.filter { it.slot == tofSlot }
+        }
+
+    fun latestFrameForSlot(tofSlot: Int): TofFrameV1? =
+        synchronized(frameHistoryLock) {
+            recentFrames.lastOrNull { it.slot == tofSlot }
+        }
+
     private fun clearRecentFrames() {
         synchronized(frameHistoryLock) {
             recentFrames.clear()

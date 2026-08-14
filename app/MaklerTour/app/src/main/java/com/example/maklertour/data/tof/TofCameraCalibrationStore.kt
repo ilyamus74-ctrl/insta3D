@@ -13,7 +13,8 @@ import java.io.File
  *   files/tof_camera_calibration/runs/<run>/validation_samples/<pose>.json
  *   files/tof_camera_calibration/runs/<run>/validation_result.json
  *   files/tof_camera_calibration/profiles/<profile>.json
- *   files/tof_camera_calibration/active_profile.json
+ *   files/tof_camera_calibration/active_profile.json               // legacy slot 0
+ *   files/tof_camera_calibration/active_profile_slot_<0..2>.json   // LM03.5+
  */
 class TofCameraCalibrationStore(context: Context) {
     private val root = File(
@@ -184,6 +185,9 @@ class TofCameraCalibrationStore(context: Context) {
         require(profile.solved) {
             "Only solved ToF/CAMERA_A profiles can be activated"
         }
+        require(profile.tofSlot in 0 until MAX_TOF_SLOTS) {
+            "Unsupported ToF slot ${profile.tofSlot}; expected 0..${MAX_TOF_SLOTS - 1}"
+        }
         val profilesDir = File(root, "profiles").apply { mkdirs() }
         val destination = File(
             profilesDir,
@@ -198,15 +202,41 @@ class TofCameraCalibrationStore(context: Context) {
         )
         writeJsonAtomically(destination, profile.toJson())
         writeJsonAtomically(
-            File(root, ACTIVE_PROFILE_FILE),
+            File(root, activeProfileFileName(profile.tofSlot)),
             profile.toJson(),
         )
+        // Keep the pre-LM03.5 pointer as a slot-0 compatibility alias.
+        if (profile.tofSlot == PRIMARY_TOF_SLOT) {
+            writeJsonAtomically(
+                File(root, ACTIVE_PROFILE_FILE),
+                profile.toJson(),
+            )
+        }
         return destination
     }
 
     @Synchronized
-    fun loadActiveProfile(): TofCameraExtrinsicsProfile? {
-        val file = File(root, ACTIVE_PROFILE_FILE)
+    fun loadActiveProfile(): TofCameraExtrinsicsProfile? =
+        loadActiveProfile(PRIMARY_TOF_SLOT)
+
+    @Synchronized
+    fun loadActiveProfile(tofSlot: Int): TofCameraExtrinsicsProfile? {
+        if (tofSlot !in 0 until MAX_TOF_SLOTS) return null
+        val slotFile = File(root, activeProfileFileName(tofSlot))
+        val slotProfile = readProfile(slotFile)
+        if (slotProfile?.tofSlot == tofSlot) return slotProfile
+
+        // Existing installations have only active_profile.json. Treat it as
+        // slot-aware only when its embedded tof_slot matches the requested slot.
+        val legacyProfile = readProfile(File(root, ACTIVE_PROFILE_FILE))
+        return legacyProfile?.takeIf { it.tofSlot == tofSlot }
+    }
+
+    @Synchronized
+    fun loadActiveProfiles(): List<TofCameraExtrinsicsProfile> =
+        (0 until MAX_TOF_SLOTS).mapNotNull(::loadActiveProfile)
+
+    private fun readProfile(file: File): TofCameraExtrinsicsProfile? {
         if (!file.isFile) return null
         return runCatching {
             TofCameraExtrinsicsProfile.fromJson(
@@ -214,6 +244,9 @@ class TofCameraCalibrationStore(context: Context) {
             )
         }.getOrNull()
     }
+
+    private fun activeProfileFileName(tofSlot: Int): String =
+        "active_profile_slot_${tofSlot}.json"
 
     private fun runRoot(calibrationRunId: String): File =
         File(
@@ -256,6 +289,9 @@ class TofCameraCalibrationStore(context: Context) {
             .take(120)
 
     companion object {
+        const val MAX_TOF_SLOTS = 3
+        const val PRIMARY_TOF_SLOT = 0
+
         private const val SOLVE_RESULT_FILE = "solve_result.json"
         private const val VALIDATION_SAMPLES_DIR = "validation_samples"
         private const val VALIDATION_RESULT_FILE = "validation_result.json"

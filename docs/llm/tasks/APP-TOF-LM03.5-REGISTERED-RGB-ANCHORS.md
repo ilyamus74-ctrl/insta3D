@@ -7,7 +7,9 @@ REPOSITORY BASELINE: 8562264865eb4520b6298476c0e1ffb18b86ffac
 
 LM03.3.2: CLOSED
 LM03.4:   CLOSED
-LM03.5:   NEXT
+LM03.5A:  IMPLEMENTED — real-device anchor validation pending
+LM03.5B:  NEXT — diagnostic overlay
+LM03.5C:  PLANNED
 ```
 
 ## Goal
@@ -16,6 +18,21 @@ Consume the independently validated CAMERA_A/ToF profile and turn every fresh
 VL53L8CX frame into registered metric anchors in CAMERA_A image coordinates.
 
 This milestone does not estimate calibration. It consumes the frozen profile.
+
+LM03.5 is multi-ToF-aware from the first runtime implementation:
+
+```text
+supported logical slots: 0, 1, 2
+current physical stream:  slot 0 only
+
+slot 0 -> independent ToF intrinsics + R0/t0
+slot 1 -> independent ToF intrinsics + R1/t1
+slot 2 -> independent ToF intrinsics + R2/t2
+```
+
+No ToF may reuse another sensor's spatial calibration. The current RP2040
+firmware command remains `stream 0`; slots 1/2 are dormant until firmware and
+hardware expose them.
 
 ```text
 ToF frame 8x8
@@ -153,7 +170,29 @@ can project outside the current CAMERA_A frame.
 
 ## LM03.5A — runtime registered-anchor producer
 
-First implementation step:
+Implemented runtime:
+
+```text
+TofCameraCalibrationStore
+  -> active_profile_slot_0.json
+  -> active_profile_slot_1.json
+  -> active_profile_slot_2.json
+  -> legacy active_profile.json as slot-0 fallback
+
+TofUsbRuntime
+  -> shared bounded frame history
+  -> slot-filtered history helpers
+
+TofCameraFramePairer.nearestForSlot()
+  -> event-time pairing cannot cross ToF slots
+
+TofRegisteredRgbAnchorRuntime
+  -> process-scoped latest StateFlow
+  -> one immutable slot snapshot per configured ToF
+  -> up to 64 immutable anchors per slot
+```
+
+Camera integration:
 
 ```text
 CameraX CAMERA_A event timestamp
@@ -175,9 +214,14 @@ Requirements:
 - no refit of ToF calibration;
 - reuse `TofCameraProjector` geometry;
 - preserve zone index and raw ToF telemetry;
-- output an immutable per-camera-frame registered-anchor snapshot.
+- output an immutable per-camera-frame registered-anchor snapshot;
+- support three logical ToF slots while allowing only slot 0 to be physically
+  active today;
+- never pair a CAMERA_A event with a frame from the wrong ToF slot.
 
-The producer must be usable by both live UI diagnostics and later fusion code.
+The producer is process-scoped and exposes its latest immutable snapshot through
+`StateFlow`, so LM03.5B UI and later fusion code consume exactly the same metric
+registration result.
 
 ## LM03.5B — diagnostic overlay
 

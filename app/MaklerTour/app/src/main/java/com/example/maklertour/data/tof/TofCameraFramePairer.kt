@@ -31,6 +31,20 @@ data class TofCameraFramePair(
 object TofCameraFramePairer {
     const val PAIRING_MARGIN_US = 2_000L
 
+    fun nearestForSlot(
+        cameraElapsedRealtimeNs: Long,
+        frames: List<TofFrameV1>,
+        tofSlot: Int,
+        mapper: (Long) -> Long? = {
+            TofActiveClockSync.mapRp2040TimestampUsToHostElapsedNs(it)
+        },
+    ): TofCameraFramePair? =
+        nearest(
+            cameraElapsedRealtimeNs = cameraElapsedRealtimeNs,
+            frames = frames.filter { it.slot == tofSlot },
+            mapper = mapper,
+        )
+
     fun nearest(
         cameraElapsedRealtimeNs: Long,
         frames: List<TofFrameV1>,
