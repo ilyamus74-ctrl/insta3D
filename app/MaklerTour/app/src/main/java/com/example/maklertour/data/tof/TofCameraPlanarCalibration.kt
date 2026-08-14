@@ -173,6 +173,8 @@ data class TofCameraPlanarCalibrationSample(
 }
 
 object TofCameraPlanarCalibrationSampleBuilder {
+    const val MIN_CALIBRATION_RANGE_MM = 100
+
     fun fromAcceptedPair(
         cameraElapsedRealtimeNs: Long,
         boardPlane: TofCameraBoardPlane,
@@ -184,6 +186,10 @@ object TofCameraPlanarCalibrationSampleBuilder {
         val zones = buildList {
             for (index in 0 until frame.zoneCount) {
                 if (!frame.isZoneValid(index)) continue
+                // Calibration board poses are never intended to be in the
+                // sensor's near field. Reject cover-glass/obstruction ghosts
+                // without changing normal runtime ToF semantics.
+                if (frame.distanceMm[index] < MIN_CALIBRATION_RANGE_MM) continue
                 add(
                     TofZoneRangeObservation(
                         zoneIndex = index,

@@ -89,6 +89,50 @@ class TofCameraPlanarCalibrationTest {
         )
     }
 
+    @Test
+    fun planarSampleDropsStatusValidNearGhostRange() {
+        val tofFrame =
+            frame(
+                sequence = 12,
+                timestampUs = 60_000,
+                validZones = setOf(0, 5, 63),
+            )
+        tofFrame.distanceMm[5] = 17
+        val pair =
+            TofCameraFramePair(
+                frame = tofFrame,
+                mappedElapsedRealtimeNs = 60_000_000L,
+                signedDeltaNs = 500_000L,
+                absDeltaNs = 500_000L,
+                thresholdUs = 35_333L,
+            )
+        val plane =
+            TofCameraBoardPlane(
+                normalX = 0.0,
+                normalY = 0.0,
+                normalZ = 1.0,
+                dMm = -800.0,
+                charucoCornersUsed = 12,
+            )
+
+        val sample =
+            TofCameraPlanarCalibrationSampleBuilder.fromAcceptedPair(
+                cameraElapsedRealtimeNs = 59_500_000L,
+                boardPlane = plane,
+                pair = pair,
+            )
+
+        assertNotNull(sample)
+        sample!!
+        assertEquals(listOf(0, 63), sample.zones.map { it.zoneIndex })
+        assertTrue(
+            sample.zones.all {
+                it.distanceMm >=
+                    TofCameraPlanarCalibrationSampleBuilder.MIN_CALIBRATION_RANGE_MM
+            },
+        )
+    }
+
     private fun frame(
         sequence: Long,
         timestampUs: Long,

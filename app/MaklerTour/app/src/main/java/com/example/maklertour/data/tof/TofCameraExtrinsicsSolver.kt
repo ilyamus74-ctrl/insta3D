@@ -229,15 +229,21 @@ class TofCameraExtrinsicsSolver {
         )
 
         val rawBySample = compatible.map { sample ->
-            sample.zones.map { zone ->
-                abs(
-                    rawResidualMm(
-                        params = p,
-                        sample = sample,
-                        zone = zone,
-                    ),
-                )
-            }.sorted()
+            sample.zones
+                .filter { zone ->
+                    zone.distanceMm >=
+                        TofCameraPlanarCalibrationSampleBuilder.MIN_CALIBRATION_RANGE_MM
+                }
+                .map { zone ->
+                    abs(
+                        rawResidualMm(
+                            params = p,
+                            sample = sample,
+                            zone = zone,
+                        ),
+                    )
+                }
+                .sorted()
         }
 
         val retainedAbs = buildList {
@@ -540,7 +546,8 @@ class TofCameraExtrinsicsSolver {
             sample.zones.forEach { zone ->
                 if (
                     zone.zoneIndex in 0 until (sample.tofWidth * sample.tofHeight) &&
-                    zone.distanceMm > 0
+                    zone.distanceMm >=
+                        TofCameraPlanarCalibrationSampleBuilder.MIN_CALIBRATION_RANGE_MM
                 ) {
                     add(Observation(sample, zone))
                 }
@@ -750,7 +757,7 @@ class TofCameraExtrinsicsSolver {
     )
 
     companion object {
-        const val SOLVER_NAME = "LM03.4B2_4_FIXED_CENTER_R2P_LM_V5"
+        const val SOLVER_NAME = "LM03.4B2_5_NEAR_GHOST_FILTER_R2P_LM_V6"
         const val MIN_SAMPLES = 8
         const val MIN_OBSERVATIONS = 128
 
