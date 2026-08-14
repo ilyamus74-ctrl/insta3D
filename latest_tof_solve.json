@@ -1,43 +1,43 @@
 {
-  "calibration_run_id": "cal-4dfeeb3f-29a7-402b-bebe-43e7dca35928",
+  "calibration_run_id": "cal-2aca1840-6303-4d4c-b8ce-a855a5cf5a0d",
   "result": {
     "schema_version": 1,
-    "successful": false,
+    "successful": true,
     "tof_slot": 0,
     "tof_width": 8,
     "tof_height": 8,
     "tof_intrinsics": {
-      "fx_zones": 10.549717254279372,
-      "fy_zones": 10.931808770153378,
+      "fx_zones": 10.618251917983343,
+      "fy_zones": 11.034381474777096,
       "cx_zones": 3.5,
       "cy_zones": 3.5
     },
     "rotation_tof_to_camera": [
-      0.9998583828001782,
-      0.005495058313115994,
-      0.01590656085857505,
-      -0.005722364044599295,
-      0.9998816611300653,
-      0.014279995991682427,
-      -0.015826209083453127,
-      -0.014368996830566975,
-      0.9997715054131768
+      0.9998618983028322,
+      -0.001935207091348905,
+      0.016505735238707565,
+      0.0016836075882755803,
+      0.9998823943676247,
+      0.015243454305195437,
+      -0.01653329331214506,
+      -0.015213559977187237,
+      0.9997475670413383
     ],
     "translation_tof_to_camera_mm": [
-      81.53890859634701,
-      2.644158133110324,
-      26.841858982476598
+      82.17996397749516,
+      4.134596092959632,
+      22.518672022696737
     ],
     "sample_count": 18,
     "total_observation_count": 1039,
     "retained_observation_count": 735,
-    "plane_rms_mm": 278.6915265386825,
-    "plane_p95_mm": 814.436850559721,
-    "all_plane_rms_mm": 406.6172288097598,
-    "initial_cost": 9.258017220334555,
-    "final_cost": 5.498620506658553,
-    "iterations": 21,
-    "solver": "LM03.4B2_4_FIXED_CENTER_R2P_LM_V5",
-    "status": "REJECTED_B2_1: numerical=true centerOffset=0.0 fxRatio=1.2485245616925615 fyRatio=1.2937438439619067 focalAspect=1.036218175962869 translationNormMm=85.8840531236823 rmsMm=278.6915265386825 p95Mm=814.436850559721"
+    "plane_rms_mm": 8.466426054195251,
+    "plane_p95_mm": 15.265841454616861,
+    "all_plane_rms_mm": 215.60595341096763,
+    "initial_cost": 7.3057191878589345,
+    "final_cost": 3.177329719849347,
+    "iterations": 23,
+    "solver": "LM03.4B2_5_NEAR_GHOST_FILTER_R2P_LM_V6",
+    "status": "SOLVED_B2_1; LM03.4C hold-out validation required"
   }
 }

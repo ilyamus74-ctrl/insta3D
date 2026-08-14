@@ -7,9 +7,9 @@ REPOSITORY BASELINE: e125fcc11ed3db9d3a361b8cb13d704f5b7b584c
 
 LM03.3.2:  CLOSED
 LM03.4:    IN PROGRESS
-LM03.4A:   IN PROGRESS
-LM03.4B:   PLANNED
-LM03.4C:   PLANNED
+LM03.4A:   CLOSED
+LM03.4B:   CLOSED — V6 real-device solve accepted
+LM03.4C:   IN PROGRESS — independent hold-out validation
 ```
 
 ## Goal
@@ -55,16 +55,33 @@ cx_zones
 cy_zones
 ```
 
-For zone centre `(column, row)`:
+For zone centre `(column, row)` the production B2/V6 model is:
 
 ```text
-x = (column - cx_zones) / fx_zones
-y = (row    - cy_zones) / fy_zones
-ray = normalize([x, y, 1])
-P_tof_mm = range_mm * ray
+xn = (column - cx_zones) / fx_zones
+yn = (row    - cy_zones) / fy_zones
+
+Z = distance_mm
+X = Z * xn
+Y = Z * yn
+
+P_tof_mm = [X, Y, Z]
 ```
 
-The returned range is treated as distance along the calibrated zone ray.
+The normal VL53L8CX ULD path keeps radial-to-perpendicular conversion enabled,
+so `distance_mm` is axial/perpendicular depth `Z`, not Euclidean ray length.
+The vector `[xn, yn, 1]` must therefore not be normalized before deprojection.
+
+For the accepted 8x8 production profile:
+
+```text
+cx_zones = 3.5
+cy_zones = 3.5
+```
+
+The principal point is fixed at the geometric zone-grid centre to remove the
+planar `principal-point <-> R/t` degeneracy. `fx_zones` and `fy_zones` remain
+estimated.
 
 ## Sensor geometry source and orientation rule
 
@@ -127,10 +144,10 @@ using the existing CAMERA_A intrinsics (`fx`, `fy`, `cx`, `cy`, `k1`, `k2`).
 
 LM03.4A does not invent solved calibration values.
 
-## LM03.4B — planned planar calibration solver
+## LM03.4B — CLOSED planar calibration solver
 
-Use the existing ChArUco CAMERA_A calibration path and the LM03.3.2 accepted
-nearest ToF pairing.
+LM03.4B reuses the existing ChArUco CAMERA_A calibration path and the LM03.3.2
+accepted nearest ToF pairing.
 
 For each accepted sample:
 
@@ -152,22 +169,32 @@ pitch
 image position
 ```
 
-Optimize:
+Final V6 optimization:
 
 ```text
-ToF fx_zones/fy_zones/cx_zones/cy_zones
+ToF fx_zones/fy_zones
 R_tof_to_camera
 t_tof_to_camera_mm
+
+cx_zones = cy_zones = 3.5 fixed
 ```
 
-against point-to-board-plane residuals across all valid ToF zones and captures.
+against point-to-board-plane residuals across accepted ToF observations.
 
-Do not set the final residual threshold before measuring the real calibration
-distribution.
+Real-device B2 acceptance:
 
-## LM03.4C — planned hold-out validation
+```text
+run: cal-2aca1840-6303-4d4c-b8ce-a855a5cf5a0d
+solver: LM03.4B2_5_NEAR_GHOST_FILTER_R2P_LM_V6
+RMS: 8.466 mm
+p95: 15.266 mm
+successful: true
+```
 
-Validation must use captures not used by the solver.
+## LM03.4C — hold-out validation
+
+Validation uses captures not used by the solver and keeps the active ToF profile
+strictly frozen. No LM03.4C code path may optimize `fx/fy`, `R` or `t`.
 
 Required telemetry:
 

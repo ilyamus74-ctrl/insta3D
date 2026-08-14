@@ -8,8 +8,8 @@ REPOSITORY BASELINE: 03a7a66b14a87b8ce4755ea3fc51040710261eaa
 LM03.3.2: CLOSED
 LM03.4A:  CLOSED
 LM03.4B1: CLOSED
-LM03.4B2: IMPLEMENTED; real-device acceptance pending
-LM03.4C:  PLANNED
+LM03.4B2: CLOSED — real-device V6 accepted
+LM03.4C:  NEXT — independent hold-out validation
 ```
 
 ## Runtime path
@@ -32,17 +32,44 @@ The planar sample is persisted inside the MASTER calibration gate before the pos
 counter advances. A ToF pose is therefore not accepted if its plane/sample cannot
 be constructed or written.
 
-The solver estimates ten parameters:
+The final B2 solver keeps the ToF principal point fixed at the geometric
+8x8 zone-grid centre and estimates eight independent parameters:
 
 ```text
-fx_zones fy_zones cx_zones cy_zones
+fx_zones fy_zones
 Rodrigues rx ry rz
 tx_mm ty_mm tz_mm
+
+cx_zones = 3.5 fixed
+cy_zones = 3.5 fixed
 ```
 
-It uses sigma-aware bounded robust residuals and multiple roll seeds. Nominal 45°
-ToF FoV is only the initial seed. No final RMS/p95 acceptance threshold is imposed
-before the first real-device distribution is measured.
+The final geometry contract is:
+
+```text
+column = zone_index % width
+row    = zone_index / width
+
+xn = (column - cx_zones) / fx_zones
+yn = (row    - cy_zones) / fy_zones
+
+Z = distance_mm
+X = Z * xn
+Y = Z * yn
+
+P_camera_mm = R_tof_to_camera * [X,Y,Z] + t_tof_to_camera_mm
+```
+
+`distance_mm` is treated as the VL53L8CX default R2P-corrected axial depth.
+The native ULD zone-index order is preserved; no one-axis mirror/reflection is
+inserted between the sensor and the solved rigid rotation.
+
+Calibration-only observations below 100 mm are rejected as near-field/ghost
+returns. Normal runtime ToF measurements are not changed by that filter.
+
+The nonlinear objective remains sigma-aware and robust. Reporting retains the
+lowest 70% point-to-plane residuals per pose, with at least eight retained zones
+per pose, because zones outside the physical board legitimately see background.
 
 Diagnostic log tag:
 
@@ -50,8 +77,46 @@ Diagnostic log tag:
 TofCalibration
 ```
 
-Important: ToF ranges were not persisted by the previous LM03.4B1 build, so the
-first B2 acceptance requires a new calibration run after this patch.
+## Real-device B2 acceptance — CLOSED
+
+Authoritative accepted run:
+
+```text
+calibration_run_id:
+  cal-2aca1840-6303-4d4c-b8ce-a855a5cf5a0d
+
+solver:
+  LM03.4B2_5_NEAR_GHOST_FILTER_R2P_LM_V6
+
+samples:                18
+observations:           1039
+retained observations: 735
+
+fx_zones: 10.618251917983343
+fy_zones: 11.034381474777096
+cx_zones: 3.5
+cy_zones: 3.5
+
+t_tof_to_camera_mm:
+  [82.17996397749516, 4.134596092959632, 22.518672022696737]
+
+plane RMS: 8.466426054195251 mm
+plane p95: 15.265841454616861 mm
+iterations: 23
+successful: true
+```
+
+The accepted rotation matrix was finite, orthonormal to numerical precision and
+physically consistent with the rigid CAMERA_A/ToF mount.
+
+`all_plane_rms_mm = 215.60595341096763` is not the B2 acceptance metric. At
+edge/oblique board poses, valid ToF zones outside the finite ChArUco board see
+background several metres behind the board. Those ranges are real measurements,
+but they are not samples of the ChArUco plane. The robust retained metrics above
+are therefore the training-quality metrics used by B2.
+
+B2 is closed. The solver must not be refit or loosened during LM03.4C.
+LM03.4C validates this frozen profile on a separate set of captures.
 
 ## Optional-ToF calibration contract
 
