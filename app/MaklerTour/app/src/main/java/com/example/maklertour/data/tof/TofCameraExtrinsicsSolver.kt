@@ -256,7 +256,7 @@ class TofCameraExtrinsicsSolver {
         val allRms = rms(allAbs)
         val p95 = percentile(retainedAbs, 0.95)
 
-        val finite =
+        val numericalFinite =
             intrinsics.structurallyValid &&
                 rotation.size == 9 &&
                 rotation.all { it.isFinite() } &&
@@ -264,9 +264,28 @@ class TofCameraExtrinsicsSolver {
                 retainedRms?.isFinite() == true &&
                 solved.finalCost.isFinite() &&
                 solved.finalCost <= solved.initialCost
+        val centerOffset = max(
+            abs(intrinsics.cxZones - nominal.cx),
+            abs(intrinsics.cyZones - nominal.cy),
+        )
+        val fxRatio = intrinsics.fxZones / nominal.fx
+        val fyRatio = intrinsics.fyZones / nominal.fy
+        val focalAspect =
+            max(intrinsics.fxZones, intrinsics.fyZones) /
+                min(intrinsics.fxZones, intrinsics.fyZones)
+        val translationNorm = sqrt(translation.sumOf { it * it })
+        val physicallyPlausible =
+            centerOffset <= MAX_ACCEPTED_CENTER_OFFSET_ZONES &&
+                fxRatio in MIN_ACCEPTED_FOCAL_RATIO..MAX_ACCEPTED_FOCAL_RATIO &&
+                fyRatio in MIN_ACCEPTED_FOCAL_RATIO..MAX_ACCEPTED_FOCAL_RATIO &&
+                focalAspect <= MAX_ACCEPTED_FOCAL_ASPECT &&
+                translationNorm <= MAX_ACCEPTED_TRANSLATION_NORM_MM &&
+                (retainedRms ?: Double.POSITIVE_INFINITY) <= MAX_TRAINING_RMS_MM &&
+                (p95 ?: Double.POSITIVE_INFINITY) <= MAX_TRAINING_P95_MM
+        val accepted = numericalFinite && physicallyPlausible
 
         return TofCameraExtrinsicsSolveResult(
-            successful = finite,
+            successful = accepted,
             tofSlot = slot,
             tofWidth = width,
             tofHeight = height,
@@ -283,10 +302,13 @@ class TofCameraExtrinsicsSolver {
             finalCost = solved.finalCost,
             iterations = solved.iterations,
             solver = SOLVER_NAME,
-            status = if (finite) {
-                "SOLVED; LM03.4C hold-out validation required"
+            status = if (accepted) {
+                "SOLVED_B2_1; LM03.4C hold-out validation required"
             } else {
-                "Numerical candidate is not structurally valid"
+                "REJECTED_B2_1: numerical=$numericalFinite " +
+                    "centerOffset=$centerOffset fxRatio=$fxRatio fyRatio=$fyRatio " +
+                    "focalAspect=$focalAspect translationNormMm=$translationNorm " +
+                    "rmsMm=$retainedRms p95Mm=$p95"
             },
         )
     }
@@ -418,7 +440,8 @@ class TofCameraExtrinsicsSolver {
         observations: List<Observation>,
         nominal: Nominal,
     ): DoubleArray {
-        val result = DoubleArray(observations.size + PARAM_COUNT)
+        val result =
+            DoubleArray(observations.size + PARAM_COUNT + EXTRA_PRIOR_COUNT)
         observations.forEachIndexed { index, observation ->
             val raw = rawResidualMm(
                 params = params,
@@ -433,16 +456,23 @@ class TofCameraExtrinsicsSolver {
         }
 
         var cursor = observations.size
-        result[cursor++] = (params[IDX_LOG_FX] - ln(nominal.fx)) / 0.50
-        result[cursor++] = (params[IDX_LOG_FY] - ln(nominal.fy)) / 0.50
-        result[cursor++] = (params[IDX_CX] - nominal.cx) / 2.0
-        result[cursor++] = (params[IDX_CY] - nominal.cy) / 2.0
+        result[cursor++] =
+            (params[IDX_LOG_FX] - ln(nominal.fx)) / FOCAL_LOG_PRIOR_SIGMA
+        result[cursor++] =
+            (params[IDX_LOG_FY] - ln(nominal.fy)) / FOCAL_LOG_PRIOR_SIGMA
+        result[cursor++] =
+            (params[IDX_CX] - nominal.cx) / CENTER_PRIOR_SIGMA_ZONES
+        result[cursor++] =
+            (params[IDX_CY] - nominal.cy) / CENTER_PRIOR_SIGMA_ZONES
         result[cursor++] = params[IDX_RX] / 2.0
         result[cursor++] = params[IDX_RY] / 2.0
         result[cursor++] = params[IDX_RZ] / 2.0
         result[cursor++] = params[IDX_TX] / 500.0
         result[cursor++] = params[IDX_TY] / 500.0
-        result[cursor] = params[IDX_TZ] / 500.0
+        result[cursor++] = params[IDX_TZ] / 500.0
+        result[cursor] =
+            (params[IDX_LOG_FX] - params[IDX_LOG_FY]) /
+                FOCAL_ISOTROPY_LOG_SIGMA
 
         return result
     }
@@ -520,14 +550,27 @@ class TofCameraExtrinsicsSolver {
         width: Int,
         height: Int,
     ) {
-        params[IDX_LOG_FX] =
-            params[IDX_LOG_FX].coerceIn(ln(2.0), ln(30.0))
-        params[IDX_LOG_FY] =
-            params[IDX_LOG_FY].coerceIn(ln(2.0), ln(30.0))
-        params[IDX_CX] =
-            params[IDX_CX].coerceIn(-2.0, width.toDouble() + 1.0)
-        params[IDX_CY] =
-            params[IDX_CY].coerceIn(-2.0, height.toDouble() + 1.0)
+        val nominalFx = nominalFocalZones(width)
+        val nominalFy = nominalFocalZones(height)
+        val nominalCx = (width - 1).toDouble() / 2.0
+        val nominalCy = (height - 1).toDouble() / 2.0
+
+        params[IDX_LOG_FX] = params[IDX_LOG_FX].coerceIn(
+            ln(nominalFx * MIN_HARD_FOCAL_RATIO),
+            ln(nominalFx * MAX_HARD_FOCAL_RATIO),
+        )
+        params[IDX_LOG_FY] = params[IDX_LOG_FY].coerceIn(
+            ln(nominalFy * MIN_HARD_FOCAL_RATIO),
+            ln(nominalFy * MAX_HARD_FOCAL_RATIO),
+        )
+        params[IDX_CX] = params[IDX_CX].coerceIn(
+            nominalCx - MAX_HARD_CENTER_OFFSET_ZONES,
+            nominalCx + MAX_HARD_CENTER_OFFSET_ZONES,
+        )
+        params[IDX_CY] = params[IDX_CY].coerceIn(
+            nominalCy - MAX_HARD_CENTER_OFFSET_ZONES,
+            nominalCy + MAX_HARD_CENTER_OFFSET_ZONES,
+        )
         params[IDX_RX] = params[IDX_RX].coerceIn(-PI, PI)
         params[IDX_RY] = params[IDX_RY].coerceIn(-PI, PI)
         params[IDX_RZ] = params[IDX_RZ].coerceIn(-PI, PI)
@@ -707,11 +750,12 @@ class TofCameraExtrinsicsSolver {
     )
 
     companion object {
-        const val SOLVER_NAME = "LM03.4B2_NUMERIC_LM_V1"
+        const val SOLVER_NAME = "LM03.4B2_1_REGULARIZED_LM_V2"
         const val MIN_SAMPLES = 8
         const val MIN_OBSERVATIONS = 128
 
         private const val PARAM_COUNT = 10
+        private const val EXTRA_PRIOR_COUNT = 1
         private const val IDX_LOG_FX = 0
         private const val IDX_LOG_FY = 1
         private const val IDX_CX = 2
@@ -725,6 +769,19 @@ class TofCameraExtrinsicsSolver {
 
         private const val MIN_SIGMA_MM = 8.0
         private const val CAUCHY_SCALE_SIGMA = 4.0
+        private const val FOCAL_LOG_PRIOR_SIGMA = 0.30
+        private const val CENTER_PRIOR_SIGMA_ZONES = 0.35
+        private const val FOCAL_ISOTROPY_LOG_SIGMA = 0.20
+        private const val MIN_HARD_FOCAL_RATIO = 0.55
+        private const val MAX_HARD_FOCAL_RATIO = 2.00
+        private const val MAX_HARD_CENTER_OFFSET_ZONES = 1.00
+        private const val MIN_ACCEPTED_FOCAL_RATIO = 0.65
+        private const val MAX_ACCEPTED_FOCAL_RATIO = 1.80
+        private const val MAX_ACCEPTED_FOCAL_ASPECT = 1.50
+        private const val MAX_ACCEPTED_CENTER_OFFSET_ZONES = 0.90
+        private const val MAX_ACCEPTED_TRANSLATION_NORM_MM = 300.0
+        private const val MAX_TRAINING_RMS_MM = 50.0
+        private const val MAX_TRAINING_P95_MM = 100.0
         private const val MAX_ITERATIONS = 80
         private const val COST_EPSILON = 1e-10
         private const val STEP_EPSILON = 1e-7
