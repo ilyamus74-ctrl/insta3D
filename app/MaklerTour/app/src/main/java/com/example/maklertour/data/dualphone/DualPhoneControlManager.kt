@@ -10,6 +10,7 @@ import com.maklertour.data.phonecamera.PhoneCameraLensRepository
 import com.maklertour.data.rig.CalibrationBoardType
 import com.maklertour.data.tof.TofCameraCalibrationStore
 import com.maklertour.data.tof.TofCameraExtrinsicsSolver
+import com.maklertour.data.tof.TofCameraHoldoutValidator
 import com.maklertour.data.tof.TofCameraFramePairer
 import com.maklertour.data.tof.TofCameraObservationPlaneEstimator
 import com.maklertour.data.tof.TofCameraPlanarCalibrationSampleBuilder
@@ -89,6 +90,7 @@ data class DualPhoneControlSnapshot(
     val calibrationSlaveAcceptedPoseCount: Int = 0,
     val calibrationStereoAcceptedPoseCount: Int = 0,
     val calibrationTofAcceptedPoseCount: Int = 0,
+    val calibrationTofValidationAcceptedPoseCount: Int = 0,
     val calibrationLastAcceptedTofSequence: Long? = null,
     val calibrationLastAcceptedTofPairDeltaUs: Long? = null,
     val calibrationLastAcceptedTofValidZoneCount: Int? = null,
@@ -168,7 +170,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     private val phoneCameraLensRepository = PhoneCameraLensRepository(appContext)
     private val tofCalibrationStore = TofCameraCalibrationStore(appContext)
     private val tofExtrinsicsSolver = TofCameraExtrinsicsSolver()
+    private val tofHoldoutValidator = TofCameraHoldoutValidator()
     private var tofSolveJob: Job? = null
+    private var tofValidationJob: Job? = null
 
     fun startMaster() {
         val settings = settingsStore.load()
@@ -346,6 +350,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationSlaveAcceptedPoseCount = 0,
             calibrationStereoAcceptedPoseCount = 0,
             calibrationTofAcceptedPoseCount = 0,
+            calibrationTofValidationAcceptedPoseCount = 0,
             calibrationLastAcceptedTofSequence = null,
             calibrationLastAcceptedTofPairDeltaUs = null,
             calibrationLastAcceptedTofValidZoneCount = null,
@@ -490,6 +495,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationStereoAcceptedPoseCount =
                 DualPhoneCalibrationStage.STEREO_EXTRINSICS.targetPoseCount,
             calibrationTofAcceptedPoseCount = 0,
+            calibrationTofValidationAcceptedPoseCount = 0,
             calibrationLastAcceptedTofSequence = null,
             calibrationLastAcceptedTofPairDeltaUs = null,
             calibrationLastAcceptedTofValidZoneCount = null,
@@ -520,6 +526,144 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             lastMessage =
                 "CAMERA_A + ToF: stereo/K-D не пересчитываются; " +
                     "ToF alignment ожидает фиксации",
+        )
+    }
+
+    fun startTofValidationFromActiveProfile() {
+        val settings = settingsStore.load()
+        val current = mutableState.value
+        val activeProfileId = settings.activeCalibrationProfileId
+        val sourceProfile = activeProfileId?.let(calibrationProfileStore::load)
+        val tofProfile = tofCalibrationStore.loadActiveProfile()
+        val selectedCameraId = runCatching {
+            phoneCameraLensRepository.selectedOrDefault().first.cameraId
+        }.getOrNull()
+        val tofRuntime = TofUsbRuntime.get(appContext)
+        val recentTof = tofRuntime.recentFramesSnapshot()
+        val tofReady =
+            tofRuntime.state.value.status == TofUsbStatus.STREAMING &&
+                recentTof.isNotEmpty() &&
+                tofRuntime.lastFrameAgeMs()?.let { it <= 1_000L } == true
+        val physicalCaptureBusy = current.phase in setOf(
+            DualPhoneControlPhase.ARMING,
+            DualPhoneControlPhase.ARMED,
+            DualPhoneControlPhase.START_SCHEDULED,
+            DualPhoneControlPhase.RECORDING,
+        )
+
+        val error = when {
+            settings.role != DualPhoneRole.MASTER ->
+                "LM03.4C validation can be started only on MASTER"
+            current.calibrationActive ->
+                "Calibration/validation session is already active"
+            physicalCaptureBusy ->
+                "Stop capture before LM03.4C validation"
+            activeProfileId.isNullOrBlank() ->
+                "Нет активного сохранённого stereo-профиля"
+            sourceProfile == null ->
+                "Активный stereo-профиль не найден на устройстве"
+            !sourceProfile.successful ->
+                "Активный stereo-профиль не прошёл quality gate"
+            sourceProfile.masterDeviceId != settings.deviceId ->
+                "Stereo-профиль принадлежит другому MASTER устройству"
+            sourceProfile.rigId != settings.rigId ||
+                sourceProfile.rigMountRevision != settings.rigMountRevision ->
+                "Rig/mount revision не совпадает с активным stereo-профилем"
+            sourceProfile.masterCameraId.isNullOrBlank() ->
+                "В stereo-профиле отсутствует CAMERA_A camera id"
+            selectedCameraId.isNullOrBlank() ->
+                "Не удалось определить выбранную CAMERA_A"
+            sourceProfile.masterCameraId != selectedCameraId ->
+                "Выбрана CAMERA_A $selectedCameraId, а профиль рассчитан для " +
+                    sourceProfile.masterCameraId
+            sourceProfile.masterIntrinsics.acceptable.not() ->
+                "Сохранённые intrinsics CAMERA_A не прошли quality gate"
+            settings.calibrationBoard.validationError() != null ->
+                requireNotNull(settings.calibrationBoard.validationError())
+            settings.calibrationBoard.boardType != CalibrationBoardType.CHARUCO ->
+                "LM03.4C требует ChArUco"
+            tofProfile == null || !tofProfile.solved ->
+                "Нет активного solved ToF/CAMERA_A профиля"
+            !tofProfile.matchesRig(
+                rigId = settings.rigId,
+                rigMountRevision = settings.rigMountRevision,
+                masterDeviceId = settings.deviceId,
+                masterCameraId = selectedCameraId,
+            ) ->
+                "Активный ToF-профиль не соответствует текущему rig/mount/CAMERA_A"
+            tofProfile.cameraCalibrationProfileId != sourceProfile.profileId ->
+                "ToF-профиль привязан к другому stereo-профилю"
+            recentTof.lastOrNull()?.let { frame ->
+                frame.slot != tofProfile.tofSlot ||
+                    frame.width != tofProfile.tofWidth ||
+                    frame.height != tofProfile.tofHeight
+            } == true ->
+                "Геометрия подключённого ToF не совпадает с активным профилем"
+            !tofReady ->
+                "ToF не STREAMING или нет свежих кадров"
+            else -> null
+        }
+        if (error != null) {
+            mutableState.value = current.copy(
+                lastError = error,
+                lastMessage = error,
+            )
+            return
+        }
+
+        val profile = requireNotNull(sourceProfile)
+        val runId = DualPhoneControlProtocol.calibrationRunId()
+        val stage = DualPhoneCalibrationStage.MASTER_TOF_VALIDATION
+        val target = DualPhoneCalibrationPosePlan.first
+        val instruction =
+            "LM03.4C HOLD-OUT: профиль заморожен; снимите 12 НОВЫХ поз ChArUco"
+
+        resetCalibrationGateLocked()
+        mutableState.value = current.copy(
+            calibrationActive = true,
+            calibrationMode = DualPhoneCalibrationMode.AUTO,
+            calibrationManualCapturePending = false,
+            calibrationRunId = runId,
+            calibrationStage = stage,
+            calibrationMasterAcceptedPoseCount =
+                DualPhoneCalibrationStage.MASTER_INTRINSICS.targetPoseCount,
+            calibrationSlaveAcceptedPoseCount =
+                DualPhoneCalibrationStage.SLAVE_INTRINSICS.targetPoseCount,
+            calibrationStereoAcceptedPoseCount =
+                DualPhoneCalibrationStage.STEREO_EXTRINSICS.targetPoseCount,
+            calibrationTofAcceptedPoseCount =
+                DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS.targetPoseCount,
+            calibrationTofValidationAcceptedPoseCount = 0,
+            calibrationLastAcceptedTofSequence = null,
+            calibrationLastAcceptedTofPairDeltaUs = null,
+            calibrationLastAcceptedTofValidZoneCount = null,
+            calibrationLastAcceptedStage = null,
+            calibrationLastCompletedStage =
+                DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS,
+            calibrationInstruction = instruction,
+            calibrationAcceptedPoseCount = 0,
+            calibrationTargetPoseCount = stage.targetPoseCount,
+            calibrationTargetPoseIndex = target.index,
+            calibrationTargetPoseId = target.id,
+            calibrationAcceptanceSerial = 0L,
+            calibrationLastAcceptedPoseIndex = null,
+            calibrationLastAcceptedPoseId = null,
+            calibrationLastAcceptedLocalFrameSequence = null,
+            calibrationLastAcceptedPeerFrameSequence = null,
+            calibrationLocalObservation = null,
+            calibrationPeerObservation = null,
+            calibrationLastAcceptedMasterObservation = null,
+            calibrationLastAcceptedSlaveObservation = null,
+            calibrationMasterIntrinsics = profile.masterIntrinsics,
+            calibrationSlaveIntrinsics = profile.slaveIntrinsics,
+            calibrationSourceProfile = profile,
+            calibrationFinalResult = null,
+            calibrationCollectionComplete = false,
+            lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
+            lastError = null,
+            lastMessage =
+                "LM03.4C: CAMERA_A + ToF, 0/${stage.targetPoseCount}; " +
+                    "SLAVE не требуется, R/t не пересчитывается",
         )
     }
 
@@ -597,6 +741,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationFinalResult = null,
             calibrationStereoAcceptedPoseCount = 0,
             calibrationTofAcceptedPoseCount = 0,
+            calibrationTofValidationAcceptedPoseCount = 0,
             calibrationLastAcceptedTofSequence = null,
             calibrationLastAcceptedTofPairDeltaUs = null,
             calibrationLastAcceptedTofValidZoneCount = null,
@@ -1307,6 +1452,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     "tof_accepted_pose_count",
                     current.calibrationTofAcceptedPoseCount,
                 ),
+                calibrationTofValidationAcceptedPoseCount = payload.optInt(
+                    "tof_validation_accepted_pose_count",
+                    current.calibrationTofValidationAcceptedPoseCount,
+                ),
                 calibrationLastAcceptedTofSequence =
                     payload.optNullableLong("tof_frame_sequence"),
                 calibrationLastAcceptedTofPairDeltaUs =
@@ -1498,7 +1647,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
 
         val acceptedTofPair =
-            if (stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS) {
+            if (
+                stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS ||
+                stage == DualPhoneCalibrationStage.MASTER_TOF_VALIDATION
+            ) {
                 if (current.calibrationAcceptedPoseCount >= stage.targetPoseCount) {
                     return null
                 }
@@ -1574,25 +1726,37 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     return null
                 }
                 val runId = current.calibrationRunId ?: return null
+                val validationStage =
+                    stage == DualPhoneCalibrationStage.MASTER_TOF_VALIDATION
                 val persisted = runCatching {
-                    tofCalibrationStore.saveSample(
-                        calibrationRunId = runId,
-                        poseIndex = current.calibrationTargetPoseIndex,
-                        poseId = current.calibrationTargetPoseId,
-                        sample = sample,
-                    )
+                    if (validationStage) {
+                        tofCalibrationStore.saveValidationSample(
+                            validationRunId = runId,
+                            poseIndex = current.calibrationTargetPoseIndex,
+                            poseId = current.calibrationTargetPoseId,
+                            sample = sample,
+                        )
+                    } else {
+                        tofCalibrationStore.saveSample(
+                            calibrationRunId = runId,
+                            poseIndex = current.calibrationTargetPoseIndex,
+                            poseId = current.calibrationTargetPoseId,
+                            sample = sample,
+                        )
+                    }
                 }
                 if (persisted.isFailure) {
                     mutableState.value = current.copy(
                         lastMessage =
-                            "TOF CAL: ошибка сохранения sample: " +
+                            "TOF: ошибка сохранения sample: " +
                                 (persisted.exceptionOrNull()?.message ?: "unknown"),
                     )
                     return null
                 }
                 android.util.Log.i(
                     "TofCalibration",
-                    "TOF_CAL_SAMPLE pose=${current.calibrationTargetPoseIndex} " +
+                    (if (validationStage) "TOF_VAL_SAMPLE" else "TOF_CAL_SAMPLE") +
+                        " pose=${current.calibrationTargetPoseIndex} " +
                         "seq=${pair.sequence} deltaUs=${pair.signedDeltaUs} " +
                         "zones=${sample.validZoneCount} " +
                         "corners=${boardPlane.charucoCornersUsed}",
@@ -1615,9 +1779,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         val tofSolvePending =
             stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS &&
                 stageComplete
+        val tofValidationPending =
+            stage == DualPhoneCalibrationStage.MASTER_TOF_VALIDATION &&
+                stageComplete
         val nextStage = when {
             stereoQualityPending -> stage
             tofSolvePending -> stage
+            tofValidationPending -> stage
             stageComplete -> stage.next()
             else -> stage
         }
@@ -1644,6 +1812,12 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         } else {
             current.calibrationTofAcceptedPoseCount
         }
+        val tofValidationCount =
+            if (stage == DualPhoneCalibrationStage.MASTER_TOF_VALIDATION) {
+                acceptedCount
+            } else {
+                current.calibrationTofValidationAcceptedPoseCount
+            }
         val nextTargetIndex = when {
             stereoQualityPending -> acceptedPoseIndex
             stageComplete -> 0
@@ -1655,6 +1829,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         val nextStageAcceptedCount = when {
             stereoQualityPending -> acceptedCount
             tofSolvePending -> acceptedCount
+            tofValidationPending -> acceptedCount
             stageComplete -> 0
             else -> acceptedCount
         }
@@ -1663,6 +1838,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 "STEREO 18/18: расчёт RMS/EPI перед переходом к ToF…"
             tofSolvePending ->
                 "MASTER + TOF: 18/18 собрано; ожидается LM03.4B2 solver"
+            tofValidationPending ->
+                "LM03.4C: 12/12 hold-out собрано; считаем frozen-profile residuals"
             workflowComplete ->
                 "Сбор калибровочных кадров завершён: MASTER, SLAVE, ОБЕ КАМЕРЫ и TOF"
             else ->
@@ -1682,6 +1859,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             .put("slave_accepted_pose_count", slaveCount)
             .put("stereo_accepted_pose_count", stereoCount)
             .put("tof_accepted_pose_count", tofCount)
+            .put("tof_validation_accepted_pose_count", tofValidationCount)
             .put("tof_skipped", false)
             .put("tof_frame_sequence", acceptedTofPair?.sequence ?: JSONObject.NULL)
             .put("tof_pair_delta_us", acceptedTofPair?.signedDeltaUs ?: JSONObject.NULL)
@@ -1724,6 +1902,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationSlaveAcceptedPoseCount = slaveCount,
             calibrationStereoAcceptedPoseCount = stereoCount,
             calibrationTofAcceptedPoseCount = tofCount,
+            calibrationTofValidationAcceptedPoseCount = tofValidationCount,
             calibrationLastAcceptedTofSequence = acceptedTofPair?.sequence,
             calibrationLastAcceptedTofPairDeltaUs =
                 acceptedTofPair?.signedDeltaUs,
@@ -1754,6 +1933,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     "STEREO 18/18: считаем RMS/EPI; ToF пока не запускается"
                 tofSolvePending ->
                     "MASTER + TOF 18/18: samples collected; LM03.4B2 solver pending"
+                tofValidationPending ->
+                    "LM03.4C 12/12: hold-out samples collected; validation pending"
                 workflowComplete ->
                     "Calibration frame collection completed: MASTER, SLAVE, stereo and ToF"
                 stageComplete ->
@@ -1764,6 +1945,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         )
         if (tofSolvePending) {
             launchTofExtrinsicsSolve(current.calibrationRunId)
+        }
+        if (tofValidationPending) {
+            launchTofHoldoutValidation(current.calibrationRunId)
         }
         return payload
     }
@@ -1947,9 +2131,125 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
     }
 
+    private fun launchTofHoldoutValidation(validationRunId: String?) {
+        if (validationRunId.isNullOrBlank()) return
+        if (tofValidationJob?.isActive == true) return
+
+        tofValidationJob = scope.launch {
+            try {
+                val samples =
+                    tofCalibrationStore.loadValidationSamples(validationRunId)
+                val activeTofProfile =
+                    tofCalibrationStore.loadActiveProfile()
+                        ?: error("Active ToF profile is missing")
+                val cameraIntrinsics =
+                    mutableState.value.calibrationMasterIntrinsics
+                        ?: error("CAMERA_A intrinsics are missing")
+
+                android.util.Log.i(
+                    "TofCalibration",
+                    "TOF_VAL_START run=$validationRunId " +
+                        "samples=${samples.size} profileSolver=${activeTofProfile.solver}",
+                )
+                mutableState.value = mutableState.value.copy(
+                    lastMessage =
+                        "LM03.4C: проверяем frozen ToF profile по ${samples.size} hold-out samples…",
+                    lastError = null,
+                )
+
+                val result = withContext(Dispatchers.Default) {
+                    tofHoldoutValidator.validate(
+                        profile = activeTofProfile,
+                        cameraIntrinsics = cameraIntrinsics,
+                        samples = samples,
+                    )
+                }
+                tofCalibrationStore.saveValidationResult(
+                    validationRunId = validationRunId,
+                    result = result,
+                )
+
+                android.util.Log.i(
+                    "TofCalibration",
+                    "TOF_VAL_RESULT success=${result.successful} " +
+                        "samples=${result.sampleCount} " +
+                        "obs=${result.totalObservationCount} " +
+                        "retained=${result.retainedObservationCount} " +
+                        "coverage=${result.retainedZoneCoveragePercent} " +
+                        "rmsMm=${result.planeRmsMm} " +
+                        "p95Mm=${result.planeP95Mm} " +
+                        "reprojRmsPx=${result.reprojectionRmsPx} " +
+                        "reprojP95Px=${result.reprojectionP95Px}",
+                )
+
+                synchronized(calibrationObservationLock) {
+                    val current = mutableState.value
+                    if (
+                        current.calibrationRunId != validationRunId ||
+                        current.calibrationStage !=
+                            DualPhoneCalibrationStage.MASTER_TOF_VALIDATION ||
+                        current.calibrationTofValidationAcceptedPoseCount <
+                            DualPhoneCalibrationStage.MASTER_TOF_VALIDATION.targetPoseCount
+                    ) {
+                        return@synchronized
+                    }
+
+                    val rms = result.planeRmsMm?.let {
+                        String.format(java.util.Locale.US, "%.1f", it)
+                    } ?: "—"
+                    val p95 = result.planeP95Mm?.let {
+                        String.format(java.util.Locale.US, "%.1f", it)
+                    } ?: "—"
+                    val coverage =
+                        String.format(
+                            java.util.Locale.US,
+                            "%.0f",
+                            result.retainedZoneCoveragePercent,
+                        )
+                    val message =
+                        (if (result.successful) {
+                            "LM03.4C HOLDOUT PASS ✓"
+                        } else {
+                            "LM03.4C HOLDOUT FAIL"
+                        }) +
+                            " · RMS $rms мм · p95 $p95 мм · zones $coverage%"
+
+                    mutableState.value = current.copy(
+                        calibrationStage = DualPhoneCalibrationStage.COMPLETE,
+                        calibrationLastCompletedStage =
+                            DualPhoneCalibrationStage.MASTER_TOF_VALIDATION,
+                        calibrationInstruction = message,
+                        calibrationAcceptedPoseCount = 0,
+                        calibrationTargetPoseCount = 0,
+                        calibrationTargetPoseIndex =
+                            DualPhoneCalibrationPosePlan.first.index,
+                        calibrationTargetPoseId =
+                            DualPhoneCalibrationPosePlan.first.id,
+                        calibrationCollectionComplete = true,
+                        lastError = if (result.successful) null else result.status,
+                        lastMessage = message,
+                    )
+                }
+            } catch (error: Throwable) {
+                mutableState.value = mutableState.value.copy(
+                    lastError =
+                        "LM03.4C exception: " +
+                            (error.message ?: error.javaClass.simpleName),
+                    lastMessage =
+                        "LM03.4C exception: " +
+                            (error.message ?: error.javaClass.simpleName),
+                )
+            } finally {
+                tofValidationJob = null
+            }
+        }
+    }
+
     private fun resetCalibrationGateLocked() {
         tofSolveJob?.cancel()
         tofSolveJob = null
+        tofValidationJob?.cancel()
+        tofValidationJob = null
         synchronized(calibrationObservationLock) {
             manualStereoCaptureRequest = null
             stereoObservationBuffer.clear()
@@ -1972,6 +2272,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             "ОБЕ КАМЕРЫ: ${target.instruction}"
         DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS ->
             "MASTER + TOF: ${target.instruction}"
+        DualPhoneCalibrationStage.MASTER_TOF_VALIDATION ->
+            "LM03.4C HOLD-OUT: ${target.instruction}"
         DualPhoneCalibrationStage.COMPLETE ->
             "Сбор калибровочных кадров завершён"
     }

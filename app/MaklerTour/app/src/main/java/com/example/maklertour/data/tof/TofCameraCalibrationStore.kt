@@ -8,8 +8,10 @@ import java.io.File
  * Persistent LM03.4 calibration artifacts.
  *
  * Layout:
- *   files/tof_camera_calibration/<run>/samples/<pose>.json
- *   files/tof_camera_calibration/<run>/solve_result.json
+ *   files/tof_camera_calibration/runs/<run>/samples/<pose>.json
+ *   files/tof_camera_calibration/runs/<run>/solve_result.json
+ *   files/tof_camera_calibration/runs/<run>/validation_samples/<pose>.json
+ *   files/tof_camera_calibration/runs/<run>/validation_result.json
  *   files/tof_camera_calibration/profiles/<profile>.json
  *   files/tof_camera_calibration/active_profile.json
  */
@@ -63,6 +65,85 @@ class TofCameraCalibrationStore(context: Context) {
                         ?.let(TofCameraPlanarCalibrationSample::fromJson)
                 }.getOrNull()
             }
+    }
+
+    @Synchronized
+    fun saveValidationSample(
+        validationRunId: String,
+        poseIndex: Int,
+        poseId: String,
+        sample: TofCameraPlanarCalibrationSample,
+    ): File {
+        require(sample.structurallyValid) {
+            "Cannot persist an invalid ToF hold-out sample"
+        }
+        val samplesDir = File(
+            runRoot(validationRunId),
+            VALIDATION_SAMPLES_DIR,
+        ).apply { mkdirs() }
+        val destination = File(
+            samplesDir,
+            "pose_${poseIndex.toString().padStart(2, '0')}_${safePathPart(poseId)}.json",
+        )
+        writeJsonAtomically(
+            destination,
+            JSONObject()
+                .put("validation_run_id", validationRunId)
+                .put("pose_index", poseIndex)
+                .put("pose_id", poseId)
+                .put("sample", sample.toJson()),
+        )
+        return destination
+    }
+
+    @Synchronized
+    fun loadValidationSamples(
+        validationRunId: String,
+    ): List<TofCameraPlanarCalibrationSample> {
+        val samplesDir = File(runRoot(validationRunId), VALIDATION_SAMPLES_DIR)
+        if (!samplesDir.isDirectory) return emptyList()
+        return samplesDir.listFiles()
+            .orEmpty()
+            .filter { it.isFile && it.extension.equals("json", ignoreCase = true) }
+            .sortedBy { it.name }
+            .mapNotNull { file ->
+                runCatching {
+                    JSONObject(file.readText())
+                        .optJSONObject("sample")
+                        ?.let(TofCameraPlanarCalibrationSample::fromJson)
+                }.getOrNull()
+            }
+    }
+
+    @Synchronized
+    fun saveValidationResult(
+        validationRunId: String,
+        result: TofCameraHoldoutValidationResult,
+    ): File {
+        val destination = File(
+            runRoot(validationRunId),
+            VALIDATION_RESULT_FILE,
+        )
+        writeJsonAtomically(
+            destination,
+            JSONObject()
+                .put("validation_run_id", validationRunId)
+                .put("result", result.toJson()),
+        )
+        return destination
+    }
+
+    @Synchronized
+    fun loadValidationResult(
+        validationRunId: String,
+    ): TofCameraHoldoutValidationResult? {
+        val file = File(runRoot(validationRunId), VALIDATION_RESULT_FILE)
+        if (!file.isFile) return null
+        return runCatching {
+            JSONObject(file.readText())
+                .optJSONObject("result")
+                ?.let(TofCameraHoldoutValidationResult::fromJson)
+        }.getOrNull()
     }
 
     @Synchronized
@@ -176,6 +257,8 @@ class TofCameraCalibrationStore(context: Context) {
 
     companion object {
         private const val SOLVE_RESULT_FILE = "solve_result.json"
+        private const val VALIDATION_SAMPLES_DIR = "validation_samples"
+        private const val VALIDATION_RESULT_FILE = "validation_result.json"
         private const val ACTIVE_PROFILE_FILE = "active_profile.json"
     }
 }

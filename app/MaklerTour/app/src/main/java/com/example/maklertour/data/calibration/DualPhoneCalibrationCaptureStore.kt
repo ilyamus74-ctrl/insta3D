@@ -112,6 +112,13 @@ class DualPhoneCalibrationCaptureStore(context: Context) {
                     DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS,
                 ),
             )
+            .put(
+                "tof_validation_count",
+                countStage(
+                    entries,
+                    DualPhoneCalibrationStage.MASTER_TOF_VALIDATION,
+                ),
+            )
         writeJsonAtomically(manifestFile, manifest)
         return output
     }

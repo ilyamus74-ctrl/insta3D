@@ -62,6 +62,7 @@ fun DualPhoneControlSettingsCard(
     onStopCapture: () -> Unit,
     onStartCalibration: () -> Unit,
     onStartTofCalibration: () -> Unit,
+    onStartTofValidation: () -> Unit,
     onStartManualCalibration: () -> Unit,
     onExitCalibration: () -> Unit,
 ) {
@@ -427,6 +428,24 @@ fun DualPhoneControlSettingsCard(
                 Text(
                     "Не пересчитывает MASTER/SLAVE K/D и stereo R/t. " +
                         "SLAVE для этого режима не требуется.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(
+                    onClick = onStartTofValidation,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !snapshot.calibrationActive &&
+                        snapshot.phase !in setOf(
+                            DualPhoneControlPhase.ARMING,
+                            DualPhoneControlPhase.ARMED,
+                            DualPhoneControlPhase.START_SCHEDULED,
+                            DualPhoneControlPhase.RECORDING,
+                        ),
+                ) {
+                    Text("ПРОВЕРИТЬ TOF ПРОФИЛЬ · LM03.4C")
+                }
+                Text(
+                    "12 новых hold-out поз · frozen ToF profile · без refit. " +
+                        "SLAVE не требуется.",
                     style = MaterialTheme.typography.bodySmall,
                 )
 

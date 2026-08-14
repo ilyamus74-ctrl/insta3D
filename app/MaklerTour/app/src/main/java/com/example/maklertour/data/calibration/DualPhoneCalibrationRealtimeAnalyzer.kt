@@ -86,7 +86,8 @@ data class DualPhoneCalibrationRealtimeResult(
         imageHeight = detection.imageHeight,
         charucoCorners = if (
             stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS ||
-            stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS
+            stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS ||
+            stage == DualPhoneCalibrationStage.MASTER_TOF_VALIDATION
         ) {
             correspondenceIds.zip(detection.normalizedCornerPoints).map {
                 (id, point) ->

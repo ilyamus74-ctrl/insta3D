@@ -30,6 +30,12 @@ enum class DualPhoneCalibrationStage(
         targetPoseCount = 18,
         captureDirectory = "master_tof_extrinsics",
     ),
+    MASTER_TOF_VALIDATION(
+        wireValue = "MASTER_TOF_VALIDATION",
+        displayNameRu = "ПРОВЕРКА TOF",
+        targetPoseCount = 12,
+        captureDirectory = "master_tof_validation",
+    ),
     COMPLETE(
         wireValue = "COMPLETE",
         displayNameRu = "ЗАВЕРШЕНО",
@@ -43,7 +49,8 @@ enum class DualPhoneCalibrationStage(
         SLAVE_INTRINSICS -> role == DualPhoneRole.SLAVE
         STEREO_EXTRINSICS ->
             role == DualPhoneRole.MASTER || role == DualPhoneRole.SLAVE
-        MASTER_TOF_EXTRINSICS -> role == DualPhoneRole.MASTER
+        MASTER_TOF_EXTRINSICS,
+        MASTER_TOF_VALIDATION -> role == DualPhoneRole.MASTER
         COMPLETE -> false
     }
 
@@ -51,7 +58,8 @@ enum class DualPhoneCalibrationStage(
         get() =
             this == MASTER_INTRINSICS ||
                 this == STEREO_EXTRINSICS ||
-                this == MASTER_TOF_EXTRINSICS
+                this == MASTER_TOF_EXTRINSICS ||
+                this == MASTER_TOF_VALIDATION
 
     val requiresSlaveObservation: Boolean
         get() = this == SLAVE_INTRINSICS || this == STEREO_EXTRINSICS
@@ -60,7 +68,9 @@ enum class DualPhoneCalibrationStage(
         MASTER_INTRINSICS -> SLAVE_INTRINSICS
         SLAVE_INTRINSICS -> STEREO_EXTRINSICS
         STEREO_EXTRINSICS -> MASTER_TOF_EXTRINSICS
-        MASTER_TOF_EXTRINSICS, COMPLETE -> COMPLETE
+        MASTER_TOF_EXTRINSICS,
+        MASTER_TOF_VALIDATION,
+        COMPLETE -> COMPLETE
     }
 
     companion object {

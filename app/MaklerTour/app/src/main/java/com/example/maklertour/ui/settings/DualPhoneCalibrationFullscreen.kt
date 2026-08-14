@@ -459,6 +459,14 @@ internal fun DualPhoneCalibrationFullscreen(
         }
         finalSolveStarted = true
 
+        if (
+            snapshot.calibrationLastCompletedStage ==
+                DualPhoneCalibrationStage.MASTER_TOF_VALIDATION
+        ) {
+            finalSolveStatus = snapshot.lastMessage
+            return@LaunchedEffect
+        }
+
         val sourceProfile = snapshot.calibrationSourceProfile
         if (sourceProfile != null) {
             finalSolveStatus =
@@ -920,7 +928,14 @@ internal fun DualPhoneCalibrationFullscreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Text(
-                            "КАЛИБРОВКА ЗАВЕРШЕНА",
+                            if (
+                                snapshot.calibrationLastCompletedStage ==
+                                    DualPhoneCalibrationStage.MASTER_TOF_VALIDATION
+                            ) {
+                                "ПРОВЕРКА TOF ЗАВЕРШЕНА"
+                            } else {
+                                "КАЛИБРОВКА ЗАВЕРШЕНА"
+                            },
                             style = MaterialTheme.typography.headlineSmall,
                         )
                         Text(
@@ -1177,7 +1192,9 @@ internal fun DualPhoneCalibrationFullscreen(
                     Button(
                         onClick = onExit,
                         enabled = !snapshot.calibrationCollectionComplete ||
-                            snapshot.calibrationFinalResult != null,
+                            snapshot.calibrationFinalResult != null ||
+                            snapshot.calibrationLastCompletedStage ==
+                                DualPhoneCalibrationStage.MASTER_TOF_VALIDATION,
                     ) {
                         Text(
                             if (snapshot.calibrationCollectionComplete) {
@@ -1408,6 +1425,8 @@ private fun acceptedStageCount(
         snapshot.calibrationStereoAcceptedPoseCount
     DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS ->
         snapshot.calibrationTofAcceptedPoseCount
+    DualPhoneCalibrationStage.MASTER_TOF_VALIDATION ->
+        snapshot.calibrationTofValidationAcceptedPoseCount
     DualPhoneCalibrationStage.COMPLETE -> 0
 }
 
@@ -1432,7 +1451,12 @@ private fun stageRoleInstruction(
     } else {
         "ОЖИДАНИЕ: этап MASTER + TOF выполняется только на MASTER."
     }
-    DualPhoneCalibrationStage.COMPLETE -> "Все четыре этапа завершены."
+    DualPhoneCalibrationStage.MASTER_TOF_VALIDATION -> if (role == DualPhoneRole.MASTER) {
+        "LM03.4C: 12 НОВЫХ поз. Профиль frozen — двигается только ChArUco, не rig/ToF."
+    } else {
+        "LM03.4C выполняется только на MASTER; SLAVE не требуется."
+    }
+    DualPhoneCalibrationStage.COMPLETE -> "Калибровка/проверка завершена."
 }
 
 private fun localQualityLine(
