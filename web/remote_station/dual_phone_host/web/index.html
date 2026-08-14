@@ -38,6 +38,28 @@ h1 { margin: 0 0 6px; font-size: 20px; }
   min-height: 0;
   transform-origin: center;
 }
+.tof-overlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  pointer-events: none;
+  transform-origin: center;
+}
+.tof-overlay-status {
+  position: absolute;
+  z-index: 2;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 20px);
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(0,0,0,.78);
+  color: #65e8ff;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  white-space: pre-line;
+}
 .selected-preview { margin: 12px auto; width: min(900px, calc(100% - 24px)); min-height: 420px; aspect-ratio: 9 / 16; cursor: crosshair; }
 .selected-preview img { min-height: 420px; }
 .registered-preview { outline: 1px solid rgba(114,245,154,.22); }
@@ -90,6 +112,12 @@ pre { max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap;
         <option value="CONFIDENCE">CONFIDENCE</option>
       </select>
     </label>
+    <label class="profile-control">
+      <input id="tofOverlayEnabled" type="checkbox" checked> TOF
+    </label>
+    <label class="profile-control">
+      <input id="tofLabelsEnabled" type="checkbox" checked> TOF IDs
+    </label>
     <button id="stopButton" type="button" title="F8 or Alt+S">
       Stop + pack JSON · F8
     </button>
@@ -107,7 +135,12 @@ pre { max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap;
   <span id="pairStatus">waiting for synchronized frames</span>
 </div>
 <div class="grid">
-  <div class="camera raw-camera"><img id="cameraA" decoding="async"><div id="labelA" class="label">CAMERA_A · WAITING</div></div>
+  <div id="cameraACard" class="camera raw-camera">
+    <img id="cameraA" decoding="async">
+    <canvas id="tofOverlayA" class="tof-overlay"></canvas>
+    <div id="labelA" class="label">CAMERA_A · WAITING</div>
+    <div id="tofOverlayStatus" class="tof-overlay-status">TOF · WAITING</div>
+  </div>
   <div class="camera raw-camera"><img id="cameraB" decoding="async"><div id="labelB" class="label">CAMERA_B · WAITING</div></div>
 </div>
 
@@ -183,6 +216,8 @@ const percent = n => `${(Number(n || 0) * 100).toFixed(1)}%`;
 const stopButton = document.getElementById('stopButton');
 const depthProfile = document.getElementById('depthProfile');
 const previewMode = document.getElementById('previewMode');
+const tofOverlayEnabled = document.getElementById('tofOverlayEnabled');
+const tofLabelsEnabled = document.getElementById('tofLabelsEnabled');
 const summary = document.getElementById('summary');
 const pairStatus = document.getElementById('pairStatus');
 const calibrationStatus = document.getElementById('calibrationStatus');
@@ -190,6 +225,9 @@ const labelA = document.getElementById('labelA');
 const labelB = document.getElementById('labelB');
 const cameraA = document.getElementById('cameraA');
 const cameraB = document.getElementById('cameraB');
+const cameraACard = document.getElementById('cameraACard');
+const tofOverlayA = document.getElementById('tofOverlayA');
+const tofOverlayStatus = document.getElementById('tofOverlayStatus');
 const depthStatus = document.getElementById('depthStatus');
 const registeredStatus = document.getElementById('registeredStatus');
 const registeredPreviewCard = document.getElementById('registeredPreviewCard');
@@ -234,6 +272,7 @@ let registeredProbeRequest = 0;
 let registeredProbeTimer = null;
 let lastRawASequence = -1;
 let lastRawBSequence = -1;
+let latestCameraAStatus = null;
 let refreshInFlight = false;
 let liveRefreshInFlight = false;
 let latestLiveStatus = {};
@@ -334,6 +373,154 @@ function orientRawImage(element, camera) {
   element.style.transform =
     `translate(-50%, -50%) rotate(${rotation}deg)`;
 }
+
+function tofSlotColour(slot) {
+  return ['#00e5ff', '#ffd740', '#ff5cff'][Number(slot)] || '#ffffff';
+}
+
+function clearTofOverlay(message = 'TOF · WAITING') {
+  const ctx = tofOverlayA.getContext('2d');
+  ctx.clearRect(0, 0, tofOverlayA.width, tofOverlayA.height);
+  tofOverlayStatus.textContent = message;
+}
+
+function drawTofOverlay(camera) {
+  latestCameraAStatus = camera || null;
+  if (!tofOverlayEnabled.checked) {
+    clearTofOverlay('TOF · HIDDEN');
+    tofOverlayA.style.display = 'none';
+    return;
+  }
+  tofOverlayA.style.display = 'block';
+
+  const latest = camera?.latest || {};
+  const tof = latest.tof_registered || null;
+  if (!tof || !Array.isArray(tof.slots)) {
+    clearTofOverlay('TOF · WAITING FOR CAMERA_A METADATA');
+    return;
+  }
+
+  const rawWidth = Number(tof.camera_width || latest.width || 0);
+  const rawHeight = Number(tof.camera_height || latest.height || 0);
+  if (rawWidth <= 0 || rawHeight <= 0) {
+    clearTofOverlay('TOF · INVALID CAMERA SIZE');
+    return;
+  }
+
+  // The canvas carries raw CAMERA_A coordinates internally and receives the
+  // exact same CSS size + transform as the JPEG. No mirror/rotate enters metric
+  // registration; this is presentation-only.
+  if (tofOverlayA.width !== rawWidth) tofOverlayA.width = rawWidth;
+  if (tofOverlayA.height !== rawHeight) tofOverlayA.height = rawHeight;
+  const imageStyle = window.getComputedStyle(cameraA);
+  tofOverlayA.style.width = imageStyle.width;
+  tofOverlayA.style.height = imageStyle.height;
+  tofOverlayA.style.transform = cameraA.style.transform;
+
+  const ctx = tofOverlayA.getContext('2d');
+  ctx.clearRect(0, 0, rawWidth, rawHeight);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  const cssWidth = Math.max(1, parseFloat(imageStyle.width) || cameraACard.clientWidth);
+  const rawPerCss = rawWidth / cssWidth;
+  const radius = 4.5 * rawPerCss;
+  const outline = 1.5 * rawPerCss;
+  const gridWidth = 1.3 * rawPerCss;
+  const fontPx = 11 * rawPerCss;
+
+  const statusLines = [];
+  for (const slot of tof.slots) {
+    const anchors = Array.isArray(slot.anchors) ? slot.anchors : [];
+    const colour = tofSlotColour(slot.slot);
+    const byZone = new Map(
+      anchors
+        .filter(anchor =>
+          Number.isFinite(Number(anchor.u_px)) &&
+          Number.isFinite(Number(anchor.v_px)))
+        .map(anchor => [Number(anchor.zone_index), anchor])
+    );
+    const width = Math.max(1, Number(slot.tof_width || 8));
+    const height = Math.max(1, Number(slot.tof_height || 8));
+
+    ctx.strokeStyle = colour;
+    ctx.globalAlpha = 0.42;
+    ctx.lineWidth = gridWidth;
+    for (let row = 0; row < height; row += 1) {
+      for (let column = 0; column < width; column += 1) {
+        const zone = row * width + column;
+        const point = byZone.get(zone);
+        if (!point) continue;
+        if (column + 1 < width) {
+          const right = byZone.get(zone + 1);
+          if (right) {
+            ctx.beginPath();
+            ctx.moveTo(Number(point.u_px), Number(point.v_px));
+            ctx.lineTo(Number(right.u_px), Number(right.v_px));
+            ctx.stroke();
+          }
+        }
+        if (row + 1 < height) {
+          const below = byZone.get(zone + width);
+          if (below) {
+            ctx.beginPath();
+            ctx.moveTo(Number(point.u_px), Number(point.v_px));
+            ctx.lineTo(Number(below.u_px), Number(below.v_px));
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    ctx.globalAlpha = 1;
+    for (const anchor of byZone.values()) {
+      const x = Number(anchor.u_px);
+      const y = Number(anchor.v_px);
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(0,0,0,.82)';
+      ctx.arc(x, y, radius + outline * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.fillStyle = colour;
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = outline;
+      ctx.stroke();
+
+      if (tofLabelsEnabled.checked) {
+        ctx.font = `700 ${fontPx}px ui-monospace, monospace`;
+        ctx.textBaseline = 'bottom';
+        ctx.lineWidth = 3 * rawPerCss;
+        const label =
+          `${String(anchor.zone_index).padStart(2, '0')} ` +
+          `${(Number(anchor.distance_mm || 0) / 1000).toFixed(2)}m`;
+        ctx.strokeStyle = 'rgba(0,0,0,.95)';
+        ctx.strokeText(label, x + radius * 1.6, y - radius * 1.2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(label, x + radius * 1.6, y - radius * 1.2);
+      }
+    }
+
+    const delta = slot.pair_delta_us == null
+      ? '—'
+      : `${(Number(slot.pair_delta_us) / 1000).toFixed(1)}ms`;
+    statusLines.push(
+      `S${slot.slot} ${slot.status || 'UNKNOWN'} ` +
+      `${slot.registered_anchor_count || anchors.length}/` +
+      `${slot.sensor_valid_zone_count || 0} Δ ${delta}`
+    );
+  }
+
+  tofOverlayStatus.textContent =
+    `TOF → CAMERA_A · ${tof.registered_anchor_count || 0} anchors\n` +
+    (statusLines.join('\n') || 'no configured ToF slots');
+}
+
+tofOverlayEnabled.addEventListener('change', () => drawTofOverlay(latestCameraAStatus));
+tofLabelsEnabled.addEventListener('change', () => drawTofOverlay(latestCameraAStatus));
+cameraA.addEventListener('load', () => drawTofOverlay(latestCameraAStatus));
+window.addEventListener('resize', () => drawTofOverlay(latestCameraAStatus));
 
 function selectedMetrics(mode, depth, processing) {
   const median = depth.median_depth_m == null
@@ -1330,6 +1517,7 @@ async function refresh() {
     }
     orientRawImage(cameraA, status.camera_a);
     orientRawImage(cameraB, status.camera_b);
+    drawTofOverlay(status.camera_a);
     updateStereo(stereo);
   } catch (error) {
     summary.textContent = stopping

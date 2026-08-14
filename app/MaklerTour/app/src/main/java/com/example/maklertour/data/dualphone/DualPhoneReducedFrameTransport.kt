@@ -2,6 +2,7 @@ package com.example.maklertour.data.dualphone
 
 import android.os.SystemClock
 import com.maklertour.data.dualphone.DualPhoneRole
+import com.maklertour.data.tof.TofRegisteredRgbSnapshot
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.Closeable
@@ -55,6 +56,9 @@ data class DualPhoneReducedFrame(
     val senderFramesDroppedOversize: Long = 0L,
     val jpegBytes: ByteArray,
     val payloadCrc32: Long = crc32(jpegBytes),
+    // Process-local LM03.5 metadata. The legacy phone-to-phone transport does
+    // not serialize this field; laptop uplink consumes it explicitly.
+    val registeredTofSnapshot: TofRegisteredRgbSnapshot? = null,
 ) {
     fun validate() {
         require(schemaVersion == SCHEMA_VERSION) { "Unsupported frame schema" }

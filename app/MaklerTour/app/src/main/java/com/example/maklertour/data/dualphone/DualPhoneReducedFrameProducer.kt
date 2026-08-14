@@ -114,6 +114,8 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
     @Volatile
     private var role: DualPhoneRole = DualPhoneRole.STANDALONE
     @Volatile
+    private var registerTofForCameraA: Boolean = false
+    @Volatile
     private var onFrame: ((DualPhoneReducedFrame) -> Unit)? = null
     @Volatile
     private var requestedNativeWidth: Int = 0
@@ -135,7 +137,12 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         onFrame: (DualPhoneReducedFrame) -> Unit,
     ) {
         require(role == DualPhoneRole.MASTER || role == DualPhoneRole.SLAVE)
-        startInternal(owner, role, onFrame)
+        startInternal(
+            owner = owner,
+            role = role,
+            registerTofForCameraA = role == DualPhoneRole.MASTER,
+            onFrame = onFrame,
+        )
     }
 
     @Synchronized
@@ -143,19 +150,26 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         owner: DualPhoneLiveStreamOwner,
         onFrame: (DualPhoneReducedFrame) -> Unit,
     ) {
-        // The laptop protocol owns CAMERA_A/CAMERA_B in hello.slot. The shared
-        // frame object keeps a neutral value that is never sent to the host.
-        startInternal(owner, DualPhoneRole.STANDALONE, onFrame)
+        // The laptop protocol owns CAMERA_A/CAMERA_B in owner.localRole.
+        // Keep the shared frame role neutral, but attach ToF only to CAMERA_A.
+        startInternal(
+            owner = owner,
+            role = DualPhoneRole.STANDALONE,
+            registerTofForCameraA = owner.localRole == "LAPTOP_CAMERA_A",
+            onFrame = onFrame,
+        )
     }
 
     private fun startInternal(
         owner: DualPhoneLiveStreamOwner,
         role: DualPhoneRole,
+        registerTofForCameraA: Boolean,
         onFrame: (DualPhoneReducedFrame) -> Unit,
     ) {
         stopInternal(publishStopped = false)
         this.owner = owner
         this.role = role
+        this.registerTofForCameraA = registerTofForCameraA
         this.onFrame = onFrame
         active.set(true)
         sequence.set(0L)
@@ -305,18 +319,23 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
             }
 
             // LM03.5A consumes the same authoritative mapped CAMERA_A event time
-            // as LM03.3.2. SLAVE never registers ToF directly.
-            if (role != DualPhoneRole.SLAVE) {
-                val boundCameraId = mutableState.value.cameraId
-                if (!boundCameraId.isNullOrBlank()) {
-                    registeredTofRuntime.onCameraAFrame(
-                        cameraElapsedRealtimeNs = cameraElapsedRealtimeNs,
-                        cameraWidth = image.width,
-                        cameraHeight = image.height,
-                        cameraId = boundCameraId,
-                    )
+            // as LM03.3.2. In laptop mode only CAMERA_A enables this attachment.
+            val registeredTofSnapshot =
+                if (registerTofForCameraA) {
+                    val boundCameraId = mutableState.value.cameraId
+                    if (!boundCameraId.isNullOrBlank()) {
+                        registeredTofRuntime.onCameraAFrame(
+                            cameraElapsedRealtimeNs = cameraElapsedRealtimeNs,
+                            cameraWidth = image.width,
+                            cameraHeight = image.height,
+                            cameraId = boundCameraId,
+                        )
+                    } else {
+                        null
+                    }
+                } else {
+                    null
                 }
-            }
 
             val encoded = encodeJpeg(image)
             if (encoded.bytes.size > DualPhoneReducedFrame.MAX_PAYLOAD_BYTES) {
@@ -345,6 +364,7 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
                 rotationAppliedDegrees = 0,
                 imageProxyRotationDegrees = image.imageInfo.rotationDegrees,
                 jpegBytes = encoded.bytes,
+                registeredTofSnapshot = registeredTofSnapshot,
             )
             val nowMs = SystemClock.elapsedRealtime()
             update { current ->

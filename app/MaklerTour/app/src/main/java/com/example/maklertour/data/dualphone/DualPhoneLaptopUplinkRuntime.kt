@@ -10,6 +10,7 @@ import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
 import com.maklertour.data.dualphone.ApplicationCaptureMode
 import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 import com.maklertour.data.phonecamera.SensorTimelineDiagnostics
+import com.maklertour.data.tof.TofRegisteredRgbSnapshot
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -573,8 +574,90 @@ class DualPhoneLaptopUplinkRuntime private constructor(context: Context) {
             .put("clock_samples", clockSamples.get())
             .put("sender_frames_offered", offered.get())
             .put("sender_frames_replaced_before_send", replaced.get())
+        frame.registeredTofSnapshot?.let { registeredTof ->
+            header.put("tof_registered", registeredTof.toLaptopJson())
+        }
         writePacket(output, header, frame.jpegBytes)
     }
+
+    private fun TofRegisteredRgbSnapshot.toLaptopJson(): JSONObject =
+        JSONObject()
+            .put("schema_version", 1)
+            .put("coordinate_space", "RAW_CAMERA_A_CALIBRATION_PIXELS_V1")
+            .put("camera_elapsed_realtime_ns", cameraElapsedRealtimeNs)
+            .put("camera_width", cameraWidth)
+            .put("camera_height", cameraHeight)
+            .put("camera_id", cameraId)
+            .put("configured_slot_count", configuredSlotCount)
+            .put("paired_slot_count", pairedSlotCount)
+            .put("registered_anchor_count", registeredAnchorCount)
+            .put("inside_image_count", insideImageCount)
+            .put(
+                "slots",
+                JSONArray(
+                    slots.map { slot ->
+                        JSONObject()
+                            .put("slot", slot.tofSlot)
+                            .put("tof_width", slot.tofWidth)
+                            .put("tof_height", slot.tofHeight)
+                            .put("tof_sequence", slot.tofSequence ?: JSONObject.NULL)
+                            .put("pair_delta_us", slot.pairDeltaUs ?: JSONObject.NULL)
+                            .put(
+                                "pair_threshold_us",
+                                slot.pairThresholdUs ?: JSONObject.NULL,
+                            )
+                            .put("pair_accepted", slot.pairAccepted)
+                            .put("status", slot.status)
+                            .put(
+                                "sensor_valid_zone_count",
+                                slot.sensorValidZoneCount,
+                            )
+                            .put(
+                                "registered_anchor_count",
+                                slot.registeredAnchorCount,
+                            )
+                            .put("inside_image_count", slot.insideImageCount)
+                            .put(
+                                "anchors",
+                                JSONArray(
+                                    slot.anchors.mapNotNull { anchor ->
+                                        if (!anchor.valid) return@mapNotNull null
+                                        val uPx = anchor.uPx
+                                            ?: return@mapNotNull null
+                                        val vPx = anchor.vPx
+                                            ?: return@mapNotNull null
+                                        JSONObject()
+                                            .put("zone_index", anchor.zoneIndex)
+                                            .put(
+                                                "distance_mm",
+                                                anchor.distanceMm,
+                                            )
+                                            .put("sigma_mm", anchor.sigmaMm)
+                                            .put(
+                                                "target_status",
+                                                anchor.targetStatus,
+                                            )
+                                            .put(
+                                                "nb_target_detected",
+                                                anchor.nbTargetDetected,
+                                            )
+                                            .put("u_px", uPx)
+                                            .put("v_px", vPx)
+                                            .put(
+                                                "camera_z_mm",
+                                                anchor.cameraZmm
+                                                    ?: JSONObject.NULL,
+                                            )
+                                            .put(
+                                                "inside_image",
+                                                anchor.insideImage,
+                                            )
+                                    },
+                                ),
+                            )
+                    },
+                ),
+            )
 
     private fun writeLatestImu(output: DataOutputStream): Boolean {
         val accelerometer = latestAccelerometer.get()

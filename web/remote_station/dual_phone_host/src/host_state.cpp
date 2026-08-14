@@ -76,6 +76,10 @@ nlohmann::json frame_metadata(const FrameRecord& frame) {
          }) {
         if (frame.header.contains(key)) value[key] = frame.header.at(key);
     }
+    if (frame.header.contains("tof_registered") &&
+        frame.header.at("tof_registered").is_object()) {
+        value["tof_registered"] = frame.header.at("tof_registered");
+    }
     return value;
 }
 
