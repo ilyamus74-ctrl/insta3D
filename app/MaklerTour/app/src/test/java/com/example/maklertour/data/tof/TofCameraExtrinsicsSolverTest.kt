@@ -17,8 +17,8 @@ class TofCameraExtrinsicsSolverTest {
         val trueIntrinsics = TofZoneIntrinsics(
             fxZones = 8.10,
             fyZones = 8.70,
-            cxZones = 3.45,
-            cyZones = 3.60,
+            cxZones = 3.50,
+            cyZones = 3.50,
         )
         val trueRotationVector = doubleArrayOf(
             Math.toRadians(1.0),

@@ -123,9 +123,11 @@ data class TofCameraExtrinsicsSolveResult(
 /**
  * LM03.4B2 nonlinear point-to-plane solver.
  *
- * Parameters:
- *   log(fx_zones), log(fy_zones), cx_zones, cy_zones,
+ * Optimized parameters:
+ *   log(fx_zones), log(fy_zones),
  *   Rodrigues(rx, ry, rz), tx_mm, ty_mm, tz_mm.
+ *
+ * The ToF principal point is fixed at the geometric zone-grid centre.
  *
  * The objective is robust and sigma-aware, but no final calibration acceptance
  * threshold is hard-coded here. LM03.4C decides acceptance from real-device
@@ -564,14 +566,11 @@ class TofCameraExtrinsicsSolver {
             ln(nominalFy * MIN_HARD_FOCAL_RATIO),
             ln(nominalFy * MAX_HARD_FOCAL_RATIO),
         )
-        params[IDX_CX] = params[IDX_CX].coerceIn(
-            nominalCx - MAX_HARD_CENTER_OFFSET_ZONES,
-            nominalCx + MAX_HARD_CENTER_OFFSET_ZONES,
-        )
-        params[IDX_CY] = params[IDX_CY].coerceIn(
-            nominalCy - MAX_HARD_CENTER_OFFSET_ZONES,
-            nominalCy + MAX_HARD_CENTER_OFFSET_ZONES,
-        )
+        // Planar point-to-plane data cannot reliably separate principal-point
+        // shifts from R/t. Keep the optical centre at the geometric zone-grid
+        // centre and estimate only focal geometry plus rigid extrinsics.
+        params[IDX_CX] = nominalCx
+        params[IDX_CY] = nominalCy
         params[IDX_RX] = params[IDX_RX].coerceIn(-PI, PI)
         params[IDX_RY] = params[IDX_RY].coerceIn(-PI, PI)
         params[IDX_RZ] = params[IDX_RZ].coerceIn(-PI, PI)
@@ -751,7 +750,7 @@ class TofCameraExtrinsicsSolver {
     )
 
     companion object {
-        const val SOLVER_NAME = "LM03.4B2_3_R2P_SENSOR_ORDER_LM_V4"
+        const val SOLVER_NAME = "LM03.4B2_4_FIXED_CENTER_R2P_LM_V5"
         const val MIN_SAMPLES = 8
         const val MIN_OBSERVATIONS = 128
 

@@ -1,5 +1,5 @@
 {
-  "calibration_run_id": "cal-33d6089b-98ca-4e01-ada9-d21099454707",
+  "calibration_run_id": "cal-f70bb45f-1315-4523-9dbc-5d0a89406e28",
   "result": {
     "schema_version": 1,
     "successful": false,
@@ -7,37 +7,37 @@
     "tof_width": 8,
     "tof_height": 8,
     "tof_intrinsics": {
-      "fx_zones": 16.89949493661167,
-      "fy_zones": 11.152521030306307,
-      "cx_zones": 3.088816676229627,
-      "cy_zones": 3.0843695940051976
+      "fx_zones": 10.945057378060794,
+      "fy_zones": 10.816757904895116,
+      "cx_zones": 4.5,
+      "cy_zones": 3.3754208792932285
     },
     "rotation_tof_to_camera": [
-      0.9814045743994475,
-      0.0518713575946441,
-      -0.18480915455985372,
-      -0.051293778744989894,
-      0.9986522964419652,
-      0.007908164973581608,
-      0.18497029385795807,
-      0.0017184506038632782,
-      0.9827426099023197
+      0.9981714604254218,
+      -0.004851869148434398,
+      0.06025109922604848,
+      0.003748824229985332,
+      0.9998235482507479,
+      0.01840702801043462,
+      -0.06032977630551389,
+      -0.01814749925060531,
+      0.9980135201298006
     ],
     "translation_tof_to_camera_mm": [
-      194.16663840842384,
-      -23.879789456432256,
-      21.78069165991842
+      162.3294115569365,
+      -7.267478772719065,
+      9.453446860426313
     ],
     "sample_count": 18,
-    "total_observation_count": 978,
-    "retained_observation_count": 693,
-    "plane_rms_mm": 63.3833832993796,
-    "plane_p95_mm": 145.32667841171667,
-    "all_plane_rms_mm": 333.76944435594436,
-    "initial_cost": 10.300088799572231,
-    "final_cost": 7.440144806170251,
-    "iterations": 58,
-    "solver": "LM03.4B2_2_R2P_ZONE_MAPPING_LM_V3",
-    "status": "REJECTED_B2_1: numerical=true centerOffset=0.4156304059948024 fxRatio=2.0000000000000004 fyRatio=1.319864418686867 focalAspect=1.5153071570713301 translationNormMm=196.83832539547672 rmsMm=63.3833832993796 p95Mm=145.32667841171667"
+    "total_observation_count": 1032,
+    "retained_observation_count": 730,
+    "plane_rms_mm": 7.192059882809138,
+    "plane_p95_mm": 11.36869525258544,
+    "all_plane_rms_mm": 425.7391342860813,
+    "initial_cost": 8.478521109788375,
+    "final_cost": 3.453129843428967,
+    "iterations": 19,
+    "solver": "LM03.4B2_3_R2P_SENSOR_ORDER_LM_V4",
+    "status": "REJECTED_B2_1: numerical=true centerOffset=1.0 fxRatio=1.2953117734127109 fyRatio=1.2801279500325549 focalAspect=1.0118611763611365 translationNormMm=162.76677106116006 rmsMm=7.192059882809138 p95Mm=11.36869525258544"
   }
 }
