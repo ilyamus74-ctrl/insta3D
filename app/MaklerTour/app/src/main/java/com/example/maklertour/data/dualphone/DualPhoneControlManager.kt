@@ -5,7 +5,11 @@ import android.os.SystemClock
 import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntime
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileResult
 import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimate
+import com.maklertour.data.tof.TofCameraCalibrationStore
+import com.maklertour.data.tof.TofCameraExtrinsicsSolver
 import com.maklertour.data.tof.TofCameraFramePairer
+import com.maklertour.data.tof.TofCameraObservationPlaneEstimator
+import com.maklertour.data.tof.TofCameraPlanarCalibrationSampleBuilder
 import com.maklertour.data.tof.TofUsbRuntime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -154,6 +159,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     private var localCalibrationReceivedAtMs: Long = 0L
     private var peerCalibrationReceivedAtMs: Long = 0L
     private var manualStereoCaptureRequest: DualPhoneManualStereoCaptureRequest? = null
+    private val tofCalibrationStore = TofCameraCalibrationStore(appContext)
+    private val tofExtrinsicsSolver = TofCameraExtrinsicsSolver()
+    private var tofSolveJob: Job? = null
 
     fun startMaster() {
         val settings = settingsStore.load()
@@ -810,20 +818,70 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         ) {
             return
         }
-        mutableState.value = current.copy(
-            calibrationFinalResult = result,
-            lastError = result.error,
-            lastMessage = if (result.successful) {
-                "Calibration profile ${result.profileId} is ready"
+
+        var tofProfileFileName: String? = null
+        val effectiveResult =
+            if (result.successful) {
+                runCatching {
+                    val solveResult =
+                        tofCalibrationStore.loadSolveResult(result.calibrationRunId)
+                            ?: error("ToF extrinsics solve result is missing")
+                    check(solveResult.successful) {
+                        "ToF extrinsics solve is not successful: ${solveResult.status}"
+                    }
+                    val masterCameraId =
+                        result.masterCameraId
+                            ?: error("MASTER camera id is missing")
+                    val tofProfile =
+                        solveResult.toProfile(
+                            rigId = result.rigId,
+                            rigMountRevision = result.rigMountRevision,
+                            masterDeviceId = result.masterDeviceId,
+                            masterCameraId = masterCameraId,
+                            cameraCalibrationProfileId = result.profileId,
+                            createdAtEpochMs = result.createdAtEpochMs,
+                        ) ?: error("Cannot build ToF/CAMERA_A profile")
+                    tofCalibrationStore.saveProfile(tofProfile).also {
+                        tofProfileFileName = it.name
+                    }
+                }.fold(
+                    onSuccess = { result },
+                    onFailure = { error ->
+                        result.copy(
+                            status = DualPhoneCalibrationProfileResult.STATUS_FAILED,
+                            error =
+                                "ToF profile activation failed: " +
+                                    (error.message ?: error.javaClass.simpleName),
+                        )
+                    },
+                )
             } else {
-                "Calibration solve failed: ${result.error ?: "unknown error"}"
+                result
+            }
+
+        android.util.Log.i(
+            "TofCalibration",
+            "TOF_CAL_PROFILE result=${effectiveResult.successful} " +
+                "stereoProfile=${result.profileId} " +
+                "tofFile=${tofProfileFileName ?: "-"} " +
+                "error=${effectiveResult.error ?: "-"}",
+        )
+
+        mutableState.value = current.copy(
+            calibrationFinalResult = effectiveResult,
+            lastError = effectiveResult.error,
+            lastMessage = if (effectiveResult.successful) {
+                "Calibration profile ${effectiveResult.profileId} + ToF is ready"
+            } else {
+                "Calibration solve failed: " +
+                    (effectiveResult.error ?: "unknown error")
             },
         )
         scope.launch {
             runCatching {
                 send(
                     DualPhoneControlType.CALIBRATION_RESULT,
-                    result.toJson(),
+                    effectiveResult.toJson(),
                 )
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(
@@ -1199,6 +1257,70 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     )
                     return null
                 }
+
+                val masterIntrinsics = current.calibrationMasterIntrinsics
+                if (masterIntrinsics?.acceptable != true) {
+                    mutableState.value = current.copy(
+                        lastMessage =
+                            "TOF CAL: итоговые intrinsics CAMERA_A ещё недоступны",
+                    )
+                    return null
+                }
+                val boardSettings =
+                    settingsStore.load().calibrationBoard.toCalibrationSettings(
+                        stage.targetPoseCount,
+                    )
+                val planeEstimate =
+                    TofCameraObservationPlaneEstimator.estimate(
+                        observation = masterObservation,
+                        settings = boardSettings,
+                        cameraIntrinsics = masterIntrinsics,
+                    )
+                val boardPlane = planeEstimate.plane
+                if (!planeEstimate.solved || boardPlane == null) {
+                    mutableState.value = current.copy(
+                        lastMessage = "TOF CAL: ${planeEstimate.status}",
+                    )
+                    return null
+                }
+                val sample =
+                    TofCameraPlanarCalibrationSampleBuilder.fromAcceptedPair(
+                        cameraElapsedRealtimeNs =
+                            masterObservation.captureElapsedRealtimeNs,
+                        boardPlane = boardPlane,
+                        pair = pair,
+                    )
+                if (sample == null) {
+                    mutableState.value = current.copy(
+                        lastMessage =
+                            "TOF CAL: не удалось построить planar sample",
+                    )
+                    return null
+                }
+                val runId = current.calibrationRunId ?: return null
+                val persisted = runCatching {
+                    tofCalibrationStore.saveSample(
+                        calibrationRunId = runId,
+                        poseIndex = current.calibrationTargetPoseIndex,
+                        poseId = current.calibrationTargetPoseId,
+                        sample = sample,
+                    )
+                }
+                if (persisted.isFailure) {
+                    mutableState.value = current.copy(
+                        lastMessage =
+                            "TOF CAL: ошибка сохранения sample: " +
+                                (persisted.exceptionOrNull()?.message ?: "unknown"),
+                    )
+                    return null
+                }
+                android.util.Log.i(
+                    "TofCalibration",
+                    "TOF_CAL_SAMPLE pose=${current.calibrationTargetPoseIndex} " +
+                        "seq=${pair.sequence} deltaUs=${pair.signedDeltaUs} " +
+                        "zones=${sample.validZoneCount} " +
+                        "corners=${boardPlane.charucoCornersUsed}",
+                )
                 pair
             } else {
                 null
@@ -1354,10 +1476,194 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     "Accepted ${stage.displayNameRu} pose $acceptedCount/${stage.targetPoseCount}"
             },
         )
+        if (tofSolvePending) {
+            launchTofExtrinsicsSolve(current.calibrationRunId)
+        }
         return payload
     }
 
+    private fun launchTofExtrinsicsSolve(calibrationRunId: String?) {
+        if (calibrationRunId.isNullOrBlank()) return
+        if (tofSolveJob?.isActive == true) return
+
+        tofSolveJob = scope.launch {
+            try {
+                val samples = tofCalibrationStore.loadSamples(calibrationRunId)
+                android.util.Log.i(
+                    "TofCalibration",
+                    "TOF_CAL_SOLVE_START run=$calibrationRunId " +
+                        "samples=${samples.size}",
+                )
+                mutableState.value = mutableState.value.copy(
+                    lastMessage =
+                        "TOF SOLVER: расчёт R/t + 8x8 ray model по ${samples.size} samples…",
+                    lastError = null,
+                )
+
+                val result = withContext(Dispatchers.Default) {
+                    tofExtrinsicsSolver.solve(samples)
+                }
+                tofCalibrationStore.saveSolveResult(
+                    calibrationRunId = calibrationRunId,
+                    result = result,
+                )
+
+                android.util.Log.i(
+                    "TofCalibration",
+                    "TOF_CAL_SOLVE_RESULT success=${result.successful} " +
+                        "samples=${result.sampleCount} " +
+                        "obs=${result.totalObservationCount} " +
+                        "rmsMm=${result.planeRmsMm} " +
+                        "p95Mm=${result.planeP95Mm} " +
+                        "allRmsMm=${result.allPlaneRmsMm} " +
+                        "tMm=${result.translationToCameraMm} " +
+                        "intrinsics=${result.tofIntrinsics}",
+                )
+
+                if (!result.successful) {
+                    mutableState.value = mutableState.value.copy(
+                        lastError = result.status,
+                        lastMessage = "TOF SOLVER FAILED: ${result.status}",
+                    )
+                    return@launch
+                }
+
+                val statePayload = synchronized(calibrationObservationLock) {
+                    val current = mutableState.value
+                    if (
+                        current.calibrationRunId != calibrationRunId ||
+                        current.calibrationStage !=
+                            DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS ||
+                        current.calibrationTofAcceptedPoseCount <
+                            DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS.targetPoseCount
+                    ) {
+                        return@synchronized null
+                    }
+
+                    val firstTarget = DualPhoneCalibrationPosePlan.first
+                    val rmsLabel = result.planeRmsMm?.let {
+                        String.format(java.util.Locale.US, "%.1f", it)
+                    } ?: "—"
+                    val p95Label = result.planeP95Mm?.let {
+                        String.format(java.util.Locale.US, "%.1f", it)
+                    } ?: "—"
+                    val instruction =
+                        "MASTER + TOF solved: RMS $rmsLabel мм · p95 $p95Label мм; " +
+                            "LM03.4C validation pending"
+
+                    mutableState.value = current.copy(
+                        calibrationStage = DualPhoneCalibrationStage.COMPLETE,
+                        calibrationLastCompletedStage =
+                            DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS,
+                        calibrationInstruction = instruction,
+                        calibrationAcceptedPoseCount = 0,
+                        calibrationTargetPoseCount = 0,
+                        calibrationTargetPoseIndex = firstTarget.index,
+                        calibrationTargetPoseId = firstTarget.id,
+                        calibrationCollectionComplete = true,
+                        lastError = null,
+                        lastMessage = instruction,
+                    )
+
+                    JSONObject()
+                        .put("calibration_run_id", calibrationRunId)
+                        .put("stage", DualPhoneCalibrationStage.COMPLETE.wireValue)
+                        .put(
+                            "accepted_stage",
+                            DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS.wireValue,
+                        )
+                        .put(
+                            "completed_stage",
+                            DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS.wireValue,
+                        )
+                        .put("stage_accepted_pose_count", 0)
+                        .put(
+                            "accepted_stage_pose_count",
+                            current.calibrationTofAcceptedPoseCount,
+                        )
+                        .put(
+                            "master_accepted_pose_count",
+                            current.calibrationMasterAcceptedPoseCount,
+                        )
+                        .put(
+                            "slave_accepted_pose_count",
+                            current.calibrationSlaveAcceptedPoseCount,
+                        )
+                        .put(
+                            "stereo_accepted_pose_count",
+                            current.calibrationStereoAcceptedPoseCount,
+                        )
+                        .put(
+                            "tof_accepted_pose_count",
+                            current.calibrationTofAcceptedPoseCount,
+                        )
+                        .put(
+                            "tof_frame_sequence",
+                            current.calibrationLastAcceptedTofSequence ?: JSONObject.NULL,
+                        )
+                        .put(
+                            "tof_pair_delta_us",
+                            current.calibrationLastAcceptedTofPairDeltaUs ?: JSONObject.NULL,
+                        )
+                        .put(
+                            "tof_valid_zone_count",
+                            current.calibrationLastAcceptedTofValidZoneCount ?: JSONObject.NULL,
+                        )
+                        .put("accepted_pose_index", JSONObject.NULL)
+                        .put("accepted_pose_id", JSONObject.NULL)
+                        .put("target_pose_index", firstTarget.index)
+                        .put("target_pose_id", firstTarget.id)
+                        .put("target_pose_count", 0)
+                        .put("instruction", instruction)
+                        .put("calibration_mode", current.calibrationMode.wireValue)
+                        .put("manual_capture_pending", false)
+                        .put(
+                            "acceptance_serial",
+                            current.calibrationAcceptanceSerial,
+                        )
+                        .put(
+                            "master_frame_sequence",
+                            current.calibrationLastAcceptedLocalFrameSequence
+                                ?: JSONObject.NULL,
+                        )
+                        .put("slave_frame_sequence", JSONObject.NULL)
+                        .put("accepted_master_observation", JSONObject.NULL)
+                        .put("accepted_slave_observation", JSONObject.NULL)
+                        .put("collection_complete", true)
+                }
+
+                if (statePayload != null) {
+                    runCatching {
+                        send(
+                            DualPhoneControlType.CALIBRATION_STATE,
+                            statePayload,
+                        )
+                    }.onFailure { error ->
+                        mutableState.value = mutableState.value.copy(
+                            lastError =
+                                "ToF calibration completion delivery failed: " +
+                                    (error.message ?: error.javaClass.simpleName),
+                        )
+                    }
+                }
+            } catch (error: Throwable) {
+                mutableState.value = mutableState.value.copy(
+                    lastError =
+                        "TOF SOLVER exception: " +
+                            (error.message ?: error.javaClass.simpleName),
+                    lastMessage =
+                        "TOF SOLVER exception: " +
+                            (error.message ?: error.javaClass.simpleName),
+                )
+            } finally {
+                tofSolveJob = null
+            }
+        }
+    }
+
     private fun resetCalibrationGateLocked() {
+        tofSolveJob?.cancel()
+        tofSolveJob = null
         synchronized(calibrationObservationLock) {
             manualStereoCaptureRequest = null
             stereoObservationBuffer.clear()
