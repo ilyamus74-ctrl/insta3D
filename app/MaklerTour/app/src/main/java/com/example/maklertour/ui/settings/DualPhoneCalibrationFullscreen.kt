@@ -751,7 +751,7 @@ internal fun DualPhoneCalibrationFullscreen(
                     )
                     if (snapshot.calibrationCollectionComplete) {
                         Text(
-                            "MASTER ✓ · SLAVE ✓ · ОБЕ КАМЕРЫ ✓",
+                            "MASTER ✓ · SLAVE ✓ · ОБЕ КАМЕРЫ ✓ · TOF ✓",
                             color = Color(0xFF7CFC98),
                             style = MaterialTheme.typography.titleMedium,
                         )
@@ -778,7 +778,7 @@ internal fun DualPhoneCalibrationFullscreen(
                             "КАЛИБРОВКА ЗАВЕРШЕНА",
                             style = MaterialTheme.typography.headlineSmall,
                         )
-                        Text("MASTER ✓   SLAVE ✓   ОБЕ КАМЕРЫ ✓")
+                        Text("MASTER ✓   SLAVE ✓   ОБЕ КАМЕРЫ ✓   TOF ✓")
                         Text("ПОСЛЕДНИЙ КАДР ЗАСЧИТАН ✓")
                         val finalResult = snapshot.calibrationFinalResult
                         if (finalResult == null) {
@@ -1174,6 +1174,11 @@ private fun CalibrationStageProgress(snapshot: DualPhoneControlSnapshot) {
             snapshot = snapshot,
             label = "3 ОБЕ",
         )
+        CalibrationStageChip(
+            stage = DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS,
+            snapshot = snapshot,
+            label = "4 TOF",
+        )
     }
 }
 
@@ -1214,6 +1219,8 @@ private fun acceptedStageCount(
         snapshot.calibrationSlaveAcceptedPoseCount
     DualPhoneCalibrationStage.STEREO_EXTRINSICS ->
         snapshot.calibrationStereoAcceptedPoseCount
+    DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS ->
+        snapshot.calibrationTofAcceptedPoseCount
     DualPhoneCalibrationStage.COMPLETE -> 0
 }
 
@@ -1233,7 +1240,12 @@ private fun stageRoleInstruction(
     }
     DualPhoneCalibrationStage.STEREO_EXTRINSICS ->
         "Обе камеры снимают пары автоматически. Доска должна быть видна обеим."
-    DualPhoneCalibrationStage.COMPLETE -> "Все три этапа завершены."
+    DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS -> if (role == DualPhoneRole.MASTER) {
+        "MASTER снимает ChArUco; ToF должен быть подключён и иметь READY clock sync."
+    } else {
+        "ОЖИДАНИЕ: этап MASTER + TOF выполняется только на MASTER."
+    }
+    DualPhoneCalibrationStage.COMPLETE -> "Все четыре этапа завершены."
 }
 
 private fun localQualityLine(

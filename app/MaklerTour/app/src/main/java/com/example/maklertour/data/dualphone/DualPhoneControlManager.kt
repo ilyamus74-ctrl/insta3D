@@ -5,6 +5,8 @@ import android.os.SystemClock
 import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntime
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileResult
 import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimate
+import com.maklertour.data.tof.TofCameraFramePairer
+import com.maklertour.data.tof.TofUsbRuntime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -77,6 +79,10 @@ data class DualPhoneControlSnapshot(
     val calibrationMasterAcceptedPoseCount: Int = 0,
     val calibrationSlaveAcceptedPoseCount: Int = 0,
     val calibrationStereoAcceptedPoseCount: Int = 0,
+    val calibrationTofAcceptedPoseCount: Int = 0,
+    val calibrationLastAcceptedTofSequence: Long? = null,
+    val calibrationLastAcceptedTofPairDeltaUs: Long? = null,
+    val calibrationLastAcceptedTofValidZoneCount: Int? = null,
     val calibrationLastAcceptedStage: DualPhoneCalibrationStage? = null,
     val calibrationLastCompletedStage: DualPhoneCalibrationStage? = null,
     val calibrationInstruction: String =
@@ -324,6 +330,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationMasterAcceptedPoseCount = 0,
             calibrationSlaveAcceptedPoseCount = 0,
             calibrationStereoAcceptedPoseCount = 0,
+            calibrationTofAcceptedPoseCount = 0,
+            calibrationLastAcceptedTofSequence = null,
+            calibrationLastAcceptedTofPairDeltaUs = null,
+            calibrationLastAcceptedTofValidZoneCount = null,
             calibrationLastAcceptedStage = null,
             calibrationLastCompletedStage = null,
             calibrationInstruction = instruction,
@@ -346,7 +356,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationCollectionComplete = false,
             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
             lastError = null,
-            lastMessage = "Stage 1/3: collecting MASTER intrinsics frames",
+            lastMessage = "Stage 1/4: collecting MASTER intrinsics frames",
         )
         scope.launch {
             try {
@@ -363,6 +373,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         .put("master_accepted_pose_count", 0)
                         .put("slave_accepted_pose_count", 0)
                         .put("stereo_accepted_pose_count", 0)
+                        .put("tof_accepted_pose_count", 0)
                         .put("instruction", instruction)
                         .put("target_pose_index", target.index)
                         .put("target_pose_id", target.id)
@@ -449,6 +460,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationSlaveIntrinsics = preservedSlave,
             calibrationFinalResult = null,
             calibrationStereoAcceptedPoseCount = 0,
+            calibrationTofAcceptedPoseCount = 0,
+            calibrationLastAcceptedTofSequence = null,
+            calibrationLastAcceptedTofPairDeltaUs = null,
+            calibrationLastAcceptedTofValidZoneCount = null,
             calibrationCollectionComplete = false,
             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
             lastError = null,
@@ -485,6 +500,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             current.calibrationSlaveAcceptedPoseCount,
                         )
                         .put("stereo_accepted_pose_count", 0)
+                        .put("tof_accepted_pose_count", 0)
                         .put("master_intrinsics", preservedMaster.toJson())
                         .put("slave_intrinsics", preservedSlave.toJson())
                         .put("instruction", instruction)
@@ -959,6 +975,16 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     "stereo_accepted_pose_count",
                     current.calibrationStereoAcceptedPoseCount,
                 ),
+                calibrationTofAcceptedPoseCount = payload.optInt(
+                    "tof_accepted_pose_count",
+                    current.calibrationTofAcceptedPoseCount,
+                ),
+                calibrationLastAcceptedTofSequence =
+                    payload.optNullableLong("tof_frame_sequence"),
+                calibrationLastAcceptedTofPairDeltaUs =
+                    payload.optNullableLong("tof_pair_delta_us"),
+                calibrationLastAcceptedTofValidZoneCount =
+                    payload.optNullableInt("tof_valid_zone_count"),
                 calibrationLastAcceptedStage = acceptedStage,
                 calibrationLastCompletedStage = completedStage,
                 calibrationInstruction = payload.optString(
@@ -1000,7 +1026,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     acceptedSlaveObservation,
                 calibrationCollectionComplete = workflowComplete,
                 lastMessage = if (workflowComplete) {
-                    "Calibration frame collection completed: MASTER, SLAVE and stereo"
+                    "Calibration frame collection completed: MASTER, SLAVE, stereo and ToF"
                 } else {
                     "Calibration stage ${stage.displayNameRu}: $acceptedCount/$targetCount"
                 },
@@ -1137,6 +1163,47 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             }
         }
 
+        val acceptedTofPair =
+            if (stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS) {
+                if (current.calibrationAcceptedPoseCount >= stage.targetPoseCount) {
+                    return null
+                }
+                val masterObservation = local ?: return null
+                val pair =
+                    TofCameraFramePairer.nearest(
+                        cameraElapsedRealtimeNs =
+                            masterObservation.captureElapsedRealtimeNs,
+                        frames = TofUsbRuntime.get(appContext).recentFramesSnapshot(),
+                    )
+                if (pair == null) {
+                    mutableState.value = current.copy(
+                        lastMessage =
+                            "TOF SYNC: ждём READY active clock и ближайший ToF frame",
+                    )
+                    return null
+                }
+                if (!pair.accepted) {
+                    mutableState.value = current.copy(
+                        lastMessage =
+                            "TOF SYNC: Δ=${pair.absDeltaUs} мкс > " +
+                                "${pair.thresholdUs} мкс — ждём более близкий ToF frame",
+                    )
+                    return null
+                }
+                val validZones =
+                    (0 until pair.frame.zoneCount).count(pair.frame::isZoneValid)
+                if (validZones <= 0) {
+                    mutableState.value = current.copy(
+                        lastMessage =
+                            "TOF: frame ${pair.sequence} не содержит валидных зон",
+                    )
+                    return null
+                }
+                pair
+            } else {
+                null
+            }
+
         val acceptedMaster = if (stage.requiresMasterObservation) local else null
         val acceptedSlave = if (stage.requiresSlaveObservation) peer else null
         val acceptedPoseIndex = current.calibrationTargetPoseIndex
@@ -1144,8 +1211,16 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         val acceptedCount = (current.calibrationAcceptedPoseCount + 1)
             .coerceAtMost(stage.targetPoseCount)
         val stageComplete = acceptedCount >= stage.targetPoseCount
-        val nextStage = if (stageComplete) stage.next() else stage
-        val workflowComplete = nextStage == DualPhoneCalibrationStage.COMPLETE
+        val tofSolvePending =
+            stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS &&
+                stageComplete
+        val nextStage = when {
+            tofSolvePending -> stage
+            stageComplete -> stage.next()
+            else -> stage
+        }
+        val workflowComplete =
+            nextStage == DualPhoneCalibrationStage.COMPLETE
 
         val masterCount = if (stage == DualPhoneCalibrationStage.MASTER_INTRINSICS) {
             acceptedCount
@@ -1162,6 +1237,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         } else {
             current.calibrationStereoAcceptedPoseCount
         }
+        val tofCount = if (stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS) {
+            acceptedCount
+        } else {
+            current.calibrationTofAcceptedPoseCount
+        }
         val nextTargetIndex = if (stageComplete) {
             0
         } else {
@@ -1170,11 +1250,18 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             )
         }
         val nextTarget = DualPhoneCalibrationPosePlan.at(nextTargetIndex)
-        val nextStageAcceptedCount = if (stageComplete) 0 else acceptedCount
-        val nextInstruction = if (workflowComplete) {
-            "Сбор калибровочных кадров завершён: MASTER, SLAVE и ОБЕ КАМЕРЫ"
-        } else {
-            calibrationInstruction(nextStage, nextTarget)
+        val nextStageAcceptedCount = when {
+            tofSolvePending -> acceptedCount
+            stageComplete -> 0
+            else -> acceptedCount
+        }
+        val nextInstruction = when {
+            tofSolvePending ->
+                "MASTER + TOF: 18/18 собрано; ожидается LM03.4B2 solver"
+            workflowComplete ->
+                "Сбор калибровочных кадров завершён: MASTER, SLAVE, ОБЕ КАМЕРЫ и TOF"
+            else ->
+                calibrationInstruction(nextStage, nextTarget)
         }
         val acceptanceSerial = current.calibrationAcceptanceSerial + 1L
         val masterSequence = acceptedMaster?.frameSequence
@@ -1189,6 +1276,15 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             .put("master_accepted_pose_count", masterCount)
             .put("slave_accepted_pose_count", slaveCount)
             .put("stereo_accepted_pose_count", stereoCount)
+            .put("tof_accepted_pose_count", tofCount)
+            .put("tof_frame_sequence", acceptedTofPair?.sequence ?: JSONObject.NULL)
+            .put("tof_pair_delta_us", acceptedTofPair?.signedDeltaUs ?: JSONObject.NULL)
+            .put(
+                "tof_valid_zone_count",
+                acceptedTofPair?.frame?.let { frame ->
+                    (0 until frame.zoneCount).count(frame::isZoneValid)
+                } ?: JSONObject.NULL,
+            )
             .put("accepted_pose_index", acceptedPoseIndex)
             .put("accepted_pose_id", acceptedPoseId)
             .put("target_pose_index", nextTargetIndex)
@@ -1221,6 +1317,14 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationMasterAcceptedPoseCount = masterCount,
             calibrationSlaveAcceptedPoseCount = slaveCount,
             calibrationStereoAcceptedPoseCount = stereoCount,
+            calibrationTofAcceptedPoseCount = tofCount,
+            calibrationLastAcceptedTofSequence = acceptedTofPair?.sequence,
+            calibrationLastAcceptedTofPairDeltaUs =
+                acceptedTofPair?.signedDeltaUs,
+            calibrationLastAcceptedTofValidZoneCount =
+                acceptedTofPair?.frame?.let { frame ->
+                    (0 until frame.zoneCount).count(frame::isZoneValid)
+                },
             calibrationLastAcceptedStage = stage,
             calibrationLastCompletedStage = if (stageComplete) stage else null,
             calibrationInstruction = nextInstruction,
@@ -1240,8 +1344,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationManualCapturePending = false,
             calibrationCollectionComplete = workflowComplete,
             lastMessage = when {
+                tofSolvePending ->
+                    "MASTER + TOF 18/18: samples collected; LM03.4B2 solver pending"
                 workflowComplete ->
-                    "Calibration frame collection completed: MASTER, SLAVE and stereo"
+                    "Calibration frame collection completed: MASTER, SLAVE, stereo and ToF"
                 stageComplete ->
                     "Stage ${stage.displayNameRu} completed; starting ${nextStage.displayNameRu}"
                 else ->
@@ -1272,6 +1378,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             "SLAVE: ${target.instruction}"
         DualPhoneCalibrationStage.STEREO_EXTRINSICS ->
             "ОБЕ КАМЕРЫ: ${target.instruction}"
+        DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS ->
+            "MASTER + TOF: ${target.instruction}"
         DualPhoneCalibrationStage.COMPLETE ->
             "Сбор калибровочных кадров завершён"
     }

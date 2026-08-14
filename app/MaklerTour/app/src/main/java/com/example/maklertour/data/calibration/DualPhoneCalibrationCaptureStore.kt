@@ -105,6 +105,13 @@ class DualPhoneCalibrationCaptureStore(context: Context) {
                 "stereo_extrinsics_count",
                 countStage(entries, DualPhoneCalibrationStage.STEREO_EXTRINSICS),
             )
+            .put(
+                "tof_extrinsics_count",
+                countStage(
+                    entries,
+                    DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS,
+                ),
+            )
         writeJsonAtomically(manifestFile, manifest)
         return output
     }
