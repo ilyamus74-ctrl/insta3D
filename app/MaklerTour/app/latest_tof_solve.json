@@ -1,0 +1,43 @@
+{
+  "calibration_run_id": "cal-33d6089b-98ca-4e01-ada9-d21099454707",
+  "result": {
+    "schema_version": 1,
+    "successful": false,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 16.89949493661167,
+      "fy_zones": 11.152521030306307,
+      "cx_zones": 3.088816676229627,
+      "cy_zones": 3.0843695940051976
+    },
+    "rotation_tof_to_camera": [
+      0.9814045743994475,
+      0.0518713575946441,
+      -0.18480915455985372,
+      -0.051293778744989894,
+      0.9986522964419652,
+      0.007908164973581608,
+      0.18497029385795807,
+      0.0017184506038632782,
+      0.9827426099023197
+    ],
+    "translation_tof_to_camera_mm": [
+      194.16663840842384,
+      -23.879789456432256,
+      21.78069165991842
+    ],
+    "sample_count": 18,
+    "total_observation_count": 978,
+    "retained_observation_count": 693,
+    "plane_rms_mm": 63.3833832993796,
+    "plane_p95_mm": 145.32667841171667,
+    "all_plane_rms_mm": 333.76944435594436,
+    "initial_cost": 10.300088799572231,
+    "final_cost": 7.440144806170251,
+    "iterations": 58,
+    "solver": "LM03.4B2_2_R2P_ZONE_MAPPING_LM_V3",
+    "status": "REJECTED_B2_1: numerical=true centerOffset=0.4156304059948024 fxRatio=2.0000000000000004 fyRatio=1.319864418686867 focalAspect=1.5153071570713301 translationNormMm=196.83832539547672 rmsMm=63.3833832993796 p95Mm=145.32667841171667"
+  }
+}

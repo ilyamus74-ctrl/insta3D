@@ -487,13 +487,12 @@ class TofCameraExtrinsicsSolver {
         val cx = params[IDX_CX]
         val cy = params[IDX_CY]
 
-        // VL53L8CX zone ids are sensor-order ids. ST's scene view is mirrored
-        // horizontally: the first raw column observes the right side of scene.
+        // Keep native zone-index order as the right-handed ToF convention.
+        // Any physical sensor rotation is estimated by R.
         val row = zone.zoneIndex / sample.tofWidth
-        val rawColumn = zone.zoneIndex % sample.tofWidth
-        val sceneColumn = sample.tofWidth - 1 - rawColumn
+        val column = zone.zoneIndex % sample.tofWidth
 
-        val normalizedX = (sceneColumn.toDouble() - cx) / fx
+        val normalizedX = (column.toDouble() - cx) / fx
         val normalizedY = (row.toDouble() - cy) / fy
 
         // VL53L8CX default firmware applies radial-to-perpendicular (R2P)
@@ -752,7 +751,7 @@ class TofCameraExtrinsicsSolver {
     )
 
     companion object {
-        const val SOLVER_NAME = "LM03.4B2_2_R2P_ZONE_MAPPING_LM_V3"
+        const val SOLVER_NAME = "LM03.4B2_3_R2P_SENSOR_ORDER_LM_V4"
         const val MIN_SAMPLES = 8
         const val MIN_OBSERVATIONS = 128
 

@@ -11,7 +11,7 @@ class TofCameraExtrinsicsProfileTest {
     @Test
     fun identityExtrinsicsProjectCentralZoneToPrincipalPoint() {
         val projection = TofCameraProjector.projectZoneCenter(
-            zoneIndex = 28,
+            zoneIndex = 27,
             distanceMm = 1_000,
             profile = profile(
                 tofIntrinsics = TofZoneIntrinsics(
@@ -34,7 +34,7 @@ class TofCameraExtrinsicsProfileTest {
     @Test
     fun translationToCameraMovesProjectedPixel() {
         val projection = TofCameraProjector.projectZoneCenter(
-            zoneIndex = 28,
+            zoneIndex = 27,
             distanceMm = 1_000,
             profile = profile(
                 tofIntrinsics = TofZoneIntrinsics(

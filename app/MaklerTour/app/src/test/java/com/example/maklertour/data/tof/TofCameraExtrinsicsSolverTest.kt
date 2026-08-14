@@ -79,10 +79,9 @@ class TofCameraExtrinsicsSolverTest {
         val zones = buildList {
             for (zoneIndex in 0 until 64) {
                 val row = zoneIndex / 8
-                val rawColumn = zoneIndex % 8
-                val sceneColumn = 7 - rawColumn
+                val column = zoneIndex % 8
                 val x =
-                    (sceneColumn - intrinsics.cxZones) / intrinsics.fxZones
+                    (column - intrinsics.cxZones) / intrinsics.fxZones
                 val y =
                     (row - intrinsics.cyZones) / intrinsics.fyZones
                 val z = 1.0

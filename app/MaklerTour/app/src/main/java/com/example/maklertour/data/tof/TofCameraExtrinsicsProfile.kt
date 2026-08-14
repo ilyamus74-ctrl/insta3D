@@ -186,12 +186,11 @@ object TofCameraProjector {
         if (listOf(fx, fy, cx, cy, k1, k2).any { !it.isFinite() }) return null
 
         val row = zoneIndex / profile.tofWidth
-        val rawColumn = zoneIndex % profile.tofWidth
-        val sceneColumn = profile.tofWidth - 1 - rawColumn
+        val column = zoneIndex % profile.tofWidth
         val zi = profile.tofIntrinsics
 
         val tofNormalizedX =
-            (sceneColumn.toDouble() - zi.cxZones) / zi.fxZones
+            (column.toDouble() - zi.cxZones) / zi.fxZones
         val tofNormalizedY =
             (row.toDouble() - zi.cyZones) / zi.fyZones
 
