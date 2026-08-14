@@ -1633,6 +1633,9 @@ private fun SettingsScreen(
             onStartCalibration = {
                 dualPhoneControl.startCalibrationSession(DualPhoneCalibrationMode.AUTO)
             },
+            onStartTofCalibration = {
+                dualPhoneControl.startTofCalibrationFromActiveProfile()
+            },
             onStartManualCalibration = {
                 dualPhoneControl.startCalibrationSession(
                     DualPhoneCalibrationMode.MANUAL_STEREO,

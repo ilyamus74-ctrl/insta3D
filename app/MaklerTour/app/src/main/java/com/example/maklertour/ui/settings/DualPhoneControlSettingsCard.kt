@@ -61,6 +61,7 @@ fun DualPhoneControlSettingsCard(
     onStartTest: () -> Unit,
     onStopCapture: () -> Unit,
     onStartCalibration: () -> Unit,
+    onStartTofCalibration: () -> Unit,
     onStartManualCalibration: () -> Unit,
     onExitCalibration: () -> Unit,
 ) {
@@ -404,6 +405,30 @@ fun DualPhoneControlSettingsCard(
                 boardSaveMessage?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall)
                 }
+
+                Text(
+                    "Активный stereo-профиль: " +
+                        (settings.activeCalibrationProfileId ?: "нет"),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(
+                    onClick = onStartTofCalibration,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !snapshot.calibrationActive &&
+                        snapshot.phase !in setOf(
+                            DualPhoneControlPhase.ARMING,
+                            DualPhoneControlPhase.ARMED,
+                            DualPhoneControlPhase.START_SCHEDULED,
+                            DualPhoneControlPhase.RECORDING,
+                        ),
+                ) {
+                    Text("CAMERA A + TOF · ИЗ СОХРАНЁННОГО STEREO")
+                }
+                Text(
+                    "Не пересчитывает MASTER/SLAVE K/D и stereo R/t. " +
+                        "SLAVE для этого режима не требуется.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
 
                 if (snapshot.phase == DualPhoneControlPhase.STOPPED ||
                     snapshot.phase == DualPhoneControlPhase.ERROR

@@ -4,7 +4,10 @@ import android.content.Context
 import android.os.SystemClock
 import com.example.maklertour.data.dualphone.DualPhoneApplicationRuntime
 import com.maklertour.data.calibration.DualPhoneCalibrationProfileResult
+import com.maklertour.data.calibration.DualPhoneCalibrationProfileStore
 import com.maklertour.data.calibration.DualPhoneLiveIntrinsicsEstimate
+import com.maklertour.data.phonecamera.PhoneCameraLensRepository
+import com.maklertour.data.rig.CalibrationBoardType
 import com.maklertour.data.tof.TofCameraCalibrationStore
 import com.maklertour.data.tof.TofCameraExtrinsicsSolver
 import com.maklertour.data.tof.TofCameraFramePairer
@@ -108,6 +111,7 @@ data class DualPhoneControlSnapshot(
     val calibrationLastAcceptedSlaveObservation: DualPhoneCalibrationObservation? = null,
     val calibrationMasterIntrinsics: DualPhoneLiveIntrinsicsEstimate? = null,
     val calibrationSlaveIntrinsics: DualPhoneLiveIntrinsicsEstimate? = null,
+    val calibrationSourceProfile: DualPhoneCalibrationProfileResult? = null,
     val calibrationFinalResult: DualPhoneCalibrationProfileResult? = null,
     val calibrationCollectionComplete: Boolean = false,
     val clockSync: DualPhoneClockSyncSnapshot = DualPhoneClockSyncSnapshot(),
@@ -160,6 +164,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
     private var localCalibrationReceivedAtMs: Long = 0L
     private var peerCalibrationReceivedAtMs: Long = 0L
     private var manualStereoCaptureRequest: DualPhoneManualStereoCaptureRequest? = null
+    private val calibrationProfileStore = DualPhoneCalibrationProfileStore(appContext)
+    private val phoneCameraLensRepository = PhoneCameraLensRepository(appContext)
     private val tofCalibrationStore = TofCameraCalibrationStore(appContext)
     private val tofExtrinsicsSolver = TofCameraExtrinsicsSolver()
     private var tofSolveJob: Job? = null
@@ -361,6 +367,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationLastAcceptedSlaveObservation = null,
             calibrationMasterIntrinsics = null,
             calibrationSlaveIntrinsics = null,
+            calibrationSourceProfile = null,
             calibrationFinalResult = null,
             calibrationCollectionComplete = false,
             lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
@@ -395,6 +402,125 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                 )
             }
         }
+    }
+
+    fun startTofCalibrationFromActiveProfile() {
+        val settings = settingsStore.load()
+        val current = mutableState.value
+        val activeProfileId = settings.activeCalibrationProfileId
+        val sourceProfile = activeProfileId?.let(calibrationProfileStore::load)
+        val selectedCameraId = runCatching {
+            phoneCameraLensRepository.selectedOrDefault().first.cameraId
+        }.getOrNull()
+        val tofRuntime = TofUsbRuntime.get(appContext)
+        val tofReady =
+            tofRuntime.state.value.status == TofUsbStatus.STREAMING &&
+                tofRuntime.recentFramesSnapshot().isNotEmpty() &&
+                tofRuntime.lastFrameAgeMs()?.let { it <= 1_000L } == true
+        val physicalCaptureBusy = current.phase in setOf(
+            DualPhoneControlPhase.ARMING,
+            DualPhoneControlPhase.ARMED,
+            DualPhoneControlPhase.START_SCHEDULED,
+            DualPhoneControlPhase.RECORDING,
+        )
+
+        val error = when {
+            settings.role != DualPhoneRole.MASTER ->
+                "CAMERA_A + ToF calibration can be started only on MASTER"
+            current.calibrationActive ->
+                "Calibration session is already active"
+            physicalCaptureBusy ->
+                "Stop capture before CAMERA_A + ToF calibration"
+            activeProfileId.isNullOrBlank() ->
+                "Нет активного сохранённого stereo-профиля"
+            sourceProfile == null ->
+                "Активный stereo-профиль не найден на устройстве"
+            !sourceProfile.successful ->
+                "Активный stereo-профиль не прошёл quality gate"
+            sourceProfile.masterDeviceId != settings.deviceId ->
+                "Stereo-профиль принадлежит другому MASTER устройству"
+            sourceProfile.rigId != settings.rigId ->
+                "Rig ID сохранённого stereo-профиля не совпадает с текущим"
+            sourceProfile.rigMountRevision != settings.rigMountRevision ->
+                "Mount revision stereo-профиля не совпадает с текущим"
+            sourceProfile.masterCameraId.isNullOrBlank() ->
+                "В stereo-профиле отсутствует CAMERA_A camera id"
+            selectedCameraId.isNullOrBlank() ->
+                "Не удалось определить выбранную CAMERA_A"
+            sourceProfile.masterCameraId != selectedCameraId ->
+                "Выбрана CAMERA_A $selectedCameraId, а stereo-профиль рассчитан для " +
+                    sourceProfile.masterCameraId
+            sourceProfile.masterIntrinsics.acceptable.not() ->
+                "Сохранённые intrinsics CAMERA_A не прошли quality gate"
+            settings.calibrationBoard.validationError() != null ->
+                requireNotNull(settings.calibrationBoard.validationError())
+            settings.calibrationBoard.boardType != CalibrationBoardType.CHARUCO ->
+                "CAMERA_A + ToF calibration требует ChArUco"
+            !tofReady ->
+                "ToF не STREAMING или нет свежих кадров"
+            else -> null
+        }
+        if (error != null) {
+            mutableState.value = current.copy(
+                lastError = error,
+                lastMessage = error,
+            )
+            return
+        }
+
+        val profile = requireNotNull(sourceProfile)
+        val runId = DualPhoneControlProtocol.calibrationRunId()
+        val stage = DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS
+        val target = DualPhoneCalibrationPosePlan.first
+        val instruction =
+            "CAMERA_A + TOF ONLY: сохранённый stereo ${profile.profileId}; " +
+                "сначала механически выставьте и зафиксируйте ToF"
+
+        resetCalibrationGateLocked()
+        mutableState.value = current.copy(
+            calibrationActive = true,
+            calibrationMode = DualPhoneCalibrationMode.AUTO,
+            calibrationManualCapturePending = false,
+            calibrationRunId = runId,
+            calibrationStage = stage,
+            calibrationMasterAcceptedPoseCount =
+                DualPhoneCalibrationStage.MASTER_INTRINSICS.targetPoseCount,
+            calibrationSlaveAcceptedPoseCount =
+                DualPhoneCalibrationStage.SLAVE_INTRINSICS.targetPoseCount,
+            calibrationStereoAcceptedPoseCount =
+                DualPhoneCalibrationStage.STEREO_EXTRINSICS.targetPoseCount,
+            calibrationTofAcceptedPoseCount = 0,
+            calibrationLastAcceptedTofSequence = null,
+            calibrationLastAcceptedTofPairDeltaUs = null,
+            calibrationLastAcceptedTofValidZoneCount = null,
+            calibrationLastAcceptedStage = null,
+            calibrationLastCompletedStage =
+                DualPhoneCalibrationStage.STEREO_EXTRINSICS,
+            calibrationInstruction = instruction,
+            calibrationAcceptedPoseCount = 0,
+            calibrationTargetPoseCount = stage.targetPoseCount,
+            calibrationTargetPoseIndex = target.index,
+            calibrationTargetPoseId = target.id,
+            calibrationAcceptanceSerial = 0L,
+            calibrationLastAcceptedPoseIndex = null,
+            calibrationLastAcceptedPoseId = null,
+            calibrationLastAcceptedLocalFrameSequence = null,
+            calibrationLastAcceptedPeerFrameSequence = null,
+            calibrationLocalObservation = null,
+            calibrationPeerObservation = null,
+            calibrationLastAcceptedMasterObservation = null,
+            calibrationLastAcceptedSlaveObservation = null,
+            calibrationMasterIntrinsics = profile.masterIntrinsics,
+            calibrationSlaveIntrinsics = profile.slaveIntrinsics,
+            calibrationSourceProfile = profile,
+            calibrationFinalResult = null,
+            calibrationCollectionComplete = false,
+            lastCommand = DualPhoneControlType.ENTER_CALIBRATION,
+            lastError = null,
+            lastMessage =
+                "CAMERA_A + ToF: stereo/K-D не пересчитываются; " +
+                    "ToF alignment ожидает фиксации",
+        )
     }
 
     fun restartStereoCalibration(
@@ -467,6 +593,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationLastAcceptedSlaveObservation = null,
             calibrationMasterIntrinsics = preservedMaster,
             calibrationSlaveIntrinsics = preservedSlave,
+            calibrationSourceProfile = null,
             calibrationFinalResult = null,
             calibrationStereoAcceptedPoseCount = 0,
             calibrationTofAcceptedPoseCount = 0,
@@ -940,9 +1067,12 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
 
     fun publishCalibrationResult(result: DualPhoneCalibrationProfileResult) {
         val current = mutableState.value
+        val reusingStoredProfile =
+            current.calibrationSourceProfile?.profileId == result.profileId
         if (
             settingsStore.load().role != DualPhoneRole.MASTER ||
-            result.calibrationRunId != current.calibrationRunId ||
+            (!reusingStoredProfile &&
+                result.calibrationRunId != current.calibrationRunId) ||
             !current.calibrationActive
         ) {
             return
@@ -953,9 +1083,13 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         val effectiveResult =
             if (result.successful && tofCalibrationUsed) {
                 runCatching {
+                    val tofSolveRunId =
+                        current.calibrationRunId ?: result.calibrationRunId
                     val solveResult =
-                        tofCalibrationStore.loadSolveResult(result.calibrationRunId)
-                            ?: error("ToF extrinsics solve result is missing")
+                        tofCalibrationStore.loadSolveResult(tofSolveRunId)
+                            ?: error(
+                                "ToF extrinsics solve result is missing for $tofSolveRunId",
+                            )
                     check(solveResult.successful) {
                         "ToF extrinsics solve is not successful: ${solveResult.status}"
                     }
@@ -969,7 +1103,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                             masterDeviceId = result.masterDeviceId,
                             masterCameraId = masterCameraId,
                             cameraCalibrationProfileId = result.profileId,
-                            createdAtEpochMs = result.createdAtEpochMs,
+                            createdAtEpochMs = System.currentTimeMillis(),
                         ) ?: error("Cannot build ToF/CAMERA_A profile")
                     tofCalibrationStore.saveProfile(tofProfile).also {
                         tofProfileFileName = it.name
@@ -1011,17 +1145,19 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                     (effectiveResult.error ?: "unknown error")
             },
         )
-        scope.launch {
-            runCatching {
-                send(
-                    DualPhoneControlType.CALIBRATION_RESULT,
-                    effectiveResult.toJson(),
-                )
-            }.onFailure { error ->
-                mutableState.value = mutableState.value.copy(
-                    lastError = "Final calibration result delivery failed: " +
-                        (error.message ?: error.javaClass.simpleName),
-                )
+        if (current.connected) {
+            scope.launch {
+                runCatching {
+                    send(
+                        DualPhoneControlType.CALIBRATION_RESULT,
+                        effectiveResult.toJson(),
+                    )
+                }.onFailure { error ->
+                    mutableState.value = mutableState.value.copy(
+                        lastError = "Final calibration result delivery failed: " +
+                            (error.message ?: error.javaClass.simpleName),
+                    )
+                }
             }
         }
     }
@@ -1782,7 +1918,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
                         .put("collection_complete", true)
                 }
 
-                if (statePayload != null) {
+                if (statePayload != null && mutableState.value.connected) {
                     runCatching {
                         send(
                             DualPhoneControlType.CALIBRATION_STATE,

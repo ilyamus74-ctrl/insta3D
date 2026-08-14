@@ -138,9 +138,18 @@ internal fun DualPhoneCalibrationFullscreen(
     val target = DualPhoneCalibrationPosePlan.byId(snapshot.calibrationTargetPoseId)
     val currentTarget by rememberUpdatedState(target)
     val currentSnapshot by rememberUpdatedState(snapshot)
+    var tofAlignmentArmed by remember(snapshot.calibrationRunId) {
+        mutableStateOf(false)
+    }
+    val tofAlignmentRequired =
+        role == DualPhoneRole.MASTER &&
+            snapshot.calibrationStage ==
+                DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS &&
+            !snapshot.calibrationCollectionComplete
     val localAnalyzerActive =
         snapshot.calibrationStage.isLocalAnalyzerActive(role) &&
-            !snapshot.calibrationCollectionComplete
+            !snapshot.calibrationCollectionComplete &&
+            (!tofAlignmentRequired || tofAlignmentArmed)
     var previewStatus by remember(snapshot.calibrationRunId) {
         mutableStateOf("Opening selected camera…")
     }
@@ -446,6 +455,15 @@ internal fun DualPhoneCalibrationFullscreen(
             return@LaunchedEffect
         }
         finalSolveStarted = true
+
+        val sourceProfile = snapshot.calibrationSourceProfile
+        if (sourceProfile != null) {
+            finalSolveStatus =
+                "STEREO ${sourceProfile.profileId} сохранён; активируем новый ToF profile…"
+            controlManager.publishCalibrationResult(sourceProfile)
+            return@LaunchedEffect
+        }
+
         finalSolveStatus = "РАСЧЁТ K/D И STEREO R/T…"
 
         var masterIntrinsics = currentSnapshot.calibrationMasterIntrinsics
@@ -560,6 +578,13 @@ internal fun DualPhoneCalibrationFullscreen(
                 onStatus = { previewStatus = it },
             )
 
+            if (tofAlignmentRequired) {
+                TofCalibrationAlignmentOverlay(
+                    armed = tofAlignmentArmed,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -604,6 +629,48 @@ internal fun DualPhoneCalibrationFullscreen(
                             color = Color(0xFFFFCC80),
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        snapshot.calibrationSourceProfile?.let { source ->
+                            Text(
+                                "TOF-ONLY · stereo ${source.profileId} сохранён · " +
+                                    "K/D и stereo R/t не пересчитываются",
+                                color = Color(0xFF7CFC98),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (tofAlignmentRequired) {
+                            Text(
+                                if (tofAlignmentArmed) {
+                                    "TOF ЗАФИКСИРОВАН ✓ · теперь двигайте только ChArUco"
+                                } else {
+                                    "TOF ALIGNMENT · автоснимки заблокированы. " +
+                                        "Выставьте модуль по live 8×8, жёстко закрепите его, " +
+                                        "затем разрешите сбор 18 поз."
+                                },
+                                color = if (tofAlignmentArmed) {
+                                    Color(0xFF7CFC98)
+                                } else {
+                                    Color(0xFFFFCC80)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Button(
+                                onClick = {
+                                    tofAlignmentArmed = true
+                                    analyzer.reset()
+                                    localAnalysis = null
+                                },
+                                enabled = !tofAlignmentArmed,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (tofAlignmentArmed) {
+                                        "TOF ЗАФИКСИРОВАН ✓"
+                                    } else {
+                                        "TOF ЗАФИКСИРОВАН · НАЧАТЬ 18 ПОЗ"
+                                    },
+                                )
+                            }
+                        }
                         Text(
                             if (
                                 snapshot.calibrationStage ==
