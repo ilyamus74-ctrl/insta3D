@@ -1,0 +1,20 @@
+{
+  "validation_run_id": "cal-943f7076-28bd-4f7b-be12-29578d2d35dc",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "profile_solver": "LM03.4B2_5_NEAR_GHOST_FILTER_R2P_LM_V6",
+    "sample_count": 12,
+    "total_observation_count": 658,
+    "retained_observation_count": 466,
+    "retained_zone_coverage_count": 62,
+    "retained_zone_coverage_percent": 96.875,
+    "plane_rms_mm": 11.54886330237104,
+    "plane_p95_mm": 19.259423254422813,
+    "all_plane_rms_mm": 234.5132919988271,
+    "reprojection_observation_count": 466,
+    "reprojection_rms_px": 2.10986858858945,
+    "reprojection_p95_px": 3.11261812973377,
+    "status": "HOLDOUT_PASS_C1; RGB reprojection telemetry only"
+  }
+}

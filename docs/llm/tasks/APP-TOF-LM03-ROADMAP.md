@@ -14,10 +14,11 @@ LM03.3.1a   USB session lifecycle fence              CLOSED
 LM03.3.2    ToF + Camera2 + IMU time alignment       CLOSED
 LM03.3.2A   local CAMERA_A sensor timeline           CLOSED
 LM03.3.2B   nearest event-time ToF pairing           CLOSED
-LM03.4      CAMERA_A <-> ToF extrinsics              IN PROGRESS
-LM03.4A     extrinsics profile + projection model    IN PROGRESS
-LM03.4B     ChArUco + ToF planar solver              PLANNED
-LM03.5      64 ToF anchors on Registered RGB         PLANNED
+LM03.4      CAMERA_A <-> ToF extrinsics              CLOSED
+LM03.4A     extrinsics profile + projection model    CLOSED
+LM03.4B     ChArUco + ToF planar solver              CLOSED
+LM03.4C     independent hold-out validation          CLOSED
+LM03.5      64 ToF anchors on Registered RGB         NEXT
 LM03.6   STEREO / TOF / FUSED cursor        PLANNED
 LM03.7   VIO + ToF metric trajectory        PLANNED
 LM03.8   accumulated metric live 3D          PLANNED

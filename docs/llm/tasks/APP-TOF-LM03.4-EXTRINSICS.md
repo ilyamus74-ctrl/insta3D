@@ -6,10 +6,10 @@
 REPOSITORY BASELINE: e125fcc11ed3db9d3a361b8cb13d704f5b7b584c
 
 LM03.3.2:  CLOSED
-LM03.4:    IN PROGRESS
+LM03.4:    CLOSED
 LM03.4A:   CLOSED
 LM03.4B:   CLOSED — V6 real-device solve accepted
-LM03.4C:   IN PROGRESS — independent hold-out validation
+LM03.4C:   CLOSED — independent hold-out passed
 ```
 
 ## Goal
@@ -209,7 +209,21 @@ coverage by ToF zone
 coverage by board pose
 ```
 
-Only after hold-out validation passes may LM03.5 consume the profile for 64 ToF
+Real-device LM03.4C hold-out acceptance:
+
+```text
+run: cal-943f7076-28bd-4f7b-be12-29578d2d35dc
+samples: 12
+retained observations: 466
+zone coverage: 62/64 = 96.875%
+RMS: 11.549 mm
+p95: 19.259 mm
+RGB reprojection RMS: 2.110 px
+RGB reprojection p95: 3.113 px
+status: HOLDOUT_PASS_C1
+```
+
+LM03.4 is CLOSED. LM03.5 may consume the frozen active profile for 64 ToF
 anchors on Registered RGB.
 
 ## Lighting note

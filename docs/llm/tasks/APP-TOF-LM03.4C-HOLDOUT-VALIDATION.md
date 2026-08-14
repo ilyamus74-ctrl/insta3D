@@ -3,12 +3,12 @@
 ## Status
 
 ```text
-REPOSITORY BASELINE: c4bb6c46420ccf3c5be73d76859f6373013d69ee
+REPOSITORY BASELINE: 8562264865eb4520b6298476c0e1ffb18b86ffac
 
 LM03.3.2: CLOSED
 LM03.4A:  CLOSED
 LM03.4B:  CLOSED
-LM03.4C:  IMPLEMENTED C1; real-device hold-out acceptance pending
+LM03.4C:  CLOSED — independent real-device hold-out passed
 ```
 
 ## Purpose
@@ -188,3 +188,66 @@ TOF_VAL_RESULT
 6. Export `validation_result.json`, logcat and optionally the full run archive.
 7. Only after C1 passes may LM03.5 treat the ToF profile as independently
    validated for registered RGB/depth fusion.
+
+## Real-device C1 acceptance — CLOSED
+
+Accepted hold-out run:
+
+```text
+validation_run_id:
+  cal-943f7076-28bd-4f7b-be12-29578d2d35dc
+
+profile_solver:
+  LM03.4B2_5_NEAR_GHOST_FILTER_R2P_LM_V6
+
+sample_count:                     12
+total_observation_count:          658
+retained_observation_count:       466
+retained_zone_coverage_count:     62 / 64
+retained_zone_coverage_percent:   96.875%
+
+plane_rms_mm:                     11.54886330237104
+plane_p95_mm:                     19.259423254422813
+all_plane_rms_mm:                 234.5132919988271
+
+reprojection_observation_count:   466
+reprojection_rms_px:              2.10986858858945
+reprojection_p95_px:              3.11261812973377
+
+status:
+  HOLDOUT_PASS_C1; RGB reprojection telemetry only
+```
+
+The hold-out set was captured independently from the 18 B2 training poses while
+keeping the accepted rigid CAMERA_A/ToF assembly unchanged.
+
+Acceptance checks:
+
+```text
+samples:     12 >= 8          PASS
+retained:   466 >= 128        PASS
+coverage:   96.875% >= 60%    PASS
+RMS:        11.549 mm <= 20   PASS
+p95:        19.259 mm <= 40   PASS
+```
+
+The hold-out RMS is higher than the B2 training RMS (8.466 mm -> 11.549 mm), as
+expected for an independent set, while remaining comfortably inside the frozen
+acceptance gate. This is evidence that the accepted profile generalizes rather
+than merely fitting its training poses.
+
+`all_plane_rms_mm` remains intentionally non-gating because ToF zones outside
+the finite ChArUco board see real background geometry.
+
+C1 also establishes an initial real-device RGB reprojection distribution:
+
+```text
+RMS: 2.110 px
+p95: 3.113 px
+```
+
+These values remain telemetry for LM03.4C. LM03.5 may use them as an engineering
+reference but must not retroactively change the closed LM03.4C acceptance gate.
+
+LM03.4C is CLOSED. The active profile is independently validated and may now be
+consumed by LM03.5 registered RGB anchor projection.

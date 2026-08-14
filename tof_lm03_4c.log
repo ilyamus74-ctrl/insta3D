@@ -1,0 +1,5 @@
+--------- beginning of main
+08-14 18:57:41.857 29994 30026 I TofCalibration: TOF_VAL_SAMPLE pose=10 seq=3232 deltaUs=-22061 zones=63 corners=28
+08-14 18:57:44.159 29994 30033 I TofCalibration: TOF_VAL_SAMPLE pose=11 seq=3267 deltaUs=15651 zones=63 corners=28
+08-14 18:57:44.192 29994 30027 I TofCalibration: TOF_VAL_START run=cal-943f7076-28bd-4f7b-be12-29578d2d35dc samples=12 profileSolver=LM03.4B2_5_NEAR_GHOST_FILTER_R2P_LM_V6
+08-14 18:57:44.252 29994 30024 I TofCalibration: TOF_VAL_RESULT success=true samples=12 obs=658 retained=466 coverage=96.875 rmsMm=11.54886330237104 p95Mm=19.259423254422813 reprojRmsPx=2.10986858858945 reprojP95Px=3.11261812973377
