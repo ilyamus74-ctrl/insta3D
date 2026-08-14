@@ -11,6 +11,7 @@ import com.maklertour.data.tof.TofCameraFramePairer
 import com.maklertour.data.tof.TofCameraObservationPlaneEstimator
 import com.maklertour.data.tof.TofCameraPlanarCalibrationSampleBuilder
 import com.maklertour.data.tof.TofUsbRuntime
+import com.maklertour.data.tof.TofUsbStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1336,8 +1337,25 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         val tofSolvePending =
             stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS &&
                 stageComplete
+        val tofAvailableAtStereoCompletion =
+            if (
+                stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
+                stageComplete
+            ) {
+                val tofRuntime = TofUsbRuntime.get(appContext)
+                tofRuntime.state.value.status == TofUsbStatus.STREAMING &&
+                    tofRuntime.recentFramesSnapshot().isNotEmpty() &&
+                    tofRuntime.lastFrameAgeMs()?.let { it <= 1_000L } == true
+            } else {
+                true
+            }
+        val tofSkipped =
+            stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
+                stageComplete &&
+                !tofAvailableAtStereoCompletion
         val nextStage = when {
             tofSolvePending -> stage
+            tofSkipped -> DualPhoneCalibrationStage.COMPLETE
             stageComplete -> stage.next()
             else -> stage
         }
@@ -1380,6 +1398,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         val nextInstruction = when {
             tofSolvePending ->
                 "MASTER + TOF: 18/18 собрано; ожидается LM03.4B2 solver"
+            tofSkipped ->
+                "Stereo-калибровка завершена; активный ToF не обнаружен — этап ToF пропущен"
             workflowComplete ->
                 "Сбор калибровочных кадров завершён: MASTER, SLAVE, ОБЕ КАМЕРЫ и TOF"
             else ->
@@ -1399,6 +1419,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             .put("slave_accepted_pose_count", slaveCount)
             .put("stereo_accepted_pose_count", stereoCount)
             .put("tof_accepted_pose_count", tofCount)
+            .put("tof_skipped", tofSkipped)
             .put("tof_frame_sequence", acceptedTofPair?.sequence ?: JSONObject.NULL)
             .put("tof_pair_delta_us", acceptedTofPair?.signedDeltaUs ?: JSONObject.NULL)
             .put(
@@ -1468,6 +1489,8 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             lastMessage = when {
                 tofSolvePending ->
                     "MASTER + TOF 18/18: samples collected; LM03.4B2 solver pending"
+                tofSkipped ->
+                    "Stereo calibration complete; ToF is not active and was skipped"
                 workflowComplete ->
                     "Calibration frame collection completed: MASTER, SLAVE, stereo and ToF"
                 stageComplete ->

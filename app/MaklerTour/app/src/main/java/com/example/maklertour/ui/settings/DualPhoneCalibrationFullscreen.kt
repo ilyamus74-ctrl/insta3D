@@ -751,7 +751,12 @@ internal fun DualPhoneCalibrationFullscreen(
                     )
                     if (snapshot.calibrationCollectionComplete) {
                         Text(
-                            "MASTER ✓ · SLAVE ✓ · ОБЕ КАМЕРЫ ✓ · TOF ✓",
+                            "MASTER ✓ · SLAVE ✓ · ОБЕ КАМЕРЫ ✓ · " +
+                                if (snapshot.calibrationTofAcceptedPoseCount > 0) {
+                                    "TOF ✓"
+                                } else {
+                                    "TOF —"
+                                },
                             color = Color(0xFF7CFC98),
                             style = MaterialTheme.typography.titleMedium,
                         )
@@ -778,7 +783,14 @@ internal fun DualPhoneCalibrationFullscreen(
                             "КАЛИБРОВКА ЗАВЕРШЕНА",
                             style = MaterialTheme.typography.headlineSmall,
                         )
-                        Text("MASTER ✓   SLAVE ✓   ОБЕ КАМЕРЫ ✓   TOF ✓")
+                        Text(
+                            "MASTER ✓   SLAVE ✓   ОБЕ КАМЕРЫ ✓   " +
+                                if (snapshot.calibrationTofAcceptedPoseCount > 0) {
+                                    "TOF ✓"
+                                } else {
+                                    "TOF НЕ ИСПОЛЬЗОВАЛСЯ"
+                                },
+                        )
                         Text("ПОСЛЕДНИЙ КАДР ЗАСЧИТАН ✓")
                         val finalResult = snapshot.calibrationFinalResult
                         if (finalResult == null) {

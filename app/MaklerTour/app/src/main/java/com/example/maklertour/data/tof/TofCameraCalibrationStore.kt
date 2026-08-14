@@ -8,9 +8,9 @@ import java.io.File
  * Persistent LM03.4 calibration artifacts.
  *
  * Layout:
- *   files/tof_camera_calibration/<run>/samples/*.json
+ *   files/tof_camera_calibration/<run>/samples/<pose>.json
  *   files/tof_camera_calibration/<run>/solve_result.json
- *   files/tof_camera_calibration/profiles/*.json
+ *   files/tof_camera_calibration/profiles/<profile>.json
  *   files/tof_camera_calibration/active_profile.json
  */
 class TofCameraCalibrationStore(context: Context) {
