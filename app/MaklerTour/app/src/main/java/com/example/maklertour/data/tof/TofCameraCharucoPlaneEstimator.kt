@@ -8,6 +8,7 @@ import com.maklertour.data.rig.CalibrationSettings
 import org.opencv.calib3d.Calib3d
 import org.opencv.core.CvType
 import org.opencv.core.Mat
+import org.opencv.core.MatOfDouble
 import org.opencv.core.MatOfPoint2f
 import org.opencv.core.MatOfPoint3f
 import org.opencv.core.Point
@@ -110,7 +111,7 @@ class TofCameraCharucoPlaneEstimator(
         val objectMat = MatOfPoint3f(*objectPoints.toTypedArray())
         val imageMat = MatOfPoint2f(*imagePoints.toTypedArray())
         val cameraMatrix = Mat.eye(3, 3, CvType.CV_64F)
-        val distCoeffs = Mat.zeros(5, 1, CvType.CV_64F)
+        val distCoeffs = MatOfDouble(k1, k2, 0.0, 0.0, 0.0)
         val rvec = Mat()
         val tvec = Mat()
         val rotation = Mat()
@@ -120,8 +121,6 @@ class TofCameraCharucoPlaneEstimator(
             cameraMatrix.put(1, 1, fy)
             cameraMatrix.put(0, 2, cx)
             cameraMatrix.put(1, 2, cy)
-            distCoeffs.put(0, 0, k1)
-            distCoeffs.put(1, 0, k2)
 
             val poseSolved =
                 Calib3d.solvePnP(
