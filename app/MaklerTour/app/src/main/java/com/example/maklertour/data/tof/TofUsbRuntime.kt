@@ -363,6 +363,22 @@ class TofUsbRuntime private constructor(context: Context) {
 
             delay(CDC_COMMAND_GAP_MS)
 
+            // `stream 0` selects binary serialization but does not start
+            // VL53L8CX ranging. Explicitly start the currently active physical
+            // ToF slot so Android does not depend on RP2040 cold-boot state.
+            // Firmware start_slot(0) is idempotent when slot 0 is already running.
+            if (!bulkWriteWithRetry(
+                    connection = connection,
+                    endpoint = port.outEndpoint,
+                    text = "start 0\n",
+                    generation = generation,
+                )
+            ) {
+                error("failed to send 'start 0'")
+            }
+
+            delay(CDC_COMMAND_GAP_MS)
+
             if (!bulkWriteWithRetry(
                     connection = connection,
                     endpoint = port.outEndpoint,
