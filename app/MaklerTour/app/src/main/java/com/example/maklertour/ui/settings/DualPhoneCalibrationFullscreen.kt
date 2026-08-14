@@ -141,6 +141,9 @@ internal fun DualPhoneCalibrationFullscreen(
     var tofAlignmentArmed by remember(snapshot.calibrationRunId) {
         mutableStateOf(false)
     }
+    var calibrationOverlayDetailed by remember(snapshot.calibrationRunId) {
+        mutableStateOf(false)
+    }
     val tofAlignmentRequired =
         role == DualPhoneRole.MASTER &&
             snapshot.calibrationStage ==
@@ -581,6 +584,7 @@ internal fun DualPhoneCalibrationFullscreen(
             if (tofAlignmentRequired) {
                 TofCalibrationAlignmentOverlay(
                     armed = tofAlignmentArmed,
+                    detailed = calibrationOverlayDetailed,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -600,7 +604,7 @@ internal fun DualPhoneCalibrationFullscreen(
                     .padding(20.dp)
                     .fillMaxWidth(0.66f),
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xCC111111),
+                    containerColor = Color(0x24111111),
                     contentColor = Color.White,
                 ),
             ) {
@@ -608,10 +612,28 @@ internal fun DualPhoneCalibrationFullscreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    Text(
-                        "КАЛИБРОВКА · ${role.name} · ${snapshot.calibrationMode.displayNameRu}",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "КАЛИБРОВКА · ${role.name} · ${snapshot.calibrationMode.displayNameRu}",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Button(
+                            onClick = {
+                                calibrationOverlayDetailed = !calibrationOverlayDetailed
+                            },
+                        ) {
+                            Text(
+                                if (calibrationOverlayDetailed) {
+                                    "КОМПАКТНО"
+                                } else {
+                                    "ПОДРОБНО"
+                                },
+                            )
+                        }
+                    }
                     CalibrationStageProgress(snapshot)
                     if (snapshot.calibrationCollectionComplete) {
                         Text(
@@ -704,10 +726,12 @@ internal fun DualPhoneCalibrationFullscreen(
                             }) + snapshot.calibrationAcceptedPoseCount + "/" +
                                 snapshot.calibrationTargetPoseCount,
                         )
-                        Text(
-                            "Доска: ${localStereoSettings.calibrationBoard.summaryRu()}",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                        if (calibrationOverlayDetailed) {
+                            Text(
+                                "Доска: ${localStereoSettings.calibrationBoard.summaryRu()}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         if (snapshot.calibrationMode ==
                             DualPhoneCalibrationMode.MANUAL_STEREO
                         ) {
@@ -746,40 +770,48 @@ internal fun DualPhoneCalibrationFullscreen(
                         color = qualityColor(localAnalysis?.qualityReady == true),
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    Text(
-                        peerQualityLine(snapshot, role),
-                        color = qualityColor(
-                            snapshot.calibrationPeerObservation?.qualityReady == true,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    localAnalysis?.let { analysis ->
+                    if (calibrationOverlayDetailed) {
                         Text(
-                            "Покрытие ${analysis.coveragePercent}% · " +
-                                "новизна ${formatThree(analysis.noveltyScore)} · " +
-                                "стабильность ${analysis.stableMs} мс",
-                            color = if (analysis.qualityReady) {
-                                Color(0xFF7CFC98)
-                            } else {
-                                Color.White
-                            },
+                            peerQualityLine(snapshot, role),
+                            color = qualityColor(
+                                snapshot.calibrationPeerObservation?.qualityReady == true,
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    }
+                    localAnalysis?.let { analysis ->
+                        if (calibrationOverlayDetailed) {
+                            Text(
+                                "Покрытие ${analysis.coveragePercent}% · " +
+                                    "новизна ${formatThree(analysis.noveltyScore)} · " +
+                                    "стабильность ${analysis.stableMs} мс",
+                                color = if (analysis.qualityReady) {
+                                    Color(0xFF7CFC98)
+                                } else {
+                                    Color.White
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         Text(
                             analysis.guidance,
                             color = Color(0xFFFFCC80),
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        Text(
-                            "углы ${analysis.detection.cornersFound}/" +
-                                "${analysis.detection.expectedCorners} · " +
-                                "резкость ${formatOne(analysis.sharpnessScore)} · " +
-                                "яркость ${formatOne(analysis.meanLuma)}",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                        if (calibrationOverlayDetailed) {
+                            Text(
+                                "углы ${analysis.detection.cornersFound}/" +
+                                    "${analysis.detection.expectedCorners} · " +
+                                    "резкость ${formatOne(analysis.sharpnessScore)} · " +
+                                    "яркость ${formatOne(analysis.meanLuma)}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
-                    if (snapshot.calibrationStage ==
-                        DualPhoneCalibrationStage.STEREO_EXTRINSICS
+                    if (
+                        calibrationOverlayDetailed &&
+                        snapshot.calibrationStage ==
+                            DualPhoneCalibrationStage.STEREO_EXTRINSICS
                     ) {
                         val commonCorners = stereoCommonCorners(snapshot)
                         val deltaMasterObservation =
@@ -835,26 +867,28 @@ internal fun DualPhoneCalibrationFullscreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    displayedLiveIntrinsics?.let { estimate ->
+                    if (calibrationOverlayDetailed) {
+                        displayedLiveIntrinsics?.let { estimate ->
+                            Text(
+                                estimate.summary(),
+                                color = if (estimate.solved) {
+                                    Color(0xFF7CFC98)
+                                } else {
+                                    Color(0xFFFFCC80)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         Text(
-                            estimate.summary(),
-                            color = if (estimate.solved) {
-                                Color(0xFF7CFC98)
-                            } else {
-                                Color(0xFFFFCC80)
-                            },
+                            "Preview: $previewStatus",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            persistenceStatus,
+                            color = Color(0xFFFFCC80),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    Text(
-                        "Preview: $previewStatus",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        persistenceStatus,
-                        color = Color(0xFFFFCC80),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
                     if (snapshot.calibrationCollectionComplete) {
                         Text(
                             "MASTER ✓ · SLAVE ✓ · ОБЕ КАМЕРЫ ✓ · " +

@@ -43,6 +43,7 @@ import kotlin.math.min
 @Composable
 internal fun TofCalibrationAlignmentOverlay(
     armed: Boolean,
+    detailed: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -86,7 +87,7 @@ internal fun TofCalibrationAlignmentOverlay(
                 .align(Alignment.TopEnd)
                 .safeDrawingPadding()
                 .padding(top = 20.dp, end = 20.dp)
-                .fillMaxWidth(0.31f),
+                .fillMaxWidth(if (detailed) 0.31f else 0.25f),
             colors = CardDefaults.cardColors(
                 containerColor = Color(0xDD101010),
                 contentColor = Color.White,
@@ -143,11 +144,13 @@ internal fun TofCalibrationAlignmentOverlay(
                         " · spread " + distanceLabel(spreadMm),
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Text(
-                    "USB ${usbState.status.name} · seq ${current?.sequence ?: "—"} · " +
-                        "age ${ageMs?.let { "$it мс" } ?: "—"}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                if (detailed) {
+                    Text(
+                        "USB ${usbState.status.name} · seq ${current?.sequence ?: "—"} · " +
+                            "age ${ageMs?.let { "$it мс" } ?: "—"}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Text(
                     if (armed) {
                         "СБОР РАЗРЕШЁН ✓ · ToF больше не двигать"
@@ -161,12 +164,14 @@ internal fun TofCalibrationAlignmentOverlay(
                     },
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Text(
-                    "Жёлтая рамка = центр CAMERA_A / центральные 4×4 ToF. " +
-                        "Цвет ToF = близость к медиане центра. До solve это не " +
-                        "точная RGB-проекция.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                if (detailed) {
+                    Text(
+                        "Жёлтая рамка = центр CAMERA_A / центральные 4×4 ToF. " +
+                            "Цвет ToF = близость к медиане центра. До solve это не " +
+                            "точная RGB-проекция.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }
