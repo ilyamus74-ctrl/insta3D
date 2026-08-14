@@ -810,6 +810,134 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
     }
 
+    fun reportStereoQualityGate(
+        result: DualPhoneCalibrationProfileResult,
+    ) {
+        if (settingsStore.load().role != DualPhoneRole.MASTER) return
+
+        var statePayload: JSONObject? = null
+        var resultPayload: JSONObject? = null
+        synchronized(calibrationObservationLock) {
+            val current = mutableState.value
+            if (
+                !current.calibrationActive ||
+                current.calibrationRunId != result.calibrationRunId ||
+                current.calibrationStage != DualPhoneCalibrationStage.STEREO_EXTRINSICS ||
+                current.calibrationStereoAcceptedPoseCount <
+                    DualPhoneCalibrationStage.STEREO_EXTRINSICS.targetPoseCount
+            ) {
+                return
+            }
+
+            val firstTarget = DualPhoneCalibrationPosePlan.first
+            val tofRuntime = TofUsbRuntime.get(appContext)
+            val tofAvailable =
+                tofRuntime.state.value.status == TofUsbStatus.STREAMING &&
+                    tofRuntime.recentFramesSnapshot().isNotEmpty() &&
+                    tofRuntime.lastFrameAgeMs()?.let { it <= 1_000L } == true
+            val stereoAccepted = result.successful
+            val nextStage = when {
+                !stereoAccepted -> DualPhoneCalibrationStage.COMPLETE
+                tofAvailable -> DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS
+                else -> DualPhoneCalibrationStage.COMPLETE
+            }
+            val collectionComplete =
+                nextStage == DualPhoneCalibrationStage.COMPLETE
+            val stereoSummary = result.stereo.summary()
+            val instruction = when {
+                !stereoAccepted ->
+                    "STEREO НЕ ПРИНЯТО — ToF не запускается. " +
+                        (result.stereo.rejectionMetricRu() ?: result.error ?: "quality gate failed")
+                tofAvailable ->
+                    "STEREO ПРИНЯТО ✓. Переходим к MASTER + TOF."
+                else ->
+                    "STEREO ПРИНЯТО ✓. Активный ToF не обнаружен — калибровка завершена без ToF."
+            }
+
+            manualStereoCaptureRequest = null
+            stereoObservationBuffer.clear()
+            localCalibrationObservation = null
+            peerCalibrationObservation = null
+            localCalibrationReceivedAtMs = 0L
+            peerCalibrationReceivedAtMs = 0L
+
+            mutableState.value = current.copy(
+                calibrationStage = nextStage,
+                calibrationLastCompletedStage =
+                    DualPhoneCalibrationStage.STEREO_EXTRINSICS,
+                calibrationInstruction = instruction,
+                calibrationAcceptedPoseCount = 0,
+                calibrationTargetPoseCount = nextStage.targetPoseCount,
+                calibrationTargetPoseIndex = firstTarget.index,
+                calibrationTargetPoseId = firstTarget.id,
+                calibrationLocalObservation = null,
+                calibrationPeerObservation = null,
+                calibrationManualCapturePending = false,
+                calibrationCollectionComplete = collectionComplete,
+                calibrationFinalResult =
+                    if (collectionComplete) result else null,
+                lastError =
+                    if (stereoAccepted) null else result.error,
+                lastMessage = instruction + "\n" + stereoSummary,
+            )
+
+            statePayload = JSONObject()
+                .put("calibration_run_id", current.calibrationRunId)
+                .put("stage", nextStage.wireValue)
+                .put(
+                    "completed_stage",
+                    DualPhoneCalibrationStage.STEREO_EXTRINSICS.wireValue,
+                )
+                .put("stage_accepted_pose_count", 0)
+                .put(
+                    "accepted_stage_pose_count",
+                    current.calibrationStereoAcceptedPoseCount,
+                )
+                .put(
+                    "master_accepted_pose_count",
+                    current.calibrationMasterAcceptedPoseCount,
+                )
+                .put(
+                    "slave_accepted_pose_count",
+                    current.calibrationSlaveAcceptedPoseCount,
+                )
+                .put(
+                    "stereo_accepted_pose_count",
+                    current.calibrationStereoAcceptedPoseCount,
+                )
+                .put(
+                    "tof_accepted_pose_count",
+                    current.calibrationTofAcceptedPoseCount,
+                )
+                .put("tof_skipped", stereoAccepted && !tofAvailable)
+                .put("target_pose_index", firstTarget.index)
+                .put("target_pose_id", firstTarget.id)
+                .put("target_pose_count", nextStage.targetPoseCount)
+                .put("instruction", instruction)
+                .put("calibration_mode", current.calibrationMode.wireValue)
+                .put("manual_capture_pending", false)
+                .put("acceptance_serial", current.calibrationAcceptanceSerial)
+                .put("collection_complete", collectionComplete)
+
+            if (collectionComplete) {
+                resultPayload = result.toJson()
+            }
+        }
+
+        scope.launch {
+            statePayload?.let { payload ->
+                runCatching {
+                    send(DualPhoneControlType.CALIBRATION_STATE, payload)
+                }
+            }
+            resultPayload?.let { payload ->
+                runCatching {
+                    send(DualPhoneControlType.CALIBRATION_RESULT, payload)
+                }
+            }
+        }
+    }
+
     fun publishCalibrationResult(result: DualPhoneCalibrationProfileResult) {
         val current = mutableState.value
         if (
@@ -821,8 +949,9 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         }
 
         var tofProfileFileName: String? = null
+        val tofCalibrationUsed = current.calibrationTofAcceptedPoseCount > 0
         val effectiveResult =
-            if (result.successful) {
+            if (result.successful && tofCalibrationUsed) {
                 runCatching {
                     val solveResult =
                         tofCalibrationStore.loadSolveResult(result.calibrationRunId)
@@ -872,7 +1001,11 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationFinalResult = effectiveResult,
             lastError = effectiveResult.error,
             lastMessage = if (effectiveResult.successful) {
-                "Calibration profile ${effectiveResult.profileId} + ToF is ready"
+                if (tofCalibrationUsed) {
+                    "Calibration profile ${effectiveResult.profileId} + ToF is ready"
+                } else {
+                    "Calibration profile ${effectiveResult.profileId} is ready (stereo-only)"
+                }
             } else {
                 "Calibration solve failed: " +
                     (effectiveResult.error ?: "unknown error")
@@ -1097,6 +1230,12 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         val current = mutableState.value
         val stage = current.calibrationStage
         if (stage == DualPhoneCalibrationStage.COMPLETE) return null
+        if (
+            stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
+            current.calibrationAcceptedPoseCount >= stage.targetPoseCount
+        ) {
+            return null
+        }
 
         val nowMs = SystemClock.elapsedRealtime()
         val clockSnapshot = clockSyncController.currentSnapshot()
@@ -1334,28 +1473,15 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         val acceptedCount = (current.calibrationAcceptedPoseCount + 1)
             .coerceAtMost(stage.targetPoseCount)
         val stageComplete = acceptedCount >= stage.targetPoseCount
+        val stereoQualityPending =
+            stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
+                stageComplete
         val tofSolvePending =
             stage == DualPhoneCalibrationStage.MASTER_TOF_EXTRINSICS &&
                 stageComplete
-        val tofAvailableAtStereoCompletion =
-            if (
-                stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
-                stageComplete
-            ) {
-                val tofRuntime = TofUsbRuntime.get(appContext)
-                tofRuntime.state.value.status == TofUsbStatus.STREAMING &&
-                    tofRuntime.recentFramesSnapshot().isNotEmpty() &&
-                    tofRuntime.lastFrameAgeMs()?.let { it <= 1_000L } == true
-            } else {
-                true
-            }
-        val tofSkipped =
-            stage == DualPhoneCalibrationStage.STEREO_EXTRINSICS &&
-                stageComplete &&
-                !tofAvailableAtStereoCompletion
         val nextStage = when {
+            stereoQualityPending -> stage
             tofSolvePending -> stage
-            tofSkipped -> DualPhoneCalibrationStage.COMPLETE
             stageComplete -> stage.next()
             else -> stage
         }
@@ -1382,24 +1508,25 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
         } else {
             current.calibrationTofAcceptedPoseCount
         }
-        val nextTargetIndex = if (stageComplete) {
-            0
-        } else {
-            (acceptedPoseIndex + 1).coerceAtMost(
+        val nextTargetIndex = when {
+            stereoQualityPending -> acceptedPoseIndex
+            stageComplete -> 0
+            else -> (acceptedPoseIndex + 1).coerceAtMost(
                 DualPhoneCalibrationPosePlan.targets.lastIndex,
             )
         }
         val nextTarget = DualPhoneCalibrationPosePlan.at(nextTargetIndex)
         val nextStageAcceptedCount = when {
+            stereoQualityPending -> acceptedCount
             tofSolvePending -> acceptedCount
             stageComplete -> 0
             else -> acceptedCount
         }
         val nextInstruction = when {
+            stereoQualityPending ->
+                "STEREO 18/18: расчёт RMS/EPI перед переходом к ToF…"
             tofSolvePending ->
                 "MASTER + TOF: 18/18 собрано; ожидается LM03.4B2 solver"
-            tofSkipped ->
-                "Stereo-калибровка завершена; активный ToF не обнаружен — этап ToF пропущен"
             workflowComplete ->
                 "Сбор калибровочных кадров завершён: MASTER, SLAVE, ОБЕ КАМЕРЫ и TOF"
             else ->
@@ -1419,7 +1546,7 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             .put("slave_accepted_pose_count", slaveCount)
             .put("stereo_accepted_pose_count", stereoCount)
             .put("tof_accepted_pose_count", tofCount)
-            .put("tof_skipped", tofSkipped)
+            .put("tof_skipped", false)
             .put("tof_frame_sequence", acceptedTofPair?.sequence ?: JSONObject.NULL)
             .put("tof_pair_delta_us", acceptedTofPair?.signedDeltaUs ?: JSONObject.NULL)
             .put(
@@ -1487,10 +1614,10 @@ class DualPhoneControlManager private constructor(context: Context) : Closeable 
             calibrationManualCapturePending = false,
             calibrationCollectionComplete = workflowComplete,
             lastMessage = when {
+                stereoQualityPending ->
+                    "STEREO 18/18: считаем RMS/EPI; ToF пока не запускается"
                 tofSolvePending ->
                     "MASTER + TOF 18/18: samples collected; LM03.4B2 solver pending"
-                tofSkipped ->
-                    "Stereo calibration complete; ToF is not active and was skipped"
                 workflowComplete ->
                     "Calibration frame collection completed: MASTER, SLAVE, stereo and ToF"
                 stageComplete ->

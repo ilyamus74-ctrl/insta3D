@@ -123,5 +123,9 @@ object DualPhonePreviewBindingRuntime {
         normalizedY = normalizedY,
     ) ?: "AF_BOARD_RECORDER_UNAVAILABLE"
 
+    suspend fun setCalibrationInfinityFocus(): String =
+        recorder?.setCalibrationInfinityFocus()
+            ?: "FOCUS_INFINITY_RECORDER_UNAVAILABLE"
+
     private const val PREVIEW_ATTACH_TIMEOUT_MS = 5_000L
 }

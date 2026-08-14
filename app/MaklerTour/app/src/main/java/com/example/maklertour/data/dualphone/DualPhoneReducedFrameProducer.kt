@@ -30,6 +30,7 @@ import androidx.lifecycle.LifecycleRegistry
 import com.maklertour.data.dualphone.DualPhoneRole
 import com.maklertour.data.phonecamera.DualPhoneCalibrationCameraControls
 import com.maklertour.data.phonecamera.DualPhoneCalibrationTimestampMapper
+import com.maklertour.data.phonecamera.PhoneCameraFocusMode
 import com.maklertour.data.phonecamera.PhoneCameraLensRepository
 import com.maklertour.data.phonecamera.SensorTimelineDiagnostics
 import java.io.ByteArrayOutputStream
@@ -237,7 +238,10 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         cameraTimestampMapper.reset(
             DualPhoneCalibrationCameraControls.timestampSource(camera),
         )
-        applyMetricStereoControls(camera)
+        applyMetricStereoControls(
+            camera = camera,
+            cameraId = cameraId,
+        )
         cameraProvider = provider
         lifecycleOwner = lifecycle
         analysis = imageAnalysis
@@ -537,7 +541,10 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
         }
     }
 
-    private fun applyMetricStereoControls(camera: Camera) {
+    private fun applyMetricStereoControls(
+        camera: Camera,
+        cameraId: String,
+    ) {
         val zoomFuture = camera.cameraControl.setZoomRatio(METRIC_STEREO_ZOOM_RATIO)
         zoomFuture.addListener(
             {
@@ -569,13 +576,48 @@ class DualPhoneReducedFrameProducer(context: Context) : Closeable {
                 CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF,
             )
         }
+
+        val focusMode = lensRepository.getSelectedFocusMode(cameraId)
+        if (focusMode == PhoneCameraFocusMode.INFINITY_FIXED) {
+            val availableAfModes =
+                info.getCameraCharacteristic(
+                    CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES,
+                ) ?: intArrayOf()
+            require(
+                availableAfModes.contains(CaptureRequest.CONTROL_AF_MODE_OFF),
+            ) {
+                "STREAM_UNAVAILABLE: saved fixed focus is unsupported for " +
+                    "camera $cameraId"
+            }
+            options.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_OFF,
+            )
+            options.setCaptureRequestOption(
+                CaptureRequest.LENS_FOCUS_DISTANCE,
+                0.0f,
+            )
+        }
+
         val optionsFuture = Camera2CameraControl.from(camera.cameraControl)
             .setCaptureRequestOptions(options.build())
         optionsFuture.addListener(
             {
                 runCatching { optionsFuture.get() }
+                    .onSuccess {
+                        Log.i(
+                            TAG,
+                            "metric stereo controls applied camera_id=$cameraId " +
+                                "focus=$focusMode",
+                        )
+                    }
                     .onFailure { error ->
-                        Log.e(TAG, "failed to disable stereo stabilization", error)
+                        Log.e(
+                            TAG,
+                            "failed to apply metric stereo controls " +
+                                "camera_id=$cameraId focus=$focusMode",
+                            error,
+                        )
                     }
             },
             mainExecutor,

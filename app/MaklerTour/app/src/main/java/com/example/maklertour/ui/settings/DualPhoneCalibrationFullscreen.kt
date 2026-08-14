@@ -223,6 +223,45 @@ internal fun DualPhoneCalibrationFullscreen(
                     }
                 }
                 if (updatedCoach != null) stereoCoach = updatedCoach
+
+                if (
+                    acceptedCount >=
+                    DualPhoneCalibrationStage.STEREO_EXTRINSICS.targetPoseCount
+                ) {
+                    val masterModel = currentSnapshot.calibrationMasterIntrinsics
+                    val slaveModel = currentSnapshot.calibrationSlaveIntrinsics
+                    if (masterModel != null && slaveModel != null) {
+                        finalSolveStatus = "ПРОВЕРКА STEREO RMS/EPI ПЕРЕД TOF…"
+                        val stereoResult = withContext(Dispatchers.Default) {
+                            stereoEstimator.solve(
+                                master = masterModel,
+                                slave = slaveModel,
+                                operatorBaselineMm =
+                                    localStereoSettings.operatorLensBaselineMm,
+                            )
+                        }
+                        val preflight = DualPhoneCalibrationProfileResult.build(
+                            calibrationRunId =
+                                requireNotNull(currentSnapshot.calibrationRunId),
+                            rigId = localStereoSettings.rigId,
+                            rigMountRevision =
+                                localStereoSettings.rigMountRevision,
+                            masterDeviceId = localStereoSettings.deviceId,
+                            slaveDeviceId =
+                                currentSnapshot.peerDeviceId
+                                    ?: localStereoSettings.peerDeviceId
+                                    ?: "unknown-slave",
+                            masterCameraId = rigProfile.cam0CameraId,
+                            slaveCameraId =
+                                currentSnapshot.peerCameraId
+                                    ?: rigProfile.cam1CameraId,
+                            masterIntrinsics = masterModel,
+                            slaveIntrinsics = slaveModel,
+                            stereo = stereoResult,
+                        )
+                        controlManager.reportStereoQualityGate(preflight)
+                    }
+                }
             }
         }
         acceptanceFeedback = buildString {
@@ -940,48 +979,83 @@ internal fun DualPhoneCalibrationFullscreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Button(
-                    onClick = {
-                        val detectedBoard = localAnalysis?.takeIf { analysis ->
-                            analysis.detection.found && !analysis.boardClipped
-                        }
-                        val focusX = detectedBoard?.centreX ?: 0.5
-                        val focusY = detectedBoard?.centreY ?: 0.5
-                        focusScope.launch {
-                            manualFocusBusy = true
-                            try {
-                                previewStatus = "Ручной автофокус…"
-                                val focusStatus =
-                                    DualPhonePreviewBindingRuntime.refreshCalibrationFocus(
-                                        normalizedX = focusX,
-                                        normalizedY = focusY,
-                                    )
-                                analyzer.reset()
-                                localAnalysis = null
-                                previewStatus = if (
-                                    focusStatus.contains("AF_BOARD_LOCKED")
-                                ) {
-                                    "Автофокус зафиксирован"
-                                } else {
-                                    "Автофокус: $focusStatus"
-                                }
-                            } finally {
-                                manualFocusBusy = false
-                            }
-                        }
-                    },
-                    enabled = snapshot.calibrationActive &&
-                        localAnalyzerActive &&
-                        !snapshot.calibrationCollectionComplete &&
-                        !manualFocusBusy,
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        if (manualFocusBusy) {
-                            "ФОКУСИРОВКА…"
-                        } else {
-                            "АВТОФОКУС"
+                    Button(
+                        onClick = {
+                            val detectedBoard = localAnalysis?.takeIf { analysis ->
+                                analysis.detection.found && !analysis.boardClipped
+                            }
+                            val focusX = detectedBoard?.centreX ?: 0.5
+                            val focusY = detectedBoard?.centreY ?: 0.5
+                            focusScope.launch {
+                                manualFocusBusy = true
+                                try {
+                                    previewStatus = "Ручной автофокус…"
+                                    val focusStatus =
+                                        DualPhonePreviewBindingRuntime.refreshCalibrationFocus(
+                                            normalizedX = focusX,
+                                            normalizedY = focusY,
+                                        )
+                                    analyzer.reset()
+                                    localAnalysis = null
+                                    previewStatus = if (
+                                        focusStatus.contains("AF_BOARD_LOCKED")
+                                    ) {
+                                        "Автофокус сохранён для этой камеры"
+                                    } else {
+                                        "Автофокус: $focusStatus"
+                                    }
+                                } finally {
+                                    manualFocusBusy = false
+                                }
+                            }
                         },
-                    )
+                        enabled = snapshot.calibrationActive &&
+                            !snapshot.calibrationCollectionComplete &&
+                            !manualFocusBusy,
+                    ) {
+                        Text(
+                            if (manualFocusBusy) {
+                                "ФОКУС…"
+                            } else {
+                                "АВТОФОКУС"
+                            },
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            focusScope.launch {
+                                manualFocusBusy = true
+                                try {
+                                    previewStatus = "Фиксируем фокус на ∞…"
+                                    val focusStatus =
+                                        DualPhonePreviewBindingRuntime
+                                            .setCalibrationInfinityFocus()
+                                    analyzer.reset()
+                                    localAnalysis = null
+                                    previewStatus = when (focusStatus) {
+                                        "FOCUS_INFINITY_LOCKED" ->
+                                            "Фокус ∞ сохранён для этой камеры"
+                                        "FOCUS_INFINITY_UNSUPPORTED" ->
+                                            "∞ focus не поддерживается этой камерой"
+                                        else ->
+                                            "∞ focus: $focusStatus"
+                                    }
+                                } finally {
+                                    manualFocusBusy = false
+                                }
+                            }
+                        },
+                        enabled = snapshot.calibrationActive &&
+                            !snapshot.calibrationCollectionComplete &&
+                            !manualFocusBusy,
+                    ) {
+                        Text("∞ FIXED")
+                    }
                 }
 
                 Row(

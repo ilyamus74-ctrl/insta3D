@@ -263,9 +263,32 @@ class AutoPhotoCaptureManager(private val context: Context, private val lifecycl
         }
         return try {
             provider.unbindAll()
-            boundCamera = provider.bindToLifecycle(lifecycleOwner, lensRepository.cameraSelectorFor(lens.cameraId), preview, imageAnalysis, imageCapture)
-            boundCamera?.cameraControl?.setZoomRatio(zoomRatio)
-            Log.i(TAG, "bind success camera_id=${lens.cameraId} zoom=$zoomRatio sensor_orientation=$sensorOrientation profile=Preview+ImageAnalysis+ImageCapture")
+            val activeCamera = provider.bindToLifecycle(
+                lifecycleOwner,
+                lensRepository.cameraSelectorFor(lens.cameraId),
+                preview,
+                imageAnalysis,
+                imageCapture,
+            )
+            boundCamera = activeCamera
+            activeCamera.cameraControl.setZoomRatio(zoomRatio)
+            val focusMode = lensRepository.getSelectedFocusMode(lens.cameraId)
+            if (focusMode == PhoneCameraFocusMode.INFINITY_FIXED) {
+                val focusStatus =
+                    DualPhoneCalibrationCameraControls.setInfinityFocus(
+                        activeCamera,
+                    )
+                check(focusStatus == "FOCUS_INFINITY_LOCKED") {
+                    "Saved fixed focus could not be restored for " +
+                        "${lens.cameraId}: $focusStatus"
+                }
+            }
+            Log.i(
+                TAG,
+                "bind success camera_id=${lens.cameraId} zoom=$zoomRatio " +
+                    "focus=$focusMode sensor_orientation=$sensorOrientation " +
+                    "profile=Preview+ImageAnalysis+ImageCapture",
+            )
             PhoneCameraBindResult(success = true, cameraId = lens.cameraId, activeBoundCameraId = lens.cameraId, requestedZoomRatio = zoomRatio, effectiveZoomRatio = zoomRatio)
         } catch (t: Throwable) {
             Log.e(TAG, "bind failed camera_id=${lens.cameraId}", t)

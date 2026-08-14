@@ -228,6 +228,86 @@ internal object DualPhoneCalibrationCameraControls {
         status
     }
 
+    suspend fun setInfinityFocus(
+        camera: Camera,
+    ): String = withContext(Dispatchers.Main.immediate) {
+        val info = Camera2CameraInfo.from(camera.cameraInfo)
+        val availableAfModes =
+            info.getCameraCharacteristic(
+                CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES,
+            ) ?: intArrayOf()
+        if (!availableAfModes.contains(CaptureRequest.CONTROL_AF_MODE_OFF)) {
+            return@withContext "FOCUS_INFINITY_UNSUPPORTED"
+        }
+
+        runCatching {
+            awaitCompletion(
+                camera.cameraControl.cancelFocusAndMetering(),
+                OPTIONS_TIMEOUT_MS,
+            )
+        }
+
+        val options = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_OFF,
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.LENS_FOCUS_DISTANCE,
+                0.0f,
+            )
+            .build()
+        val applied = runCatching {
+            awaitCompletion(
+                Camera2CameraControl.from(camera.cameraControl)
+                    .addCaptureRequestOptions(options),
+                OPTIONS_TIMEOUT_MS,
+            )
+        }.getOrDefault(false)
+        if (applied) delay(FIXED_FOCUS_SETTLE_MS)
+
+        val status = if (applied) {
+            "FOCUS_INFINITY_LOCKED"
+        } else {
+            "FOCUS_INFINITY_FAILED"
+        }
+        Log.i(TAG, "calibration fixed focus: $status")
+        status
+    }
+
+    suspend fun restoreAutofocus(
+        camera: Camera,
+        previewView: PreviewView,
+        normalizedX: Double,
+        normalizedY: Double,
+    ): String = withContext(Dispatchers.Main.immediate) {
+        val cleared = runCatching {
+            awaitCompletion(
+                Camera2CameraControl.from(camera.cameraControl)
+                    .clearCaptureRequestOptions(),
+                OPTIONS_TIMEOUT_MS,
+            )
+        }.getOrDefault(false)
+        if (!cleared) {
+            return@withContext "AF_RESTORE_OPTIONS_CLEAR_FAILED"
+        }
+
+        val prepared = prepare(
+            camera = camera,
+            previewView = previewView,
+        )
+        if (!prepared.startsWith("METRIC_READY")) {
+            return@withContext prepared
+        }
+        val boardFocus = refocusOnBoard(
+            camera = camera,
+            previewView = previewView,
+            normalizedX = normalizedX,
+            normalizedY = normalizedY,
+        )
+        "$prepared,$boardFocus"
+    }
+
     suspend fun release(camera: Camera): String =
         withContext(Dispatchers.Main.immediate) {
             val statuses = mutableListOf<String>()
@@ -294,6 +374,7 @@ internal object DualPhoneCalibrationCameraControls {
     private const val OPTIONS_TIMEOUT_MS = 1_500L
     private const val SETTLE_DELAY_MS = 250L
     private const val BOARD_REFOCUS_SETTLE_MS = 220L
+    private const val FIXED_FOCUS_SETTLE_MS = 350L
     private const val PREVIEW_LAYOUT_WAIT_STEPS = 20
     private const val PREVIEW_LAYOUT_WAIT_STEP_MS = 50L
 }

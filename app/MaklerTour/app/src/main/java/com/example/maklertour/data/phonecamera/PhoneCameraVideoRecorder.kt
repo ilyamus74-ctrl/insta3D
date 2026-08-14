@@ -363,22 +363,45 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 }.getOrElse { error ->
                     "PREPARE_FAILED:${error.message ?: error.javaClass.simpleName}"
                 }
-                if (preparedControlStatus.startsWith("METRIC_READY")) {
-                    // Frames produced while zoom/stabilization options were changing must never
-                    // enter intrinsics or stereo calibration. Keep the gate PREPARING during
-                    // this settle interval, then drop the last pre-ready frame.
+                val cameraId = selectedLensOption?.cameraId
+                val focusMode = cameraId?.let(lensRepository::getSelectedFocusMode)
+                    ?: PhoneCameraFocusMode.AUTO
+                val focusAwareControlStatus =
+                    if (
+                        preparedControlStatus.startsWith("METRIC_READY") &&
+                        focusMode == PhoneCameraFocusMode.INFINITY_FIXED
+                    ) {
+                        val fixedStatus = runCatching {
+                            DualPhoneCalibrationCameraControls.setInfinityFocus(
+                                calibrationCamera,
+                            )
+                        }.getOrElse { error ->
+                            "FOCUS_INFINITY_ERROR:" +
+                                (error.message ?: error.javaClass.simpleName)
+                        }
+                        if (fixedStatus == "FOCUS_INFINITY_LOCKED") {
+                            "$preparedControlStatus,$fixedStatus"
+                        } else {
+                            "METRIC_NOT_READY,$fixedStatus"
+                        }
+                    } else {
+                        preparedControlStatus
+                    }
+                if (focusAwareControlStatus.startsWith("METRIC_READY")) {
+                    // Frames produced while zoom/stabilization/focus options were changing
+                    // must never enter metric calibration.
                     delay(300L)
                     synchronized(latestFrameLock) {
                         latestCalibrationFrame = null
                     }
                 }
                 calibrationMetricReadyAfterElapsedRealtimeNs =
-                    if (preparedControlStatus.startsWith("METRIC_READY")) {
+                    if (focusAwareControlStatus.startsWith("METRIC_READY")) {
                         SystemClock.elapsedRealtimeNanos()
                     } else {
                         Long.MAX_VALUE
                     }
-                calibrationCameraControlStatus = preparedControlStatus
+                calibrationCameraControlStatus = focusAwareControlStatus
                 if (calibrationCameraControlStatus.contains("ZOOM_1X_LOCKED")) {
                     requestedZoomRatio = 1.0f
                     effectiveZoomRatio =
@@ -387,7 +410,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 Log.i(
                     TAG,
                     "calibration camera prepared timestamp_source=$timestampSource " +
-                        "controls=$calibrationCameraControlStatus",
+                        "focus=$focusMode controls=$calibrationCameraControlStatus",
                 )
             }
         } else {
@@ -401,6 +424,30 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 }.getOrElse { error ->
                     "RELEASE_FAILED:${error.message ?: error.javaClass.simpleName}"
                 }
+            }
+            if (regularCamera != null) {
+                val cameraId = selectedLensOption?.cameraId
+                val focusMode = cameraId?.let(lensRepository::getSelectedFocusMode)
+                    ?: PhoneCameraFocusMode.AUTO
+                if (focusMode == PhoneCameraFocusMode.INFINITY_FIXED) {
+                    val focusStatus = runCatching {
+                        DualPhoneCalibrationCameraControls.setInfinityFocus(
+                            regularCamera,
+                        )
+                    }.getOrElse { error ->
+                        "FOCUS_INFINITY_ERROR:" +
+                            (error.message ?: error.javaClass.simpleName)
+                    }
+                    check(focusStatus == "FOCUS_INFINITY_LOCKED") {
+                        "Saved fixed focus could not be restored for " +
+                            "${cameraId ?: "unknown-camera"}: $focusStatus"
+                    }
+                }
+                Log.i(
+                    TAG,
+                    "regular camera focus restored camera_id=${cameraId ?: "-"} " +
+                        "focus=$focusMode",
+                )
             }
         }
         Log.d(TAG, "bindPreview(): success video_mode=${resolvedVideoMode.id}")
@@ -767,7 +814,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
         }
 
         val focusStatus = runCatching {
-            DualPhoneCalibrationCameraControls.refocusOnBoard(
+            DualPhoneCalibrationCameraControls.restoreAutofocus(
                 camera = camera,
                 previewView = previewView,
                 normalizedX = normalizedX,
@@ -777,19 +824,73 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
             "AF_BOARD_ERROR:${error.message ?: error.javaClass.simpleName}"
         }
 
-        val preservedMetricStatus = previousStatus
-            .split(',')
-            .filterNot { it.startsWith("AF_") }
-            .joinToString(",")
         synchronized(latestFrameLock) {
             latestCalibrationFrame = null
         }
+        val ready = focusStatus.startsWith("METRIC_READY")
         calibrationMetricReadyAfterElapsedRealtimeNs =
-            SystemClock.elapsedRealtimeNanos()
-        calibrationCameraControlStatus =
-            "$preservedMetricStatus,$focusStatus"
+            if (ready) SystemClock.elapsedRealtimeNanos() else Long.MAX_VALUE
+        calibrationCameraControlStatus = focusStatus
+        if (ready) {
+            selectedLensOption?.cameraId?.let { cameraId ->
+                lensRepository.saveSelectedFocusMode(
+                    cameraId,
+                    PhoneCameraFocusMode.AUTO,
+                )
+            }
+        }
         calibrationCameraControlStatus
     }
+
+    suspend fun setCalibrationInfinityFocus(): String =
+        withContext(Dispatchers.Main.immediate) {
+            val camera = boundCamera
+                ?: return@withContext "FOCUS_INFINITY_NO_BOUND_CAMERA"
+            val previousStatus = calibrationCameraControlStatus
+            if (!previousStatus.startsWith("METRIC_READY")) {
+                return@withContext previousStatus
+            }
+
+            calibrationCameraControlStatus = "FOCUS_INFINITY_APPLYING"
+            calibrationMetricReadyAfterElapsedRealtimeNs = Long.MAX_VALUE
+            synchronized(latestFrameLock) {
+                latestCalibrationFrame = null
+            }
+
+            val focusStatus = runCatching {
+                DualPhoneCalibrationCameraControls.setInfinityFocus(camera)
+            }.getOrElse { error ->
+                "FOCUS_INFINITY_ERROR:${error.message ?: error.javaClass.simpleName}"
+            }
+            val preservedMetricStatus = previousStatus
+                .split(',')
+                .filterNot {
+                    it.startsWith("AF_") ||
+                        it.startsWith("FOCUS_")
+                }
+                .joinToString(",")
+            synchronized(latestFrameLock) {
+                latestCalibrationFrame = null
+            }
+            val ready = focusStatus == "FOCUS_INFINITY_LOCKED"
+            calibrationMetricReadyAfterElapsedRealtimeNs =
+                if (ready) SystemClock.elapsedRealtimeNanos() else Long.MAX_VALUE
+            calibrationCameraControlStatus =
+                if (ready) {
+                    "$preservedMetricStatus,$focusStatus"
+                } else {
+                    focusStatus
+                }
+            if (ready) {
+                selectedLensOption?.cameraId?.let { cameraId ->
+                    lensRepository.saveSelectedFocusMode(
+                        cameraId,
+                        PhoneCameraFocusMode.INFINITY_FIXED,
+                    )
+                }
+            }
+            calibrationCameraControlStatus
+        }
 
     fun getSelectedLensOption(): PhoneCameraLensOption? = selectedLensOption
 

@@ -21,6 +21,7 @@ private const val PREFS = "phone_camera_lens"
 private const val KEY_CAMERA_ID = "selected_camera_id"
 private const val KEY_ZOOM_RATIO = "selected_zoom_ratio"
 private const val KEY_VIDEO_MODE_PREFIX = "selected_video_mode_"
+private const val KEY_FOCUS_MODE_PREFIX = "focus_mode_"
 
 data class SelectedPhoneVideoInfo(
     val width: Int?,
@@ -76,6 +77,17 @@ data class HighSpeedVideoConfiguration(
 data class FovInfo(val horizontal: Double, val vertical: Double)
 data class PhoneLensPreset(val label: String, val zoomRatio: Float)
 
+enum class PhoneCameraFocusMode {
+    AUTO,
+    INFINITY_FIXED,
+    ;
+
+    companion object {
+        fun fromStoredValue(value: String?): PhoneCameraFocusMode =
+            values().firstOrNull { it.name == value } ?: AUTO
+    }
+}
+
 data class PhoneCameraBindResult(
     val success: Boolean,
     val error: String? = null,
@@ -119,12 +131,26 @@ class PhoneCameraLensRepository(private val context: Context) {
 
     fun getSelectedZoomRatio(): Float = prefs.getFloat(KEY_ZOOM_RATIO, 1.0f)
 
+    fun getSelectedFocusMode(cameraId: String): PhoneCameraFocusMode =
+        PhoneCameraFocusMode.fromStoredValue(
+            prefs.getString(KEY_FOCUS_MODE_PREFIX + cameraId, null),
+        )
+
     fun saveSelectedCameraId(cameraId: String) {
         prefs.edit().putString(KEY_CAMERA_ID, cameraId).apply()
     }
 
     fun saveSelectedZoomRatio(zoomRatio: Float) {
         prefs.edit().putFloat(KEY_ZOOM_RATIO, zoomRatio).apply()
+    }
+
+    fun saveSelectedFocusMode(
+        cameraId: String,
+        focusMode: PhoneCameraFocusMode,
+    ) {
+        prefs.edit()
+            .putString(KEY_FOCUS_MODE_PREFIX + cameraId, focusMode.name)
+            .apply()
     }
 
     fun saveSelection(cameraId: String, zoomRatio: Float) {
