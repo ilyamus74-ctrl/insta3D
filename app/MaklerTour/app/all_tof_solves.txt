@@ -1,0 +1,397 @@
+
+===== files/tof_camera_calibration/runs/cal-15e103df-2731-4d32-a82b-cd89b6ab753b/solve_result.json =====
+{
+  "calibration_run_id": "cal-15e103df-2731-4d32-a82b-cd89b6ab753b",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 14.349618422908817,
+      "fy_zones": 11.446565361232993,
+      "cx_zones": 0.07871673851774073,
+      "cy_zones": 3.4416342328740774
+    },
+    "rotation_tof_to_camera": [
+      0.9850601540227343,
+      0.042718504348657045,
+      -0.1668281221584682,
+      -0.03718295031038856,
+      0.9986538077153698,
+      0.036166290130567394,
+      0.1681485092497766,
+      -0.029422809549853848,
+      0.9853224736680224
+    ],
+    "translation_tof_to_camera_mm": [
+      73.57582974980485,
+      -3.404420035187328,
+      26.904068135698413
+    ],
+    "sample_count": 18,
+    "total_observation_count": 1096,
+    "retained_observation_count": 775,
+    "plane_rms_mm": 11.952603810055006,
+    "plane_p95_mm": 21.2796466188949,
+    "all_plane_rms_mm": 186.98021726127826,
+    "initial_cost": 10.429188128610123,
+    "final_cost": 3.2086565195135526,
+    "iterations": 29,
+    "solver": "LM03.4B2_NUMERIC_LM_V1",
+    "status": "SOLVED; LM03.4C hold-out validation required"
+  }
+}
+===== files/tof_camera_calibration/runs/cal-432d486a-315d-4a92-8753-148184d127f7/solve_result.json =====
+{
+  "calibration_run_id": "cal-432d486a-315d-4a92-8753-148184d127f7",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 9.627568730723208,
+      "fy_zones": 10.123137314039809,
+      "cx_zones": -2,
+      "cy_zones": 3.5986961239370046
+    },
+    "rotation_tof_to_camera": [
+      0.9318646893090131,
+      0.05366499163181632,
+      -0.35881509094821173,
+      -0.02610772156843223,
+      0.9963547611741034,
+      0.08121315632457937,
+      0.36186542760192164,
+      -0.06631182819718087,
+      0.9298688906225576
+    ],
+    "translation_tof_to_camera_mm": [
+      -21.982976979158167,
+      -27.680102199215124,
+      56.31043933771317
+    ],
+    "sample_count": 18,
+    "total_observation_count": 890,
+    "retained_observation_count": 630,
+    "plane_rms_mm": 23.573783303454352,
+    "plane_p95_mm": 51.918554222837884,
+    "all_plane_rms_mm": 239.44132615604943,
+    "initial_cost": 9.489020303862148,
+    "final_cost": 5.273906693863512,
+    "iterations": 80,
+    "solver": "LM03.4B2_NUMERIC_LM_V1",
+    "status": "SOLVED; LM03.4C hold-out validation required"
+  }
+}
+===== files/tof_camera_calibration/runs/cal-445f90ed-9311-49e2-9196-8cf0cf8c74af/solve_result.json =====
+{
+  "calibration_run_id": "cal-445f90ed-9311-49e2-9196-8cf0cf8c74af",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 13.449967123923647,
+      "fy_zones": 9.126656241612357,
+      "cx_zones": 1.907678435162802,
+      "cy_zones": -2
+    },
+    "rotation_tof_to_camera": [
+      0.9994362042384233,
+      0.0031212586085169877,
+      -0.0334294989820575,
+      -0.016980703855919623,
+      0.9059313635443432,
+      -0.4230839399495619,
+      0.02896427720572673,
+      0.42341306343969326,
+      0.9054736044493865
+    ],
+    "translation_tof_to_camera_mm": [
+      60.492931212457286,
+      -76.90306809143422,
+      45.193528238759676
+    ],
+    "sample_count": 18,
+    "total_observation_count": 965,
+    "retained_observation_count": 682,
+    "plane_rms_mm": 13.195305152203893,
+    "plane_p95_mm": 27.303507186775164,
+    "all_plane_rms_mm": 417.57650844680876,
+    "initial_cost": 11.431520794844925,
+    "final_cost": 3.7778904841584233,
+    "iterations": 80,
+    "solver": "LM03.4B2_NUMERIC_LM_V1",
+    "status": "SOLVED; LM03.4C hold-out validation required"
+  }
+}
+===== files/tof_camera_calibration/runs/cal-65a42b83-6c8d-44fa-a517-2ae1c4418006/solve_result.json =====
+{
+  "calibration_run_id": "cal-65a42b83-6c8d-44fa-a517-2ae1c4418006",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 12.59441811605487,
+      "fy_zones": 11.556774932939119,
+      "cx_zones": -0.214053455205244,
+      "cy_zones": 2.9170112377676354
+    },
+    "rotation_tof_to_camera": [
+      0.9835704745681396,
+      0.014665000103922665,
+      -0.17992792815390465,
+      -0.01199829000796467,
+      0.9998015894231248,
+      0.015900403261493952,
+      0.18012540796536589,
+      -0.013480339719209625,
+      0.9835512787070968
+    ],
+    "translation_tof_to_camera_mm": [
+      43.92182764147554,
+      -58.71353067763417,
+      48.8322328219761
+    ],
+    "sample_count": 18,
+    "total_observation_count": 923,
+    "retained_observation_count": 655,
+    "plane_rms_mm": 21.969735027758645,
+    "plane_p95_mm": 45.18823353257244,
+    "all_plane_rms_mm": 467.9575655980142,
+    "initial_cost": 11.24183383164779,
+    "final_cost": 4.942167911364014,
+    "iterations": 48,
+    "solver": "LM03.4B2_NUMERIC_LM_V1",
+    "status": "SOLVED; LM03.4C hold-out validation required"
+  }
+}
+===== files/tof_camera_calibration/runs/cal-85658d7e-43ef-4430-bde2-51c62f9a9a82/solve_result.json =====
+{
+  "calibration_run_id": "cal-85658d7e-43ef-4430-bde2-51c62f9a9a82",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 10.441912379972745,
+      "fy_zones": 12.066311206772854,
+      "cx_zones": 1.9186134931138035,
+      "cy_zones": 1.8699873772669477
+    },
+    "rotation_tof_to_camera": [
+      0.9927473689814142,
+      -0.027321539609504016,
+      -0.11707345922046636,
+      0.019441460918133174,
+      0.9975006522742246,
+      -0.06792995149317645,
+      0.11863680279680752,
+      0.06516120153790066,
+      0.9907973187470224
+    ],
+    "translation_tof_to_camera_mm": [
+      76.85908210129759,
+      -21.92481621420113,
+      33.61765300161964
+    ],
+    "sample_count": 18,
+    "total_observation_count": 1064,
+    "retained_observation_count": 751,
+    "plane_rms_mm": 15.66383085768155,
+    "plane_p95_mm": 32.97075423773879,
+    "all_plane_rms_mm": 55.50809138502916,
+    "initial_cost": 9.711291931186604,
+    "final_cost": 3.502826614903396,
+    "iterations": 29,
+    "solver": "LM03.4B2_NUMERIC_LM_V1",
+    "status": "SOLVED; LM03.4C hold-out validation required"
+  }
+}
+===== files/tof_camera_calibration/runs/cal-a0e7043f-80fd-468e-bc2b-3ff2814a56ec/solve_result.json =====
+{
+  "calibration_run_id": "cal-a0e7043f-80fd-468e-bc2b-3ff2814a56ec",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 13.219680493455229,
+      "fy_zones": 9.938313792522678,
+      "cx_zones": 3.756520853976469,
+      "cy_zones": 3.340862707994442
+    },
+    "rotation_tof_to_camera": [
+      0.9983322627608725,
+      0.0019631351097440354,
+      0.057696093726500385,
+      -0.003963666700205424,
+      0.9993940850087171,
+      0.034579650025396494,
+      -0.05759325027332552,
+      -0.0347506683407688,
+      0.9977351394898467
+    ],
+    "translation_tof_to_camera_mm": [
+      63.53048982207813,
+      -3.7308772287843275,
+      30.358573381482746
+    ],
+    "sample_count": 18,
+    "total_observation_count": 1075,
+    "retained_observation_count": 763,
+    "plane_rms_mm": 19.265176322900494,
+    "plane_p95_mm": 38.813678302352514,
+    "all_plane_rms_mm": 161.1607095931601,
+    "initial_cost": 9.093507556234357,
+    "final_cost": 4.286805618689248,
+    "iterations": 27,
+    "solver": "LM03.4B2_NUMERIC_LM_V1",
+    "status": "SOLVED; LM03.4C hold-out validation required"
+  }
+}
+===== files/tof_camera_calibration/runs/cal-adac2c8a-c7f3-4ff5-bac6-488d820d9db7/solve_result.json =====
+{
+  "calibration_run_id": "cal-adac2c8a-c7f3-4ff5-bac6-488d820d9db7",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 19.1853307141047,
+      "fy_zones": 30.000000000000004,
+      "cx_zones": 4.292530593073251,
+      "cy_zones": -2
+    },
+    "rotation_tof_to_camera": [
+      0.9958937710993072,
+      0.04635318877578462,
+      0.07776232105536152,
+      -0.04730302738374116,
+      0.9988262717298403,
+      0.010416453455969742,
+      -0.07718821338736687,
+      -0.014052074316051167,
+      0.9969175085840766
+    ],
+    "translation_tof_to_camera_mm": [
+      110.41330860824336,
+      -179.1279360909471,
+      10.50990919392375
+    ],
+    "sample_count": 18,
+    "total_observation_count": 1102,
+    "retained_observation_count": 779,
+    "plane_rms_mm": 227.64904466153678,
+    "plane_p95_mm": 616.6395640798299,
+    "all_plane_rms_mm": 265.0606697276953,
+    "initial_cost": 8.769875372258248,
+    "final_cost": 4.4310864360762485,
+    "iterations": 80,
+    "solver": "LM03.4B2_NUMERIC_LM_V1",
+    "status": "SOLVED; LM03.4C hold-out validation required"
+  }
+}
+===== files/tof_camera_calibration/runs/cal-c51f12fc-400f-40f7-84ae-6c77473735f5/solve_result.json =====
+{
+  "calibration_run_id": "cal-c51f12fc-400f-40f7-84ae-6c77473735f5",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 19.858976999126458,
+      "fy_zones": 10.892266043779667,
+      "cx_zones": 1.957942980970021,
+      "cy_zones": -2
+    },
+    "rotation_tof_to_camera": [
+      0.9942999937178763,
+      0.07993812059087001,
+      0.0705508282660869,
+      -0.046733785783211176,
+      0.9215231120082004,
+      -0.38550111193236625,
+      -0.09583045319208446,
+      0.3800066458775706,
+      0.9200062354842375
+    ],
+    "translation_tof_to_camera_mm": [
+      36.25465153003878,
+      -36.896076488243104,
+      46.21614494438395
+    ],
+    "sample_count": 18,
+    "total_observation_count": 1065,
+    "retained_observation_count": 755,
+    "plane_rms_mm": 7.73096061011386,
+    "plane_p95_mm": 14.553262788507595,
+    "all_plane_rms_mm": 299.64289782496763,
+    "initial_cost": 10.284023966303922,
+    "final_cost": 2.5540671096847367,
+    "iterations": 80,
+    "solver": "LM03.4B2_NUMERIC_LM_V1",
+    "status": "SOLVED; LM03.4C hold-out validation required"
+  }
+}
+===== files/tof_camera_calibration/runs/cal-ca2b15eb-1eeb-40ed-9804-45af2fc29f37/solve_result.json =====
+{
+  "calibration_run_id": "cal-ca2b15eb-1eeb-40ed-9804-45af2fc29f37",
+  "result": {
+    "schema_version": 1,
+    "successful": true,
+    "tof_slot": 0,
+    "tof_width": 8,
+    "tof_height": 8,
+    "tof_intrinsics": {
+      "fx_zones": 15.900048058167663,
+      "fy_zones": 10.745377383834287,
+      "cx_zones": 3.552181146376413,
+      "cy_zones": -2
+    },
+    "rotation_tof_to_camera": [
+      0.9927170916294581,
+      0.05454666944121681,
+      0.1074124612864859,
+      -0.015077334857953796,
+      0.940864429788618,
+      -0.33844763070838585,
+      -0.1195217551759149,
+      0.3343632539789763,
+      0.9348346187579166
+    ],
+    "translation_tof_to_camera_mm": [
+      48.195231645140666,
+      -107.70952800730326,
+      51.66917757806551
+    ],
+    "sample_count": 18,
+    "total_observation_count": 856,
+    "retained_observation_count": 608,
+    "plane_rms_mm": 17.883215520153733,
+    "plane_p95_mm": 35.55544860234079,
+    "all_plane_rms_mm": 398.72454982381026,
+    "initial_cost": 10.183085936730267,
+    "final_cost": 3.949726820011239,
+    "iterations": 80,
+    "solver": "LM03.4B2_NUMERIC_LM_V1",
+    "status": "SOLVED; LM03.4C hold-out validation required"
+  }
+}
