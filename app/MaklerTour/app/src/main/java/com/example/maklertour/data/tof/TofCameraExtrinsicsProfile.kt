@@ -186,19 +186,20 @@ object TofCameraProjector {
         if (listOf(fx, fy, cx, cy, k1, k2).any { !it.isFinite() }) return null
 
         val row = zoneIndex / profile.tofWidth
-        val column = zoneIndex % profile.tofWidth
+        val rawColumn = zoneIndex % profile.tofWidth
+        val sceneColumn = profile.tofWidth - 1 - rawColumn
         val zi = profile.tofIntrinsics
 
-        val rayX = (column.toDouble() - zi.cxZones) / zi.fxZones
-        val rayY = (row.toDouble() - zi.cyZones) / zi.fyZones
-        val rayZ = 1.0
-        val rayNorm = sqrt(rayX * rayX + rayY * rayY + rayZ * rayZ)
-        if (!rayNorm.isFinite() || rayNorm <= 0.0) return null
+        val normalizedX =
+            (sceneColumn.toDouble() - zi.cxZones) / zi.fxZones
+        val normalizedY =
+            (row.toDouble() - zi.cyZones) / zi.fyZones
 
-        val distance = distanceMm.toDouble()
-        val tofX = distance * rayX / rayNorm
-        val tofY = distance * rayY / rayNorm
-        val tofZ = distance * rayZ / rayNorm
+        // distanceMm is VL53L8CX's default R2P-corrected axial Z depth.
+        val axialDepthMm = distanceMm.toDouble()
+        val tofX = axialDepthMm * normalizedX
+        val tofY = axialDepthMm * normalizedY
+        val tofZ = axialDepthMm
 
         val r = profile.rotationToCamera
         val t = profile.translationToCameraMm

@@ -192,9 +192,10 @@ private fun TofRawMatrix(
 
         for (index in 0 until current.zoneCount) {
             val row = index / current.width
-            val column = index % current.width
+            val rawColumn = index % current.width
+            val sceneColumn = current.width - 1 - rawColumn
             val topLeft = Offset(
-                x = column * cellWidth,
+                x = sceneColumn * cellWidth,
                 y = row * cellHeight,
             )
             val valid = current.isZoneValid(index)

@@ -79,14 +79,13 @@ class TofCameraExtrinsicsSolverTest {
         val zones = buildList {
             for (zoneIndex in 0 until 64) {
                 val row = zoneIndex / 8
-                val column = zoneIndex % 8
-                var x = (column - intrinsics.cxZones) / intrinsics.fxZones
-                var y = (row - intrinsics.cyZones) / intrinsics.fyZones
-                var z = 1.0
-                val norm = sqrt(x * x + y * y + z * z)
-                x /= norm
-                y /= norm
-                z /= norm
+                val rawColumn = zoneIndex % 8
+                val sceneColumn = 7 - rawColumn
+                val x =
+                    (sceneColumn - intrinsics.cxZones) / intrinsics.fxZones
+                val y =
+                    (row - intrinsics.cyZones) / intrinsics.fyZones
+                val z = 1.0
 
                 val rx =
                     rotation[0] * x +
@@ -110,13 +109,15 @@ class TofCameraExtrinsicsSolverTest {
                         boardPlane.normalZ * translation[2] +
                         boardPlane.dMm
                     )
-                val distance = numerator / denominator
-                if (distance > 0.0 && distance.isFinite()) {
+                // With z=1 above, this solves directly for the R2P-corrected
+                // axial depth reported in VL53L8CX distance_mm.
+                val axialDepth = numerator / denominator
+                if (axialDepth > 0.0 && axialDepth.isFinite()) {
                     val measuredDistance =
                         if ((zoneIndex + sampleIndex) % 7 == 0) {
-                            distance.roundToInt() + 450
+                            axialDepth.roundToInt() + 450
                         } else {
-                            distance.roundToInt()
+                            axialDepth.roundToInt()
                         }
                     add(
                         TofZoneRangeObservation(

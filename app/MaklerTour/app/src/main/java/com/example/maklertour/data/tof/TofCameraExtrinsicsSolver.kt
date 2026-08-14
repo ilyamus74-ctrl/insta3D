@@ -486,21 +486,23 @@ class TofCameraExtrinsicsSolver {
         val fy = exp(params[IDX_LOG_FY])
         val cx = params[IDX_CX]
         val cy = params[IDX_CY]
+
+        // VL53L8CX zone ids are sensor-order ids. ST's scene view is mirrored
+        // horizontally: the first raw column observes the right side of scene.
         val row = zone.zoneIndex / sample.tofWidth
-        val column = zone.zoneIndex % sample.tofWidth
+        val rawColumn = zone.zoneIndex % sample.tofWidth
+        val sceneColumn = sample.tofWidth - 1 - rawColumn
 
-        var rayX = (column.toDouble() - cx) / fx
-        var rayY = (row.toDouble() - cy) / fy
-        var rayZ = 1.0
-        val rayNorm = sqrt(rayX * rayX + rayY * rayY + rayZ * rayZ)
-        rayX /= rayNorm
-        rayY /= rayNorm
-        rayZ /= rayNorm
+        val normalizedX = (sceneColumn.toDouble() - cx) / fx
+        val normalizedY = (row.toDouble() - cy) / fy
 
-        val distance = zone.distanceMm.toDouble()
-        val tofX = distance * rayX
-        val tofY = distance * rayY
-        val tofZ = distance * rayZ
+        // VL53L8CX default firmware applies radial-to-perpendicular (R2P)
+        // correction. distance_mm is therefore axial Z depth, not Euclidean
+        // ray length. Do NOT normalize the ray before deprojection.
+        val axialDepthMm = zone.distanceMm.toDouble()
+        val tofX = axialDepthMm * normalizedX
+        val tofY = axialDepthMm * normalizedY
+        val tofZ = axialDepthMm
 
         val rotation = rotationMatrix(
             params[IDX_RX],
@@ -750,7 +752,7 @@ class TofCameraExtrinsicsSolver {
     )
 
     companion object {
-        const val SOLVER_NAME = "LM03.4B2_1_REGULARIZED_LM_V2"
+        const val SOLVER_NAME = "LM03.4B2_2_R2P_ZONE_MAPPING_LM_V3"
         const val MIN_SAMPLES = 8
         const val MIN_OBSERVATIONS = 128
 
