@@ -3,13 +3,13 @@
 ## Status
 
 ```text
-REPOSITORY BASELINE: 8562264865eb4520b6298476c0e1ffb18b86ffac
+REPOSITORY BASELINE: d57d8a8b7218a657bbb7b4b3ae5f8e97a4e626ab
 
 LM03.3.2: CLOSED
 LM03.4:   CLOSED
-LM03.5A:  IMPLEMENTED — real-device anchor validation pending
-LM03.5B:  NEXT — diagnostic overlay
-LM03.5C:  PLANNED
+LM03.5A:  CLOSED — slot0 runtime pairing/projection verified on device
+LM03.5B:  IMPLEMENTED — laptop/web overlay verified; orientation sign-off pending
+LM03.5C:  IMPLEMENTED — bounded host diagnostic; device verification pending
 ```
 
 ## Goal
@@ -223,24 +223,41 @@ The producer is process-scoped and exposes its latest immutable snapshot through
 `StateFlow`, so LM03.5B UI and later fusion code consume exactly the same metric
 registration result.
 
-## LM03.5B — diagnostic overlay
+## LM03.5B — laptop/web diagnostic overlay
 
-After LM03.5A is numerically verified, draw registered anchors over CAMERA_A.
+The operator view lives on the laptop host, not on the phone.
+
+CAMERA_A attaches the exact same-frame `tof_registered` metadata to its existing
+laptop JPEG header. The C++ host exposes it through the existing status JSON and
+the browser draws a canvas directly over raw CAMERA_A.
 
 Initial diagnostic rendering:
 
 ```text
 valid anchor:
-  small cross/circle at (u_px, v_px)
+  small circle at (u_px, v_px)
 
-label in detailed mode:
+grid:
+  connect native neighbouring zone indexes
+
+label:
   zone index
   distance m
 ```
 
-The overlay must transform raw CAMERA_A pixels into the actual FIT_CENTER preview
-viewport using the existing preview-coordinate mapping rules. Metric registration
-itself remains in raw camera coordinates.
+The canvas has raw CAMERA_A dimensions internally and receives the exact same CSS
+size/rotation transform as the CAMERA_A JPEG. Metric registration itself remains
+in raw camera coordinates; browser code must not recompute R2P, R/t or K/D.
+
+The payload is already multi-slot:
+
+```text
+slots[0] -> ToF0
+slots[1] -> ToF1
+slots[2] -> ToF2
+```
+
+Only slot0 is physically active today.
 
 Expected visual test:
 
@@ -253,20 +270,68 @@ Expected visual test:
 
 ## LM03.5C — machine-readable diagnostics
 
-Persist or log one bounded diagnostic snapshot containing:
+LM03.5C is host-side because LM03.5B already transports the complete same-frame
+registered ToF payload to the laptop.
+
+Runtime endpoint:
 
 ```text
-camera timestamp
-ToF sequence
-pair delta
-valid zone count
-projected anchor count
-inside-image count
-min/median/max depth
-anchor list
+GET /api/tof/registered
 ```
 
-This is diagnostic evidence, not a new calibration artifact.
+Bounded persisted evidence:
+
+```text
+sessions/<session>/tof_registered_latest.json
+```
+
+The file is overwritten atomically rather than appended forever. To avoid
+high-frequency disk churn it is refreshed every 15 CAMERA_A frames while the
+in-memory/API snapshot remains current for every received registered frame.
+
+Snapshot contract:
+
+```text
+schema_version
+ready
+coordinate_space
+
+camera_frame_sequence
+camera_sensor_timestamp_ns
+camera_capture_elapsed_ns
+camera_elapsed_realtime_ns
+camera_width
+camera_height
+rotation_degrees
+
+configured_slot_count
+paired_slot_count
+valid_zone_count
+projected_anchor_count
+inside_image_count
+
+slots[]
+  slot
+  tof_width / tof_height
+  tof_sequence
+  pair_delta_us / pair_threshold_us
+  pair_accepted
+  status
+  valid_zone_count
+  projected_anchor_count
+  inside_image_count
+  min_depth_mm
+  median_depth_mm
+  max_depth_mm
+  anchor_count
+  anchors[]
+```
+
+`anchors[]` preserves the compact LM03.5B laptop payload including zone index,
+distance, sigma/status, registered `u_px/v_px`, CAMERA_A Z and `inside_image`.
+
+This is bounded diagnostic evidence, not a calibration artifact and not yet the
+per-SfM-frame ToF archive. Full capture-time ToF sidecars belong to LM03.5D.
 
 ## Acceptance
 

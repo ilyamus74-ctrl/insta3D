@@ -22,6 +22,8 @@ constexpr std::size_t kEventRingSize = 200;
 constexpr std::size_t kPairQueueCapacity = 12;
 constexpr std::size_t kDefaultColmapPairStride = 3;
 constexpr std::size_t kMaximumColmapPairStride = 60;
+constexpr std::uint64_t kTofDiagnosticPersistStride = 15;
+constexpr const char* kTofDiagnosticFile = "tof_registered_latest.json";
 
 std::size_t colmap_pair_stride_from_environment() {
     const char* raw = std::getenv("MAKLER_COLMAP_PAIR_STRIDE");
@@ -50,6 +52,140 @@ std::string session_stamp() {
 
 std::size_t slot_index(const CameraSlot slot) {
     return static_cast<std::size_t>(slot);
+}
+
+nlohmann::json json_value_or_null(
+    const nlohmann::json& value,
+    const char* key) {
+    return value.contains(key) ? value.at(key) : nlohmann::json(nullptr);
+}
+
+nlohmann::json build_tof_registered_diagnostic(const FrameRecord& frame) {
+    const auto& registered = frame.header.at("tof_registered");
+    nlohmann::json slots = nlohmann::json::array();
+    std::uint64_t total_valid = 0;
+    std::uint64_t total_projected = 0;
+    std::uint64_t total_inside = 0;
+
+    if (registered.contains("slots") && registered.at("slots").is_array()) {
+        for (const auto& source_slot : registered.at("slots")) {
+            if (!source_slot.is_object()) continue;
+            std::vector<int> depths;
+            nlohmann::json anchors = nlohmann::json::array();
+            if (source_slot.contains("anchors") &&
+                source_slot.at("anchors").is_array()) {
+                anchors = source_slot.at("anchors");
+                for (const auto& anchor : anchors) {
+                    if (!anchor.is_object() ||
+                        !anchor.contains("distance_mm") ||
+                        !anchor.at("distance_mm").is_number_integer()) {
+                        continue;
+                    }
+                    const int distance = anchor.at("distance_mm").get<int>();
+                    if (distance > 0) depths.push_back(distance);
+                }
+            }
+            std::sort(depths.begin(), depths.end());
+
+            const auto valid = source_slot.value(
+                "sensor_valid_zone_count", std::uint64_t{0});
+            const auto projected = source_slot.value(
+                "registered_anchor_count", std::uint64_t{0});
+            const auto inside = source_slot.value(
+                "inside_image_count", std::uint64_t{0});
+            total_valid += valid;
+            total_projected += projected;
+            total_inside += inside;
+
+            nlohmann::json slot = {
+                {"slot", source_slot.value("slot", -1)},
+                {"tof_width", source_slot.value("tof_width", 0)},
+                {"tof_height", source_slot.value("tof_height", 0)},
+                {"tof_sequence", json_value_or_null(source_slot, "tof_sequence")},
+                {"pair_delta_us", json_value_or_null(source_slot, "pair_delta_us")},
+                {"pair_threshold_us",
+                 json_value_or_null(source_slot, "pair_threshold_us")},
+                {"pair_accepted", source_slot.value("pair_accepted", false)},
+                {"status", source_slot.value("status", std::string{"UNKNOWN"})},
+                {"valid_zone_count", valid},
+                {"projected_anchor_count", projected},
+                {"inside_image_count", inside},
+                {"anchor_count", anchors.size()},
+                {"anchors", std::move(anchors)},
+            };
+            if (depths.empty()) {
+                slot["min_depth_mm"] = nullptr;
+                slot["median_depth_mm"] = nullptr;
+                slot["max_depth_mm"] = nullptr;
+            } else {
+                slot["min_depth_mm"] = depths.front();
+                slot["median_depth_mm"] = depths[depths.size() / 2];
+                slot["max_depth_mm"] = depths.back();
+            }
+            slots.push_back(std::move(slot));
+        }
+    }
+
+    return {
+        {"schema_version", 1},
+        {"coordinate_space",
+         registered.value(
+             "coordinate_space",
+             std::string{"RAW_CAMERA_A_CALIBRATION_PIXELS_V1"})},
+        {"source", "CAMERA_A_FRAME_HEADER"},
+        {"camera_frame_sequence", frame.sequence},
+        {"camera_sensor_timestamp_ns", frame.sensor_timestamp_ns},
+        {"camera_capture_elapsed_ns", frame.capture_elapsed_ns},
+        {"camera_received_monotonic_ns", frame.received_monotonic_ns},
+        {"camera_elapsed_realtime_ns",
+         json_value_or_null(registered, "camera_elapsed_realtime_ns")},
+        {"camera_width", frame.width},
+        {"camera_height", frame.height},
+        {"rotation_degrees", frame.rotation_degrees},
+        {"configured_slot_count",
+         registered.value("configured_slot_count", std::uint64_t{0})},
+        {"paired_slot_count",
+         registered.value("paired_slot_count", std::uint64_t{0})},
+        {"valid_zone_count", total_valid},
+        {"projected_anchor_count", total_projected},
+        {"inside_image_count", total_inside},
+        {"slots", std::move(slots)},
+    };
+}
+
+void write_json_atomically(
+    const std::filesystem::path& destination,
+    const nlohmann::json& value) {
+    auto temporary = destination;
+    temporary += ".tmp";
+    {
+        std::ofstream output(temporary, std::ios::trunc);
+        if (!output) {
+            throw std::runtime_error(
+                "cannot open temporary ToF diagnostic file");
+        }
+        output << std::setw(2) << value << '\n';
+        output.flush();
+        if (!output) {
+            throw std::runtime_error(
+                "cannot write temporary ToF diagnostic file");
+        }
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, destination, error);
+    if (!error) return;
+
+    // Linux rename normally replaces atomically. Keep a conservative fallback
+    // for filesystems where the destination must first be removed.
+    std::error_code ignored;
+    std::filesystem::remove(destination, ignored);
+    error.clear();
+    std::filesystem::rename(temporary, destination, error);
+    if (error) {
+        std::filesystem::remove(temporary, ignored);
+        throw std::runtime_error(
+            "cannot publish ToF diagnostic file: " + error.message());
+    }
 }
 
 nlohmann::json frame_metadata(const FrameRecord& frame) {
@@ -213,6 +349,42 @@ void HostState::accept_frame(const CameraSlot slot, FrameRecord frame) {
     camera.bytes += frame.jpeg.size();
     if (camera.first_frame_ns == 0) camera.first_frame_ns = frame.received_monotonic_ns;
     camera.last_frame_ns = frame.received_monotonic_ns;
+
+    if (slot == CameraSlot::A &&
+        frame.header.contains("tof_registered") &&
+        frame.header.at("tof_registered").is_object()) {
+        latest_tof_registered_diagnostic_ =
+            build_tof_registered_diagnostic(frame);
+        ++tof_registered_diagnostics_seen_;
+
+        const bool sequence_restarted =
+            frame.sequence < last_tof_registered_persist_sequence_;
+        const bool persist_due =
+            tof_registered_diagnostics_persisted_ == 0 ||
+            sequence_restarted ||
+            frame.sequence - last_tof_registered_persist_sequence_ >=
+                kTofDiagnosticPersistStride;
+        if (persist_due) {
+            try {
+                write_json_atomically(
+                    session_dir_ / kTofDiagnosticFile,
+                    latest_tof_registered_diagnostic_);
+                ++tof_registered_diagnostics_persisted_;
+                last_tof_registered_persist_sequence_ = frame.sequence;
+            } catch (const std::exception& error) {
+                nlohmann::json event = {
+                    {"ts", utc_iso8601_now()},
+                    {"level", "WARN"},
+                    {"event", "TOF_REGISTERED_DIAGNOSTIC_WRITE_FAILED"},
+                    {"reason", error.what()},
+                };
+                append_jsonl_locked(events_file_, event);
+                events_.push_back(std::move(event));
+                while (events_.size() > kEventRingSize) events_.pop_front();
+            }
+        }
+    }
+
     camera.latest = frame;
     maybe_archive_locked(slot, frame);
     camera.pair_queue.push_back(std::move(frame));
@@ -288,6 +460,18 @@ nlohmann::json HostState::status_json() const {
         {"session_dir", session_dir_.string()},
         {"camera_a", camera_json(cameras_[0])},
         {"camera_b", camera_json(cameras_[1])},
+        {"tof_registered_diagnostic", {
+            {"ready", latest_tof_registered_diagnostic_.is_object()},
+            {"snapshots_seen", tof_registered_diagnostics_seen_},
+            {"snapshots_persisted", tof_registered_diagnostics_persisted_},
+            {"persist_stride_frames", kTofDiagnosticPersistStride},
+            {"file", kTofDiagnosticFile},
+            {"latest_camera_frame_sequence",
+             latest_tof_registered_diagnostic_.is_object()
+                 ? latest_tof_registered_diagnostic_.value(
+                       "camera_frame_sequence", std::uint64_t{0})
+                 : std::uint64_t{0}},
+        }},
         {"pairing", {
             {"pairs", pair_count_},
             {"ready_pairs", pair_ready_count_},
@@ -307,6 +491,28 @@ nlohmann::json HostState::status_json() const {
         }},
         {"stereo_preview", stereo_preview_->status_json()},
     };
+}
+
+nlohmann::json HostState::tof_registered_diagnostic_json() const {
+    std::scoped_lock lock(mutex_);
+    if (!latest_tof_registered_diagnostic_.is_object()) {
+        return {
+            {"schema_version", 1},
+            {"ready", false},
+            {"snapshots_seen", tof_registered_diagnostics_seen_},
+            {"snapshots_persisted", tof_registered_diagnostics_persisted_},
+            {"persist_stride_frames", kTofDiagnosticPersistStride},
+            {"file", kTofDiagnosticFile},
+        };
+    }
+    auto result = latest_tof_registered_diagnostic_;
+    result["ready"] = true;
+    result["snapshots_seen"] = tof_registered_diagnostics_seen_;
+    result["snapshots_persisted"] =
+        tof_registered_diagnostics_persisted_;
+    result["persist_stride_frames"] = kTofDiagnosticPersistStride;
+    result["file"] = kTofDiagnosticFile;
+    return result;
 }
 
 std::vector<nlohmann::json> HostState::recent_events() const {

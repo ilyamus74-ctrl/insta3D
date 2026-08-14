@@ -196,6 +196,11 @@ void HttpDashboard::handle_client(const int client_fd) {
                   state_.live_preview_json().dump());
         return;
     }
+    if (path == "/api/tof/registered") {
+        send_text(client_fd, 200, "application/json",
+                  state_.tof_registered_diagnostic_json().dump());
+        return;
+    }
     if (path == "/api/depth/probe") {
         const auto x = query_number(target, "x");
         const auto y = query_number(target, "y");

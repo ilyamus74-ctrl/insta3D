@@ -64,6 +64,7 @@ public:
 
     CameraSnapshot camera(CameraSlot slot) const;
     nlohmann::json status_json() const;
+    nlohmann::json tof_registered_diagnostic_json() const;
     std::vector<nlohmann::json> recent_events() const;
     std::filesystem::path session_directory() const;
     std::optional<std::vector<std::uint8_t>> stereo_preview_image(
@@ -116,6 +117,10 @@ private:
     std::ofstream imu_a_file_;
     std::ofstream imu_b_file_;
     std::ofstream colmap_pairs_file_;
+    nlohmann::json latest_tof_registered_diagnostic_;
+    std::uint64_t tof_registered_diagnostics_seen_ = 0;
+    std::uint64_t tof_registered_diagnostics_persisted_ = 0;
+    std::uint64_t last_tof_registered_persist_sequence_ = 0;
     std::unique_ptr<StereoPreview> stereo_preview_;
 };
 
