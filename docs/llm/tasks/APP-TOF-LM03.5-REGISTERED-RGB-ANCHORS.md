@@ -7,9 +7,11 @@ REPOSITORY BASELINE: d57d8a8b7218a657bbb7b4b3ae5f8e97a4e626ab
 
 LM03.3.2: CLOSED
 LM03.4:   CLOSED
+LM03.5:   CLOSED — registered ToF -> CAMERA_A path accepted
 LM03.5A:  CLOSED — slot0 runtime pairing/projection verified on device
-LM03.5B:  IMPLEMENTED — laptop/web overlay verified; orientation sign-off pending
-LM03.5C:  IMPLEMENTED — bounded host diagnostic; device verification pending
+LM03.5B:  CLOSED — laptop/web registered overlay verified on real scenes
+LM03.5C:  CLOSED — bounded machine-readable host diagnostic verified
+LM03.5D:  NEXT — capture-time ToF sidecars for SfM/COLMAP/Dense
 ```
 
 ## Goal
@@ -332,6 +334,69 @@ distance, sigma/status, registered `u_px/v_px`, CAMERA_A Z and `inside_image`.
 
 This is bounded diagnostic evidence, not a calibration artifact and not yet the
 per-SfM-frame ToF archive. Full capture-time ToF sidecars belong to LM03.5D.
+
+## LM03.5 real-device closeout
+
+LM03.5A acceptance established slot-aware CAMERA_A event-time registration with
+the active slot0 profile and successful frames reaching up to 64/64 registered
+anchors while remaining inside the LM03.3.2 pairing threshold.
+
+LM03.5B acceptance established the complete operator path:
+
+```text
+MASTER CAMERA_A + ToF slot0
+        |
+        +--> same-frame registered ToF metadata
+        |
+        v
+laptop host
+        |
+        v
+web CAMERA_A + native-zone grid + distance labels
+```
+
+Real scene screenshots showed the projected native-zone grid and metric distance
+labels moving over CAMERA_A content in the laptop web UI. Browser code only
+applies the same presentation transform as the raw CAMERA_A image; it does not
+recompute ToF geometry.
+
+LM03.5C real-device acceptance:
+
+```text
+static contract test: PASS
+
+GET /api/tof/registered:
+  ready: true
+  configured_slot_count: 1
+  paired_slot_count: 1
+  slot0.status: OK
+
+accepted example:
+  camera_frame_sequence: 6516
+  tof_sequence: 14752
+  pair_delta_us: +16038
+  pair_threshold_us: 35333
+
+  valid_zone_count: 12
+  projected_anchor_count: 12
+  inside_image_count: 12
+
+  min_depth_mm: 1487
+  median_depth_mm: 2822
+  max_depth_mm: 3322
+
+bounded persistence:
+  snapshots_seen: 371
+  snapshots_persisted: 25
+  persist_stride_frames: 15
+```
+
+The persisted `tof_registered_latest.json` was observed changing camera frame
+sequence and payload size while the host remained live, proving that the file is
+a bounded current snapshot rather than a stale one-shot artifact.
+
+LM03.5 is CLOSED. LM03.5D is a new capture/export extension; it must not reopen
+the accepted LM03.4 calibration or LM03.5 registration geometry.
 
 ## Acceptance
 

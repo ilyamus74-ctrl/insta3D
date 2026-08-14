@@ -18,12 +18,14 @@ LM03.4      CAMERA_A <-> ToF extrinsics              CLOSED
 LM03.4A     extrinsics profile + projection model    CLOSED
 LM03.4B     ChArUco + ToF planar solver              CLOSED
 LM03.4C     independent hold-out validation          CLOSED
-LM03.5      64 ToF anchors on Registered RGB         IN PROGRESS
-LM03.5A     multi-slot runtime anchor producer        IMPLEMENTED; DEVICE TEST NEXT
-LM03.5B     registered CAMERA_A diagnostic overlay    NEXT
-LM03.6   STEREO / TOF / FUSED cursor        PLANNED
-LM03.7   VIO + ToF metric trajectory        PLANNED
-LM03.8   accumulated metric live 3D          PLANNED
+LM03.5      64 ToF anchors on Registered RGB         CLOSED
+LM03.5A     multi-slot runtime anchor producer        CLOSED
+LM03.5B     laptop/web CAMERA_A ToF overlay           CLOSED
+LM03.5C     bounded registered-ToF diagnostics        CLOSED
+LM03.5D     SfM/COLMAP capture-time ToF sidecars      NEXT
+LM03.6      STEREO / TOF / FUSED cursor               PLANNED
+LM03.7      VIO + ToF metric trajectory               PLANNED
+LM03.8      accumulated metric live 3D preview        PLANNED
 ```
 
 ## LM03.1 closeout
