@@ -253,6 +253,29 @@ select_camera_model_from_metadata() {
   meta_json="$(find_camera_metadata_json || true)"
 
   if [[ -n "$meta_json" ]]; then
+    local capture_identity=()
+    mapfile -t capture_identity < <(python3 - "$meta_json" <<'PYCAPTURE'
+import json,sys
+m=json.load(open(sys.argv[1]))
+print(str(m.get('capture_source') or '').strip().upper())
+print(str(m.get('capture_mode') or '').strip().upper())
+print(str(m.get('focus_mode') or '').strip().upper())
+PYCAPTURE
+)
+    local capture_source="${capture_identity[0]:-}"
+    local capture_mode="${capture_identity[1]:-}"
+    local focus_mode="${capture_identity[2]:-}"
+
+    # A PHONE_CAMERA video is one physical camera stream. Even without a
+    # verified calibrated K/D profile, COLMAP must share one camera/intrinsics
+    # object across all extracted frames. Per-image cameras make focal length
+    # and distortion drift independently and were observed to fragment a
+    # 60-frame SINGLE capture into multiple sparse components.
+    if [[ "$capture_source" == "PHONE_CAMERA" ]]; then
+      COLMAP_CAMERA_SINGLE_FROM_METADATA="1"
+      echo "INFO | CAMERA_METADATA | SINGLE phone video detected: ImageReader.single_camera=1 capture_mode=${capture_mode:-unknown} focus_mode=${focus_mode:-unknown}" >> "$LOG_FILE"
+    fi
+
     local prior_lines=()
     mapfile -t prior_lines < <(python3 - "$meta_json" <<'PYPRIOR'
 import json,sys
@@ -392,7 +415,10 @@ mkdir -p "$OUTPUT_DIR" "$SPARSE_DIR" "$COLMAP_LOG_DIR"
 write_status "RUNNING" 15 -1 "COLMAP feature extraction"
 FEATURE_ARGS=(feature_extractor --database_path "$DATABASE_PATH" --image_path "$FRAMES_DIR" --FeatureExtraction.use_gpu 1)
 [[ -n "$COLMAP_CAMERA_MODEL_FROM_METADATA" ]] && FEATURE_ARGS+=(--ImageReader.camera_model "$COLMAP_CAMERA_MODEL_FROM_METADATA")
-[[ "$COLMAP_CAMERA_SINGLE_FROM_METADATA" == "1" ]] && FEATURE_ARGS+=(--ImageReader.single_camera 1)
+if [[ "$COLMAP_CAMERA_SINGLE_FROM_METADATA" == "1" ]]; then
+  FEATURE_ARGS+=(--ImageReader.single_camera 1)
+  echo "INFO | CAMERA_METADATA | COLMAP feature extraction uses one shared camera for all frames" >> "$LOG_FILE"
+fi
 [[ -n "$COLMAP_CAMERA_PARAMS_FROM_METADATA" ]] && FEATURE_ARGS+=(--ImageReader.camera_params "$COLMAP_CAMERA_PARAMS_FROM_METADATA")
 run_colmap "${FEATURE_ARGS[@]}" > "$COLMAP_LOG_DIR/feature_extractor.log" 2>&1
 

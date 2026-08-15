@@ -166,7 +166,13 @@ model. A verified `colmap_camera_prior` object has this contract:
 ```
 
 If `usable_for_colmap` is false or parameters are incomplete, GrafikStation must
-fall back to the existing COLMAP initialization.
+fall back to COLMAP self-estimation of the numeric camera parameters.
+
+For a `PHONE_CAMERA` SINGLE video, fallback does **not** mean one camera object
+per extracted image. All frames from the same video share one COLMAP camera
+(`ImageReader.single_camera=1`) because camera id, resolution and zoom belong to
+one physical stream. A verified calibration profile may later initialize K/D,
+but profile absence must not allow independent focal/distortion drift per frame.
 
 ## S01E — server metadata identity
 

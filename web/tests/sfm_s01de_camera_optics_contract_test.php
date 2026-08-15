@@ -46,10 +46,17 @@ $checks = [
         str_contains($cameraInfo, '"usable_for_colmap", false') &&
         str_contains($cameraInfo, 'Factory Camera2 calibration is sensor-space'),
 
-    'GrafikStation metadata preserves optical state' =>
+    'GrafikStation metadata preserves optical state and capture identity' =>
+        str_contains($metadata, "'capture_source'") &&
         str_contains($metadata, "'focus_mode'") &&
         str_contains($metadata, "'camera2_intrinsic_calibration'") &&
         str_contains($metadata, "'colmap_camera_prior'"),
+
+    'PHONE_CAMERA SINGLE forces one shared COLMAP camera even without K/D prior' =>
+        str_contains($sparse, '$capture_source" == "PHONE_CAMERA"') &&
+        str_contains($sparse, 'COLMAP_CAMERA_SINGLE_FROM_METADATA="1"') &&
+        str_contains($sparse, 'SINGLE phone video detected') &&
+        str_contains($sparse, '--ImageReader.single_camera'),
 
     'verified future prior can configure COLMAP shared intrinsics' =>
         str_contains($sparse, '--ImageReader.single_camera') &&
@@ -70,7 +77,6 @@ $checks = [
         str_contains($migration, "'tof_registered_path'"),
 
     'roadmap is SINGLE then STEREO then LIVE and ToF is optional' =>
-        str_contains($contract, 'SFM-S01A') &&
         str_contains($contract, 'SFM-S01A') &&
         str_contains($contract, 'ToF is an enhancement, never a prerequisite'),
 ];

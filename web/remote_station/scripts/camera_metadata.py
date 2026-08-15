@@ -112,6 +112,8 @@ def collect(ci, mf):
     fps=num(find(src,['fps','frame_rate','frameRate','video_fps']))
     selected=find(src,['selected_camera_id','selectedCameraId','camera_id','cameraId','id'])
     stab=find(src,['stabilization_mode','stabilizationMode','video_stabilization_mode','ois_mode','eis_mode'])
+    capture_source=find(src,['source','capture_source','captureSource'])
+    capture_mode=find(src,['capture_mode','captureMode'])
     focus_mode=find(src,['focus_mode','focusMode'])
     focus_locked=bool_value(find(src,['focus_locked','focusLocked']))
     focus_distance=num(find(src,['focus_distance_diopters','focusDistanceDiopters']))
@@ -136,6 +138,8 @@ def collect(ci, mf):
       'resolution': [int(resolution[0]), int(resolution[1])] if resolution else None,
       'fps': fps,
       'stabilization_mode': str(stab) if stab is not None else None,
+      'capture_source': str(capture_source) if capture_source is not None else None,
+      'capture_mode': str(capture_mode) if capture_mode is not None else None,
       'focus_mode': str(focus_mode) if focus_mode is not None else None,
       'focus_locked': focus_locked,
       'focus_distance_diopters': focus_distance,
@@ -168,6 +172,7 @@ def main():
         res=(str(r[0])+'x'+str(r[1])) if len(r)>=2 else 'unknown'
         print(f"INFO | CAMERA_METADATA | resolution/fps: {res}/{meta.get('fps','unknown')}")
         if meta.get('stabilization_mode'): print(f"INFO | CAMERA_METADATA | stabilization: {meta.get('stabilization_mode')}")
+        if meta.get('capture_source') or meta.get('capture_mode'): print(f"INFO | CAMERA_METADATA | capture_source={meta.get('capture_source','unknown')} capture_mode={meta.get('capture_mode','unknown')}")
         if meta.get('focus_mode'): print(f"INFO | CAMERA_METADATA | focus_mode: {meta.get('focus_mode')} locked={meta.get('focus_locked','unknown')}")
         intr=meta.get('camera2_intrinsic_calibration') or {}
         if intr: print(f"INFO | CAMERA_METADATA | Camera2 sensor intrinsics: fx={intr.get('fx')} fy={intr.get('fy')} cx={intr.get('cx')} cy={intr.get('cy')} space={intr.get('coordinate_space')}")
