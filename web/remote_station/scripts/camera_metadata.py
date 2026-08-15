@@ -112,8 +112,27 @@ def collect(ci, mf):
     fps=num(find(src,['fps','frame_rate','frameRate','video_fps']))
     selected=find(src,['selected_camera_id','selectedCameraId','camera_id','cameraId','id'])
     stab=find(src,['stabilization_mode','stabilizationMode','video_stabilization_mode','ois_mode','eis_mode'])
-    capture_source=find(src,['source','capture_source','captureSource'])
-    capture_mode=find(src,['capture_mode','captureMode'])
+
+    # `source` is a generic key also used inside Camera2 optical metadata
+    # (`CAMERA2_LENS_INTRINSIC_CALIBRATION`, `CAMERA2_LENS_DISTORTION`).
+    # Capture identity must therefore prefer explicit top-level manifest/camera
+    # fields and must never obtain a generic nested `source` recursively.
+    capture_source=None
+    if isinstance(mf,dict):
+        capture_source=mf.get('source') or mf.get('capture_source') or mf.get('captureSource')
+    if capture_source is None and isinstance(ci,dict):
+        capture_source=ci.get('capture_source') or ci.get('captureSource')
+    if capture_source is None:
+        capture_source=find(src,['capture_source','captureSource'])
+
+    capture_mode=None
+    if isinstance(mf,dict):
+        capture_mode=mf.get('capture_mode') or mf.get('captureMode')
+    if capture_mode is None and isinstance(ci,dict):
+        capture_mode=ci.get('capture_mode') or ci.get('captureMode')
+    if capture_mode is None:
+        capture_mode=find(src,['capture_mode','captureMode'])
+
     focus_mode=find(src,['focus_mode','focusMode'])
     focus_locked=bool_value(find(src,['focus_locked','focusLocked']))
     focus_distance=num(find(src,['focus_distance_diopters','focusDistanceDiopters']))

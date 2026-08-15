@@ -52,6 +52,11 @@ $checks = [
         str_contains($metadata, "'camera2_intrinsic_calibration'") &&
         str_contains($metadata, "'colmap_camera_prior'"),
 
+    'capture source prefers top-level manifest identity over nested Camera2 source' =>
+        str_contains($metadata, "mf.get('source')") &&
+        str_contains($metadata, "find(src,['capture_source','captureSource'])") &&
+        !str_contains($metadata, "find(src,['source','capture_source','captureSource'])"),
+
     'PHONE_CAMERA SINGLE forces one shared COLMAP camera even without K/D prior' =>
         str_contains($sparse, '$capture_source" == "PHONE_CAMERA"') &&
         str_contains($sparse, 'COLMAP_CAMERA_SINGLE_FROM_METADATA="1"') &&
