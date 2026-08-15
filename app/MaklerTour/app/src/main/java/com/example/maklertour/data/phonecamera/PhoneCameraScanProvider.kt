@@ -137,6 +137,7 @@ class PhoneCameraScanProvider(
             videoFile = File(video.path),
             cameraInfoFile = current.cameraInfoFile,
             imuFile = current.imuFile,
+            framesFile = video.frameTelemetrySummary?.path?.let(::File),
             createdAt = current.startedAt.toString(),
             finishedAt = finishedAt.toString(),
             durationSec = video.durationSec,

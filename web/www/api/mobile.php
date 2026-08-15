@@ -767,6 +767,7 @@ if (!is_writable($orderDir)) {
         'camera_info' => null,
         'manifest' => null,
         'imu' => null,
+        'frames' => null,
     ];
 
     if ($isChunkMode) {
@@ -911,6 +912,7 @@ if (!is_writable($orderDir)) {
     $metadataPaths['camera_info'] = api_store_optional_video_metadata('camera_info', $orderDir, $relativeDir, $safeScanUuid, '_camera_info.json', $metadataWarnings);
     $metadataPaths['manifest'] = api_store_optional_video_metadata('manifest', $orderDir, $relativeDir, $safeScanUuid, '_manifest.json', $metadataWarnings);
     $metadataPaths['imu'] = api_store_optional_video_metadata('imu', $orderDir, $relativeDir, $safeScanUuid, '_imu.jsonl', $metadataWarnings);
+    $metadataPaths['frames'] = api_store_optional_video_metadata('frames', $orderDir, $relativeDir, $safeScanUuid, '_frames.jsonl', $metadataWarnings);
 
     $metadataDbColumns = [
         'camera_info' => ['camera_info_path', 'camera_info_storage_path'],

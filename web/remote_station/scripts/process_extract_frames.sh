@@ -34,7 +34,7 @@ if [[ -n "$IMU_JSONL" && -f "$IMU_JSONL" ]]; then
 else
   echo "INFO | IMU | No source IMU sidecar found for video $(basename "$INPUT_VIDEO")"
 fi
-for sidecar_pair in "source_video.camera_info_path:$JOB_ROOT/camera_info.json:camera_info" "source_video.manifest_path:$JOB_ROOT/manifest.json:manifest"; do
+for sidecar_pair in "source_video.camera_info_path:$JOB_ROOT/camera_info.json:camera_info" "source_video.manifest_path:$JOB_ROOT/manifest.json:manifest" "source_video.frames_path:$JOB_ROOT/frames.jsonl:frames"; do
   key="${sidecar_pair%%:*}"; rest="${sidecar_pair#*:}"; dest="${rest%%:*}"; label="${rest##*:}"
   src="$(read_param "$key" "")"
   if [[ -n "$src" && -f "$src" ]]; then

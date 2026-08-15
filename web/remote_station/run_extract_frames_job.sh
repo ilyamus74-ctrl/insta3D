@@ -47,9 +47,11 @@ REMOTE_LOG="$STATION_BASE/logs/job_${JOB_ID}.nohup.log"
 REMOTE_IMU="$STATION_BASE/input/job_${JOB_ID}/scan_imu.jsonl"
 REMOTE_CAMERA_INFO="$STATION_BASE/input/job_${JOB_ID}/camera_info.json"
 REMOTE_MANIFEST="$STATION_BASE/input/job_${JOB_ID}/manifest.json"
+REMOTE_FRAMES="$STATION_BASE/input/job_${JOB_ID}/frames.jsonl"
 
 LOCAL_CAMERA_INFO=""
 LOCAL_MANIFEST=""
+LOCAL_FRAMES=""
 if [[ -n "$EXTRACT_PARAMS_JSON" ]]; then
   mapfile -t SOURCE_SIDECARS < <(
     python3 - "$EXTRACT_PARAMS_JSON" <<'PY'
@@ -67,10 +69,29 @@ if not isinstance(source, dict):
 
 print(source.get("camera_info_path") or "")
 print(source.get("manifest_path") or "")
+print(source.get("frames_path") or "")
 PY
   )
   LOCAL_CAMERA_INFO="${SOURCE_SIDECARS[0]:-}"
   LOCAL_MANIFEST="${SOURCE_SIDECARS[1]:-}"
+  LOCAL_FRAMES="${SOURCE_SIDECARS[2]:-}"
+fi
+
+# frames.jsonl is optional telemetry and older DB schemas do not have a
+# dedicated path column. For PHONE_CAMERA uploads it is stored next to the
+# camera-info/manifest sidecars using the same scan UUID prefix, so recover it
+# from either known sidecar path when the worker did not provide frames_path.
+if [[ -z "$LOCAL_FRAMES" || ! -f "$LOCAL_FRAMES" ]]; then
+  if [[ "$LOCAL_CAMERA_INFO" == *_camera_info.json ]]; then
+    candidate="${LOCAL_CAMERA_INFO%_camera_info.json}_frames.jsonl"
+    [[ -f "$candidate" ]] && LOCAL_FRAMES="$candidate"
+  fi
+fi
+if [[ -z "$LOCAL_FRAMES" || ! -f "$LOCAL_FRAMES" ]]; then
+  if [[ "$LOCAL_MANIFEST" == *_manifest.json ]]; then
+    candidate="${LOCAL_MANIFEST%_manifest.json}_frames.jsonl"
+    [[ -f "$candidate" ]] && LOCAL_FRAMES="$candidate"
+  fi
 fi
 
 upload_optional_sidecar() {
@@ -129,17 +150,18 @@ fi
 
 upload_optional_sidecar "$LOCAL_CAMERA_INFO" "$REMOTE_CAMERA_INFO" "camera_info"
 upload_optional_sidecar "$LOCAL_MANIFEST" "$REMOTE_MANIFEST" "manifest"
+upload_optional_sidecar "$LOCAL_FRAMES" "$REMOTE_FRAMES" "frames"
 
 echo "==> Start extract frames job $JOB_ID"
 printf -v Q_FPS '%q' "$EXTRACT_FPS"; printf -v Q_MAX '%q' "$EXTRACT_MAX_FRAMES"; printf -v Q_W '%q' "$EXTRACT_SCALE_WIDTH"; printf -v Q_Q '%q' "$EXTRACT_JPEG_QUALITY"
 if [[ -n "$EXTRACT_PARAMS_JSON" ]]; then
   printf -v Q_JSON '%q' "$EXTRACT_PARAMS_JSON"
-  "${SSH[@]}" "mkdir -p '$STATION_BASE/input/job_${JOB_ID}' && printf %s $Q_JSON > '$STATION_BASE/input/job_${JOB_ID}/parameters.json' && python3 - '$STATION_BASE/input/job_${JOB_ID}/parameters.json' '$REMOTE_IMU' '$REMOTE_CAMERA_INFO' '$REMOTE_MANIFEST' <<'PY'
+  "${SSH[@]}" "mkdir -p '$STATION_BASE/input/job_${JOB_ID}' && printf %s $Q_JSON > '$STATION_BASE/input/job_${JOB_ID}/parameters.json' && python3 - '$STATION_BASE/input/job_${JOB_ID}/parameters.json' '$REMOTE_IMU' '$REMOTE_CAMERA_INFO' '$REMOTE_MANIFEST' '$REMOTE_FRAMES' <<'PY'
 import json
 import os
 import sys
 
-parameter_path, imu_path, camera_info_path, manifest_path = sys.argv[1:5]
+parameter_path, imu_path, camera_info_path, manifest_path, frames_path = sys.argv[1:6]
 with open(parameter_path, encoding='utf-8') as handle:
     payload = json.load(handle)
 
@@ -155,6 +177,7 @@ if not isinstance(source, dict):
 for key, path in (
     ('camera_info_path', camera_info_path),
     ('manifest_path', manifest_path),
+    ('frames_path', frames_path),
 ):
     if path and os.path.isfile(path):
         source[key] = path

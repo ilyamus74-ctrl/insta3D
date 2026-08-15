@@ -12,6 +12,7 @@ class PhoneScanManifestWriter {
         videoFile: File,
         cameraInfoFile: File,
         imuFile: File?,
+        framesFile: File? = null,
         createdAt: String,
         finishedAt: String,
         durationSec: Long,
@@ -31,6 +32,9 @@ class PhoneScanManifestWriter {
         if (imuFile != null && imuFile.exists() && imuFile.length() > 0L) {
             files.put(JSONObject().put("name", imuFile.name).put("path", imuFile.name).put("file_size_bytes", imuFile.length()))
         }
+        if (framesFile != null && framesFile.exists() && framesFile.length() > 0L) {
+            files.put(JSONObject().put("name", framesFile.name).put("path", framesFile.name).put("file_size_bytes", framesFile.length()))
+        }
         val cameraInfo = runCatching {
             JSONObject(cameraInfoFile.readText())
         }.getOrNull()
@@ -49,6 +53,7 @@ class PhoneScanManifestWriter {
             .put("video", videoFile.name)
             .put("camera_info", cameraInfoFile.name)
             .put("imu", if (imuFile != null && imuFile.exists() && imuFile.length() > 0L) imuFile.name else JSONObject.NULL)
+            .put("frames", if (framesFile != null && framesFile.exists() && framesFile.length() > 0L) framesFile.name else JSONObject.NULL)
             .put("calibration", calibration?.toJson() ?: JSONObject.NULL)
             .put("selected_camera_id", selectedLens?.cameraId ?: JSONObject.NULL)
             .put("camera_id", selectedLens?.cameraId ?: JSONObject.NULL)

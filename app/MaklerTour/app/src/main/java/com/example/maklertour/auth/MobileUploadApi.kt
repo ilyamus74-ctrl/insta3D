@@ -41,6 +41,7 @@ class MobileUploadApi(
         val cameraInfo: File,
         val manifest: File,
         val imu: File,
+        val frames: File,
     ) {
         val requiredReady: Boolean
             get() = cameraInfo.isFile && cameraInfo.length() > 0L &&
@@ -129,6 +130,7 @@ class MobileUploadApi(
             cameraInfo = File(dir, "camera_info.json"),
             manifest = File(dir, "manifest.json"),
             imu = File(dir, "imu.jsonl"),
+            frames = File(dir, "frames.jsonl"),
         )
     }
 
@@ -220,6 +222,7 @@ class MobileUploadApi(
         addFilePartIfAvailable(bodyBuilder, scan, metadata.cameraInfo, "camera_info", "application/json")
         addFilePartIfAvailable(bodyBuilder, scan, metadata.manifest, "manifest", "application/json")
         addFilePartIfAvailable(bodyBuilder, scan, metadata.imu, "imu", "application/x-ndjson")
+        addFilePartIfAvailable(bodyBuilder, scan, metadata.frames, "frames", "application/x-ndjson")
     }
 
     private fun addFilePartIfAvailable(bodyBuilder: MultipartBody.Builder, scan: ScanVideo, file: File, partName: String, mediaType: String) {
