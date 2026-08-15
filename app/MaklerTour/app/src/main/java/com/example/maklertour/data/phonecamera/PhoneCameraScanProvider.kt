@@ -37,6 +37,7 @@ class PhoneCameraScanProvider(
     private val appContext = context.applicationContext
     private val videoRecorder = PhoneCameraVideoRecorder(appContext, lifecycleOwner)
     private val imuRecorder = ImuRecorder(appContext)
+    private val tofCaptureSidecarRecorder = TofCaptureSidecarRecorder(appContext)
     private val cameraInfoCollector = PhoneCameraInfoCollector(appContext)
     private val manifestWriter = PhoneScanManifestWriter()
     private var active: ActivePhoneScan? = null
@@ -99,8 +100,26 @@ class PhoneCameraScanProvider(
             "Dual-phone capture is armed or recording"
         }
         val startedAt = Instant.now()
-        val baseDir = videoRecorder.startRecording(sessionId, scanId)
-        val imuFile = imuRecorder.start(sessionId, scanId, baseDir)
+        val baseDir = File(
+            appContext.filesDir,
+            "sessions/$sessionId/phone_scans/$scanId",
+        ).apply { mkdirs() }
+        val provisionalVideoStartNs = android.os.SystemClock.elapsedRealtimeNanos()
+        val imuFile = imuRecorder.start(
+            sessionId = sessionId,
+            scanId = scanId,
+            baseDir = baseDir,
+            videoStartTNs = provisionalVideoStartNs,
+        )
+        tofCaptureSidecarRecorder.start(baseDir)
+        writeActiveTofCalibrationSnapshot(appContext, baseDir)
+        try {
+            videoRecorder.startRecording(sessionId, scanId)
+        } catch (error: Throwable) {
+            tofCaptureSidecarRecorder.stop()
+            imuRecorder.stop()
+            throw error
+        }
         val cameraInfoFile = cameraInfoCollector.writeCameraInfo(baseDir, videoRecorder.getSelectedVideoInfo(), videoRecorder.getSelectedLensOption(), videoRecorder.getRequestedZoomRatio(), videoRecorder.getEffectiveZoomRatio(), videoRecorder.getMinZoomRatio(), videoRecorder.getMaxZoomRatio(), videoRecorder.getCalibrationResolutionInfo())
         check(cameraInfoFile.isFile && cameraInfoFile.length() > 0L) {
             "Phone camera metadata file was not created"
@@ -124,11 +143,31 @@ class PhoneCameraScanProvider(
     override suspend fun stopVideoScan(): ScanVideo {
         val current = active ?: error("Phone camera scan is not recording")
         val video = videoRecorder.stopRecording()
+        val tofSummary = tofCaptureSidecarRecorder.stop()
+        if (tofSummary == null) {
+            File(current.baseDir, "tof_calibration.json").delete()
+        }
+        imuRecorder.stop()
+        val videoTimelineStartNs =
+            video.cameraXStartElapsedNs ?: video.startCallElapsedNs
+        if (videoTimelineStartNs != null) {
+            imuRecorder.rebaseVideoTimeline(
+                file = current.imuFile,
+                videoStartTNs = videoTimelineStartNs,
+                anchorSource = "CAMERAX_VIDEO_RECORD_EVENT_START",
+            )
+        }
+        val encoderPtsSummary = withContext(Dispatchers.IO) {
+            Mp4VideoPtsExtractor.extract(
+                videoFile = File(video.path),
+                outputFile = File(current.baseDir, "encoder_pts.jsonl"),
+                cameraXStartElapsedNs = video.cameraXStartElapsedNs,
+            )
+        }
         cameraInfoCollector.updateRuntimeCaptureState(
             current.cameraInfoFile,
             video.frameTelemetrySummary,
         )
-        imuRecorder.stop()
         val finishedAt = Instant.now()
         val manifestFile = manifestWriter.write(
             baseDir = current.baseDir,
@@ -138,6 +177,11 @@ class PhoneCameraScanProvider(
             cameraInfoFile = current.cameraInfoFile,
             imuFile = current.imuFile,
             framesFile = video.frameTelemetrySummary?.path?.let(::File),
+            tofFramesFile = tofSummary?.path?.let(::File),
+            tofCalibrationFile = File(current.baseDir, "tof_calibration.json")
+                .takeIf { tofSummary != null && it.isFile && it.length() > 0L },
+            encoderPtsFile = File(encoderPtsSummary.path)
+                .takeIf { it.isFile && it.length() > 0L },
             createdAt = current.startedAt.toString(),
             finishedAt = finishedAt.toString(),
             durationSec = video.durationSec,

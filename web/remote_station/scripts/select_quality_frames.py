@@ -35,7 +35,7 @@ def extract(video, outdir, count, duration, source_fps, minfps, maxfps, width, a
     fps=count/duration if duration>0 else minfps
     fps=max(minfps, min(maxfps, fps))
     if source_fps>0: fps=min(fps, source_fps)
-    vf=f"fps={fps:.8f},{scale_filter(width, allow)}"
+    vf=f"fps=fps={fps:.8f}:start_time=0,{scale_filter(width, allow)}"
     subprocess.check_call(['ffmpeg','-y','-i',video,'-map','0:v:0','-vf',vf,'-q:v',str(q),str(outdir/'candidate_%06d.jpg')])
     return fps
 
@@ -67,12 +67,12 @@ def main():
     info=ffprobe(a.video); duration=max(info['duration'], .001)
     ccount=max(1, int(round(a.target_frames*(1 if a.sampling_mode=='auto_uniform' else a.candidate_multiplier))))
     eff=extract(a.video,cand,ccount,duration,info['fps'],a.min_fps,a.max_fps,a.scale_width,a.allow_upscale,a.jpeg_quality)
-    files=sorted(cand.glob('candidate_*.jpg')); actual=len(files); interval=duration/max(actual,1)
+    files=sorted(cand.glob('candidate_*.jpg')); actual=len(files); interval=(1.0/eff if eff>0 else duration/max(actual,1))
     prev=None; rows=[]
     for i,p in enumerate(files):
         m=metric(p, prev); 
         if not m: continue
-        prev=m['_thumb']; ts=min(duration,(i+0.5)*interval); m.update({'candidate':p.name,'timestamp_sec':ts,'index':i,'selected':False,'rejected_reason':''})
+        prev=m['_thumb']; ts=min(duration,max(0.0,i*interval)); m.update({'candidate':p.name,'timestamp_sec':ts,'video_pts_us':int(round(ts*1_000_000.0)),'index':i,'selected':False,'rejected_reason':''})
         mot=frame_motion_at(imu,ts) if imu_enabled else {}
         av=mot.get('angular_velocity_deg_sec'); adev=mot.get('accel_deviation')
         score=max((av or 0)/max(float(imu_cfg.get('hard_gyro_threshold_deg_sec',120)),1), (adev or 0)/max(float(imu_cfg.get('accel_deviation_threshold',2.5)),.1))

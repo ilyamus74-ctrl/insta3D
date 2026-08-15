@@ -13,6 +13,9 @@ class PhoneScanManifestWriter {
         cameraInfoFile: File,
         imuFile: File?,
         framesFile: File? = null,
+        tofFramesFile: File? = null,
+        tofCalibrationFile: File? = null,
+        encoderPtsFile: File? = null,
         createdAt: String,
         finishedAt: String,
         durationSec: Long,
@@ -35,6 +38,15 @@ class PhoneScanManifestWriter {
         if (framesFile != null && framesFile.exists() && framesFile.length() > 0L) {
             files.put(JSONObject().put("name", framesFile.name).put("path", framesFile.name).put("file_size_bytes", framesFile.length()))
         }
+        if (tofFramesFile != null && tofFramesFile.exists() && tofFramesFile.length() > 0L) {
+            files.put(JSONObject().put("name", tofFramesFile.name).put("path", tofFramesFile.name).put("file_size_bytes", tofFramesFile.length()))
+        }
+        if (tofCalibrationFile != null && tofCalibrationFile.exists() && tofCalibrationFile.length() > 0L) {
+            files.put(JSONObject().put("name", tofCalibrationFile.name).put("path", tofCalibrationFile.name).put("file_size_bytes", tofCalibrationFile.length()))
+        }
+        if (encoderPtsFile != null && encoderPtsFile.exists() && encoderPtsFile.length() > 0L) {
+            files.put(JSONObject().put("name", encoderPtsFile.name).put("path", encoderPtsFile.name).put("file_size_bytes", encoderPtsFile.length()))
+        }
         val cameraInfo = runCatching {
             JSONObject(cameraInfoFile.readText())
         }.getOrNull()
@@ -54,6 +66,9 @@ class PhoneScanManifestWriter {
             .put("camera_info", cameraInfoFile.name)
             .put("imu", if (imuFile != null && imuFile.exists() && imuFile.length() > 0L) imuFile.name else JSONObject.NULL)
             .put("frames", if (framesFile != null && framesFile.exists() && framesFile.length() > 0L) framesFile.name else JSONObject.NULL)
+            .put("tof_frames", if (tofFramesFile != null && tofFramesFile.exists() && tofFramesFile.length() > 0L) tofFramesFile.name else JSONObject.NULL)
+            .put("tof_calibration", if (tofCalibrationFile != null && tofCalibrationFile.exists() && tofCalibrationFile.length() > 0L) tofCalibrationFile.name else JSONObject.NULL)
+            .put("encoder_pts", if (encoderPtsFile != null && encoderPtsFile.exists() && encoderPtsFile.length() > 0L) encoderPtsFile.name else JSONObject.NULL)
             .put("calibration", calibration?.toJson() ?: JSONObject.NULL)
             .put("selected_camera_id", selectedLens?.cameraId ?: JSONObject.NULL)
             .put("camera_id", selectedLens?.cameraId ?: JSONObject.NULL)

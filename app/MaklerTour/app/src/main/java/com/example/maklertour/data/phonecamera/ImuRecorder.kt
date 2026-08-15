@@ -67,6 +67,49 @@ class ImuRecorder(context: Context) : SensorEventListener {
         return file
     }
 
+    fun rebaseVideoTimeline(
+        file: File,
+        videoStartTNs: Long,
+        anchorSource: String,
+    ) {
+        if (!file.isFile || file.length() <= 0L) return
+        val temporary = File(file.parentFile, "${file.name}.rebase.tmp")
+        temporary.bufferedWriter().use { output ->
+            file.forEachLine { line ->
+                val json = runCatching { JSONObject(line) }.getOrNull()
+                if (json == null) {
+                    output.write(line)
+                    output.newLine()
+                    return@forEachLine
+                }
+                if (json.optString("type") == "metadata") {
+                    json.put("video_start_t_ns", videoStartTNs)
+                    json.put("video_timeline_anchor_source", anchorSource)
+                    json.put("video_timeline_rebased", true)
+                } else if (json.has("t_ns")) {
+                    val timestampNs = json.optLong("t_ns", Long.MIN_VALUE)
+                    if (timestampNs != Long.MIN_VALUE) {
+                        json.put(
+                            "video_t_sec",
+                            (timestampNs - videoStartTNs).toDouble() /
+                                1_000_000_000.0,
+                        )
+                    }
+                }
+                output.write(json.toString())
+                output.newLine()
+            }
+        }
+        if (file.exists() && !file.delete()) {
+            temporary.delete()
+            error("Cannot replace IMU timeline ${file.absolutePath}")
+        }
+        if (!temporary.renameTo(file)) {
+            temporary.copyTo(file, overwrite = true)
+            temporary.delete()
+        }
+    }
+
     fun stop() {
         sensorManager.unregisterListener(this)
 

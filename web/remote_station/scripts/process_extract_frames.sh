@@ -34,7 +34,13 @@ if [[ -n "$IMU_JSONL" && -f "$IMU_JSONL" ]]; then
 else
   echo "INFO | IMU | No source IMU sidecar found for video $(basename "$INPUT_VIDEO")"
 fi
-for sidecar_pair in "source_video.camera_info_path:$JOB_ROOT/camera_info.json:camera_info" "source_video.manifest_path:$JOB_ROOT/manifest.json:manifest" "source_video.frames_path:$JOB_ROOT/frames.jsonl:frames"; do
+for sidecar_pair in \
+  "source_video.camera_info_path:$JOB_ROOT/camera_info.json:camera_info" \
+  "source_video.manifest_path:$JOB_ROOT/manifest.json:manifest" \
+  "source_video.frames_path:$JOB_ROOT/frames.jsonl:frames" \
+  "source_video.tof_frames_path:$JOB_ROOT/tof_frames.jsonl:tof_frames" \
+  "source_video.tof_calibration_path:$JOB_ROOT/tof_calibration.json:tof_calibration" \
+  "source_video.encoder_pts_path:$JOB_ROOT/encoder_pts.jsonl:encoder_pts"; do
   key="${sidecar_pair%%:*}"; rest="${sidecar_pair#*:}"; dest="${rest%%:*}"; label="${rest##*:}"
   src="$(read_param "$key" "")"
   if [[ -n "$src" && -f "$src" ]]; then
@@ -72,11 +78,33 @@ PY
   SUMMARY=$(python3 "$STATION_BASE/scripts/select_quality_frames.py" --video "$INPUT_VIDEO" --output-dir "$JOB_ROOT" --sampling-mode "$SAMPLING_MODE" --target-frames "$TARGET" --candidate-multiplier "$CAND_MULT" --min-fps "$MIN_FPS" --max-fps "$MAX_FPS" --scale-width "$SCALE" --jpeg-quality "$JPEG" "${KEEP_ARG[@]}" "${UPSCALE_ARG[@]}" "${BRIDGE_ARG[@]}" "${IMU_ARG[@]}")
   FRAME_COUNT=$(find "$JOB_ROOT/frames" -type f -name 'frame_*.jpg' | wc -l | tr -d ' ')
   [[ "$FRAME_COUNT" -gt 0 ]] || { write_status ERROR 0 -1 "No frames selected"; exit 2; }
+
+  if [[ -f "$JOB_ROOT/quality/selected_frames.json" && -f "$JOB_ROOT/frames.jsonl" && -f "$JOB_ROOT/encoder_pts.jsonl" ]]; then
+    SENSOR_ASSOC_ARGS=(
+      --selected-frames "$JOB_ROOT/quality/selected_frames.json"
+      --camera-frames "$JOB_ROOT/frames.jsonl"
+      --encoder-pts "$JOB_ROOT/encoder_pts.jsonl"
+      --output-jsonl "$JOB_ROOT/selected_sensor_associations.jsonl"
+      --report-json "$JOB_ROOT/selected_sensor_association_report.json"
+    )
+    [[ -f "$JOB_ROOT/tof_frames.jsonl" ]] && SENSOR_ASSOC_ARGS+=(--tof-frames "$JOB_ROOT/tof_frames.jsonl")
+    [[ -f "$JOB_ROOT/tof_calibration.json" ]] && SENSOR_ASSOC_ARGS+=(--tof-calibration "$JOB_ROOT/tof_calibration.json")
+    [[ -f "$JOB_ROOT/camera_info.json" ]] && SENSOR_ASSOC_ARGS+=(--camera-info "$JOB_ROOT/camera_info.json")
+    [[ -f "$JOB_ROOT/scan_imu.jsonl" ]] && SENSOR_ASSOC_ARGS+=(--imu "$JOB_ROOT/scan_imu.jsonl")
+    python3 "$STATION_BASE/scripts/build_selected_sensor_associations.py" "${SENSOR_ASSOC_ARGS[@]}" >> "$LOG_FILE" 2>&1 || \
+      echo "WARNING | SENSOR_ASSOC | Selected-frame Camera2/ToF/IMU association failed" >> "$LOG_FILE"
+  else
+    echo "INFO | SENSOR_ASSOC | Skipped: selected_frames.json, frames.jsonl or encoder_pts.jsonl unavailable" >> "$LOG_FILE"
+  fi
+
   python3 - "$JOB_ROOT" "$JOB_ID" "$SUMMARY" <<'PY'
 import json,sys,datetime,os
 root,job,summary=sys.argv[1:4]; s=json.loads(summary)
 s.update({'job_id':job,'frames':s.get('selected_frames',0),'output_dir':os.path.join(root,'frames'),'quality_dir':os.path.join(root,'quality'),'finished_at':datetime.datetime.now(datetime.timezone.utc).isoformat()})
 s['camera_metadata']=json.load(open(os.path.join(root,'camera_metadata.json'))) if os.path.isfile(os.path.join(root,'camera_metadata.json')) else {}
+association_report=os.path.join(root,'selected_sensor_association_report.json')
+if os.path.isfile(association_report):
+    s['sensor_association']=json.load(open(association_report))
 open(os.path.join(root,'result.json'),'w').write(json.dumps(s,indent=2))
 PY
   echo "INFO | EXTRACT_FRAMES | Candidate extraction completed frames=$CANDIDATES"

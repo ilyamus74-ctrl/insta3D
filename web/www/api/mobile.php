@@ -913,6 +913,9 @@ if (!is_writable($orderDir)) {
     $metadataPaths['manifest'] = api_store_optional_video_metadata('manifest', $orderDir, $relativeDir, $safeScanUuid, '_manifest.json', $metadataWarnings);
     $metadataPaths['imu'] = api_store_optional_video_metadata('imu', $orderDir, $relativeDir, $safeScanUuid, '_imu.jsonl', $metadataWarnings);
     $metadataPaths['frames'] = api_store_optional_video_metadata('frames', $orderDir, $relativeDir, $safeScanUuid, '_frames.jsonl', $metadataWarnings);
+    $metadataPaths['tof_frames'] = api_store_optional_video_metadata('tof_frames', $orderDir, $relativeDir, $safeScanUuid, '_tof_frames.jsonl', $metadataWarnings);
+    $metadataPaths['tof_calibration'] = api_store_optional_video_metadata('tof_calibration', $orderDir, $relativeDir, $safeScanUuid, '_tof_calibration.json', $metadataWarnings);
+    $metadataPaths['encoder_pts'] = api_store_optional_video_metadata('encoder_pts', $orderDir, $relativeDir, $safeScanUuid, '_encoder_pts.jsonl', $metadataWarnings);
 
     $metadataDbColumns = [
         'camera_info' => ['camera_info_path', 'camera_info_storage_path'],

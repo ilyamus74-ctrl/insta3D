@@ -48,10 +48,16 @@ REMOTE_IMU="$STATION_BASE/input/job_${JOB_ID}/scan_imu.jsonl"
 REMOTE_CAMERA_INFO="$STATION_BASE/input/job_${JOB_ID}/camera_info.json"
 REMOTE_MANIFEST="$STATION_BASE/input/job_${JOB_ID}/manifest.json"
 REMOTE_FRAMES="$STATION_BASE/input/job_${JOB_ID}/frames.jsonl"
+REMOTE_TOF_FRAMES="$STATION_BASE/input/job_${JOB_ID}/tof_frames.jsonl"
+REMOTE_TOF_CALIBRATION="$STATION_BASE/input/job_${JOB_ID}/tof_calibration.json"
+REMOTE_ENCODER_PTS="$STATION_BASE/input/job_${JOB_ID}/encoder_pts.jsonl"
 
 LOCAL_CAMERA_INFO=""
 LOCAL_MANIFEST=""
 LOCAL_FRAMES=""
+LOCAL_TOF_FRAMES=""
+LOCAL_TOF_CALIBRATION=""
+LOCAL_ENCODER_PTS=""
 if [[ -n "$EXTRACT_PARAMS_JSON" ]]; then
   mapfile -t SOURCE_SIDECARS < <(
     python3 - "$EXTRACT_PARAMS_JSON" <<'PY'
@@ -70,11 +76,17 @@ if not isinstance(source, dict):
 print(source.get("camera_info_path") or "")
 print(source.get("manifest_path") or "")
 print(source.get("frames_path") or "")
+print(source.get("tof_frames_path") or "")
+print(source.get("tof_calibration_path") or "")
+print(source.get("encoder_pts_path") or "")
 PY
   )
   LOCAL_CAMERA_INFO="${SOURCE_SIDECARS[0]:-}"
   LOCAL_MANIFEST="${SOURCE_SIDECARS[1]:-}"
   LOCAL_FRAMES="${SOURCE_SIDECARS[2]:-}"
+  LOCAL_TOF_FRAMES="${SOURCE_SIDECARS[3]:-}"
+  LOCAL_TOF_CALIBRATION="${SOURCE_SIDECARS[4]:-}"
+  LOCAL_ENCODER_PTS="${SOURCE_SIDECARS[5]:-}"
 fi
 
 # frames.jsonl is optional telemetry and older DB schemas do not have a
@@ -93,6 +105,29 @@ if [[ -z "$LOCAL_FRAMES" || ! -f "$LOCAL_FRAMES" ]]; then
     [[ -f "$candidate" ]] && LOCAL_FRAMES="$candidate"
   fi
 fi
+
+recover_phone_sidecar() {
+  local current="$1"
+  local suffix="$2"
+  local candidate=""
+  if [[ -n "$current" && -f "$current" ]]; then
+    printf '%s\n' "$current"
+    return 0
+  fi
+  if [[ "$LOCAL_CAMERA_INFO" == *_camera_info.json ]]; then
+    candidate="${LOCAL_CAMERA_INFO%_camera_info.json}${suffix}"
+  elif [[ "$LOCAL_MANIFEST" == *_manifest.json ]]; then
+    candidate="${LOCAL_MANIFEST%_manifest.json}${suffix}"
+  fi
+  if [[ -n "$candidate" && -f "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+  fi
+  return 0
+}
+
+LOCAL_TOF_FRAMES="$(recover_phone_sidecar "$LOCAL_TOF_FRAMES" "_tof_frames.jsonl")"
+LOCAL_TOF_CALIBRATION="$(recover_phone_sidecar "$LOCAL_TOF_CALIBRATION" "_tof_calibration.json")"
+LOCAL_ENCODER_PTS="$(recover_phone_sidecar "$LOCAL_ENCODER_PTS" "_encoder_pts.jsonl")"
 
 upload_optional_sidecar() {
   local local_path="$1"
@@ -151,17 +186,20 @@ fi
 upload_optional_sidecar "$LOCAL_CAMERA_INFO" "$REMOTE_CAMERA_INFO" "camera_info"
 upload_optional_sidecar "$LOCAL_MANIFEST" "$REMOTE_MANIFEST" "manifest"
 upload_optional_sidecar "$LOCAL_FRAMES" "$REMOTE_FRAMES" "frames"
+upload_optional_sidecar "$LOCAL_TOF_FRAMES" "$REMOTE_TOF_FRAMES" "tof_frames"
+upload_optional_sidecar "$LOCAL_TOF_CALIBRATION" "$REMOTE_TOF_CALIBRATION" "tof_calibration"
+upload_optional_sidecar "$LOCAL_ENCODER_PTS" "$REMOTE_ENCODER_PTS" "encoder_pts"
 
 echo "==> Start extract frames job $JOB_ID"
 printf -v Q_FPS '%q' "$EXTRACT_FPS"; printf -v Q_MAX '%q' "$EXTRACT_MAX_FRAMES"; printf -v Q_W '%q' "$EXTRACT_SCALE_WIDTH"; printf -v Q_Q '%q' "$EXTRACT_JPEG_QUALITY"
 if [[ -n "$EXTRACT_PARAMS_JSON" ]]; then
   printf -v Q_JSON '%q' "$EXTRACT_PARAMS_JSON"
-  "${SSH[@]}" "mkdir -p '$STATION_BASE/input/job_${JOB_ID}' && printf %s $Q_JSON > '$STATION_BASE/input/job_${JOB_ID}/parameters.json' && python3 - '$STATION_BASE/input/job_${JOB_ID}/parameters.json' '$REMOTE_IMU' '$REMOTE_CAMERA_INFO' '$REMOTE_MANIFEST' '$REMOTE_FRAMES' <<'PY'
+  "${SSH[@]}" "mkdir -p '$STATION_BASE/input/job_${JOB_ID}' && printf %s $Q_JSON > '$STATION_BASE/input/job_${JOB_ID}/parameters.json' && python3 - '$STATION_BASE/input/job_${JOB_ID}/parameters.json' '$REMOTE_IMU' '$REMOTE_CAMERA_INFO' '$REMOTE_MANIFEST' '$REMOTE_FRAMES' '$REMOTE_TOF_FRAMES' '$REMOTE_TOF_CALIBRATION' '$REMOTE_ENCODER_PTS' <<'PY'
 import json
 import os
 import sys
 
-parameter_path, imu_path, camera_info_path, manifest_path, frames_path = sys.argv[1:6]
+parameter_path, imu_path, camera_info_path, manifest_path, frames_path, tof_frames_path, tof_calibration_path, encoder_pts_path = sys.argv[1:9]
 with open(parameter_path, encoding='utf-8') as handle:
     payload = json.load(handle)
 
@@ -178,6 +216,9 @@ for key, path in (
     ('camera_info_path', camera_info_path),
     ('manifest_path', manifest_path),
     ('frames_path', frames_path),
+    ('tof_frames_path', tof_frames_path),
+    ('tof_calibration_path', tof_calibration_path),
+    ('encoder_pts_path', encoder_pts_path),
 ):
     if path and os.path.isfile(path):
         source[key] = path

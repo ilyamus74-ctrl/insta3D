@@ -673,6 +673,7 @@ object Mp4VideoPtsExtractor {
             videoFile.parentFile,
             "encoder_pts.jsonl",
         ),
+        cameraXStartElapsedNs: Long? = null,
     ): PhoneEncoderPtsSummary {
         outputFile.parentFile?.mkdirs()
         outputFile.delete()
@@ -699,6 +700,18 @@ object Mp4VideoPtsExtractor {
                             .put("schema_version", 1)
                             .put("source", "ANDROID_MEDIA_EXTRACTOR")
                             .put("video_path", videoFile.absolutePath)
+                            .putNullable(
+                                "camera_x_start_elapsed_realtime_ns",
+                                cameraXStartElapsedNs,
+                            )
+                            .put(
+                                "camera_x_start_anchor_status",
+                                if (cameraXStartElapsedNs != null) {
+                                    "AVAILABLE_PENDING_SERVER_VALIDATION"
+                                } else {
+                                    "UNAVAILABLE"
+                                },
+                            )
                             .putNullable(
                                 "mime",
                                 format.stringOrNull(MediaFormat.KEY_MIME),
