@@ -5,6 +5,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.os.Build
+import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -18,6 +19,7 @@ class PhoneCameraInfoCollector(private val context: Context) {
         val manager = context.getSystemService(CameraManager::class.java)
         val chars = manager.getCameraCharacteristics(lens.cameraId)
         val focusMode = lensRepository.getSelectedFocusMode(lens.cameraId)
+        val captureRigSettings = DualPhoneStereoSettingsStore(context).load()
         val factoryIntrinsics = chars.get(
             CameraCharacteristics.LENS_INTRINSIC_CALIBRATION,
         )?.takeIf { it.size >= 5 }
@@ -84,6 +86,22 @@ class PhoneCameraInfoCollector(private val context: Context) {
             .put("device_manufacturer", Build.MANUFACTURER)
             .put("device_model", Build.MODEL)
             .put("selected_camera_id", lens.cameraId)
+            .put(
+                "capture_rig_identity",
+                JSONObject()
+                    .put("device_id", captureRigSettings.deviceId)
+                    .put("rig_id", captureRigSettings.rigId)
+                    .put(
+                        "rig_mount_revision",
+                        captureRigSettings.rigMountRevision,
+                    )
+                    .put("selected_camera_id", lens.cameraId)
+                    .put(
+                        "active_calibration_profile_id",
+                        captureRigSettings.activeCalibrationProfileId
+                            ?: JSONObject.NULL,
+                    ),
+            )
             .put("lens_label", lens.lensLabel)
             .put("requested_zoom_ratio", requestedZoomRatio.toDouble())
             .put("effective_zoom_ratio", effectiveZoomRatio.toDouble())

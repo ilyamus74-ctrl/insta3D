@@ -2,6 +2,7 @@ package com.maklertour.data.phonecamera
 
 import android.content.Context
 import android.os.SystemClock
+import com.maklertour.data.dualphone.DualPhoneStereoSettingsStore
 import com.maklertour.data.tof.TofActiveClockSync
 import com.maklertour.data.tof.TofCameraCalibrationStore
 import com.maklertour.data.tof.TofFrameV1
@@ -190,19 +191,43 @@ class TofCaptureSidecarRecorder(context: Context) {
 fun writeActiveTofCalibrationSnapshot(
     context: Context,
     baseDir: File,
+    selectedCameraId: String? = null,
 ): File? {
     val profiles = TofCameraCalibrationStore(context).loadActiveProfiles()
         .filter { it.solved }
     if (profiles.isEmpty()) return null
+
+    val settings = DualPhoneStereoSettingsStore(context).load()
+    val effectiveCameraId = selectedCameraId
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: profiles
+            .map { it.masterCameraId }
+            .distinct()
+            .singleOrNull()
+
+    val captureIdentity = JSONObject()
+        .put("device_id", settings.deviceId)
+        .put("rig_id", settings.rigId)
+        .put("rig_mount_revision", settings.rigMountRevision)
+        .put(
+            "selected_camera_id",
+            effectiveCameraId ?: JSONObject.NULL,
+        )
+        .put(
+            "active_calibration_profile_id",
+            settings.activeCalibrationProfileId ?: JSONObject.NULL,
+        )
 
     val file = File(baseDir, "tof_calibration.json")
     val jsonProfiles = JSONArray()
     profiles.forEach { profile -> jsonProfiles.put(profile.toJson()) }
     file.writeText(
         JSONObject()
-            .put("schema_version", 1)
+            .put("schema_version", 2)
             .put("snapshot_type", "FROZEN_TOF_TO_CAMERA_EXTRINSICS")
             .put("captured_at_epoch_ms", System.currentTimeMillis())
+            .put("capture_identity", captureIdentity)
             .put("profile_count", profiles.size)
             .put("profiles", jsonProfiles)
             .toString(2),

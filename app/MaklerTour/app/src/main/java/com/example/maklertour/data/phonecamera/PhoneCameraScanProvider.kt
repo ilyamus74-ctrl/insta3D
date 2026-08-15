@@ -112,7 +112,11 @@ class PhoneCameraScanProvider(
             videoStartTNs = provisionalVideoStartNs,
         )
         tofCaptureSidecarRecorder.start(baseDir)
-        writeActiveTofCalibrationSnapshot(appContext, baseDir)
+        writeActiveTofCalibrationSnapshot(
+            context = appContext,
+            baseDir = baseDir,
+            selectedCameraId = videoRecorder.getSelectedLensOption()?.cameraId,
+        )
         try {
             videoRecorder.startRecording(sessionId, scanId)
         } catch (error: Throwable) {

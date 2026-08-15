@@ -272,6 +272,166 @@ function pipeline_log_camera_metadata(mysqli $db, int $pipelineRunId, string $jo
     if ($st) { $st->bind_param('si', $json, $pipelineRunId); $st->execute(); $st->close(); }
 }
 
+function pipeline_log_sensor_association_summary(
+    int $pipelineRunId,
+    string $extractDir
+): void {
+    if ($pipelineRunId <= 0) { return; }
+
+    $reportPath = rtrim($extractDir, '/')
+        . '/selected_sensor_association_report.json';
+    if (!is_file($reportPath) || !is_readable($reportPath)) {
+        pipeline_log(
+            $pipelineRunId,
+            'INFO',
+            'SENSOR_ASSOC',
+            'No selected_sensor_association_report.json; '
+                . 'Camera2/ToF/IMU association unavailable'
+        );
+        return;
+    }
+
+    $report = json_decode(
+        (string)file_get_contents($reportPath),
+        true
+    );
+    if (!is_array($report)) {
+        pipeline_log(
+            $pipelineRunId,
+            'WARNING',
+            'SENSOR_ASSOC',
+            'Invalid selected_sensor_association_report.json'
+        );
+        return;
+    }
+
+    $camera = is_array($report['camera_encoder'] ?? null)
+        ? $report['camera_encoder'] : [];
+    $tof = is_array($report['tof'] ?? null)
+        ? $report['tof'] : [];
+    $imu = is_array($report['imu'] ?? null)
+        ? $report['imu'] : [];
+    $cal = is_array($report['tof_calibration'] ?? null)
+        ? $report['tof_calibration'] : [];
+
+    $fmt = static function ($value, int $digits = 2): string {
+        return is_numeric($value)
+            ? number_format((float)$value, $digits, '.', '')
+            : 'n/a';
+    };
+    $yesNo = static fn($value): string => !empty($value) ? 'yes' : 'no';
+
+    pipeline_log(
+        $pipelineRunId,
+        'INFO',
+        'TOF',
+        sprintf(
+            'raw_sidecar=%s raw_frames=%d accepted_selected=%d '
+                . 'raw_selected=%d raw_coverage=%s%%',
+            $yesNo($tof['raw_sidecar_available'] ?? false),
+            (int)($tof['raw_frame_count'] ?? 0),
+            (int)($tof['selected_with_accepted_pair'] ?? 0),
+            (int)($tof['selected_with_accepted_pair_and_raw_frame'] ?? 0),
+            $fmt(
+                ((float)($tof['accepted_pair_raw_coverage'] ?? 0.0)) * 100.0,
+                2
+            )
+        )
+    );
+
+    pipeline_log(
+        $pipelineRunId,
+        'INFO',
+        'TOF',
+        sprintf(
+            'calibration=%s profiles=%d matched=%d identity_match=%s '
+                . 'observed_slots=%s',
+            (string)($cal['binding_status'] ?? 'UNKNOWN'),
+            (int)($cal['profile_count'] ?? 0),
+            (int)($cal['matching_profile_count'] ?? 0),
+            $yesNo($cal['identity_match'] ?? false),
+            implode(
+                ',',
+                array_map(
+                    'strval',
+                    is_array($cal['observed_tof_slots'] ?? null)
+                        ? $cal['observed_tof_slots'] : []
+                )
+            ) ?: 'none'
+        )
+    );
+
+    pipeline_log(
+        $pipelineRunId,
+        'INFO',
+        'SENSOR_ASSOC',
+        sprintf(
+            'mapping=%s temporal_candidate=%s selected=%d '
+                . 'camera_p50=%sms camera_p95=%sms camera_max=%sms',
+            (string)($report['mapping_status'] ?? 'UNKNOWN'),
+            !empty($report['temporal_candidate_pass']) ? 'PASS' : 'FAIL',
+            (int)($camera['selected_association_count'] ?? 0),
+            $fmt(
+                ((float)($camera['selected_association_error_p50_us'] ?? 0.0))
+                    / 1000.0,
+                3
+            ),
+            $fmt(
+                ((float)($camera['selected_association_error_p95_us'] ?? 0.0))
+                    / 1000.0,
+                3
+            ),
+            $fmt(
+                ((float)($camera['selected_association_error_max_us'] ?? 0.0))
+                    / 1000.0,
+                3
+            )
+        )
+    );
+
+    pipeline_log(
+        $pipelineRunId,
+        'INFO',
+        'SENSOR_ASSOC',
+        sprintf(
+            'frame_offset median=%s span=%s ordinal_fit=%s '
+                . 'ordinal_p95=%sus drift=%sppm '
+                . 'full_stream_span_delta=%sms diagnostic_only=yes',
+            $fmt($camera['frame_index_offset_median'] ?? null, 1),
+            (string)($camera['frame_index_offset_span'] ?? 'n/a'),
+            !empty($camera['ordinal_fit_pass']) ? 'PASS' : 'FAIL',
+            $fmt($camera['ordinal_fit_residual_p95_us'] ?? null, 2),
+            $fmt($camera['ordinal_fit_drift_abs_ppm'] ?? null, 2),
+            $fmt($camera['span_delta_ms'] ?? null, 3)
+        )
+    );
+
+    pipeline_log(
+        $pipelineRunId,
+        'INFO',
+        'SENSOR_ASSOC',
+        sprintf(
+            'IMU available=%s sync=%s rebased=%s anchor=%s',
+            $yesNo($imu['available'] ?? false),
+            (string)($imu['sync_quality'] ?? 'unavailable'),
+            $yesNo($imu['timeline_rebased'] ?? false),
+            (string)($imu['timeline_anchor_source'] ?? 'unavailable')
+        )
+    );
+
+    pipeline_log(
+        $pipelineRunId,
+        'INFO',
+        'SENSOR_ASSOC',
+        sprintf(
+            'ToF geometry gate=%s fusion=%s reason=%s',
+            !empty($report['ready_for_tof_geometry']) ? 'OPEN' : 'CLOSED',
+            !empty($report['fusion_enabled']) ? 'ON' : 'OFF',
+            (string)($report['geometry_gate_reason'] ?? 'unknown')
+        )
+    );
+}
+
 function auto_chain_after_done(mysqli $db, array $job): void
 {
     $type = (string)$job['job_type'];
@@ -314,7 +474,13 @@ function auto_chain_after_done(mysqli $db, array $job): void
             worker_log("EXTRACT_FRAMES parent={$remote} completed as upload preparation/diagnostics; not auto-queueing COLMAP_SPARSE");
             return;
         }
-        pipeline_log_extract_quality_summary($db, $pipelineRunId, remote_output_dir($remote)); pipeline_log_camera_metadata($db, $pipelineRunId, remote_output_dir($remote)); $er=sfm_json_array((string)@file_get_contents(remote_output_dir($remote).'/result.json')); $frames=(int)($er['frames'] ?? 0); $extra=$frames>0?['extracted_frames'=>$frames]:[]; sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued',$extra); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done'); pipeline_log($pipelineRunId,'INFO','SPARSE','Started');
+        pipeline_log_extract_quality_summary($db, $pipelineRunId, remote_output_dir($remote));
+        pipeline_log_camera_metadata($db, $pipelineRunId, remote_output_dir($remote));
+        pipeline_log_sensor_association_summary(
+            $pipelineRunId,
+            remote_output_dir($remote)
+        );
+        $er=sfm_json_array((string)@file_get_contents(remote_output_dir($remote).'/result.json')); $frames=(int)($er['frames'] ?? 0); $extra=$frames>0?['extracted_frames'=>$frames]:[]; sfm_pipeline_update($db,$pipelineRunId,'RUNNING','SPARSE',15,'Sparse reconstruction queued',$extra); pipeline_log($pipelineRunId,'INFO','EXTRACT_FRAMES','Done'); pipeline_log($pipelineRunId,'INFO','SPARSE','Started');
         $rid = sfm_job_id($db);
         $input = frames_path_for_parent($remote);
         $out = remote_output_dir($rid);

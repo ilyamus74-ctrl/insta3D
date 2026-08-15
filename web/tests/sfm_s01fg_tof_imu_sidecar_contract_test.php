@@ -26,11 +26,16 @@ ok(str_contains($tofRecorder, '"tof_frames.jsonl"'), 'PHONE_CAMERA records a ded
 ok(str_contains($tofRecorder, '"distance_mm"') && str_contains($tofRecorder, '"sigma_mm"'), 'raw ToF sidecar preserves distance and sigma arrays');
 ok(str_contains($tofRecorder, '"target_status"') && str_contains($tofRecorder, '"nb_target_detected"'), 'raw ToF sidecar preserves target validity arrays');
 ok(str_contains($tofRecorder, 'FROZEN_TOF_TO_CAMERA_EXTRINSICS'), 'capture freezes active ToF to CAMERA_A extrinsics');
+ok(str_contains($tofRecorder, '"capture_identity"'), 'frozen ToF calibration snapshots capture rig identity');
+ok(str_contains($tofRecorder, 'DualPhoneStereoSettingsStore'), 'frozen ToF calibration identity comes from persisted rig settings');
 
 $provider = source('app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraScanProvider.kt');
 ok(str_contains($provider, 'tofCaptureSidecarRecorder.start(baseDir)'), 'regular PHONE_CAMERA starts ToF sidecar capture');
 ok(str_contains($provider, 'Mp4VideoPtsExtractor.extract('), 'regular PHONE_CAMERA emits encoder PTS telemetry');
 ok(str_contains($provider, 'cameraXStartElapsedNs = video.cameraXStartElapsedNs'), 'encoder PTS sidecar carries CameraX elapsed-realtime anchor');
+ok(str_contains($provider, 'selectedCameraId = videoRecorder.getSelectedLensOption()?.cameraId'), 'frozen ToF calibration binds the actual selected camera');
+$cameraInfo = source('app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraInfoCollector.kt');
+ok(str_contains($cameraInfo, '"capture_rig_identity"'), 'camera_info independently records capture rig identity');
 $imuRecorder = source('app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/ImuRecorder.kt');
 ok(str_contains($imuRecorder, 'rebaseVideoTimeline'), 'IMU timeline is rebased to the video CameraX start anchor');
 ok(str_contains($imuRecorder, 'video_timeline_anchor_source'), 'IMU sidecar records its authoritative video timeline anchor');
@@ -68,8 +73,18 @@ ok(str_contains($selector, "'video_pts_us'"), 'selected JPEG metadata records vi
 
 $association = source('web/remote_station/scripts/build_selected_sensor_associations.py');
 ok(str_contains($association, 'CANDIDATE_CAMERAX_START_REALTIME'), 'S01G measures a conservative CameraX/Camera2 timeline candidate');
+ok(str_contains($association, 'full_stream_span_delta_diagnostic_only'), 'full Camera2/MP4 stream span delta is diagnostic only');
+ok(str_contains($association, 'ordinal_fit_ok'), 'temporal gate includes independent ordinal clock-fit sanity');
+ok(!str_contains($association, 'and span_delta_ms <= 100.0'), 'full stream span mismatch no longer rejects a stable selected-frame mapping');
+ok(str_contains($association, 'MATCHED_CAPTURE_IDENTITY'), 'ToF calibration binds by rig/device/camera identity');
+ok(str_contains($association, 'CAPTURE_IDENTITY_MISMATCH'), 'ToF calibration rejects mismatched capture identity');
 ok(str_contains($association, '"fusion_enabled": False'), 'S01G does not enable ToF fusion');
 ok(str_contains($association, '"ready_for_tof_geometry": False'), 'S01G keeps ToF geometry/fusion gate closed pending measured review');
 ok(str_contains($association, 'nearest_imu_record'), 'S01G preserves per-selected-frame IMU association');
+
+$worker = source('web/tools/sfm_remote_worker.php');
+ok(str_contains($worker, 'pipeline_log_sensor_association_summary'), 'pipeline publishes S01G sensor-association summary');
+ok(str_contains($worker, "'TOF'"), 'pipeline publishes dedicated ToF log lines');
+ok(str_contains($worker, 'full_stream_span_delta=') && str_contains($worker, 'diagnostic_only=yes'), 'pipeline explains full-stream span delta is diagnostic only');
 
 echo "Result: PASS\n";

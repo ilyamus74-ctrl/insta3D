@@ -121,15 +121,20 @@ def tof_valid_zone_count(row):
     return count
 
 
-def calibration_status(path, camera_info_path):
+def calibration_status(path, camera_info_path, tof_rows=None):
     result = {
         "snapshot_available": False,
         "profile_count": 0,
         "slots": [],
+        "observed_tof_slots": [],
         "camera_calibration_profile_id": None,
+        "camera_capture_identity": None,
+        "snapshot_capture_identity": None,
+        "identity_match": False,
         "matching_profile_count": 0,
         "binding_status": "NO_SNAPSHOT",
     }
+
     camera_info = {}
     if camera_info_path and Path(camera_info_path).is_file():
         try:
@@ -138,16 +143,28 @@ def calibration_status(path, camera_info_path):
             )
         except Exception:
             camera_info = {}
+
     camera_profile_id = camera_info.get("calibration_profile_id")
+    camera_identity = camera_info.get("capture_rig_identity")
+    if not isinstance(camera_identity, dict):
+        camera_identity = None
+
     result["camera_calibration_profile_id"] = camera_profile_id
+    result["camera_capture_identity"] = camera_identity
 
     if not path or not Path(path).is_file():
         return result
+
     try:
         snapshot = json.loads(Path(path).read_text(encoding="utf-8"))
     except Exception:
         result["binding_status"] = "INVALID_SNAPSHOT"
         return result
+
+    snapshot_identity = snapshot.get("capture_identity")
+    if not isinstance(snapshot_identity, dict):
+        snapshot_identity = None
+    result["snapshot_capture_identity"] = snapshot_identity
 
     profiles = (
         snapshot.get("profiles")
@@ -157,24 +174,73 @@ def calibration_status(path, camera_info_path):
     result["snapshot_available"] = True
     result["profile_count"] = len(profiles)
     result["slots"] = sorted({
-        int(p.get("tof_slot"))
-        for p in profiles
-        if isinstance(p, dict) and isinstance(p.get("tof_slot"), int)
+        int(profile.get("tof_slot"))
+        for profile in profiles
+        if isinstance(profile, dict)
+        and isinstance(profile.get("tof_slot"), int)
     })
 
-    if not camera_profile_id:
-        result["binding_status"] = "CAMERA_PROFILE_ID_MISSING"
+    observed_slots = sorted({
+        int(row.get("slot"))
+        for row in (tof_rows or [])
+        if isinstance(row, dict)
+        and isinstance(row.get("slot"), int)
+    })
+    result["observed_tof_slots"] = observed_slots
+
+    if not camera_identity or not snapshot_identity:
+        result["binding_status"] = "CAPTURE_IDENTITY_MISSING"
+        return result
+
+    identity_keys = (
+        "device_id",
+        "rig_id",
+        "rig_mount_revision",
+        "selected_camera_id",
+    )
+    identity_match = all(
+        camera_identity.get(key) is not None
+        and camera_identity.get(key) == snapshot_identity.get(key)
+        for key in identity_keys
+    )
+    result["identity_match"] = identity_match
+    if not identity_match:
+        result["binding_status"] = "CAPTURE_IDENTITY_MISMATCH"
+        return result
+
+    selected_camera_id = camera_info.get("selected_camera_id")
+    if (
+        selected_camera_id is not None
+        and selected_camera_id
+            != camera_identity.get("selected_camera_id")
+    ):
+        result["binding_status"] = "CAMERA_SELECTION_MISMATCH"
         return result
 
     matching = [
-        p
-        for p in profiles
-        if isinstance(p, dict)
-        and p.get("camera_calibration_profile_id") == camera_profile_id
-        and p.get("status") == "solved"
+        profile
+        for profile in profiles
+        if isinstance(profile, dict)
+        and profile.get("status") == "solved"
+        and profile.get("rig_id") == camera_identity.get("rig_id")
+        and profile.get("rig_mount_revision")
+            == camera_identity.get("rig_mount_revision")
+        and profile.get("master_device_id")
+            == camera_identity.get("device_id")
+        and profile.get("master_camera_id")
+            == camera_identity.get("selected_camera_id")
+        and (
+            not observed_slots
+            or profile.get("tof_slot") in observed_slots
+        )
     ]
+
     result["matching_profile_count"] = len(matching)
-    result["binding_status"] = "MATCHED" if matching else "PROFILE_MISMATCH"
+    result["binding_status"] = (
+        "MATCHED_CAPTURE_IDENTITY"
+        if matching
+        else "PROFILE_IDENTITY_MISMATCH"
+    )
     return result
 
 
@@ -447,6 +513,30 @@ def main():
         abs(camera_span_ns - encoder_span_ns) / 1_000_000.0
         if camera_span_ns is not None and encoder_span_ns is not None else None
     )
+
+    ordinal_fit_residual_p95_us = (
+        ordinal_fit.get("residual_p95_us")
+        if isinstance(ordinal_fit, dict)
+        else None
+    )
+    ordinal_fit_drift_abs_ppm = (
+        abs(float(ordinal_fit.get("drift_ppm")))
+        if isinstance(ordinal_fit, dict)
+        and ordinal_fit.get("drift_ppm") is not None
+        else None
+    )
+    ordinal_fit_ok = bool(
+        ordinal_fit_residual_p95_us is not None
+        and ordinal_fit_residual_p95_us <= 5000.0
+        and ordinal_fit_drift_abs_ppm is not None
+        and ordinal_fit_drift_abs_ppm <= 1000.0
+    )
+
+    # Camera2 callbacks intentionally cover pre-roll/post-roll around the
+    # encoded MP4. Therefore full Camera2-span vs MP4-span delta is a
+    # diagnostic only, not a temporal gate. Stable selected-frame mapping is
+    # judged from the CameraX anchor, nearest Camera2 timestamps, constant
+    # frame-index offset and the independent ordinal-fit clock sanity check.
     selected_mapping_ok = bool(
         anchor_available
         and selected_error_p95 is not None
@@ -455,8 +545,7 @@ def main():
         >= max(1, int(len(selected) * 0.95))
         and frame_offset_span is not None
         and frame_offset_span <= 3
-        and span_delta_ms is not None
-        and span_delta_ms <= 100.0
+        and ordinal_fit_ok
     )
 
     raw_tof_coverage = (
@@ -467,6 +556,7 @@ def main():
     calibration = calibration_status(
         args.tof_calibration,
         args.camera_info,
+        tof_rows,
     )
 
     report = {
@@ -488,6 +578,9 @@ def main():
             "encoder_sample_count": len(encoder_rows),
             "ordinal_pair_count": pair_count,
             "ordinal_fit_diagnostic_only": ordinal_fit,
+            "ordinal_fit_pass": ordinal_fit_ok,
+            "ordinal_fit_residual_p95_us": ordinal_fit_residual_p95_us,
+            "ordinal_fit_drift_abs_ppm": ordinal_fit_drift_abs_ppm,
             "selected_association_count": len(
                 selected_camera_errors_us
             ),
@@ -503,6 +596,7 @@ def main():
             "camera_timestamp_span_ns": camera_span_ns,
             "encoder_pts_span_ns": encoder_span_ns,
             "span_delta_ms": span_delta_ms,
+            "full_stream_span_delta_diagnostic_only": True,
             "selected_association_error_max_us": (
                 max(selected_camera_errors_us)
                 if selected_camera_errors_us
@@ -512,7 +606,8 @@ def main():
                 "selected_association_error_p95_us_max": 10000.0,
                 "selected_association_coverage_min": 0.95,
                 "frame_index_offset_span_max": 3,
-                "camera_encoder_span_delta_ms_max": 100.0,
+                "ordinal_fit_residual_p95_us_max": 5000.0,
+                "ordinal_clock_drift_abs_ppm_max": 1000.0,
             },
         },
         "tof": {
