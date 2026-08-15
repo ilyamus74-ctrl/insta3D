@@ -87,7 +87,251 @@ def colmap_prior_value(v):
         parsed=[num(x) for x in params]
         if parsed and all(x is not None for x in parsed):
             out['params']=parsed
+    source_resolution=pair(v.get('source_resolution'))
+    if source_resolution:
+        out['source_resolution']=[
+            int(round(source_resolution[0])),
+            int(round(source_resolution[1])),
+        ]
+    for key in (
+        'video_intrinsics',
+        'runtime_crop_sensor_pixels',
+        'stream_crop_sensor_pixels',
+        'validation',
+    ):
+        if isinstance(v.get(key), dict):
+            out[key]=v.get(key)
+    if v.get('distortion_initialization') is not None:
+        out['distortion_initialization']=str(v.get('distortion_initialization'))
     return out
+
+def rect_value(v):
+    if not isinstance(v, dict):
+        return None
+    left=num(v.get('left'))
+    top=num(v.get('top'))
+    right=num(v.get('right'))
+    bottom=num(v.get('bottom'))
+    if (
+        left is None or top is None or
+        right is None or bottom is None or
+        right <= left or bottom <= top
+    ):
+        return None
+    return {
+        'left': left,
+        'top': top,
+        'right': right,
+        'bottom': bottom,
+        'width': right-left,
+        'height': bottom-top,
+    }
+
+def crop_region_value(v):
+    if isinstance(v, dict):
+        return rect_value(v)
+    if isinstance(v, str):
+        values=re.findall(r'-?\d+(?:\.\d+)?', v)
+        if len(values) >= 4:
+            left,top,right,bottom=(float(x) for x in values[:4])
+            return rect_value({
+                'left': left,
+                'top': top,
+                'right': right,
+                'bottom': bottom,
+            })
+    return None
+
+def rects_equal(a, b, tolerance=0.5):
+    return bool(
+        a and b and
+        all(
+            abs(a[key]-b[key]) <= tolerance
+            for key in ('left','top','right','bottom')
+        )
+    )
+
+def derive_colmap_camera_prior(
+    ci,
+    capture_source,
+    resolution,
+    factory_intrinsics,
+    runtime,
+    existing_prior,
+    is_wide,
+):
+    if existing_prior and existing_prior.get('usable_for_colmap'):
+        return existing_prior
+    if str(capture_source or '').strip().upper() != 'PHONE_CAMERA' or is_wide:
+        return existing_prior
+
+    source='CAMERA2_FACTORY_INTRINSICS_RUNTIME_STREAM_CROP'
+
+    def reject(reason):
+        return {
+            'usable_for_colmap': False,
+            'source': source,
+            'reason': reason,
+        }
+
+    if not isinstance(ci, dict) or not isinstance(factory_intrinsics, dict):
+        return reject('Factory Camera2 intrinsics are unavailable.')
+    if (
+        str(factory_intrinsics.get('coordinate_space') or '') !=
+        'SENSOR_PRE_CORRECTION_ACTIVE_ARRAY_PIXELS'
+    ):
+        return reject(
+            'Factory Camera2 intrinsics are not in '
+            'pre-correction active-array coordinates.'
+        )
+    if not resolution or resolution[0] <= 0 or resolution[1] <= 0:
+        return reject('Video resolution is unavailable.')
+
+    active=rect_value(ci.get('active_array_size'))
+    pre_correction=rect_value(ci.get('pre_correction_active_array_size'))
+    if (
+        active is None or
+        pre_correction is None or
+        not rects_equal(active, pre_correction)
+    ):
+        return reject(
+            'Active array and pre-correction active array are unavailable '
+            'or differ.'
+        )
+
+    if (
+        not isinstance(runtime, dict) or
+        int(num(runtime.get('capture_result_count')) or 0) < 10
+    ):
+        return reject('Insufficient runtime Camera2 capture results.')
+    observed=runtime.get('observed_runtime')
+    if (
+        not isinstance(observed, dict) or
+        observed.get('geometry_stable') is not True
+    ):
+        return reject('Runtime Camera2 geometry is not stable.')
+
+    regions=observed.get('crop_regions')
+    if not isinstance(regions, list) or len(regions) != 1:
+        return reject('Runtime Camera2 crop region is not unique.')
+    runtime_crop=crop_region_value(regions[0])
+    if (
+        runtime_crop is None or
+        not rects_equal(runtime_crop, active) or
+        not rects_equal(runtime_crop, pre_correction)
+    ):
+        return reject(
+            'Runtime crop is not the full active/pre-correction array.'
+        )
+
+    zoom_min=num(observed.get('zoom_ratio_min'))
+    zoom_max=num(observed.get('zoom_ratio_max'))
+    if (
+        zoom_min is None or
+        zoom_max is None or
+        abs(zoom_min-1.0) > 1e-3 or
+        abs(zoom_max-1.0) > 1e-3
+    ):
+        return reject('Runtime zoom is not fixed at 1.0x.')
+
+    physical_ids=observed.get('active_physical_camera_ids') or []
+    if isinstance(physical_ids, list) and physical_ids:
+        return reject('Runtime logical multi-camera switched physical cameras.')
+
+    video_stabilization_modes=observed.get('video_stabilization_modes') or []
+    if any(int(num(value) or 0) != 0 for value in video_stabilization_modes):
+        return reject('Electronic/video stabilization is active.')
+
+    distortion_correction_modes=observed.get('distortion_correction_modes') or []
+    if any(int(num(value) or 0) != 0 for value in distortion_correction_modes):
+        return reject('Runtime distortion correction is active.')
+
+    output_width=float(resolution[0])
+    output_height=float(resolution[1])
+    crop_width=runtime_crop['width']
+    crop_height=runtime_crop['height']
+    output_aspect=output_width/output_height
+    crop_aspect=crop_width/crop_height
+
+    if crop_aspect > output_aspect:
+        stream_height=crop_height
+        stream_width=stream_height*output_aspect
+        stream_left=runtime_crop['left']+(crop_width-stream_width)/2.0
+        stream_top=runtime_crop['top']
+    else:
+        stream_width=crop_width
+        stream_height=stream_width/output_aspect
+        stream_left=runtime_crop['left']
+        stream_top=runtime_crop['top']+(crop_height-stream_height)/2.0
+
+    stream_values=(stream_left, stream_top, stream_width, stream_height)
+    if any(abs(value-round(value)) > 1e-6 for value in stream_values):
+        return reject(
+            'Centered stream aspect crop does not resolve to integral '
+            'sensor-pixel geometry.'
+        )
+
+    stream_right=stream_left+stream_width
+    stream_bottom=stream_top+stream_height
+    scale_x=output_width/stream_width
+    scale_y=output_height/stream_height
+
+    fx=factory_intrinsics['fx']*scale_x
+    fy=factory_intrinsics['fy']*scale_y
+    cx=(factory_intrinsics['cx']-stream_left)*scale_x
+    cy=(factory_intrinsics['cy']-stream_top)*scale_y
+    skew=(factory_intrinsics.get('skew') or 0.0)*scale_x
+    focal=(fx+fy)/2.0
+
+    if focal <= 0 or abs(fx-fy)/focal > 0.01:
+        return reject(
+            'Mapped fx/fy are inconsistent with COLMAP SIMPLE_RADIAL.'
+        )
+    if not (0.0 <= cx <= output_width and 0.0 <= cy <= output_height):
+        return reject('Mapped principal point is outside the video frame.')
+
+    return {
+        'usable_for_colmap': True,
+        'source': source,
+        'model': 'SIMPLE_RADIAL',
+        'params': [focal, cx, cy, 0.0],
+        'source_resolution': [
+            int(round(output_width)),
+            int(round(output_height)),
+        ],
+        'video_intrinsics': {
+            'fx': fx,
+            'fy': fy,
+            'cx': cx,
+            'cy': cy,
+            'skew': skew,
+        },
+        'runtime_crop_sensor_pixels': runtime_crop,
+        'stream_crop_sensor_pixels': {
+            'left': stream_left,
+            'top': stream_top,
+            'right': stream_right,
+            'bottom': stream_bottom,
+            'width': stream_width,
+            'height': stream_height,
+        },
+        'validation': {
+            'geometry_stable': True,
+            'zoom_ratio_min': zoom_min,
+            'zoom_ratio_max': zoom_max,
+            'video_stabilization_modes': video_stabilization_modes,
+            'optical_stabilization_modes':
+                observed.get('optical_stabilization_modes') or [],
+            'distortion_correction_modes': distortion_correction_modes,
+            'active_physical_camera_ids': physical_ids,
+        },
+        'distortion_initialization': 'ZERO_SIMPLE_RADIAL_BA_REFINES',
+        'reason': (
+            'Validated Camera2 factory intrinsics mapped through stable 1x '
+            'runtime crop and centered output aspect crop; SIMPLE_RADIAL k '
+            'starts at 0 for COLMAP refinement.'
+        ),
+    }
 
 def fov_value(v):
     direct=num(v)
@@ -151,6 +395,15 @@ def collect(ci, mf):
     text=' '.join(str(x).lower() for x in [label, selected, find(src,['camera_name','name','lens_type'])] if x is not None)
     is_wide=bool(re.search(r'ultra[\s_-]?wide|fisheye|fish[\s_-]?eye|0\.5x|0,5x|wide_angle', text)) or (fov is not None and fov >= 100) or (focal is not None and focal <= 2.2)
     if not lens and is_wide: lens='ultrawide'
+    colmap_prior=derive_colmap_camera_prior(
+        ci=ci,
+        capture_source=capture_source,
+        resolution=resolution,
+        factory_intrinsics=factory_intrinsics,
+        runtime=camera2_capture_state,
+        existing_prior=colmap_prior,
+        is_wide=is_wide,
+    )
     out={
       'selected_camera_id': str(selected) if selected is not None else None,
       'lens_label': lens,
@@ -208,6 +461,9 @@ def main():
         pairing=tof.get('camera2_pairing') or {}
         if tof: print(f"INFO | CAMERA_METADATA | ToF active={tof.get('active',False)} frames_during_capture={tof.get('frames_during_capture',0)} pairing={pairing.get('status','unknown')} accepted={pairing.get('accepted_pairs',0)} rejected={pairing.get('rejected_pairs',0)}")
         prior=meta.get('colmap_camera_prior') or {}
-        if prior: print(f"INFO | CAMERA_METADATA | COLMAP prior usable={prior.get('usable_for_colmap',False)} source={prior.get('source','unresolved')} reason={prior.get('reason','')}")
+        if prior:
+            print(f"INFO | CAMERA_METADATA | COLMAP prior usable={prior.get('usable_for_colmap',False)} source={prior.get('source','unresolved')} reason={prior.get('reason','')}")
+            if prior.get('usable_for_colmap'):
+                print(f"INFO | CAMERA_METADATA | COLMAP prior model={prior.get('model','unknown')} params={prior.get('params',[])} source_resolution={prior.get('source_resolution',[])}")
         for w in meta.get('warnings',[]): print('WARNING | CAMERA_METADATA | '+w)
 if __name__=='__main__': main()

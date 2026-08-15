@@ -52,6 +52,15 @@ $checks = [
         str_contains($metadata, "'camera2_intrinsic_calibration'") &&
         str_contains($metadata, "'colmap_camera_prior'"),
 
+    'GrafikStation derives a guarded Camera2 video-space COLMAP prior' =>
+        str_contains($metadata, 'derive_colmap_camera_prior') &&
+        str_contains($metadata, 'CAMERA2_FACTORY_INTRINSICS_RUNTIME_STREAM_CROP') &&
+        str_contains($metadata, "'stream_crop_sensor_pixels'") &&
+        str_contains($metadata, "'source_resolution'") &&
+        str_contains($metadata, 'Runtime zoom is not fixed at 1.0x.') &&
+        str_contains($metadata, 'Electronic/video stabilization is active.') &&
+        str_contains($metadata, 'ZERO_SIMPLE_RADIAL_BA_REFINES'),
+
     'capture source prefers top-level manifest identity over nested Camera2 source' =>
         str_contains($metadata, "mf.get('source')") &&
         str_contains($metadata, "find(src,['capture_source','captureSource'])") &&
@@ -68,6 +77,13 @@ $checks = [
         str_contains($sparse, '--ImageReader.camera_params') &&
         str_contains($sparse, 'usable_for_colmap') &&
         str_contains($sparse, 'Verified prior requested unsupported camera model'),
+
+    'COLMAP prior adapts to extracted frame orientation and scale' =>
+        str_contains($sparse, 'adapt_colmap_prior_to_frame') &&
+        str_contains($sparse, 'source_resolution') &&
+        str_contains($sparse, 'ROTATED_90_OR_270') &&
+        str_contains($sparse, 'COLMAP prior params disabled after frame-geometry validation') &&
+        str_contains($sparse, 'camera_params=$COLMAP_CAMERA_PARAMS_FROM_METADATA'),
 
     'worker supports explicit DB metadata paths plus legacy fallback' =>
         str_contains($worker, "['imu_path', 'imu_storage_path']") &&

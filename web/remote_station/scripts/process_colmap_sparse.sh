@@ -27,6 +27,7 @@ COLMAP_CAMERA_MODEL_FROM_METADATA=""
 COLMAP_CAMERA_PARAMS_FROM_METADATA=""
 COLMAP_CAMERA_SINGLE_FROM_METADATA="0"
 COLMAP_CAMERA_PRIOR_SOURCE=""
+COLMAP_CAMERA_PRIOR_ADAPTATION=""
 PARAMETERS_JSON_PATH="$BASE/input/job_${JOB_ID}/parameters.json"
 APRILTAG_ASSIST_ENABLED="${APRILTAG_ASSIST_ENABLED:-1}"
 APRILTAG_TAG_FAMILY="${APRILTAG_TAG_FAMILY:-tag36h11}"
@@ -335,6 +336,213 @@ PYMETA
   fi
 }
 
+adapt_colmap_prior_to_frame() {
+  local first_frame="${1:-}"
+  [[ -n "$COLMAP_CAMERA_PARAMS_FROM_METADATA" ]] || return 0
+  [[ -f "$first_frame" ]] || return 0
+
+  local meta_json=""
+  meta_json="$(find_camera_metadata_json || true)"
+  [[ -n "$meta_json" ]] || return 0
+
+  local adaptation=()
+  mapfile -t adaptation < <(python3 - "$meta_json" "$first_frame" <<'PYADAPT'
+import json
+import struct
+import sys
+
+meta_path, frame_path = sys.argv[1], sys.argv[2]
+meta = json.load(open(meta_path, encoding='utf-8'))
+prior = meta.get('colmap_camera_prior') or {}
+model = str(prior.get('model') or '')
+params = prior.get('params')
+source_resolution = prior.get('source_resolution')
+
+def emit(status, adapted_params, message):
+    print(status)
+    print(','.join(f'{float(value):.12g}' for value in adapted_params) if adapted_params else '')
+    print(str(message).replace('\n', ' '))
+
+def jpeg_size(path):
+    sof_markers = {
+        0xC0, 0xC1, 0xC2, 0xC3,
+        0xC5, 0xC6, 0xC7,
+        0xC9, 0xCA, 0xCB,
+        0xCD, 0xCE, 0xCF,
+    }
+    with open(path, 'rb') as fh:
+        if fh.read(2) != b'\xff\xd8':
+            raise ValueError('not a JPEG file')
+        while True:
+            prefix = fh.read(1)
+            if not prefix:
+                raise ValueError('JPEG SOF marker not found')
+            if prefix != b'\xff':
+                continue
+            marker = fh.read(1)
+            while marker == b'\xff':
+                marker = fh.read(1)
+            if not marker:
+                raise ValueError('truncated JPEG marker')
+            code = marker[0]
+            if code in (0xD8, 0xD9, 0x01) or 0xD0 <= code <= 0xD7:
+                continue
+            length_raw = fh.read(2)
+            if len(length_raw) != 2:
+                raise ValueError('truncated JPEG segment')
+            length = struct.unpack('>H', length_raw)[0]
+            if length < 2:
+                raise ValueError('invalid JPEG segment length')
+            if code in sof_markers:
+                header = fh.read(5)
+                if len(header) != 5:
+                    raise ValueError('truncated JPEG SOF')
+                height, width = struct.unpack('>HH', header[1:5])
+                return int(width), int(height)
+            fh.seek(length - 2, 1)
+
+if not (
+    isinstance(params, list) and
+    len(params) > 0 and
+    bool(model)
+):
+    emit('REJECTED', None, 'metadata prior is incomplete')
+    raise SystemExit(0)
+
+if not (
+    isinstance(source_resolution, list) and
+    len(source_resolution) >= 2
+):
+    emit(
+        'UNCHANGED',
+        params,
+        'prior has no source_resolution; assuming params already match extracted frames',
+    )
+    raise SystemExit(0)
+
+try:
+    source_width = float(source_resolution[0])
+    source_height = float(source_resolution[1])
+    actual_width, actual_height = jpeg_size(frame_path)
+except Exception as exc:
+    emit('REJECTED', None, f'cannot resolve frame geometry: {exc}')
+    raise SystemExit(0)
+
+if source_width <= 0 or source_height <= 0:
+    emit('REJECTED', None, 'invalid prior source_resolution')
+    raise SystemExit(0)
+
+if model != 'SIMPLE_RADIAL' or len(params) != 4:
+    if (
+        int(round(source_width)) == actual_width and
+        int(round(source_height)) == actual_height
+    ):
+        emit(
+            'UNCHANGED',
+            params,
+            f'model={model} already matches frame resolution '
+            f'{actual_width}x{actual_height}',
+        )
+    else:
+        emit(
+            'REJECTED',
+            None,
+            f'cannot rotate/scale model={model} prior automatically',
+        )
+    raise SystemExit(0)
+
+try:
+    focal, cx, cy, radial = (float(value) for value in params)
+except Exception as exc:
+    emit('REJECTED', None, f'invalid SIMPLE_RADIAL params: {exc}')
+    raise SystemExit(0)
+
+def uniform_scale(scale_x, scale_y):
+    denominator = max(abs(scale_x), abs(scale_y), 1e-12)
+    return abs(scale_x - scale_y) / denominator <= 0.01
+
+same_scale_x = actual_width / source_width
+same_scale_y = actual_height / source_height
+
+if uniform_scale(same_scale_x, same_scale_y):
+    scale = (same_scale_x + same_scale_y) / 2.0
+    adapted = [
+        focal * scale,
+        cx * same_scale_x,
+        cy * same_scale_y,
+        radial,
+    ]
+    emit(
+        'SCALED',
+        adapted,
+        f'source={int(source_width)}x{int(source_height)} '
+        f'frame={actual_width}x{actual_height}',
+    )
+    raise SystemExit(0)
+
+rotated_scale_x = actual_width / source_height
+rotated_scale_y = actual_height / source_width
+
+if uniform_scale(rotated_scale_x, rotated_scale_y):
+    center_tolerance_x = max(2.0, source_width * 0.01)
+    center_tolerance_y = max(2.0, source_height * 0.01)
+    if (
+        abs(cx - source_width / 2.0) > center_tolerance_x or
+        abs(cy - source_height / 2.0) > center_tolerance_y
+    ):
+        emit(
+            'REJECTED',
+            None,
+            '90/270-degree frame rotation detected but source principal '
+            'point is not sufficiently centered to rotate without direction metadata',
+        )
+        raise SystemExit(0)
+
+    scale = (rotated_scale_x + rotated_scale_y) / 2.0
+    adapted = [
+        focal * scale,
+        actual_width / 2.0,
+        actual_height / 2.0,
+        radial,
+    ]
+    emit(
+        'ROTATED_90_OR_270',
+        adapted,
+        f'source={int(source_width)}x{int(source_height)} '
+        f'frame={actual_width}x{actual_height}',
+    )
+    raise SystemExit(0)
+
+emit(
+    'REJECTED',
+    None,
+    f'frame aspect/scale does not match prior source resolution: '
+    f'source={int(source_width)}x{int(source_height)} '
+    f'frame={actual_width}x{actual_height}',
+)
+PYADAPT
+)
+
+  local status="${adaptation[0]:-REJECTED}"
+  local adapted_params="${adaptation[1]:-}"
+  local message="${adaptation[2]:-no adaptation details}"
+
+  case "$status" in
+    UNCHANGED|SCALED|ROTATED_90_OR_270)
+      if [[ -n "$adapted_params" ]]; then
+        COLMAP_CAMERA_PARAMS_FROM_METADATA="$adapted_params"
+        COLMAP_CAMERA_PRIOR_ADAPTATION="$status"
+        echo "INFO | CAMERA_METADATA | COLMAP prior frame adaptation=$status $message params=$adapted_params" >> "$LOG_FILE"
+      fi
+      ;;
+    *)
+      COLMAP_CAMERA_PARAMS_FROM_METADATA=""
+      COLMAP_CAMERA_PRIOR_ADAPTATION="REJECTED"
+      echo "WARNING | CAMERA_METADATA | COLMAP prior params disabled after frame-geometry validation: $message" >> "$LOG_FILE"
+      ;;
+  esac
+}
+
 validate_colmap() {
   case "$COLMAP_MODE" in
     native)
@@ -409,6 +617,8 @@ if (( ${#FRAME_FILES[@]} == 0 )); then
 fi
 shopt -u nullglob
 
+adapt_colmap_prior_to_frame "${FRAME_FILES[0]}"
+
 write_status "RUNNING" 5 -1 "Preparing workspace"
 mkdir -p "$OUTPUT_DIR" "$SPARSE_DIR" "$COLMAP_LOG_DIR"
 
@@ -419,7 +629,10 @@ if [[ "$COLMAP_CAMERA_SINGLE_FROM_METADATA" == "1" ]]; then
   FEATURE_ARGS+=(--ImageReader.single_camera 1)
   echo "INFO | CAMERA_METADATA | COLMAP feature extraction uses one shared camera for all frames" >> "$LOG_FILE"
 fi
-[[ -n "$COLMAP_CAMERA_PARAMS_FROM_METADATA" ]] && FEATURE_ARGS+=(--ImageReader.camera_params "$COLMAP_CAMERA_PARAMS_FROM_METADATA")
+if [[ -n "$COLMAP_CAMERA_PARAMS_FROM_METADATA" ]]; then
+  FEATURE_ARGS+=(--ImageReader.camera_params "$COLMAP_CAMERA_PARAMS_FROM_METADATA")
+  echo "INFO | CAMERA_METADATA | COLMAP feature extraction camera_params=$COLMAP_CAMERA_PARAMS_FROM_METADATA adaptation=${COLMAP_CAMERA_PRIOR_ADAPTATION:-UNCHANGED}" >> "$LOG_FILE"
+fi
 run_colmap "${FEATURE_ARGS[@]}" > "$COLMAP_LOG_DIR/feature_extractor.log" 2>&1
 
 case "$COLMAP_MATCHER" in
