@@ -196,4 +196,37 @@ class PhoneCameraInfoCollector(private val context: Context) {
         file.writeText(json.toString(2))
         return file
     }
+
+    fun updateRuntimeCaptureState(
+        cameraInfoFile: File,
+        summary: PhoneFrameTelemetrySummary?,
+    ): File {
+        if (summary == null || !cameraInfoFile.isFile) return cameraInfoFile
+        val json = runCatching {
+            JSONObject(cameraInfoFile.readText())
+        }.getOrElse { JSONObject() }
+        json
+            .put(
+                "camera2_capture_state",
+                summary.camera2CaptureState ?: JSONObject.NULL,
+            )
+            .put(
+                "tof_capture_state",
+                summary.tofCaptureState ?: JSONObject.NULL,
+            )
+            .put(
+                "capture_result_telemetry",
+                JSONObject()
+                    .put("path", summary.path)
+                    .put("frame_count", summary.frameCount)
+                    .putNullable("observed_fps", summary.observedCaptureResultFps)
+                    .put("estimated_missing_results", summary.estimatedMissingCaptureResults),
+            )
+            .put("runtime_capture_metadata_updated_at", Instant.now().toString())
+        cameraInfoFile.writeText(json.toString(2))
+        return cameraInfoFile
+    }
+
+    private fun JSONObject.putNullable(key: String, value: Any?): JSONObject =
+        put(key, value ?: JSONObject.NULL)
 }

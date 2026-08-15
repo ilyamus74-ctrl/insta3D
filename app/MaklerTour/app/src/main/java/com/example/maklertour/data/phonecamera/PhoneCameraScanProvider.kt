@@ -124,6 +124,10 @@ class PhoneCameraScanProvider(
     override suspend fun stopVideoScan(): ScanVideo {
         val current = active ?: error("Phone camera scan is not recording")
         val video = videoRecorder.stopRecording()
+        cameraInfoCollector.updateRuntimeCaptureState(
+            current.cameraInfoFile,
+            video.frameTelemetrySummary,
+        )
         imuRecorder.stop()
         val finishedAt = Instant.now()
         val manifestFile = manifestWriter.write(
@@ -774,6 +778,12 @@ class PhoneCameraScanProvider(
             null
         }
         val frameSummary = recordingResult?.frameTelemetrySummary
+        if (recordingResult != null) {
+            cameraInfoCollector.updateRuntimeCaptureState(
+                current.cameraInfoFile,
+                frameSummary,
+            )
+        }
         val localTimelineSummary = if (recordingResult != null) {
             withContext(Dispatchers.IO) {
                 DualPhoneLocalTimelineAnalyzer.analyze(

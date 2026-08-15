@@ -176,7 +176,7 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
     @Volatile private var lastStartCallElapsedNs: Long? = null
     @Volatile private var lastCameraXStartElapsedNs: Long? = null
     @Volatile private var lastFinalizeElapsedNs: Long? = null
-    private val frameTelemetryRecorder = DualPhoneFrameTelemetryRecorder()
+    private val frameTelemetryRecorder = DualPhoneFrameTelemetryRecorder(context)
     private val frameCaptureCallback =
         object : CameraCaptureSession.CaptureCallback() {
             override fun onCaptureCompleted(
@@ -1196,27 +1196,25 @@ class PhoneCameraVideoRecorder(private val context: Context, private val lifecyc
                 ?.previewStreamState
                 ?.value
                 ?.name ?: lastPreviewStreamState
-        if (telemetryContext != null) {
-            val info = selectedVideoInfo
-            frameTelemetryRecorder.start(
-                baseDir = file.parentFile ?: file,
-                context = telemetryContext,
-                cameraId = lens.cameraId,
-                videoModeId = info?.let {
-                    "${it.width}x${it.height}@${it.fps}"
-                },
-                width = info?.width,
-                height = info?.height,
-                fps = info?.fps,
-                rotationDegrees = when (currentTargetRotation) {
-                    Surface.ROTATION_90 -> 90
-                    Surface.ROTATION_180 -> 180
-                    Surface.ROTATION_270 -> 270
-                    else -> 0
-                },
-                startCallElapsedNs = startCallNs,
-            )
-        }
+        val info = selectedVideoInfo
+        frameTelemetryRecorder.start(
+            baseDir = file.parentFile ?: file,
+            context = telemetryContext,
+            cameraId = lens.cameraId,
+            videoModeId = info?.let {
+                "${it.width}x${it.height}@${it.fps}"
+            },
+            width = info?.width,
+            height = info?.height,
+            fps = info?.fps,
+            rotationDegrees = when (currentTargetRotation) {
+                Surface.ROTATION_90 -> 90
+                Surface.ROTATION_180 -> 180
+                Surface.ROTATION_270 -> 270
+                else -> 0
+            },
+            startCallElapsedNs = startCallNs,
+        )
         try {
             recording = preparedVideoCapture.output.prepareRecording(
                 context,

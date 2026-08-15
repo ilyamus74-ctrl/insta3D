@@ -142,6 +142,9 @@ def collect(ci, mf):
     factory_intrinsics=intrinsics_value(find(src,['camera2_intrinsic_calibration']))
     factory_distortion=distortion_value(find(src,['camera2_lens_distortion']))
     colmap_prior=colmap_prior_value(find(src,['colmap_camera_prior','colmapCameraPrior']))
+    camera2_capture_state=ci.get('camera2_capture_state') if isinstance(ci,dict) else None
+    tof_capture_state=ci.get('tof_capture_state') if isinstance(ci,dict) else None
+    capture_result_telemetry=ci.get('capture_result_telemetry') if isinstance(ci,dict) else None
     if fov is None and focal and sensor:
         fov=math.degrees(2*math.atan(max(sensor)/(2*focal)))
     lens=norm_label(label)
@@ -168,6 +171,9 @@ def collect(ci, mf):
       'camera2_intrinsic_calibration': factory_intrinsics,
       'camera2_lens_distortion': factory_distortion,
       'colmap_camera_prior': colmap_prior,
+      'camera2_capture_state': camera2_capture_state,
+      'tof_capture_state': tof_capture_state,
+      'capture_result_telemetry': capture_result_telemetry,
       'is_ultrawide_or_fisheye': is_wide,
       'warnings': [ULTRAWIDE_WARNING] if is_wide else [],
     }
@@ -195,6 +201,12 @@ def main():
         if meta.get('focus_mode'): print(f"INFO | CAMERA_METADATA | focus_mode: {meta.get('focus_mode')} locked={meta.get('focus_locked','unknown')}")
         intr=meta.get('camera2_intrinsic_calibration') or {}
         if intr: print(f"INFO | CAMERA_METADATA | Camera2 sensor intrinsics: fx={intr.get('fx')} fy={intr.get('fy')} cx={intr.get('cx')} cy={intr.get('cy')} space={intr.get('coordinate_space')}")
+        runtime=meta.get('camera2_capture_state') or {}
+        observed=runtime.get('observed_runtime') or {}
+        if runtime: print(f"INFO | CAMERA_METADATA | Runtime Camera2 results={runtime.get('capture_result_count',0)} crop_regions={observed.get('crop_regions_count','unknown')} geometry_stable={observed.get('geometry_stable','unknown')}")
+        tof=meta.get('tof_capture_state') or {}
+        pairing=tof.get('camera2_pairing') or {}
+        if tof: print(f"INFO | CAMERA_METADATA | ToF active={tof.get('active',False)} frames_during_capture={tof.get('frames_during_capture',0)} pairing={pairing.get('status','unknown')} accepted={pairing.get('accepted_pairs',0)} rejected={pairing.get('rejected_pairs',0)}")
         prior=meta.get('colmap_camera_prior') or {}
         if prior: print(f"INFO | CAMERA_METADATA | COLMAP prior usable={prior.get('usable_for_colmap',False)} source={prior.get('source','unresolved')} reason={prior.get('reason','')}")
         for w in meta.get('warnings',[]): print('WARNING | CAMERA_METADATA | '+w)
