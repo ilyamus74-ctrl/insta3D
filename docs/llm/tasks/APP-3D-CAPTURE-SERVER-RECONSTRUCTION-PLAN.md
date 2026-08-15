@@ -74,6 +74,78 @@ Use cases:
 The server extracts/selects keyframes and runs the reconstruction pipeline after
 capture.
 
+ToF is optional. A missing/disconnected ToF sensor must never block SINGLE
+capture, upload, frame extraction, sparse reconstruction, dense reconstruction,
+mesh generation or texturing.
+
+### Camera optical state and calibration profiles
+
+Camera intrinsics are not represented by one global `camera_intrinsics.json`.
+Profiles are keyed by the optical state that can change image geometry:
+
+```text
+camera id
+video resolution
+zoom ratio
+focus mode
+```
+
+Initial focus modes:
+
+```text
+AUTO
+INFINITY_FIXED
+```
+
+The capture manifest records the requested/effective focus state. The production
+UI will expose the same two focus choices already used by calibration workflows:
+
+```text
+[ AUTO FOCUS ]
+[ infinity / INFINITY_FIXED ]
+```
+
+A reproducible fixed-focus profile is authoritative when available:
+
+```text
+camera_calibration/
+  camera0_1920x1080_1x_infinity.json
+  camera0_1920x1080_1x_auto_reference.json
+```
+
+`AUTO` is not assumed to be one fixed optical calibration. Its actual lens
+position may change while recording. Runtime focus-distance telemetry may later
+be used to choose/interpolate a profile. Until then AUTO may use Camera2 factory
+metadata as diagnostic/prior information while COLMAP remains allowed to refine
+intrinsics.
+
+Capture metadata contract:
+
+```text
+focus_mode
+focus_locked
+focus_distance_diopters
+intrinsics_source
+calibration_profile_key
+calibration_profile_id
+```
+
+Camera2 `LENS_INTRINSIC_CALIBRATION` and `LENS_DISTORTION` are preserved when the
+device exposes them, but their native coordinate system is sensor/pre-correction
+space. They must not be injected blindly as video-frame COLMAP parameters until
+crop/zoom/resolution mapping or a verified calibration profile makes them valid
+for the actual recorded frames.
+
+Camera/ToF separation remains:
+
+```text
+ToF <-> CAMERA_A extrinsics: R/t      rigid mounting
+CAMERA_A intrinsics:         K/D      optical/focus profile
+```
+
+Changing focus does not by itself redefine the rigid ToF mounting transform.
+Projection into RGB uses the K/D profile matching the capture optical state.
+
 ### Stereo-camera capture
 
 Preferred input when both phones are available:
@@ -227,25 +299,52 @@ not on the critical path for the first production-quality reconstruction.
 
 ## Current order
 
+The production implementation order is intentionally serial:
+
 ```text
-LM03.5A  registered anchor runtime              CLOSED
-LM03.5B  laptop/web registered overlay          CLOSED
-LM03.5C  bounded diagnostics                    CLOSED
-
-LM03.5D  SfM/COLMAP ToF sidecars                NEXT
-
-LM03.6   live STEREO / TOF / FUSED
-LM03.7   VIO + metric trajectory
-LM03.8   coarse accumulated live 3D preview
-
-SERVER PIPELINE
-  capture validation
-  keyframes
-  COLMAP sparse
-  COLMAP dense
-  ToF/stereo fusion
-  mesh + texture
+1. SINGLE capture + server reconstruction
+2. STEREO capture + server reconstruction
+3. LIVE operator preview / fused 3D
 ```
 
-The server pipeline and live LM03.6-LM03.8 path can evolve in parallel because
-both consume the same synchronized/calibrated capture contracts.
+Current milestones:
+
+```text
+LM03.5A  registered anchor runtime                    CLOSED
+LM03.5B  laptop/web registered overlay                CLOSED
+LM03.5C  bounded diagnostics                          CLOSED
+
+SFM-S01A SINGLE capture without ToF baseline          PASS
+SFM-S01D camera optical-state/intrinsics contract     CURRENT
+SFM-S01E explicit server metadata paths               CURRENT
+SFM-S01F optional ToF capture sidecar                 AFTER RGB baseline
+SFM-S01G optional ToF <-> selected-frame association
+SFM-S01H optional ToF-assisted dense/fusion
+          -> SINGLE CLOSED
+
+SFM-S02   STEREO capture + server reconstruction      AFTER SINGLE
+          ToF remains optional
+          -> STEREO CLOSED
+
+LM03.6    live STEREO / TOF / FUSED                   AFTER STEREO
+LM03.7    VIO + metric trajectory
+LM03.8    coarse accumulated live 3D preview
+```
+
+`LM03.5D` is no longer a blocker before SINGLE RGB reconstruction. Its capture
+sidecar work is folded into the optional ToF extensions of SFM-S01/SFM-S02.
+
+The existing web-driven processing path remains authoritative:
+
+```text
+Android capture/upload
+  -> IlyamusWWW web + MySQL + sfm worker
+  -> GrafikStation
+  -> EXTRACT_FRAMES
+  -> COLMAP sparse
+  -> COLMAP dense/fusion
+  -> mesh
+  -> web artifacts
+```
+
+Operators do not manually launch GrafikStation jobs in the normal workflow.

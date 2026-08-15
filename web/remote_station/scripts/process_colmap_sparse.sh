@@ -24,6 +24,9 @@ COLMAP_SEQUENTIAL_OVERLAP="${COLMAP_SEQUENTIAL_OVERLAP:-60}"
 COLMAP_LOOP_DETECTION="${COLMAP_LOOP_DETECTION:-0}"
 COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA="${COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA:-0}"
 COLMAP_CAMERA_MODEL_FROM_METADATA=""
+COLMAP_CAMERA_PARAMS_FROM_METADATA=""
+COLMAP_CAMERA_SINGLE_FROM_METADATA="0"
+COLMAP_CAMERA_PRIOR_SOURCE=""
 PARAMETERS_JSON_PATH="$BASE/input/job_${JOB_ID}/parameters.json"
 APRILTAG_ASSIST_ENABLED="${APRILTAG_ASSIST_ENABLED:-1}"
 APRILTAG_TAG_FAMILY="${APRILTAG_TAG_FAMILY:-tag36h11}"
@@ -243,9 +246,52 @@ PYMETA
 
 select_camera_model_from_metadata() {
   COLMAP_CAMERA_MODEL_FROM_METADATA=""
-  [[ "$COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA" == "1" ]] || return 0
+  COLMAP_CAMERA_PARAMS_FROM_METADATA=""
+  COLMAP_CAMERA_SINGLE_FROM_METADATA="0"
+  COLMAP_CAMERA_PRIOR_SOURCE=""
   local meta_json=""
   meta_json="$(find_camera_metadata_json || true)"
+
+  if [[ -n "$meta_json" ]]; then
+    local prior_lines=()
+    mapfile -t prior_lines < <(python3 - "$meta_json" <<'PYPRIOR'
+import json,sys
+m=json.load(open(sys.argv[1]))
+p=m.get('colmap_camera_prior') or {}
+usable=bool(p.get('usable_for_colmap', False))
+model=str(p.get('model') or '')
+params=p.get('params')
+source=str(p.get('source') or '')
+reason=str(p.get('reason') or '')
+valid=usable and bool(model) and isinstance(params,list) and len(params)>0
+print('1' if valid else '0')
+print(model)
+print(','.join(str(float(x)) for x in params) if valid else '')
+print(source)
+print(reason)
+PYPRIOR
+)
+    if [[ "${prior_lines[0]:-0}" == "1" ]]; then
+      local prior_model="${prior_lines[1]:-}"
+      local prior_params="${prior_lines[2]:-}"
+      local prior_source="${prior_lines[3]:-VERIFIED_PROFILE}"
+      local help_text
+      help_text="$(run_colmap feature_extractor -h 2>&1 || true)"
+      if grep -q "$prior_model" <<< "$help_text"; then
+        COLMAP_CAMERA_MODEL_FROM_METADATA="$prior_model"
+        COLMAP_CAMERA_PARAMS_FROM_METADATA="$prior_params"
+        COLMAP_CAMERA_SINGLE_FROM_METADATA="1"
+        COLMAP_CAMERA_PRIOR_SOURCE="$prior_source"
+        echo "INFO | CAMERA_METADATA | Using verified COLMAP prior model=$prior_model source=$prior_source single_camera=1" >> "$LOG_FILE"
+        return 0
+      fi
+      echo "WARNING | CAMERA_METADATA | Verified prior requested unsupported camera model=$prior_model; falling back to normal COLMAP camera initialization" >> "$LOG_FILE"
+    elif [[ -n "${prior_lines[4]:-}" ]]; then
+      echo "INFO | CAMERA_METADATA | COLMAP prior not injected: ${prior_lines[4]}" >> "$LOG_FILE"
+    fi
+  fi
+
+  [[ "$COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA" == "1" ]] || return 0
   [[ -n "$meta_json" ]] || { echo "WARNING | CAMERA_METADATA | COLMAP_CAMERA_MODEL_AUTO_FROM_METADATA=1 but no metadata was found; using COLMAP default camera model" >> "$LOG_FILE"; return 0; }
   local is_wide
   is_wide="$(python3 - "$meta_json" <<'PYMETA'
@@ -346,6 +392,8 @@ mkdir -p "$OUTPUT_DIR" "$SPARSE_DIR" "$COLMAP_LOG_DIR"
 write_status "RUNNING" 15 -1 "COLMAP feature extraction"
 FEATURE_ARGS=(feature_extractor --database_path "$DATABASE_PATH" --image_path "$FRAMES_DIR" --FeatureExtraction.use_gpu 1)
 [[ -n "$COLMAP_CAMERA_MODEL_FROM_METADATA" ]] && FEATURE_ARGS+=(--ImageReader.camera_model "$COLMAP_CAMERA_MODEL_FROM_METADATA")
+[[ "$COLMAP_CAMERA_SINGLE_FROM_METADATA" == "1" ]] && FEATURE_ARGS+=(--ImageReader.single_camera 1)
+[[ -n "$COLMAP_CAMERA_PARAMS_FROM_METADATA" ]] && FEATURE_ARGS+=(--ImageReader.camera_params "$COLMAP_CAMERA_PARAMS_FROM_METADATA")
 run_colmap "${FEATURE_ARGS[@]}" > "$COLMAP_LOG_DIR/feature_extractor.log" 2>&1
 
 case "$COLMAP_MATCHER" in

@@ -1041,6 +1041,57 @@ function safe_session_imu_path(mysqli $db, array $job): ?string
     return null;
 }*/
 
+function sfm_video_scan_metadata_values(
+    mysqli $db,
+    array $job,
+    array $columns
+): array {
+    $videoScanId = sfm_job_video_scan_id($db, $job);
+    if ($videoScanId <= 0) { return []; }
+
+    $values = [];
+    foreach ($columns as $column) {
+        if (!preg_match('/^[a-zA-Z0-9_]+$/', (string)$column)) {
+            continue;
+        }
+        $escaped = $db->real_escape_string((string)$column);
+        $exists = $db->query(
+            "SHOW COLUMNS FROM video_scans LIKE '" . $escaped . "'"
+        );
+        $available = $exists && $exists->num_rows > 0;
+        if ($exists) { $exists->close(); }
+        if (!$available) { continue; }
+
+        $query = $db->query(
+            'SELECT `' . $column . '` AS metadata_path ' .
+            'FROM video_scans WHERE id=' . (int)$videoScanId .
+            ' AND deleted_at IS NULL LIMIT 1'
+        );
+        $row = $query ? $query->fetch_assoc() : null;
+        if ($query) { $query->close(); }
+        $value = trim((string)($row['metadata_path'] ?? ''));
+        if ($value !== '') { $values[] = $value; }
+    }
+    return array_values(array_unique($values));
+}
+
+function sfm_append_storage_path_candidates(
+    array &$candidates,
+    string $value,
+    string $videoDir
+): void {
+    $value = trim($value);
+    if ($value === '') { return; }
+    $candidates[] = $value;
+    if (!str_starts_with($value, '/')) {
+        $relative = ltrim($value, '/');
+        $candidates[] = rtrim(source_storage_root(), '/') . '/' . $relative;
+        $candidates[] =
+            rtrim(legacy_source_storage_root(), '/') . '/' . $relative;
+        $candidates[] = rtrim($videoDir, '/') . '/' . basename($relative);
+    }
+}
+
 function safe_session_imu_path(mysqli $db, array $job): ?string
 {
     $video = safe_session_video_path($db, $job);
@@ -1072,8 +1123,17 @@ function safe_session_imu_path(mysqli $db, array $job): ?string
     ]) as $name) {
         $candidates[] = $videoDir . '/' . $name;
     }
+    foreach (
+        sfm_video_scan_metadata_values(
+            $db,
+            $job,
+            ['imu_path', 'imu_storage_path'],
+        ) as $value
+    ) {
+        sfm_append_storage_path_candidates($candidates, $value, $videoDir);
+    }
 
-    foreach ($candidates as $candidate) {
+    foreach (array_values(array_unique($candidates)) as $candidate) {
         $real = realpath($candidate);
         if (
             $real !== false &&
@@ -1099,10 +1159,18 @@ function safe_session_metadata_path(mysqli $db, array $job, string $suffix): ?st
     $key = $suffix === '_camera_info.json' ? 'camera_info_path' : 'manifest_path';
     $candidates = [];
     if (is_array($params) && !empty($params['source_video'][$key])) { $candidates[] = (string)$params['source_video'][$key]; }
+    $dbColumns = $suffix === '_camera_info.json'
+        ? ['camera_info_path', 'camera_info_storage_path']
+        : ['manifest_path', 'manifest_storage_path'];
+    foreach (
+        sfm_video_scan_metadata_values($db, $job, $dbColumns) as $value
+    ) {
+        sfm_append_storage_path_candidates($candidates, $value, $videoDir);
+    }
     $stem = pathinfo($video, PATHINFO_FILENAME);
     $baseStem = preg_replace('/_video$/', '', $stem);
     foreach (array_unique([$stem . $suffix, $baseStem . $suffix]) as $name) { $candidates[] = $videoDir . '/' . $name; }
-    foreach ($candidates as $candidate) {
+    foreach (array_values(array_unique($candidates)) as $candidate) {
         $real = realpath($candidate);
         if ($real !== false && is_file($real) && str_starts_with($real, $allowedDir . DIRECTORY_SEPARATOR)) { return $real; }
     }

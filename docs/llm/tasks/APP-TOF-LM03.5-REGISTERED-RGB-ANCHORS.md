@@ -11,7 +11,7 @@ LM03.5:   CLOSED — registered ToF -> CAMERA_A path accepted
 LM03.5A:  CLOSED — slot0 runtime pairing/projection verified on device
 LM03.5B:  CLOSED — laptop/web registered overlay verified on real scenes
 LM03.5C:  CLOSED — bounded machine-readable host diagnostic verified
-LM03.5D:  NEXT — capture-time ToF sidecars for SfM/COLMAP/Dense
+LM03.5D:  DEFERRED — optional ToF sidecars are integrated after SINGLE RGB baseline
 ```
 
 ## Goal

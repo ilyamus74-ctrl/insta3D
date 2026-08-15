@@ -31,6 +31,13 @@ class PhoneScanManifestWriter {
         if (imuFile != null && imuFile.exists() && imuFile.length() > 0L) {
             files.put(JSONObject().put("name", imuFile.name).put("path", imuFile.name).put("file_size_bytes", imuFile.length()))
         }
+        val cameraInfo = runCatching {
+            JSONObject(cameraInfoFile.readText())
+        }.getOrNull()
+        fun cameraInfoValue(key: String): Any =
+            cameraInfo?.opt(key)?.takeUnless { it == JSONObject.NULL }
+                ?: JSONObject.NULL
+
         val json = JSONObject()
             .put("scan_id", scanId)
             .put("session_id", sessionId)
@@ -46,6 +53,21 @@ class PhoneScanManifestWriter {
             .put("selected_camera_id", selectedLens?.cameraId ?: JSONObject.NULL)
             .put("camera_id", selectedLens?.cameraId ?: JSONObject.NULL)
             .put("lens_label", selectedLens?.lensLabel ?: JSONObject.NULL)
+            .put("focus_mode", cameraInfoValue("focus_mode"))
+            .put("focus_locked", cameraInfoValue("focus_locked"))
+            .put(
+                "focus_distance_diopters",
+                cameraInfoValue("focus_distance_diopters"),
+            )
+            .put("intrinsics_source", cameraInfoValue("intrinsics_source"))
+            .put(
+                "calibration_profile_key",
+                cameraInfoValue("calibration_profile_key"),
+            )
+            .put(
+                "calibration_profile_id",
+                cameraInfoValue("calibration_profile_id"),
+            )
             .put("requested_zoom_ratio", requestedZoomRatio.toDouble())
             .put("effective_zoom_ratio", effectiveZoomRatio.toDouble())
             .put("selected_zoom_ratio", effectiveZoomRatio.toDouble())

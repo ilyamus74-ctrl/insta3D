@@ -22,10 +22,12 @@ LM03.5      64 ToF anchors on Registered RGB         CLOSED
 LM03.5A     multi-slot runtime anchor producer        CLOSED
 LM03.5B     laptop/web CAMERA_A ToF overlay           CLOSED
 LM03.5C     bounded registered-ToF diagnostics        CLOSED
-LM03.5D     SfM/COLMAP capture-time ToF sidecars      NEXT
-LM03.6      STEREO / TOF / FUSED cursor               PLANNED
-LM03.7      VIO + ToF metric trajectory               PLANNED
-LM03.8      accumulated metric live 3D preview        PLANNED
+LM03.5D     capture-time ToF sidecars                  DEFERRED / OPTIONAL
+SFM-S01     SINGLE RGB + server reconstruction         CURRENT
+SFM-S02     STEREO + server reconstruction             AFTER S01
+LM03.6      STEREO / TOF / FUSED live cursor           AFTER S02
+LM03.7      VIO + ToF metric trajectory                AFTER S02
+LM03.8      accumulated metric live 3D preview         AFTER S02
 ```
 
 ## LM03.1 closeout

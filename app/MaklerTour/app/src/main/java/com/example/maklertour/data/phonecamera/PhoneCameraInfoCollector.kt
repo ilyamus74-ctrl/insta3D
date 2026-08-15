@@ -17,6 +17,58 @@ class PhoneCameraInfoCollector(private val context: Context) {
         val lens = selectedLens ?: lensRepository.selectedOrDefault().first
         val manager = context.getSystemService(CameraManager::class.java)
         val chars = manager.getCameraCharacteristics(lens.cameraId)
+        val focusMode = lensRepository.getSelectedFocusMode(lens.cameraId)
+        val factoryIntrinsics = chars.get(
+            CameraCharacteristics.LENS_INTRINSIC_CALIBRATION,
+        )?.takeIf { it.size >= 5 }
+        val factoryDistortion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            chars.get(CameraCharacteristics.LENS_DISTORTION)
+                ?.takeIf { it.size >= 5 }
+        } else {
+            null
+        }
+        val preCorrectionActiveArray = chars.get(
+            CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE,
+        )
+        val zoomKey = String.format(
+            java.util.Locale.US,
+            "%.3f",
+            effectiveZoomRatio,
+        ).replace('.', 'p')
+        val calibrationProfileKey = buildString {
+            append("camera_").append(lens.cameraId)
+            append("_")
+            append(selectedVideoInfo?.width ?: 0)
+            append("x")
+            append(selectedVideoInfo?.height ?: 0)
+            append("_zoom_").append(zoomKey)
+            append("_focus_").append(focusMode.name.lowercase())
+        }
+        val camera2IntrinsicsJson = factoryIntrinsics?.let { values ->
+            JSONObject()
+                .put("source", "CAMERA2_LENS_INTRINSIC_CALIBRATION")
+                .put(
+                    "coordinate_space",
+                    "SENSOR_PRE_CORRECTION_ACTIVE_ARRAY_PIXELS",
+                )
+                .put("fx", values[0].toDouble())
+                .put("fy", values[1].toDouble())
+                .put("cx", values[2].toDouble())
+                .put("cy", values[3].toDouble())
+                .put("skew", values[4].toDouble())
+                .put("raw", JSONArray(values.toList()))
+        }
+        val camera2DistortionJson = factoryDistortion?.let { values ->
+            JSONObject()
+                .put("source", "CAMERA2_LENS_DISTORTION")
+                .put("model", "BROWN_CONRADY")
+                .put("k1", values[0].toDouble())
+                .put("k2", values[1].toDouble())
+                .put("k3", values[2].toDouble())
+                .put("p1", values[3].toDouble())
+                .put("p2", values[4].toDouble())
+                .put("raw", JSONArray(values.toList()))
+        }
         val sensorTimestampSource = chars.get(
             CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE,
         )
@@ -37,6 +89,56 @@ class PhoneCameraInfoCollector(private val context: Context) {
             .put("effective_zoom_ratio", effectiveZoomRatio.toDouble())
             .put("selected_zoom_ratio", effectiveZoomRatio.toDouble())
             .put("lens_preset_label", zoomPresetLabel(effectiveZoomRatio))
+            .put("focus_mode", focusMode.name)
+            .put(
+                "focus_locked",
+                focusMode == PhoneCameraFocusMode.INFINITY_FIXED,
+            )
+            .put(
+                "focus_distance_diopters",
+                if (focusMode == PhoneCameraFocusMode.INFINITY_FIXED) {
+                    0.0
+                } else {
+                    JSONObject.NULL
+                },
+            )
+            .put(
+                "focus_distance_source",
+                if (focusMode == PhoneCameraFocusMode.INFINITY_FIXED) {
+                    "FIXED_INFINITY_REQUEST"
+                } else {
+                    "DYNAMIC_CAPTURE_RESULT_REQUIRED"
+                },
+            )
+            .put(
+                "intrinsics_source",
+                if (camera2IntrinsicsJson != null) {
+                    "CAMERA2_FACTORY_SENSOR"
+                } else {
+                    "UNAVAILABLE"
+                },
+            )
+            .put("calibration_profile_key", calibrationProfileKey)
+            .put("calibration_profile_id", JSONObject.NULL)
+            .put(
+                "camera2_intrinsic_calibration",
+                camera2IntrinsicsJson ?: JSONObject.NULL,
+            )
+            .put(
+                "camera2_lens_distortion",
+                camera2DistortionJson ?: JSONObject.NULL,
+            )
+            .put(
+                "colmap_camera_prior",
+                JSONObject()
+                    .put("usable_for_colmap", false)
+                    .put(
+                        "reason",
+                        "Factory Camera2 calibration is sensor-space; " +
+                            "a verified video-resolution/crop calibration " +
+                            "profile is required before injecting COLMAP params.",
+                    ),
+            )
             .put("logical_multi_camera_capable", lens.logicalMultiCameraCapable)
             .put("physical_camera_ids", JSONArray(lens.physicalCameraIds))
             .put("min_zoom_ratio", minZoomRatio ?: lens.minZoomRatio ?: JSONObject.NULL)
@@ -54,6 +156,18 @@ class PhoneCameraInfoCollector(private val context: Context) {
             .put("lens_facing", lens.lensFacing)
             .put("focal_lengths_mm", JSONArray(lens.focalLengthsMm))
             .put("active_array_size", lens.activeArraySize?.let { JSONObject().put("left", it.left).put("top", it.top).put("right", it.right).put("bottom", it.bottom).put("width", it.width).put("height", it.height) } ?: JSONObject.NULL)
+            .put(
+                "pre_correction_active_array_size",
+                preCorrectionActiveArray?.let {
+                    JSONObject()
+                        .put("left", it.left)
+                        .put("top", it.top)
+                        .put("right", it.right)
+                        .put("bottom", it.bottom)
+                        .put("width", it.width())
+                        .put("height", it.height())
+                } ?: JSONObject.NULL,
+            )
             .put("pixel_array_size", chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)?.let { JSONObject().put("width", it.width).put("height", it.height) } ?: JSONObject.NULL)
             .put(
                 "sensor_timestamp_source",
