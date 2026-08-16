@@ -97,6 +97,16 @@ PY
     echo "INFO | SENSOR_ASSOC | Skipped: selected_frames.json, frames.jsonl or encoder_pts.jsonl unavailable" >> "$LOG_FILE"
   fi
 
+  python3 "$STATION_BASE/scripts/build_tof_metric_observations.py" \
+    --associations "$JOB_ROOT/selected_sensor_associations.jsonl" \
+    --association-report "$JOB_ROOT/selected_sensor_association_report.json" \
+    --tof-frames "$JOB_ROOT/tof_frames.jsonl" \
+    --tof-calibration "$JOB_ROOT/tof_calibration.json" \
+    --output-jsonl "$JOB_ROOT/tof_metric_observations.jsonl" \
+    --output-report "$JOB_ROOT/tof_metric_observation_report.json" \
+    >> "$LOG_FILE" 2>&1 || \
+      echo "WARNING | TOF_METRIC | S01H.1 measurement failed; RGB/COLMAP processing continues unchanged" >> "$LOG_FILE"
+
   python3 - "$JOB_ROOT" "$JOB_ID" "$SUMMARY" <<'PY'
 import json,sys,datetime,os
 root,job,summary=sys.argv[1:4]; s=json.loads(summary)
@@ -105,6 +115,9 @@ s['camera_metadata']=json.load(open(os.path.join(root,'camera_metadata.json'))) 
 association_report=os.path.join(root,'selected_sensor_association_report.json')
 if os.path.isfile(association_report):
     s['sensor_association']=json.load(open(association_report))
+tof_metric_report=os.path.join(root,'tof_metric_observation_report.json')
+if os.path.isfile(tof_metric_report):
+    s['tof_metric_measurement']=json.load(open(tof_metric_report))
 open(os.path.join(root,'result.json'),'w').write(json.dumps(s,indent=2))
 PY
   echo "INFO | EXTRACT_FRAMES | Candidate extraction completed frames=$CANDIDATES"

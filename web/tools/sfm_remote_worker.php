@@ -431,6 +431,32 @@ function pipeline_log_sensor_association_summary(
             (string)($report['geometry_gate_reason'] ?? 'unknown')
         )
     );
+
+    $metricPath = rtrim($extractDir, '/')
+        . '/tof_metric_observation_report.json';
+    if (is_file($metricPath) && is_readable($metricPath)) {
+        $metric = json_decode(
+            (string)file_get_contents($metricPath),
+            true
+        );
+        if (is_array($metric)) {
+            pipeline_log(
+                $pipelineRunId,
+                'INFO',
+                'TOF_METRIC',
+                sprintf(
+                    'status=%s measurement_only=yes frames=%d '
+                        . 'observations=%d sparse_scale_ready=%s '
+                        . 'geometry_mutation=OFF fusion=OFF',
+                    (string)($metric['status'] ?? 'UNKNOWN'),
+                    (int)($metric['frames_with_metric_observations'] ?? 0),
+                    (int)($metric['metric_observation_count'] ?? 0),
+                    !empty($metric['ready_for_sparse_scale_measurement'])
+                        ? 'yes' : 'no'
+                )
+            );
+        }
+    }
 }
 
 function auto_chain_after_done(mysqli $db, array $job): void
