@@ -185,10 +185,11 @@ def main():
         assert report["active_perturbation_sensitivity"]["status"] == (
             "SKIPPED_DENSE_UNAVAILABLE"
         )
-        assert report["decision"]["classification"] in {
-            "RGB_IMAGE_REGION_PATTERN_SUPPORTED",
-            "INSUFFICIENT_SUPPORT",
-        }
+        assert report["decision"]["classification"] == "INSUFFICIENT_SUPPORT"
+        assert report["decision"]["active_perturbation_completed"] is False
+        assert report["decision"]["passive_rgb_image_region_pattern"] is True
+        assert report["decision"]["rgb_image_region_pattern_supported"] is False
+        assert report["decision"]["zone_angular_perturbation_supported"] is False
         assert report["measurement_only"] is True
         assert report["calibration_mutation_enabled"] is False
         assert report["geometry_mutation_enabled"] is False

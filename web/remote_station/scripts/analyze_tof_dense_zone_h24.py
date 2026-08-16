@@ -941,9 +941,13 @@ def main():
         )
     )
 
+    active_perturbation_completed = (
+        perturbation.get("status") == "MEASURED"
+    )
+
     zone_supported = False
     best = perturbation.get("best_perturbation")
-    if isinstance(best, dict):
+    if active_perturbation_completed and isinstance(best, dict):
         improvement = best.get("zone_structure_improvement_fraction")
         p95_ratio = best.get("p95_error_ratio_vs_baseline")
         support_ratio = best.get("support_ratio_vs_baseline")
@@ -956,7 +960,13 @@ def main():
             and float(support_ratio) >= 0.90
         )
 
-    if zone_supported and rgb_signal:
+    # Passive localization cannot distinguish ToF-zone structure from RGB-image
+    # structure because the 8x8 zone coordinates project monotonically into RGB
+    # coordinates. Root-cause classification requires active perturbation
+    # resampling against the original dense depth maps.
+    if not active_perturbation_completed:
+        decision = "INSUFFICIENT_SUPPORT"
+    elif zone_supported and rgb_signal:
         decision = "MIXED_PATTERN_SUPPORTED"
     elif zone_supported:
         decision = "ZONE_ANGULAR_PATTERN_SUPPORTED"
@@ -967,13 +977,18 @@ def main():
 
     report["decision"] = {
         "classification": decision,
+        "active_perturbation_completed": active_perturbation_completed,
         "zone_angular_perturbation_supported": zone_supported,
-        "rgb_image_region_pattern_supported": rgb_signal,
+        "passive_rgb_image_region_pattern": rgb_signal,
+        "rgb_image_region_pattern_supported": (
+            rgb_signal and active_perturbation_completed
+        ),
         "zone_improvement_threshold": args.zone_improvement_threshold,
         "rgb_spread_threshold": args.rgb_spread_threshold,
         "note": (
-            "This is diagnostic evidence. A perturbation is never written back "
-            "to the accepted calibration profile."
+            "Passive localization is correlation evidence only. Final pattern "
+            "classification requires active perturbation resampling against "
+            "dense depth maps. No perturbation is written back to calibration."
         ),
     }
 
