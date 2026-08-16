@@ -266,8 +266,14 @@ Long-term options:
   `PARTIAL SUPPORT / CLOSED DIAGNOSTIC`
 - [x] S01H.2.7 — exact-frame fixed-effect Dense-local analysis —
   `PASS / CLOSED DIAGNOSTIC`
+- [x] S01H.2.8 — Dense quality gating —
+  `PARTIAL SUPPORT / CLOSED DIAGNOSTIC`
+- [x] S01H.2.9 — quality-controlled decomposition —
+  `PASS / CLOSED DIAGNOSTIC`
 - [x] Dense-local-structure hypothesis — `SUPPORTED`
-- [ ] S01H.2.8 — Dense quality gating — **NEXT**
+- [x] Systematic distance/scale deformation — `SUPPORTED`
+- [ ] Systematic distance/scale source attribution — `OPEN`
+- [ ] S01H.2.10 — independent ToF range linearity — **NEXT**
 - [ ] S01H.3 — reviewed metric sparse + stock Dense — `CLOSED / BLOCKED`
 - [ ] S01H.4 — Dense <-> ToF validation
 - [ ] S01H.5 — conservative fusion
@@ -278,9 +284,28 @@ Safety state:
 - fusion: `OFF`
 - ToF remains optional and must never block the RGB reconstruction path.
 
-### S01H.2.8 gate
+### S01H.2.8 / S01H.2.9 result
 
-H2.8 must be a quality-gating experiment, not another post-hoc correlation.
+H2.8 подтвердил локальный Dense-quality компонент, но не устранил глобальную
+distance deformation. H2.9 показал, что systematic distance/scale term
+сохраняется даже на `CLEAN_DENSE` после row/column control.
+
+Final H2.9 classification:
+
+`MIXED_LOCAL_DENSE_INSTABILITY_AND_SYSTEMATIC_DEPTH_SCALE_DEFORMATION_SUPPORTED`
+
+### S01H.2.10 gate
+
+Следующий этап должен независимо проверить линейность ToF range по физической
+метрической плоскости без использования COLMAP, PatchMatch, Dense maps или SfM
+scale. Предпочтительно использовать сохраненные LM03.4 ChArUco hold-out samples;
+если их distance coverage недостаточен — выполнить короткий controlled distance
+sweep.
+
+H2.10 остается measurement-only: calibration mutation, geometry mutation и
+fusion запрещены.
+
+Исторический H2.8 design contract:
 
 Define subsets using Dense-quality metrics only, before inspecting metric
 residuals:
