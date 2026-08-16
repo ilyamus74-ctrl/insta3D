@@ -259,7 +259,7 @@ Long-term options:
 - [x] S01H.2.3 — controlled decomposition + Camera2/COLMAP optics audit —
   `PASS / CLOSED DIAGNOSTIC`
 - [x] S01H.2.4 — angular/zone localization + active ToF calibration
-  perturbation — `PASS / CLOSED DIAGNOSTIC`
+  perturbation — `INSUFFICIENT_SUPPORT / CLOSED DIAGNOSTIC`
 - [x] S01H.2.5 — effective RGB projection / Dense-local diagnostic —
   `PASS / CLOSED DIAGNOSTIC`
 - [x] S01H.2.6 — conditional Dense-local analysis —
@@ -271,9 +271,10 @@ Long-term options:
 - [x] S01H.2.9 — quality-controlled decomposition —
   `PASS / CLOSED DIAGNOSTIC`
 - [x] Dense-local-structure hypothesis — `SUPPORTED`
-- [x] Systematic distance/scale deformation — `SUPPORTED`
-- [ ] Systematic distance/scale source attribution — `OPEN`
-- [ ] S01H.2.10 — independent ToF range linearity — **NEXT**
+- [x] CW90 orientation incident — `CLOSED / CW_90_PHYSICALLY_CONFIRMED`
+- [x] Strong systematic distance/scale deformation — `NOT SUPPORTED POST-CW90`
+- [ ] Independent ToF range-linearity sweep — `OPTIONAL / NOT REQUIRED NEXT`
+- [ ] S01H.2.10 — POST-CW90 METRIC READINESS / REPRODUCIBILITY — **NEXT**
 - [ ] S01H.3 — reviewed metric sparse + stock Dense — `CLOSED / BLOCKED`
 - [ ] S01H.4 — Dense <-> ToF validation
 - [ ] S01H.5 — conservative fusion
@@ -284,7 +285,56 @@ Safety state:
 - fusion: `OFF`
 - ToF remains optional and must never block the RGB reconstruction path.
 
-### S01H.2.8 / S01H.2.9 result
+### CW90 incident closure and POST-CW90 result
+
+CAMERA_A landscape -> COLMAP portrait CW90 fix:
+
+`8f649737c56b4dd7c27f7dc668218f47511e8c2a`
+
+Physical confirmation:
+
+`CW_90_PHYSICALLY_CONFIRMED`
+
+POST-CW90 evidence root:
+
+`remote_station/output/pipeline_93/metric_evidence_post_cw90_8f649737c56b4dd7/`
+
+H2.2 `geometric_footprint_p50` comparison:
+
+| Metric | PRE-CW90 | POST-CW90 |
+|---|---:|---:|
+| coverage | 91.24% | 98.12% |
+| valid correspondences | 4467 | 4804 |
+| robust inliers | 2899 | 4223 |
+| robust scale, mm/unit | 190.067 | 190.605 |
+| residual p50, mm | 79.89 | 26.46 |
+| residual p95, mm | 217.41 | 122.33 |
+| relative error p50 | 9.04% | 3.01% |
+| relative error p95 | 23.50% | 12.09% |
+| distance spread | 1.993 | 1.211 |
+| row spread | 1.289 | 1.046 |
+| column spread | 1.393 | 1.048 |
+| image-region spread | 1.221 | 1.009 |
+
+POST-CW90 H2.4 classification:
+
+`INSUFFICIENT_SUPPORT`
+
+POST-CW90 H2.9 classification:
+
+`QUALITY_GATING_COLLAPSES_CONTROLLED_DEFORMATION`
+
+На `CLEAN_DENSE` zone-normalized distance spread уменьшился до `1.0010`.
+Прежняя strong systematic distance deformation больше не поддерживается.
+
+Старый root `remote_station/output/pipeline_93/metric_evidence/` и прежние
+H2.2-H2.9 выводы сохраняются как исторические **PRE-CW90** результаты до
+исправления orientation bug. Они не удаляются и не используются как актуальная
+POST-CW90 классификация.
+
+### Historical PRE-CW90 S01H.2.8 / S01H.2.9 result
+
+Следующий блок сохранен для трассируемости и описывает результаты до CW90 fix.
 
 H2.8 подтвердил локальный Dense-quality компонент, но не устранил глобальную
 distance deformation. H2.9 показал, что systematic distance/scale term
@@ -296,14 +346,27 @@ Final H2.9 classification:
 
 ### S01H.2.10 gate
 
-Следующий этап должен независимо проверить линейность ToF range по физической
-метрической плоскости без использования COLMAP, PatchMatch, Dense maps или SfM
-scale. Предпочтительно использовать сохраненные LM03.4 ChArUco hold-out samples;
-если их distance coverage недостаточен — выполнить короткий controlled distance
-sweep.
+S01H.2.10 переопределяется как `POST-CW90 METRIC READINESS / REPRODUCIBILITY`.
+Он должен:
+
+- повторить measurement-only H2.2-H2.9 на независимом capture/pipeline;
+- подтвердить применение единого CAMERA_A -> COLMAP CW90 contract;
+- проверить воспроизводимость coverage, correspondences, robust scale,
+  residual p50/p95 и distance/row/column/image-region spreads;
+- проверить, что H2.4 image-region pattern и H2.9 strong clean systematic
+  distance deformation не возвращаются;
+- зафиксировать immutable inputs, artifact provenance и версии scripts;
+- завершиться отдельным readiness decision.
 
 H2.10 остается measurement-only: calibration mutation, geometry mutation и
 fusion запрещены.
+
+Independent ToF range-linearity sweep больше не является обязательным
+следующим шагом. Он остается optional sensor audit на случай, если независимый
+POST-CW90 run снова покажет устойчивую distance-dependent деформацию.
+
+До отдельного readiness decision geometry mutation и fusion остаются `OFF`, а
+S01H.3 остается `CLOSED / BLOCKED`.
 
 Исторический H2.8 design contract:
 

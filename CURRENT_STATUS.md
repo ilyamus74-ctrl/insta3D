@@ -43,21 +43,81 @@
 | S01H.2.1 | PASS / CLOSED DIAGNOSTIC |
 | S01H.2.2 | PASS / CLOSED DIAGNOSTIC |
 | S01H.2.3 | PASS / CLOSED DIAGNOSTIC |
-| S01H.2.4 | PASS / CLOSED DIAGNOSTIC |
+| S01H.2.4 | INSUFFICIENT_SUPPORT / CLOSED DIAGNOSTIC |
 | S01H.2.5 | PASS / CLOSED DIAGNOSTIC |
 | S01H.2.6 | PARTIAL SUPPORT / CLOSED DIAGNOSTIC |
 | S01H.2.7 | PASS / CLOSED DIAGNOSTIC |
 | S01H.2.8 | PARTIAL SUPPORT / CLOSED DIAGNOSTIC |
 | S01H.2.9 | PASS / CLOSED DIAGNOSTIC |
 | Dense-local-structure hypothesis | SUPPORTED |
-| Systematic distance/scale deformation | SUPPORTED |
-| Systematic distance/scale source attribution | OPEN |
-| S01H.2.10 | NEXT — independent ToF range linearity |
+| Strong systematic distance/scale deformation | NOT SUPPORTED POST-CW90 |
+| Independent ToF range-linearity sweep | OPTIONAL / NOT REQUIRED NEXT |
+| S01H.2.10 | NEXT — POST-CW90 METRIC READINESS / REPRODUCIBILITY |
 | S01H.3 | CLOSED / BLOCKED |
 | geometry mutation | OFF |
 | fusion | OFF |
 
+### CW90 orientation incident — CLOSED
+
+Исправление CAMERA_A landscape -> COLMAP portrait зафиксировано commit:
+
+`8f649737c56b4dd7c27f7dc668218f47511e8c2a`
+
+Физическое направление преобразования подтверждено независимо от residual:
+
+`CW_90_PHYSICALLY_CONFIRMED`
+
+Coordinate contract:
+
+```text
+X_colmap = -Y_camera_a
+Y_colmap =  X_camera_a
+Z_colmap =  Z_camera_a
+```
+
+Pipeline 93 повторно измерен с неизменными H1 observations, sparse model и
+Dense maps. POST-CW90 evidence root:
+
+`remote_station/output/pipeline_93/metric_evidence_post_cw90_8f649737c56b4dd7/`
+
+H2.2 `geometric_footprint_p50`:
+
+| Metric | PRE-CW90 | POST-CW90 |
+|---|---:|---:|
+| coverage | 91.24% | 98.12% |
+| valid correspondences | 4467 | 4804 |
+| robust inliers | 2899 | 4223 |
+| robust scale, mm/unit | 190.067 | 190.605 |
+| residual p50, mm | 79.89 | 26.46 |
+| residual p95, mm | 217.41 | 122.33 |
+| relative error p50 | 9.04% | 3.01% |
+| relative error p95 | 23.50% | 12.09% |
+| distance spread | 1.993 | 1.211 |
+| row spread | 1.289 | 1.046 |
+| column spread | 1.393 | 1.048 |
+| image-region spread | 1.221 | 1.009 |
+
+POST-CW90 classifications:
+
+- H2.4: `INSUFFICIENT_SUPPORT`;
+- H2.9: `QUALITY_GATING_COLLAPSES_CONTROLLED_DEFORMATION`;
+- H2.9 CLEAN zone-normalized distance spread: `1.0010`;
+- прежняя strong systematic distance deformation больше не поддерживается.
+
+Независимый ToF range-linearity sweep больше не является обязательным
+следующим шагом. Он остается допустимым дополнительным sensor audit, но не
+блокирует POST-CW90 readiness/reproducibility review.
+
+Старый evidence root
+`remote_station/output/pipeline_93/metric_evidence/` и приведенные ниже
+результаты H2.2-H2.9 сохраняются как исторические **PRE-CW90** результаты,
+полученные до исправления orientation bug. Они не являются актуальной оценкой
+POST-CW90 metric deformation.
+
 ### S01H.2.7 — итоговый диагностический вывод
+
+> Historical PRE-CW90 result: этот раздел сохраняется без удаления для
+> трассируемости результатов до исправления orientation bug.
 
 После удаления baseline по `zone + distance` и проверки связи внутри каждого
 конкретного RGB-кадра (`exact-image within-frame Spearman`) два независимых
@@ -109,6 +169,9 @@
 
 ### S01H.2.8 — Dense quality gating
 
+> Historical PRE-CW90 result: этот раздел сохраняется без удаления для
+> трассируемости результатов до исправления orientation bug.
+
 H2.8 заморозил `CLEAN_DENSE` / `UNSTABLE_DENSE` только по Dense-quality
 признакам, без использования ToF residual/error при выборе.
 
@@ -138,6 +201,9 @@ H2.8 evidence:
   - SHA256: `c3f2747fc3195eb832c757c508bed5aea1c24b114b726fe8bc1ee556e736621a`
 
 ### S01H.2.9 — quality-controlled decomposition
+
+> Historical PRE-CW90 result: этот раздел сохраняется без удаления для
+> трассируемости результатов до исправления orientation bug.
 
 H2.9 повторил controlled decomposition на `CLEAN_DENSE`.
 
@@ -177,6 +243,35 @@ H2.9 evidence:
 Persistent evidence root:
 
 `remote_station/output/pipeline_93/metric_evidence/`
+
+### S01H.2.10 — POST-CW90 METRIC READINESS / REPRODUCIBILITY
+
+Следующий обязательный gate должен проверить воспроизводимость исправленного
+coordinate-space contract, а не заранее предполагать ToF range nonlinearity.
+
+Минимальный scope H2.10:
+
+1. повторить measurement-only H2.2-H2.9 на независимом capture/pipeline с тем
+   же явным CAMERA_A -> COLMAP CW90 contract;
+2. проверить стабильность coverage, correspondence count, robust scale,
+   p50/p95 residual и distance/row/column/image-region spreads;
+3. подтвердить, что H2.4 image-region pattern и H2.9 strong clean systematic
+   distance deformation не возвращаются;
+4. зафиксировать artifact provenance, immutable H1 input и точные версии
+   diagnostic scripts;
+5. выдать отдельный readiness decision перед любым открытием S01H.3.
+
+H2.10 остается measurement-only. Он не меняет ToF calibration, R/t, sparse или
+Dense geometry. До отдельного readiness decision обязательны:
+
+- `geometry_mutation_enabled=false`;
+- `fusion_enabled=false`;
+- S01H.3 `CLOSED / BLOCKED`.
+
+Независимый ToF range-linearity sweep может быть выполнен как дополнительный
+контроль сенсора, если новые capture evidence снова покажут устойчивую
+distance-dependent деформацию, но больше не является обязательным следующим
+шагом S01H.
 
 ### Safety gate
 
