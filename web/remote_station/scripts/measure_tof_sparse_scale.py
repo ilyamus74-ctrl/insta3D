@@ -286,7 +286,14 @@ def world_to_camera(image, xyz):
     return result if all(math.isfinite(value) for value in result) else None
 
 
-def project_camera_point(camera, xyz):
+def camera_a_landscape_to_colmap_camera(xyz):
+    """Rotate raw landscape CAMERA_A coordinates into portrait COLMAP space."""
+    x_camera_a, y_camera_a, z_camera_a = xyz
+    return [-y_camera_a, x_camera_a, z_camera_a]
+
+
+def project_colmap_camera_point(camera, xyz):
+    """Project a point already expressed in COLMAP camera coordinates."""
     x, y, z = xyz
     if not all(finite(value) for value in xyz) or z <= 0.0:
         return None
@@ -333,6 +340,14 @@ def project_camera_point(camera, xyz):
     u = fx * xd + cx
     v = fy * yd + cy
     return [u, v] if math.isfinite(u) and math.isfinite(v) else None
+
+
+def project_camera_a_point_to_colmap_image(camera, xyz):
+    """Project a raw landscape CAMERA_A point into the portrait COLMAP image."""
+    return project_colmap_camera_point(
+        camera,
+        camera_a_landscape_to_colmap_camera(xyz),
+    )
 
 
 def nearest_sparse_point(image, points3d, target_uv, max_radius):
@@ -487,7 +502,10 @@ def main():
         ):
             invalid_projection += 1
             continue
-        projected_uv = project_camera_point(camera, [float(value) for value in tof_xyz])
+        projected_uv = project_camera_a_point_to_colmap_image(
+            camera,
+            [float(value) for value in tof_xyz],
+        )
         if projected_uv is None:
             invalid_projection += 1
             continue

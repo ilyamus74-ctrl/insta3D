@@ -590,7 +590,7 @@ def main():
                             "geometric_footprint_iqr_fraction"
                         ].append((p75 - p25) / p50)
 
-                    center_uv = h2.project_camera_point(
+                    center_uv = h2.project_camera_a_point_to_colmap_image(
                         variant_camera, camera_xyz
                     )
                     center_depth_uv = h22.scale_uv_to_depth(

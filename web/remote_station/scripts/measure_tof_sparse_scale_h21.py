@@ -239,7 +239,7 @@ def zone_footprint_polygon(profile, camera, observation):
         )
         if camera_xyz is None:
             return None
-        uv = h2.project_camera_point(camera, camera_xyz)
+        uv = h2.project_camera_a_point_to_colmap_image(camera, camera_xyz)
         if uv is None:
             return None
         projected.append(uv)
@@ -758,7 +758,7 @@ def main():
         ):
             continue
 
-        center_uv = h2.project_camera_point(
+        center_uv = h2.project_camera_a_point_to_colmap_image(
             camera,
             [float(value) for value in tof_xyz],
         )

@@ -791,7 +791,9 @@ def main():
         ))
         xyz_delta.append(delta_mm)
 
-        uv = h2.project_camera_point(camera, recomputed_xyz)
+        uv = h2.project_camera_a_point_to_colmap_image(
+            camera, recomputed_xyz
+        )
         if uv is None:
             continue
         width = float(camera["width"])

@@ -654,7 +654,7 @@ def main():
                         or float(tof_xyz[2]) <= 0.0
                     ):
                         continue
-                    center_camera_uv = h2.project_camera_point(
+                    center_camera_uv = h2.project_camera_a_point_to_colmap_image(
                         camera, [float(value) for value in tof_xyz]
                     )
                     center_depth_uv = scale_uv_to_depth(

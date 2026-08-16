@@ -43,12 +43,13 @@ def build_fixture(root, with_tof=True):
         encoding="utf-8",
     )
 
-    # Zone row=3/col=3 projects approximately to x/y 37.5..50.0.
+    # In landscape CAMERA_A, zone row=3/col=3 spans x/y -125..0 mm.
+    # CW90 maps that footprint to COLMAP pixels x=50..62.5, y=37.5..50.
     feature_rows = [
-        (42.0, 42.0, 1),
-        (46.0, 42.0, 2),
-        (42.0, 46.0, 3),
-        (46.0, 46.0, 4),
+        (54.0, 42.0, 1),
+        (58.0, 42.0, 2),
+        (54.0, 46.0, 3),
+        (58.0, 46.0, 4),
     ]
     points2d = " ".join(
         f"{x} {y} {point_id}"
@@ -63,10 +64,10 @@ def build_fixture(root, with_tof=True):
     )
     (model / "points3D.txt").write_text(
         "# 3D point list\n"
-        "1 -0.16 -0.16 2 255 255 255 0.1 1 0\n"
-        "2 -0.08 -0.16 2 255 255 255 0.1 1 1\n"
-        "3 -0.16 -0.08 2 255 255 255 0.1 1 2\n"
-        "4 -0.08 -0.08 2 255 255 255 0.1 1 3\n",
+        "1 0.08 -0.16 2 255 255 255 0.1 1 0\n"
+        "2 0.16 -0.16 2 255 255 255 0.1 1 1\n"
+        "3 0.08 -0.08 2 255 255 255 0.1 1 2\n"
+        "4 0.16 -0.08 2 255 255 255 0.1 1 3\n",
         encoding="utf-8",
     )
 
