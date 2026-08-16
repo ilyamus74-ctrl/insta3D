@@ -350,14 +350,15 @@ function pipeline_log_sensor_association_summary(
             (int)($cal['profile_count'] ?? 0),
             (int)($cal['matching_profile_count'] ?? 0),
             $yesNo($cal['identity_match'] ?? false),
-            implode(
-                ',',
-                array_map(
-                    'strval',
-                    is_array($cal['observed_tof_slots'] ?? null)
-                        ? $cal['observed_tof_slots'] : []
+            (
+                is_array($cal['observed_tof_slots'] ?? null)
+                && count($cal['observed_tof_slots']) > 0
+            )
+                ? implode(
+                    ',',
+                    array_map('strval', $cal['observed_tof_slots'])
                 )
-            ) ?: 'none'
+                : 'none'
         )
     );
 

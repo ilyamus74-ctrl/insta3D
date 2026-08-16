@@ -2606,6 +2606,92 @@ private fun AutoPhotoCaptureScreen(
     }
 }
 
+private const val TOF_UI_FRESH_MAX_AGE_MS = 500L
+private const val TOF_UI_LOST_MAX_AGE_MS = 1_500L
+private const val TOF_UI_RECOVERY_WINDOW_NS = 2_500_000_000L
+private const val TOF_UI_REFRESH_MS = 250L
+
+@Composable
+private fun TofStatusIndicator(
+    recording: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val runtime = remember(context.applicationContext) {
+        TofUsbRuntime.get(context.applicationContext)
+    }
+    val usbState by runtime.state.collectAsState()
+    val latestFrame by runtime.latestFrame.collectAsState()
+    var nowElapsedNs by remember {
+        mutableStateOf(android.os.SystemClock.elapsedRealtimeNanos())
+    }
+
+    LaunchedEffect(runtime) {
+        while (true) {
+            nowElapsedNs = android.os.SystemClock.elapsedRealtimeNanos()
+            delay(TOF_UI_REFRESH_MS)
+        }
+    }
+
+    val ageMs = runtime.lastFrameAgeMs(nowElapsedNs)
+    val attached = usbState.deviceId != null
+    val fresh =
+        usbState.status.name == "STREAMING" &&
+            ageMs != null &&
+            ageMs <= TOF_UI_FRESH_MAX_AGE_MS
+    val recoveryRecent = usbState.lastRecoveryElapsedRealtimeNs?.let { recoveryNs ->
+        val deltaNs = nowElapsedNs - recoveryNs
+        deltaNs in 0..TOF_UI_RECOVERY_WINDOW_NS
+    } == true
+    val recovering = attached && !fresh && recoveryRecent
+    val staleOrError =
+        attached &&
+            (
+                usbState.status.name == "ERROR" ||
+                    (ageMs != null && ageMs > TOF_UI_LOST_MAX_AGE_MS)
+                )
+
+    val (label, statusColor) = when {
+        fresh -> {
+            val frequency = latestFrame?.frequencyHz?.let { "$it Hz" } ?: "live"
+            "ToF OK · $frequency" to Color(0xFF4CAF50)
+        }
+        recovering ->
+            "ToF RECOVERING" to Color(0xFFFFC107)
+        recording && !fresh ->
+            "ToF LOST" to Color(0xFFFF5252)
+        staleOrError ->
+            "ToF LOST" to Color(0xFFFF5252)
+        attached ->
+            "ToF WAIT" to Color(0xFFFFC107)
+        else ->
+            "ToF OFF" to Color(0xFF9E9E9E)
+    }
+
+    Surface(
+        modifier = modifier,
+        color = statusColor.copy(alpha = 0.18f),
+        shape = CircleShape,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(9.dp)
+                    .background(statusColor, CircleShape),
+            )
+            Text(
+                label,
+                color = statusColor,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
 @Composable
 private fun PhoneCameraScanScreen(
     scanName: String,
@@ -2712,6 +2798,7 @@ private fun PhoneCameraScanScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Скан смартфоном", color = Color.White, style = MaterialTheme.typography.titleMedium)
                     Text(status, color = if (status == "Ошибка" || status == "Нет доступа") Color(0xFFFFB4AB) else Color.White)
+                    TofStatusIndicator(recording = isRecordingScanVideo)
                 }
                 TextButton(onClick = onClose, enabled = !isRecordingScanVideo && videoScanUiState != VideoScanUiState.STOPPING) { Text("Назад") }
             }
@@ -4311,6 +4398,9 @@ private fun StereoCaptureExperimentalScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("Rig / status", style = MaterialTheme.typography.titleSmall)
+                    TofStatusIndicator(
+                        recording = isRecording || syncedDepthRecording,
+                    )
                     Text("Active profile: ${activeProfile.rigId}")
                     Text("Baseline: ${baseline?.let { "${it} mm" } ?: "not set"}")
                     Text("Calibration: ${activeProfile.calibrationStatus.name.lowercase().replace('_', ' ')}")

@@ -50,6 +50,13 @@ ok(str_contains($frameTelemetry, '"stream_fresh"'), 'ToF capture active flag req
 ok(str_contains($frameTelemetry, '"stream_stalls_during_capture"'), 'camera metadata reports ToF stream stalls during capture');
 ok(str_contains($frameTelemetry, '"automatic_recoveries_during_capture"'), 'camera metadata reports automatic ToF recoveries');
 
+$mainActivity = source('app/MaklerTour/app/src/main/java/com/example/maklertour/MainActivity.kt');
+ok(str_contains($mainActivity, 'private fun TofStatusIndicator'), 'app exposes one shared live ToF status indicator');
+ok(str_contains($mainActivity, '"ToF OK') && str_contains($mainActivity, '"ToF LOST"'), 'ToF indicator has explicit healthy and lost states');
+ok(str_contains($mainActivity, 'lastFrameAgeMs(nowElapsedNs)'), 'ToF indicator evaluates live depth-frame freshness');
+ok(str_contains($mainActivity, 'lastRecoveryElapsedRealtimeNs'), 'ToF indicator exposes automatic recovery state');
+ok(substr_count($mainActivity, 'TofStatusIndicator(') >= 3, 'ToF indicator is shown in single and stereo capture screens');
+
 $imuRecorder = source('app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/ImuRecorder.kt');
 ok(str_contains($imuRecorder, 'rebaseVideoTimeline'), 'IMU timeline is rebased to the video CameraX start anchor');
 ok(str_contains($imuRecorder, 'video_timeline_anchor_source'), 'IMU sidecar records its authoritative video timeline anchor');
@@ -100,5 +107,6 @@ $worker = source('web/tools/sfm_remote_worker.php');
 ok(str_contains($worker, 'pipeline_log_sensor_association_summary'), 'pipeline publishes S01G sensor-association summary');
 ok(str_contains($worker, "'TOF'"), 'pipeline publishes dedicated ToF log lines');
 ok(str_contains($worker, 'full_stream_span_delta=') && str_contains($worker, 'diagnostic_only=yes'), 'pipeline explains full-stream span delta is diagnostic only');
+ok(str_contains($worker, "count(\$cal['observed_tof_slots']) > 0"), 'pipeline preserves ToF slot 0 instead of logging it as none');
 
 echo "Result: PASS\n";
