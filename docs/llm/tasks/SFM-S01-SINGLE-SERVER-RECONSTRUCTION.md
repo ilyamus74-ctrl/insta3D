@@ -56,9 +56,9 @@ SFM-S01B  existing upload/web pipeline reuse           CONFIRMED
 SFM-S01C  existing GrafikStation chain reuse           CONFIRMED
 SFM-S01D  camera optical-state/intrinsics contract     IMPLEMENTING
 SFM-S01E  explicit metadata paths in video_scans       IMPLEMENTING
-SFM-S01F  optional ToF capture sidecar                 PLANNED
-SFM-S01G  ToF <-> selected frame association           PLANNED
-SFM-S01H  ToF-assisted dense/fusion                    PLANNED
+SFM-S01F  optional ToF capture sidecar                 PASS
+SFM-S01G  ToF <-> selected frame association           PASS
+SFM-S01H  ToF metric measurement / dense assistance    IMPLEMENTING
 ```
 
 ## S01A real-device baseline
@@ -229,3 +229,141 @@ transform by definition.
 7. video_scans explicit metadata columns exist after the idempotent migration.
 8. worker prefers explicit DB metadata paths and retains filename fallback.
 9. existing web-driven pipeline behavior remains unchanged for old scans.
+
+
+## S01F closure — optional raw ToF capture
+
+Status: `PASS`.
+
+Accepted production contract:
+
+```text
+ToF absent
+  -> RGB/IMU capture continues
+  -> upload continues
+  -> EXTRACT/SPARSE/DENSE/MESH continue
+
+ToF present and healthy
+  -> tof_frames.jsonl
+  -> tof_calibration.json
+  -> normal RGB/IMU pipeline remains unchanged
+```
+
+The USB runtime validates depth-frame freshness independently from the CDC
+transport state. A stale ranging stream is recovered by a real stop/start
+transition, and stale frames are removed from the pairing history.
+
+SINGLE and stereo capture expose the same live operator state:
+
+```text
+ToF OK
+ToF WAIT
+ToF RECOVERING
+ToF LOST
+ToF OFF
+```
+
+Manual USB disconnect/reconnect testing confirmed live state changes and
+automatic return to `ToF OK`.
+
+Accepted real-device evidence:
+
+```text
+capture UUID:                 5ae1fa5a-224a-4b85-927d-d32a40dc143f
+tof_calibration schema:       2
+raw ToF frames:               220
+frames_during_capture:        220
+stream_fresh at stop:         true
+last_frame_age_ms:            58
+ToF frequency:                15 Hz
+```
+
+Frozen identity:
+
+```text
+device_id:                    ce5b6784-0141-45e1-9587-cad22793a91a
+rig_id:                       dual-phone-rig-001
+rig_mount_revision:           rev-a
+selected/master camera:       0
+calibration profile:          dual-15e103df-2731-4d32-a82b-cd89b6ab753b
+ToF slot:                     0
+```
+
+## S01G closure — selected RGB / Camera2 / ToF / IMU association
+
+Status: `PASS`.
+
+Accepted validation:
+
+```text
+pipeline_run_id:              90
+video_scan_id:                91
+extract remote job:           492524236
+selected frames:              143
+mapping_status:               CANDIDATE_CAMERAX_START_REALTIME
+temporal_candidate_pass:      true
+Camera2 error p50:            1.292 ms
+Camera2 error p95:            1.492 ms
+Camera2 error max:            1.614 ms
+frame-index offset median:    9
+frame-index offset span:      0
+ordinal fit residual p95:     119.61 us
+absolute clock drift:         28.40 ppm
+selected with accepted ToF:   128
+accepted ToF with raw frame:  128
+raw ToF coverage:             100%
+observed_tof_slots:           [0]
+calibration binding:          MATCHED_CAPTURE_IDENTITY
+identity_match:               true
+matching_profile_count:       1
+IMU sync:                     exact
+IMU timeline rebased:         true
+IMU anchor:                   CAMERAX_VIDEO_RECORD_EVENT_START
+```
+
+The full Camera2 callback span is diagnostic only because callbacks may include
+encoder pre-roll/post-roll.
+
+S01G deliberately does not mutate geometry:
+
+```text
+fusion_enabled:          false
+ready_for_tof_geometry:  false
+```
+
+## S01H — measurement before geometry mutation
+
+Hard compatibility rule:
+
+```text
+missing / invalid / unbound ToF
+        |
+        v
+skip ToF assistance
+        |
+        v
+continue stock RGB -> COLMAP sparse -> COLMAP dense -> mesh
+```
+
+No S01H failure may turn an otherwise valid RGB reconstruction into a failed
+pipeline run.
+
+Implementation order:
+
+```text
+S01H.1  build filtered metric ToF observations       IMPLEMENTING
+S01H.2  compare ToF against COLMAP sparse / estimate scale
+S01H.3  reviewed metric sparse + stock COLMAP dense
+S01H.4  compare COLMAP dense depth against ToF
+S01H.5  conservative ToF-assisted fusion
+```
+
+Until S01H.4 is reviewed, ToF is read-only evidence:
+
+```text
+COLMAP sparse input modified:  no
+COLMAP dense input modified:   no
+camera poses modified:         no
+point cloud modified:          no
+fusion enabled:                no
+```
