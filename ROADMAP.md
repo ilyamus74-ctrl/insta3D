@@ -244,3 +244,67 @@ Long-term options:
    - marker detection from video
    - trajectory draft
    - 2D/3D map refinement
+
+---
+
+## S01H — ToF metric geometry validation
+
+Этот раздел фиксирует текущий execution order ветки метрической валидации и
+является более новым статусом для S01H, чем общие legacy checklist выше.
+
+- [x] S01H.1 — ToF metric observations — `PASS / CLOSED`
+- [x] S01H.2 — sparse metric scale — `MEASURED`
+- [x] S01H.2.1 — sparse correspondence diagnostic — `PASS / CLOSED DIAGNOSTIC`
+- [x] S01H.2.2 — Dense depth diagnostic — `PASS / CLOSED DIAGNOSTIC`
+- [x] S01H.2.3 — controlled decomposition + Camera2/COLMAP optics audit —
+  `PASS / CLOSED DIAGNOSTIC`
+- [x] S01H.2.4 — angular/zone localization + active ToF calibration
+  perturbation — `PASS / CLOSED DIAGNOSTIC`
+- [x] S01H.2.5 — effective RGB projection / Dense-local diagnostic —
+  `PASS / CLOSED DIAGNOSTIC`
+- [x] S01H.2.6 — conditional Dense-local analysis —
+  `PARTIAL SUPPORT / CLOSED DIAGNOSTIC`
+- [x] S01H.2.7 — exact-frame fixed-effect Dense-local analysis —
+  `PASS / CLOSED DIAGNOSTIC`
+- [x] Dense-local-structure hypothesis — `SUPPORTED`
+- [ ] S01H.2.8 — Dense quality gating — **NEXT**
+- [ ] S01H.3 — reviewed metric sparse + stock Dense — `CLOSED / BLOCKED`
+- [ ] S01H.4 — Dense <-> ToF validation
+- [ ] S01H.5 — conservative fusion
+
+Safety state:
+
+- geometry mutation: `OFF`
+- fusion: `OFF`
+- ToF remains optional and must never block the RGB reconstruction path.
+
+### S01H.2.8 gate
+
+H2.8 must be a quality-gating experiment, not another post-hoc correlation.
+
+Define subsets using Dense-quality metrics only, before inspecting metric
+residuals:
+
+- `CLEAN DENSE`:
+  - low local depth gradient
+  - **AND** low geometric-vs-photometric disagreement
+- `UNSTABLE DENSE`:
+  - high local depth gradient
+  - **OR** high geometric-vs-photometric disagreement
+
+Then independently compare:
+
+- metric scale drift;
+- absolute metric error `p50/p95`;
+- distance dependence;
+- zone-row / zone-column dependence.
+
+The selection threshold must not use ToF residual/error values.
+
+Success criterion: if the preselected `CLEAN DENSE` subset materially lowers
+metric error and collapses distance/row/column deformation relative to the
+full and `UNSTABLE DENSE` subsets, this supports using only high-confidence
+Dense<->ToF correspondences as metric anchors.
+
+Even on success, H2.8 does not mutate reconstruction automatically and does
+not open S01H.3 by itself.
