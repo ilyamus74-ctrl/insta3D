@@ -90,6 +90,44 @@ def main():
         assert comparison["focal_delta_pct"] > 3.0
         assert abs(comparison["cx_delta_px"]) < 1e-9
         assert abs(comparison["cy_delta_px"]) < 1e-9
+
+        # PHONE_CAMERA frames can be physically stored portrait while the
+        # Camera2/COLMAP prior is expressed in 1920x1080 video coordinates.
+        # The sparse worker treats this as a 90/270-degree rotation. H2.3 must
+        # apply the same rule instead of inventing anisotropic x/y scaling.
+        rotated_model = Path(tmp) / "rotated_sparse" / "0"
+        rotated_model.mkdir(parents=True, exist_ok=True)
+        (rotated_model / "cameras.txt").write_text(
+            "# Camera list\n"
+            "1 SIMPLE_RADIAL 1080 1920 1314.7288166744515 540 960 0.013810626697161198\n",
+            encoding="utf-8",
+        )
+        rotated_report = Path(tmp) / "rotated_report.json"
+        rotated_output = Path(tmp) / "rotated_rows.jsonl"
+        subprocess.run([
+            sys.executable, str(SCRIPT),
+            "--h22-candidates", str(p["h22_candidates"]),
+            "--h22-report", str(p["h22_report"]),
+            "--strategy", "geometric_footprint_p50",
+            "--camera-metadata", str(p["camera_metadata"]),
+            "--sparse-model-dir", str(rotated_model),
+            "--minimum-group-count", "20",
+            "--output-jsonl", str(rotated_output),
+            "--report-json", str(rotated_report),
+        ], check=True)
+        rotated = json.loads(rotated_report.read_text(encoding="utf-8"))
+        rotated_audit = rotated["camera_optics_audit"]
+        rotated_prior = rotated_audit["cameras"][0]["scaled_camera2_colmap_prior"]
+        rotated_cmp = rotated_audit["cameras"][0]["comparison"]
+        assert rotated_prior["frame_adaptation"] == "ROTATED_90_OR_270"
+        assert abs(rotated_prior["params"][0] - 1300.0) < 1e-9
+        assert abs(rotated_prior["params"][1] - 540.0) < 1e-9
+        assert abs(rotated_prior["params"][2] - 960.0) < 1e-9
+        assert 1.0 < rotated_cmp["focal_delta_pct"] < 1.2
+        assert rotated_audit["signals"]["aspect_scale_mismatch_gt_0p5pct"] is False
+        assert rotated_audit["signals"]["focal_drift_gt_2pct"] is False
+        assert rotated_audit["camera_optics_drift_signal"] is False
+
         assert report["geometry_mutation_enabled"] is False
         assert report["ready_for_geometry_mutation"] is False
         assert report["dense_input_modified"] is False

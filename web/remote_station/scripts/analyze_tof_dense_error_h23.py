@@ -221,20 +221,75 @@ def prior_for_camera_size(prior, width, height):
     if not isinstance(source_resolution, list) or len(source_resolution) < 2 or not all(finite(v) for v in source_resolution[:2]):
         return None
     sw, sh = float(source_resolution[0]), float(source_resolution[1])
-    if sw <= 0.0 or sh <= 0.0:
+    tw, th = float(width), float(height)
+    if sw <= 0.0 or sh <= 0.0 or tw <= 0.0 or th <= 0.0:
         return None
-    sx, sy = float(width) / sw, float(height) / sh
+
     f, cx, cy, k = [float(v) for v in params[:4]]
+
+    def uniform_scale(scale_x, scale_y):
+        denominator = max(abs(scale_x), abs(scale_y), 1e-12)
+        return abs(scale_x - scale_y) / denominator <= 0.01
+
+    same_scale_x = tw / sw
+    same_scale_y = th / sh
+    if uniform_scale(same_scale_x, same_scale_y):
+        scale = (same_scale_x + same_scale_y) * 0.5
+        return {
+            "model": "SIMPLE_RADIAL",
+            "params": [f * scale, cx * same_scale_x, cy * same_scale_y, k],
+            "source_resolution": [int(round(sw)), int(round(sh))],
+            "target_resolution": [int(width), int(height)],
+            "frame_adaptation": "SCALED_OR_UNCHANGED",
+            "scale_x": same_scale_x,
+            "scale_y": same_scale_y,
+            "aspect_scale_mismatch_ratio": (
+                max(same_scale_x, same_scale_y) / min(same_scale_x, same_scale_y)
+                if min(same_scale_x, same_scale_y) > 0 else None
+            ),
+            "source": prior.get("source"),
+        }
+
+    rotated_scale_x = tw / sh
+    rotated_scale_y = th / sw
+    if uniform_scale(rotated_scale_x, rotated_scale_y):
+        center_tolerance_x = max(2.0, sw * 0.01)
+        center_tolerance_y = max(2.0, sh * 0.01)
+        if (
+            abs(cx - sw * 0.5) > center_tolerance_x
+            or abs(cy - sh * 0.5) > center_tolerance_y
+        ):
+            return {
+                "model": "SIMPLE_RADIAL",
+                "source_resolution": [int(round(sw)), int(round(sh))],
+                "target_resolution": [int(width), int(height)],
+                "frame_adaptation": "ROTATED_REJECTED_NONCENTERED_PRINCIPAL_POINT",
+                "source": prior.get("source"),
+            }
+
+        scale = (rotated_scale_x + rotated_scale_y) * 0.5
+        return {
+            "model": "SIMPLE_RADIAL",
+            "params": [f * scale, tw * 0.5, th * 0.5, k],
+            "source_resolution": [int(round(sw)), int(round(sh))],
+            "target_resolution": [int(width), int(height)],
+            "frame_adaptation": "ROTATED_90_OR_270",
+            "scale_x": rotated_scale_x,
+            "scale_y": rotated_scale_y,
+            "aspect_scale_mismatch_ratio": (
+                max(rotated_scale_x, rotated_scale_y) / min(rotated_scale_x, rotated_scale_y)
+                if min(rotated_scale_x, rotated_scale_y) > 0 else None
+            ),
+            "source": prior.get("source"),
+        }
+
     return {
         "model": "SIMPLE_RADIAL",
-        "params": [f * ((sx + sy) * 0.5), cx * sx, cy * sy, k],
         "source_resolution": [int(round(sw)), int(round(sh))],
         "target_resolution": [int(width), int(height)],
-        "scale_x": sx, "scale_y": sy,
-        "aspect_scale_mismatch_ratio": max(sx, sy) / min(sx, sy) if min(sx, sy) > 0 else None,
+        "frame_adaptation": "REJECTED_ASPECT_OR_SCALE_MISMATCH",
         "source": prior.get("source"),
     }
-
 def focal_fov_deg(size_px, focal_px):
     if not finite(size_px) or not finite(focal_px) or float(focal_px) <= 0.0:
         return None
@@ -272,7 +327,13 @@ def optics_audit(camera_metadata_path, sparse_model_dir):
         }
         scaled_prior = prior_for_camera_size(prior, camera["width"], camera["height"])
         item["scaled_camera2_colmap_prior"] = scaled_prior
-        if camera["model"] == "SIMPLE_RADIAL" and len(camera["params"]) >= 4 and scaled_prior is not None:
+        if (
+            camera["model"] == "SIMPLE_RADIAL"
+            and len(camera["params"]) >= 4
+            and scaled_prior is not None
+            and isinstance(scaled_prior.get("params"), list)
+            and len(scaled_prior["params"]) >= 4
+        ):
             final_f, final_cx, final_cy, final_k = camera["params"][:4]
             prior_f, prior_cx, prior_cy, prior_k = scaled_prior["params"]
             focal_delta_pct = ((final_f - prior_f) / prior_f * 100.0) if prior_f > 0 else None
