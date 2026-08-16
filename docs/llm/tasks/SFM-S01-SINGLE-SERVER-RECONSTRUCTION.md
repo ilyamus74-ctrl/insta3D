@@ -58,7 +58,7 @@ SFM-S01D  camera optical-state/intrinsics contract     IMPLEMENTING
 SFM-S01E  explicit metadata paths in video_scans       IMPLEMENTING
 SFM-S01F  optional ToF capture sidecar                 PASS
 SFM-S01G  ToF <-> selected frame association           PASS
-SFM-S01H  ToF metric measurement / dense assistance    IMPLEMENTING
+SFM-S01H  ToF metric measurement / dense assistance    H1 PASS / H2.x ACTIVE
 ```
 
 ## S01A real-device baseline
@@ -351,14 +351,18 @@ pipeline run.
 Implementation order:
 
 ```text
-S01H.1  build filtered metric ToF observations       IMPLEMENTING
-S01H.2  compare ToF against COLMAP sparse / estimate scale
-S01H.3  reviewed metric sparse + stock COLMAP dense
-S01H.4  compare COLMAP dense depth against ToF
-S01H.5  conservative ToF-assisted fusion
+S01H.1    build filtered metric ToF observations           PASS / CLOSED
+S01H.2    sparse metric-scale diagnostic                   MEASURED
+S01H.2.1  sparse correspondence / zone-footprint test      MEASURED
+S01H.2.2  COLMAP dense depth diagnostic                    MEASURED
+S01H.2.3  controlled error decomposition + optics audit    IMPLEMENTING
+S01H.3    reviewed metric sparse / geometry mutation       CLOSED / BLOCKED
+S01H.4    final dense <-> ToF validation                   NOT STARTED
+S01H.5    conservative ToF-assisted fusion                 CLOSED / BLOCKED
 ```
 
-Until S01H.4 is reviewed, ToF is read-only evidence:
+Until H2.x explains the measured depth-dependent scale instability and H3 is
+explicitly opened by review, ToF is read-only evidence:
 
 ```text
 COLMAP sparse input modified:  no
