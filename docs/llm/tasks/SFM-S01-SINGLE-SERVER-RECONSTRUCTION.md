@@ -354,8 +354,9 @@ Implementation order:
 S01H.1    build filtered metric ToF observations           PASS / CLOSED
 S01H.2    sparse metric-scale diagnostic                   MEASURED
 S01H.2.1  sparse correspondence / zone-footprint test      MEASURED
-S01H.2.2  COLMAP dense depth diagnostic                    MEASURED
-S01H.2.3  controlled error decomposition + optics audit    IMPLEMENTING
+S01H.2.2  COLMAP dense depth diagnostic                    PASS / CLOSED DIAGNOSTIC
+S01H.2.3  controlled error decomposition + optics audit    PASS / CLOSED DIAGNOSTIC
+S01H.2.4  angular / zone residual localization             NEXT / DIAGNOSTIC
 S01H.3    reviewed metric sparse / geometry mutation       CLOSED / BLOCKED
 S01H.4    final dense <-> ToF validation                   NOT STARTED
 S01H.5    conservative ToF-assisted fusion                 CLOSED / BLOCKED

@@ -11,8 +11,9 @@ Measure benefit before allowing ToF to change reconstruction geometry.
 S01H.1  metric observation builder                       PASS / CLOSED
 S01H.2  sparse metric-scale diagnostic                   MEASURED
 S01H.2.1 sparse nearest-radius / zone-footprint test     MEASURED
-S01H.2.2 dense depth diagnostic                          MEASURED
-S01H.2.3 controlled error decomposition + optics audit   IMPLEMENTING
+S01H.2.2 dense depth diagnostic                          PASS / CLOSED DIAGNOSTIC
+S01H.2.3 controlled error decomposition + optics audit   PASS / CLOSED DIAGNOSTIC
+S01H.2.4 angular / zone residual localization            NEXT / DIAGNOSTIC
 S01H.3  reviewed metric geometry mutation                CLOSED / BLOCKED
 S01H.4  final dense-vs-ToF validation                    NOT STARTED
 S01H.5  conservative fusion                              CLOSED / BLOCKED
@@ -239,15 +240,64 @@ zone-radial correlation:       false
 Therefore the sparse-only explanation is rejected. Dense depth has the same
 metric instability and a single global scale is unsafe.
 
-### S01H.2.3 — controlled error decomposition — IMPLEMENTING
+### S01H.2.3 — controlled error decomposition — PASS / CLOSED DIAGNOSTIC
 
 H2.3 removes distance trend before evaluating ToF row/column effects, then
 removes row/column effects before evaluating the remaining distance trend.
 It also compares final optimized COLMAP camera parameters against the validated
 Camera2-derived `colmap_camera_prior`.
 
-Pipeline 92 is regenerating fresh sparse/dense workspaces so H2.2 and H2.3 can
-be persisted before temporary job cleanup.
+Accepted pipeline-92 controlled result:
+
+```text
+raw distance spread:                          1.9963966344
+distance spread after row/column control:     1.9222057701
+zone-row spread after distance control:       1.3350201802
+zone-column spread after distance control:    1.2413141594
+zone-radial spread after distance control:    1.0717985469
+image-region spread after distance control:   1.1320704877
+time spread after distance control:           1.0601545298
+```
+
+The orientation-aware Camera2/COLMAP audit reports:
+
+```text
+prior orientation:              1920x1080 -> 1080x1920 ROTATED_90_OR_270
+prior focal:                    1303.124942780 px
+final focal:                    1314.728816674 px
+focal delta:                    +0.8904651821 %
+principal-point shift:          0 px
+camera_optics_drift_signal:     false
+```
+
+Accepted diagnostic conclusions:
+
+```text
+distance deformation remains after zone control
+row/column structure remains after distance control
+image-region structure remains after distance control
+time drift is not supported as the primary cause
+gross Camera2/COLMAP optics drift is rejected
+```
+
+Detailed closure:
+
+```text
+docs/llm/tasks/results/SFM-S01H22-H23-DENSE-DIAGNOSTIC-RESULT.md
+```
+
+### S01H.2.4 — angular / zone residual localization — NEXT
+
+H2.4 must build a signed distance-conditioned 8x8 residual map and compare
+ToF-zone structure against projected RGB image coordinates. It may evaluate
+small calibration perturbations diagnostically, but must not write a new
+calibration or mutate reconstruction geometry.
+
+Task contract:
+
+```text
+docs/llm/tasks/SFM-S01H2.4-ANGULAR-ZONE-RESIDUAL-LOCALIZATION.md
+```
 
 ## S01H.3 — reviewed metric sparse — CLOSED / BLOCKED
 
