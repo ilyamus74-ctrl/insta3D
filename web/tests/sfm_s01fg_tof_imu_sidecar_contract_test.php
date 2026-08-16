@@ -31,11 +31,25 @@ ok(str_contains($tofRecorder, 'DualPhoneStereoSettingsStore'), 'frozen ToF calib
 
 $provider = source('app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraScanProvider.kt');
 ok(str_contains($provider, 'tofCaptureSidecarRecorder.start(baseDir)'), 'regular PHONE_CAMERA starts ToF sidecar capture');
+ok(str_contains($provider, 'awaitFreshFrame()'), 'PHONE_CAMERA waits for a fresh attached ToF stream before capture');
 ok(str_contains($provider, 'Mp4VideoPtsExtractor.extract('), 'regular PHONE_CAMERA emits encoder PTS telemetry');
 ok(str_contains($provider, 'cameraXStartElapsedNs = video.cameraXStartElapsedNs'), 'encoder PTS sidecar carries CameraX elapsed-realtime anchor');
 ok(str_contains($provider, 'selectedCameraId = videoRecorder.getSelectedLensOption()?.cameraId'), 'frozen ToF calibration binds the actual selected camera');
 $cameraInfo = source('app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraInfoCollector.kt');
 ok(str_contains($cameraInfo, '"capture_rig_identity"'), 'camera_info independently records capture rig identity');
+
+$tofRuntime = source('app/MaklerTour/app/src/main/java/com/example/maklertour/data/tof/TofUsbRuntime.kt');
+ok(str_contains($tofRuntime, 'TOF_FRAME_STALL_TIMEOUT_NS'), 'ToF USB runtime has a stale-depth-frame watchdog');
+ok(str_contains($tofRuntime, 'text = "stop 0\n"') && str_contains($tofRuntime, 'text = "start 0\n"'), 'ToF watchdog forces a real VL53L8CX stop/start transition');
+ok(str_contains($tofRuntime, 'TOF_WATCHDOG'), 'ToF watchdog emits explicit recovery diagnostics');
+ok(str_contains($tofRuntime, 'automaticRecoveries'), 'ToF runtime counts automatic recoveries');
+ok(str_contains($tofRuntime, 'lastFrameHostElapsedRealtimeNs = null'), 'ToF reconnect/recovery clears stale frame timestamps');
+
+$frameTelemetry = source('app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/DualPhoneFrameTelemetry.kt');
+ok(str_contains($frameTelemetry, '"stream_fresh"'), 'ToF capture active flag requires fresh depth frames');
+ok(str_contains($frameTelemetry, '"stream_stalls_during_capture"'), 'camera metadata reports ToF stream stalls during capture');
+ok(str_contains($frameTelemetry, '"automatic_recoveries_during_capture"'), 'camera metadata reports automatic ToF recoveries');
+
 $imuRecorder = source('app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/ImuRecorder.kt');
 ok(str_contains($imuRecorder, 'rebaseVideoTimeline'), 'IMU timeline is rebased to the video CameraX start anchor');
 ok(str_contains($imuRecorder, 'video_timeline_anchor_source'), 'IMU sidecar records its authoritative video timeline anchor');

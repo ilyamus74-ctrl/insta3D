@@ -44,6 +44,10 @@ data class TofUsbState(
     val sequenceDrops: Long = 0,
     val lastSequence: Long? = null,
     val lastFrameHostElapsedRealtimeNs: Long? = null,
+    val streamStalls: Long = 0,
+    val automaticRecoveries: Long = 0,
+    val lastRecoveryReason: String? = null,
+    val lastRecoveryElapsedRealtimeNs: Long? = null,
     val lastError: String? = null,
 )
 
@@ -167,6 +171,37 @@ class TofUsbRuntime private constructor(context: Context) {
     fun lastFrameAgeMs(nowElapsedRealtimeNs: Long = SystemClock.elapsedRealtimeNanos()): Long? {
         val last = _state.value.lastFrameHostElapsedRealtimeNs ?: return null
         return ((nowElapsedRealtimeNs - last).coerceAtLeast(0L)) / 1_000_000L
+    }
+
+    fun hasAttachedTofDevice(): Boolean =
+        usbManager.deviceList.values.any { device ->
+            device.vendorId == RASPBERRY_PI_USB_VID &&
+                findPort(device) != null
+        }
+
+    fun hasFreshFrame(
+        maxAgeMs: Long = DEFAULT_FRESH_FRAME_MAX_AGE_MS,
+    ): Boolean {
+        if (_state.value.status != TofUsbStatus.STREAMING) return false
+        val ageMs = lastFrameAgeMs() ?: return false
+        return ageMs <= maxAgeMs
+    }
+
+    suspend fun awaitFreshFrame(
+        timeoutMs: Long = CAPTURE_READY_TIMEOUT_MS,
+        maxAgeMs: Long = DEFAULT_FRESH_FRAME_MAX_AGE_MS,
+    ): Boolean {
+        val deadlineNs =
+            SystemClock.elapsedRealtimeNanos() + timeoutMs * 1_000_000L
+        while (
+            currentCoroutineContext().isActive &&
+            SystemClock.elapsedRealtimeNanos() < deadlineNs
+        ) {
+            if (hasFreshFrame(maxAgeMs)) return true
+            refreshAttachedDevices()
+            delay(CAPTURE_READY_POLL_MS)
+        }
+        return hasFreshFrame(maxAgeMs)
     }
 
     fun recentFramesSnapshot(): List<TofFrameV1> =
@@ -391,8 +426,11 @@ class TofUsbRuntime private constructor(context: Context) {
 
             TofActiveClockSync.reset()
             clearRecentFrames()
+            _latestFrame.value = null
             _state.value = _state.value.copy(
                 status = TofUsbStatus.STREAMING,
+                lastSequence = null,
+                lastFrameHostElapsedRealtimeNs = null,
                 lastError = null,
             )
 
@@ -405,8 +443,10 @@ class TofUsbRuntime private constructor(context: Context) {
             )
 
             val readBuffer = ByteArray(USB_READ_BUFFER_BYTES)
-            var nextSyncNs = SystemClock.elapsedRealtimeNanos() + ACTIVE_SYNC_INITIAL_DELAY_NS
+            var streamFreshnessOriginNs = SystemClock.elapsedRealtimeNanos()
+            var nextSyncNs = streamFreshnessOriginNs + ACTIVE_SYNC_INITIAL_DELAY_NS
             var syncRepliesObserved = 0L
+            var stalledRecoveryAttempts = 0
 
             while (
                 isSessionCurrent(generation) &&
@@ -475,6 +515,55 @@ class TofUsbRuntime private constructor(context: Context) {
                 if (!isSessionCurrent(generation)) break
 
                 val nowNs = SystemClock.elapsedRealtimeNanos()
+                val lastFrameNs = _state.value.lastFrameHostElapsedRealtimeNs
+                if (
+                    lastFrameNs != null &&
+                    nowNs - lastFrameNs < TOF_FRAME_STALL_TIMEOUT_NS
+                ) {
+                    stalledRecoveryAttempts = 0
+                }
+
+                val freshnessReferenceNs =
+                    lastFrameNs ?: streamFreshnessOriginNs
+                val staleForNs =
+                    (nowNs - freshnessReferenceNs).coerceAtLeast(0L)
+
+                if (staleForNs >= TOF_FRAME_STALL_TIMEOUT_NS) {
+                    if (
+                        stalledRecoveryAttempts >=
+                        MAX_STALL_RECOVERY_ATTEMPTS
+                    ) {
+                        throw IllegalStateException(
+                            "ToF ranging stream stalled after " +
+                                "$stalledRecoveryAttempts automatic recoveries",
+                        )
+                    }
+
+                    stalledRecoveryAttempts += 1
+                    val recovered = recoverStalledRanging(
+                        connection = connection,
+                        endpoint = port.outEndpoint,
+                        generation = generation,
+                        staleForMs = staleForNs / 1_000_000L,
+                        attempt = stalledRecoveryAttempts,
+                        firstAttemptInEpisode =
+                            stalledRecoveryAttempts == 1,
+                        syncLinkAlive = syncRepliesObserved > 0,
+                    )
+                    if (!recovered) {
+                        throw IllegalStateException(
+                            "ToF ranging stream recovery commands failed",
+                        )
+                    }
+
+                    parser.reset()
+                    streamFreshnessOriginNs =
+                        SystemClock.elapsedRealtimeNanos()
+                    nextSyncNs =
+                        streamFreshnessOriginNs + ACTIVE_SYNC_INITIAL_DELAY_NS
+                    continue
+                }
+
                 if (nowNs >= nextSyncNs) {
                     val nonce = TofActiveClockSync.beginRequest(nowNs)
                     if (!bulkWrite(connection, port.outEndpoint, "sync $nonce\n")) {
@@ -530,6 +619,105 @@ class TofUsbRuntime private constructor(context: Context) {
         synchronized(lifecycleLock) {
             started && lifecycleGeneration == generation
         }
+
+    private suspend fun recoverStalledRanging(
+        connection: UsbDeviceConnection,
+        endpoint: UsbEndpoint,
+        generation: Long,
+        staleForMs: Long,
+        attempt: Int,
+        firstAttemptInEpisode: Boolean,
+        syncLinkAlive: Boolean,
+    ): Boolean {
+        if (!isSessionCurrent(generation)) return false
+
+        val recoveryNs = SystemClock.elapsedRealtimeNanos()
+        val before = _state.value
+        _state.value = before.copy(
+            streamStalls =
+                before.streamStalls + if (firstAttemptInEpisode) 1L else 0L,
+            lastRecoveryReason = "STALE_TOF_FRAME_STREAM",
+            lastRecoveryElapsedRealtimeNs = recoveryNs,
+            lastError =
+                "ToF frame stream stale for ${staleForMs}ms; " +
+                    "automatic recovery attempt $attempt",
+        )
+
+        Log.w(
+            TAG,
+            "TOF_WATCHDOG stale_frames=${staleForMs}ms " +
+                "attempt=$attempt/$MAX_STALL_RECOVERY_ATTEMPTS " +
+                "sync_link_alive=$syncLinkAlive action=stop_start_stream",
+        )
+
+        if (!bulkWriteWithRetry(
+                connection = connection,
+                endpoint = endpoint,
+                text = "stream off\n",
+                generation = generation,
+            )
+        ) {
+            return false
+        }
+        delay(CDC_RECOVERY_COMMAND_GAP_MS)
+
+        // RP2040 start_slot() intentionally no-ops while its `running` flag is
+        // already true. A stalled VL53L8CX can therefore keep answering sync
+        // requests while producing no depth frames. Force a real stop/start
+        // transition instead of replaying only `start 0`.
+        if (!bulkWriteWithRetry(
+                connection = connection,
+                endpoint = endpoint,
+                text = "stop 0\n",
+                generation = generation,
+            )
+        ) {
+            return false
+        }
+        delay(CDC_RECOVERY_COMMAND_GAP_MS)
+
+        if (!bulkWriteWithRetry(
+                connection = connection,
+                endpoint = endpoint,
+                text = "start 0\n",
+                generation = generation,
+            )
+        ) {
+            return false
+        }
+        delay(CDC_RECOVERY_COMMAND_GAP_MS)
+
+        if (!bulkWriteWithRetry(
+                connection = connection,
+                endpoint = endpoint,
+                text = "stream 0\n",
+                generation = generation,
+            )
+        ) {
+            return false
+        }
+
+        // Never leave stale frames available to Camera2 pairing during recovery.
+        clearRecentFrames()
+        _latestFrame.value = null
+        val after = _state.value
+        _state.value = after.copy(
+            status = TofUsbStatus.STREAMING,
+            lastSequence = null,
+            lastFrameHostElapsedRealtimeNs = null,
+            automaticRecoveries = after.automaticRecoveries + 1L,
+            lastRecoveryReason = "STALE_TOF_FRAME_STREAM",
+            lastRecoveryElapsedRealtimeNs = recoveryNs,
+            lastError = null,
+        )
+
+        Log.i(
+            TAG,
+            "TOF_WATCHDOG recovery_commands_sent attempt=$attempt " +
+                "waiting_for_fresh_frame=true",
+        )
+        return true
+    }
 
     private fun publishFrame(
         frame: TofFrameV1,
@@ -757,6 +945,7 @@ class TofUsbRuntime private constructor(context: Context) {
         private const val SCAN_INTERVAL_MS = 1000L
         private const val CDC_SETTLE_MS = 250L
         private const val CDC_COMMAND_GAP_MS = 50L
+        private const val CDC_RECOVERY_COMMAND_GAP_MS = 100L
         private const val CDC_WRITE_RETRY_DELAY_MS = 100L
         private const val CDC_WRITE_ATTEMPTS = 3
         private const val USB_READ_BUFFER_BYTES = 4096
@@ -764,6 +953,15 @@ class TofUsbRuntime private constructor(context: Context) {
         private const val USB_WRITE_TIMEOUT_MS = 1000
         private const val USB_CONTROL_TIMEOUT_MS = 1000
         private const val LOG_EVERY_FRAMES = 30L
+
+        // At 15 Hz a healthy VL53L8CX frame arrives about every 67 ms.
+        // 1.5 s is deliberately conservative and still catches the observed
+        // multi-second ranging stall long before a PHONE_CAMERA capture starts.
+        private const val TOF_FRAME_STALL_TIMEOUT_NS = 1_500_000_000L
+        private const val MAX_STALL_RECOVERY_ATTEMPTS = 2
+        private const val DEFAULT_FRESH_FRAME_MAX_AGE_MS = 500L
+        private const val CAPTURE_READY_TIMEOUT_MS = 5_000L
+        private const val CAPTURE_READY_POLL_MS = 50L
 
         private const val ACTIVE_SYNC_INITIAL_DELAY_NS = 500_000_000L
         private const val ACTIVE_SYNC_INTERVAL_NS = 1_000_000_000L

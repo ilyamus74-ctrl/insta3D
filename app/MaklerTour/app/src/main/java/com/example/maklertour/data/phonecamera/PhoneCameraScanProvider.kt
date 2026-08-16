@@ -23,6 +23,7 @@ import com.maklertour.domain.ScanVideoCaptureStatus
 import com.maklertour.domain.ScanVideoDownloadState
 import com.maklertour.domain.ScanVideoProcessingState
 import com.maklertour.domain.ScanVideoUploadState
+import com.maklertour.data.tof.TofUsbRuntime
 import java.io.File
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
@@ -99,6 +100,15 @@ class PhoneCameraScanProvider(
         check(dualCapture == null) {
             "Dual-phone capture is armed or recording"
         }
+
+        val tofRuntime = TofUsbRuntime.get(appContext)
+        if (tofRuntime.hasAttachedTofDevice()) {
+            check(tofRuntime.awaitFreshFrame()) {
+                "ToF device is connected but fresh depth frames are unavailable. " +
+                    "Wait for automatic recovery or reconnect USB."
+            }
+        }
+
         val startedAt = Instant.now()
         val baseDir = File(
             appContext.filesDir,

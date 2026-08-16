@@ -82,6 +82,8 @@ class DualPhoneFrameTelemetryRecorder(context: Context) {
     private var tofFramesOkAtStart: Long = 0L
     private var tofCrcErrorsAtStart: Long = 0L
     private var tofSequenceDropsAtStart: Long = 0L
+    private var tofStreamStallsAtStart: Long = 0L
+    private var tofAutomaticRecoveriesAtStart: Long = 0L
     private var tofAcceptedPairs: Long = 0L
     private var tofRejectedPairs: Long = 0L
     private var tofUnpairedResults: Long = 0L
@@ -136,6 +138,8 @@ class DualPhoneFrameTelemetryRecorder(context: Context) {
             tofFramesOkAtStart = tofState.framesOk
             tofCrcErrorsAtStart = tofState.crcErrors
             tofSequenceDropsAtStart = tofState.sequenceDrops
+            tofStreamStallsAtStart = tofState.streamStalls
+            tofAutomaticRecoveriesAtStart = tofState.automaticRecoveries
         }
         writer = file.bufferedWriter().also { active ->
             active.write(
@@ -518,6 +522,11 @@ class DualPhoneFrameTelemetryRecorder(context: Context) {
         val runtime = TofUsbRuntime.get(appContext)
         val state = runtime.state.value
         val latest = runtime.latestFrame.value
+        val lastFrameAgeMs = runtime.lastFrameAgeMs()
+        val streamFresh =
+            state.status.name == "STREAMING" &&
+                lastFrameAgeMs != null &&
+                lastFrameAgeMs <= TOF_ACTIVE_MAX_FRAME_AGE_MS
         val sortedDeltaUs = tofPairAbsDeltaUs.toList().sorted()
         val timestampDomainValid = cameraTimestampSourceName == "REALTIME"
         return JSONObject()
@@ -527,7 +536,8 @@ class DualPhoneFrameTelemetryRecorder(context: Context) {
                 state.deviceId != null || latest != null ||
                     state.framesOk > tofFramesOkAtStart,
             )
-            .put("active", state.status.name == "STREAMING")
+            .put("active", streamFresh)
+            .put("stream_fresh", streamFresh)
             .put("source", "VL53L8CX_RP2040_USB")
             .put("usb_status_start", tofStatusAtStart)
             .put("usb_status_end", state.status.name)
@@ -549,7 +559,27 @@ class DualPhoneFrameTelemetryRecorder(context: Context) {
                 (state.sequenceDrops - tofSequenceDropsAtStart)
                     .coerceAtLeast(0L),
             )
-            .putNullable("last_frame_age_ms", runtime.lastFrameAgeMs())
+            .put(
+                "stream_stalls_during_capture",
+                (state.streamStalls - tofStreamStallsAtStart)
+                    .coerceAtLeast(0L),
+            )
+            .put(
+                "automatic_recoveries_during_capture",
+                (
+                    state.automaticRecoveries -
+                        tofAutomaticRecoveriesAtStart
+                    ).coerceAtLeast(0L),
+            )
+            .putNullable(
+                "last_recovery_reason",
+                state.lastRecoveryReason,
+            )
+            .putNullable(
+                "last_recovery_elapsed_realtime_ns",
+                state.lastRecoveryElapsedRealtimeNs,
+            )
+            .putNullable("last_frame_age_ms", lastFrameAgeMs)
             .put(
                 "latest_frame",
                 latest?.let { frame ->
@@ -663,6 +693,7 @@ class DualPhoneFrameTelemetryRecorder(context: Context) {
 
     private companion object {
         const val MAX_TOF_PAIRING_SAMPLES = 4096
+        const val TOF_ACTIVE_MAX_FRAME_AGE_MS = 500L
     }
 }
 
