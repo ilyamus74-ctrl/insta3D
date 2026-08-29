@@ -1,0 +1,3 @@
+/home/ilyamus/AndroidStudioProjects/MaklerTour/app/.cxx/Debug/70425w2u/x86_64/CMakeFiles/cam1_uvc.dir
+/home/ilyamus/AndroidStudioProjects/MaklerTour/app/.cxx/Debug/70425w2u/x86_64/CMakeFiles/edit_cache.dir
+/home/ilyamus/AndroidStudioProjects/MaklerTour/app/.cxx/Debug/70425w2u/x86_64/CMakeFiles/rebuild_cache.dir

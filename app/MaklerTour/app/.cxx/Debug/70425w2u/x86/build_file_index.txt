@@ -1,0 +1,1 @@
+/home/ilyamus/AndroidStudioProjects/MaklerTour/app/src/main/cpp/CMakeLists.txt

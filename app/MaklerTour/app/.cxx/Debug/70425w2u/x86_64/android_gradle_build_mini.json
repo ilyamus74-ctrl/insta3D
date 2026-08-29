@@ -1,0 +1,27 @@
+{
+  "buildFiles": [
+    "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/src/main/cpp/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/home/ilyamus/Android/Sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/.cxx/Debug/70425w2u/x86_64",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/home/ilyamus/Android/Sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/.cxx/Debug/70425w2u/x86_64",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "cam1_uvc::@6890427a1f51a3e7e1df": {
+      "artifactName": "cam1_uvc",
+      "abi": "x86_64",
+      "output": "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/build/intermediates/cxx/Debug/70425w2u/obj/x86_64/libcam1_uvc.so",
+      "runtimeFiles": []
+    }
+  }
+}

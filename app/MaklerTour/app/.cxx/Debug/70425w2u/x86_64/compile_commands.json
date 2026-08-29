@@ -1,0 +1,7 @@
+[
+{
+  "directory": "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/.cxx/Debug/70425w2u/x86_64",
+  "command": "/home/ilyamus/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ --target=x86_64-none-linux-android26 --sysroot=/home/ilyamus/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot -Dcam1_uvc_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -fPIC -o CMakeFiles/cam1_uvc.dir/cam1_uvc.cpp.o -c /home/ilyamus/AndroidStudioProjects/MaklerTour/app/src/main/cpp/cam1_uvc.cpp",
+  "file": "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/src/main/cpp/cam1_uvc.cpp"
+}
+]

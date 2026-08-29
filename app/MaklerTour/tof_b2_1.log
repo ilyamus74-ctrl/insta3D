@@ -1,0 +1,12 @@
+--------- beginning of main
+08-14 17:04:04.060 21466 21697 I TofCalibration: TOF_CAL_SAMPLE pose=9 seq=974 deltaUs=8310 zones=53 corners=28
+08-14 17:04:07.704 21466 21697 I TofCalibration: TOF_CAL_SAMPLE pose=10 seq=1029 deltaUs=18122 zones=49 corners=28
+08-14 17:04:11.605 21466 21702 I TofCalibration: TOF_CAL_SAMPLE pose=11 seq=1088 deltaUs=-7537 zones=57 corners=28
+08-14 17:04:12.174 21466 21702 I TofCalibration: TOF_CAL_SAMPLE pose=12 seq=1096 deltaUs=-15747 zones=31 corners=28
+08-14 17:04:16.715 21466 21697 I TofCalibration: TOF_CAL_SAMPLE pose=13 seq=1166 deltaUs=29921 zones=62 corners=28
+08-14 17:04:21.321 21466 21702 I TofCalibration: TOF_CAL_SAMPLE pose=14 seq=1235 deltaUs=8105 zones=43 corners=28
+08-14 17:04:22.012 21466 21699 I TofCalibration: TOF_CAL_SAMPLE pose=15 seq=1244 deltaUs=-32306 zones=43 corners=28
+08-14 17:04:28.433 21466 21697 I TofCalibration: TOF_CAL_SAMPLE pose=16 seq=1343 deltaUs=23674 zones=62 corners=28
+08-14 17:04:33.192 21466 21697 I TofCalibration: TOF_CAL_SAMPLE pose=17 seq=1414 deltaUs=740 zones=62 corners=28
+08-14 17:04:33.236 21466 21702 I TofCalibration: TOF_CAL_SOLVE_START run=cal-40f8ac48-4bf5-4155-9f07-51e857f1071c samples=18
+08-14 17:04:37.520 21466 21695 I TofCalibration: TOF_CAL_SOLVE_RESULT success=false samples=18 obs=1010 rmsMm=129.12017647618936 p95Mm=92.20892162054008 allRmsMm=332.98109510951184 tMm=[63.523316181584214, -39.30726078820942, 44.42282021785043] intrinsics=TofZoneIntrinsics(fxZones=10.820482907299553, fyZones=11.728296587670735, cxZones=2.5, cyZones=2.6893736752902764)

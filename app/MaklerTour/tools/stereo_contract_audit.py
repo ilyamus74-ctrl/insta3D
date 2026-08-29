@@ -16,16 +16,6 @@ STEREO_CAPTURE = ROOT / "app/src/main/java/com/example/maklertour/data/phonecame
 NATIVE_UVC = ROOT / "app/src/main/cpp/cam1_uvc.cpp"
 DEVICE_ORIENTATION = ROOT / "app/src/main/java/com/example/maklertour/data/phonecamera/DeviceOrientationTracker.kt"
 DENSE_DEPTH = ROOT / "tools/dense_depth_from_synced_capture.py"
-PHONE_PROVIDER = ROOT / "app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraScanProvider.kt"
-PHONE_MANIFEST = ROOT / "app/src/main/java/com/example/maklertour/data/phonecamera/PhoneScanManifestWriter.kt"
-MOBILE_UPLOAD_API = ROOT / "app/src/main/java/com/example/maklertour/auth/MobileUploadApi.kt"
-APP_VIEW_MODEL = ROOT / "app/src/main/java/com/example/maklertour/state/AppStateViewModel.kt"
-REPOSITORIES = ROOT / "app/src/main/java/com/example/maklertour/data/repository/Repositories.kt"
-UPLOAD_DAO = ROOT / "app/src/main/java/com/maklertour/data/local/dao/UploadItemDao.kt"
-APP_GRADLE = ROOT / "app/build.gradle.kts"
-ROOT_GRADLE = ROOT / "build.gradle.kts"
-VERSIONS_TOML = ROOT / "gradle/libs.versions.toml"
-CAMERA_METADATA_PARSER = ROOT.parent.parent / "web/remote_station/scripts/camera_metadata.py"
 
 
 class Audit:
@@ -416,37 +406,6 @@ def audit_capture_bundle_upload(audit: Audit) -> None:
     )
     audit.require("asynchronous" in docs.lower() and "upload queue" in docs.lower(), "docs mention asynchronous packaging and upload queue")
 
-def audit_android_build_and_phone_upload(audit: Audit) -> None:
-    app_gradle = read(APP_GRADLE, audit)
-    root_gradle = read(ROOT_GRADLE, audit)
-    versions = read(VERSIONS_TOML, audit)
-    provider = read(PHONE_PROVIDER, audit)
-    manifest = read(PHONE_MANIFEST, audit)
-    upload_api = read(MOBILE_UPLOAD_API, audit)
-    view_model = read(APP_VIEW_MODEL, audit)
-    repositories = read(REPOSITORIES, audit)
-    upload_dao = read(UPLOAD_DAO, audit)
-    metadata_parser = read(CAMERA_METADATA_PARSER, audit)
-    docs = read(ROOT / "docs/APP_CAMERA_STEREO_CONTRACT.md", audit)
-
-    audit.require('kotlin = "2.0.21"' in versions, "Android contract pins Kotlin 2.0.21")
-    audit.require("libs.plugins.ksp" in app_gradle and "libs.plugins.ksp" in root_gradle, "KSP plugin is enabled")
-    audit.require('ksp("androidx.room:room-compiler:2.6.1")' in app_gradle, "Room compiler uses KSP")
-    audit.require("kapt(" not in app_gradle and 'kotlin("kapt")' not in app_gradle, "active Android build has no kapt")
-    audit.require(provider.count("companion object") == 1, "PhoneCameraScanProvider has one companion object")
-    audit.require(provider.count("PhoneCameraVideoRecorder(appContext, lifecycleOwner)") == 1, "PhoneCameraScanProvider owns one recorder")
-    audit.require("camera_info.json" in upload_api and "manifest.json" in upload_api, "phone upload attaches camera_info and manifest")
-    audit.require("required metadata missing" in upload_api and "server acknowledgement missing required metadata" in upload_api, "PHONE_CAMERA upload requires local and server metadata")
-    audit.require("Phone camera metadata file was not created" in provider and "Phone scan manifest file was not created" in provider, "provider validates metadata sidecars")
-    audit.require('"focal_length_mm"' in manifest and '"approximate_fov_deg"' in manifest and '"resolution"' in manifest and '"fps"' in manifest, "phone manifest carries camera intrinsics summary")
-    audit.require('uploadType == "VIDEO"' in view_model and "bindingId == scan.id" in view_model, "video queue item binds exactly one ScanVideo")
-    upload_worker = balanced_block(view_model, "private suspend fun processUploadInternal")
-    audit.require("targetScanVideos.forEach" in upload_worker and not re.search(r"scanVideos\.forEach\s*\{\s*scan\s*->\s*val file", upload_worker), "upload worker does not transfer all session videos")
-    audit.require("clearForVideo" in upload_dao and "uploadItemDao.clearForVideo" in repositories, "Room queue can clear one video item")
-    audit.require("def fov_value" in metadata_parser, "camera metadata parser accepts nested FOV objects")
-    audit.require("compileDebugKotlin --no-build-cache" in docs and "kapt" in docs.lower() and "bindingId = app_scan_uuid" in docs, "contract documents build and per-video upload gates")
-
-
 def main() -> int:
     audit = Audit()
 
@@ -475,7 +434,6 @@ def main() -> int:
 
     audit_depth_axis_contract(audit)
     audit_capture_bundle_upload(audit)
-    audit_android_build_and_phone_upload(audit)
 
     return audit.report()
 

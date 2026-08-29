@@ -1,0 +1,5 @@
+# ninja log v5
+0	446	1783076431423866259	CMakeFiles/cam1_uvc.dir/cam1_uvc.cpp.o	3d1f0f475e62976c
+451	537	1783076431515867416	/home/ilyamus/AndroidStudioProjects/MaklerTour/app/build/intermediates/cxx/Debug/70425w2u/obj/x86_64/libcam1_uvc.so	39d06bfe3febc7eb
+2	1575	1783077926483689737	CMakeFiles/cam1_uvc.dir/cam1_uvc.cpp.o	3d1f0f475e62976c
+1578	1644	1783077926557690670	/home/ilyamus/AndroidStudioProjects/MaklerTour/app/build/intermediates/cxx/Debug/70425w2u/obj/x86_64/libcam1_uvc.so	a8d357b7139451e7

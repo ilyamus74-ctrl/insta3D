@@ -1,0 +1,38 @@
+{
+  "buildFiles": [
+    "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/src/main/cpp/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/home/ilyamus/Android/Sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/.cxx/Debug/70425w2u/armeabi-v7a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/home/ilyamus/Android/Sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/.cxx/Debug/70425w2u/armeabi-v7a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "cam1_uvc::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "armeabi-v7a",
+      "artifactName": "cam1_uvc",
+      "output": "/home/ilyamus/AndroidStudioProjects/MaklerTour/app/build/intermediates/cxx/Debug/70425w2u/obj/armeabi-v7a/libcam1_uvc.so",
+      "runtimeFiles": []
+    }
+  },
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "/home/ilyamus/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/bin/clang.lld",
+      "cppCompilerExecutable": "/home/ilyamus/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++.lld"
+    }
+  },
+  "cFileExtensions": [],
+  "cppFileExtensions": [
+    "cpp"
+  ]
+}

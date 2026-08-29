@@ -1,0 +1,3265 @@
+{
+  "format": "project-navigator",
+  "schemaVersion": "1.0.0",
+  "project": {
+    "id": "b6ea9bc5-8560-45ca-933c-33a09849f66b",
+    "name": "Insta3D_refactoring_reconciled",
+    "description": "",
+    "status": "draft",
+    "createdAt": "2026-08-28T08:56:43.022Z",
+    "updatedAt": "2026-08-28T08:56:43.022Z",
+    "revision": 1,
+    "settings": {
+      "locale": "ru",
+      "weekStartsOn": 1,
+      "defaultView": "overview"
+    }
+  },
+  "workItems": [
+    {
+      "id": "0b06374d-ccc3-4261-a376-676807e8ac12",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "Получения полноценных модели с достоверными метрическими данными",
+      "description": "Получения достовреныз 3д моделей с метрическими данными готовых для построения полноценных выдачей польщователю и обработке построения глобальныхз 3Д моделей",
+      "status": "planned",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "0ef71a6e-7291-4695-8e19-41de6f9f058e",
+          "text": "all required frames/camera roles form an accepted globally consistent trajectory and component structure.",
+          "completed": false
+        },
+        {
+          "id": "e925c9fe-c328-4d2b-a612-46d5b400eda4",
+          "text": "scale and geometry are constrained by calibrated stereo, ToF, IMU/ground truth as applicable—not merely reported afterward.",
+          "completed": false
+        },
+        {
+          "id": "37a51344-591e-4cca-be68-ec131ca4ebb2",
+          "text": "preregistered measurements meet explicit absolute/relative error thresholds on representative scenes.",
+          "completed": false
+        },
+        {
+          "id": "ad05ac6e-942a-44c5-9602-d9c9497be4c0",
+          "text": "dense/mesh tooling exists; final mesh validity, texture coverage and reproducibility are not accepted.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [
+        "ebc6c657-8ff8-48af-bebb-b2c6bfcd90f6",
+        "0255284d-fe83-45ba-9558-d3159330e067"
+      ],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:32:42.182Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 3
+    },
+    {
+      "id": "19dfb29a-4d50-4fb5-8848-39af4e78eb5d",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "Использщование камеры Insta360",
+      "description": "подключение и испольщование камеры для построяния 3Д туров",
+      "status": "done",
+      "priority": "medium",
+      "progress": 100,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "f2f815cf-9bc0-47ed-a296-214b198f0e87",
+          "text": "the app connects to the X4, captures intended photo/video media and associates it with the tour workflow.",
+          "completed": true
+        },
+        {
+          "id": "037e4c4a-1bd5-49ca-970b-2c05690ddae5",
+          "text": "current hardware regression confirms capture/upload/view after recent repository changes.",
+          "completed": false
+        },
+        {
+          "id": "0233db28-04a1-4e79-815b-ade08145cac1",
+          "text": "metric SfM use requires new calibration/processing criteria if the user intends it.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:55:02.062Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 2
+    },
+    {
+      "id": "2498f509-0f87-41e1-9eba-fe0684511263",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "APP record Automatic photo capture to Photo SfM/viewer",
+      "description": "создание высоких разшенрением снимков с одного телеыона для обработки модели с сипольщование IMU  + TOF для построеня 3Д модели с метричискимиданными",
+      "status": "in-progress",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "fababca3-d6a7-4ef8-9c7a-fb85906d851d",
+          "text": "physical-device automatic capture preserves full-resolution images, usable timestamps and calibration and reaches server storage.",
+          "completed": false
+        },
+        {
+          "id": "99d36633-1823-4ff1-a6f0-d1aaff06aa38",
+          "text": "the server produces a sparse/dense result and viewer entry without manual intervention.",
+          "completed": false
+        },
+        {
+          "id": "aa40bb32-f03f-45c3-a509-1226b78d6164",
+          "text": "required IMU and ToF sidecars are uploaded and actively consumed for the intended metric result.",
+          "completed": false
+        },
+        {
+          "id": "f36db81f-c451-4166-9307-df93e8689b00",
+          "text": "end-to-end runtime evidence records image count, registration/components, artifact validity and metric error.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [
+        "36da4049-c2e5-4463-ab3c-69cae85810b1",
+        "ebc6c657-8ff8-48af-bebb-b2c6bfcd90f6",
+        "0255284d-fe83-45ba-9558-d3159330e067"
+      ],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:36:03.531Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 3
+    },
+    {
+      "id": "4c7e40a0-5f6a-4563-b889-27e1f3286010",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "APP Android + USB камера",
+      "description": "Запись стерео видео с возмоджным иполльщованием IMU + TOF для посторояния конечной 3д модели с размерами",
+      "status": "in-progress",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "7a33a4fb-a6af-41d8-84e2-b0a3b015b2f2",
+          "text": "phone/USB roles, calibration and synchronized pairs survive capture and package validation on a physical device.",
+          "completed": false
+        },
+        {
+          "id": "aa723b4e-e833-46a2-af37-a6b0a43208a5",
+          "text": "required ToF sidecars are persisted and reach processing.",
+          "completed": false
+        },
+        {
+          "id": "b44dcb35-f4c0-4004-afa2-2218b80e4c18",
+          "text": "pair clouds and trajectory are generated and accumulated; complete global fusion/optimization is not accepted.",
+          "completed": false
+        },
+        {
+          "id": "b453402a-1601-41f5-978a-7a88ebae60eb",
+          "text": "F02 device/build preflight and graphics-station runtime acceptance pass on a representative dataset.",
+          "completed": false
+        },
+        {
+          "id": "6cc26e31-bc52-48d9-9d75-77aeb2a7dc1f",
+          "text": "output meets a declared global metric and mesh/texturing gate.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [
+        "36da4049-c2e5-4463-ab3c-69cae85810b1",
+        "0a4c3d54-1668-4b9b-8733-cab8c91ac647"
+      ],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:45:55.796Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 2
+    },
+    {
+      "id": "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "APP Android инструмент для работы с заказами и сьемкой материалов для построения 3Д модели",
+      "description": "Работа с сервером для получения заказов/заявок\nвыбор заявки и сьемка с помощью доступнфз инструментов. камера. дополнительные камеры, датчики IMU , TOF и вспомогательные инструменты.\nпередача на сервер в заказ для дальнейшей обработки.\nвозможна работа для построения 3д модели с сипольщованием локально пк или ноутбкуа.\n",
+      "status": "in-progress",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "06ab0d28-5274-40c6-a888-93b1ab52f170",
+          "text": "every supported capture emits the canonical identity, mode, roles, timestamps/clock relation, calibration, media, telemetry, integrity and lifecycle fields.",
+          "completed": false
+        },
+        {
+          "id": "a986331e-1c79-418a-8e1e-b1770303efba",
+          "text": "artifacts survive local persistence and resumable upload without silent loss.",
+          "completed": false
+        },
+        {
+          "id": "d4aa69b6-07c3-4ded-97bd-d6bcc3aef0fa",
+          "text": "the server accepts or explicitly rejects every declared mode against a versioned contract; current dual aggregate is rejected unexpectedly.",
+          "completed": false
+        },
+        {
+          "id": "1d5ce5cc-3dd8-478e-b106-88e8031a6b7b",
+          "text": "fixtures prove backward compatibility for current SINGLE, Auto Photo, MASTER/SLAVE, laptop-live and USB modes.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [
+        "f601936e-ed07-4083-8aac-fb54f2e45512",
+        "36da4049-c2e5-4463-ab3c-69cae85810b1",
+        "a2871bac-c1b3-4aa7-b196-e6069feb9e65"
+      ],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:31:22.026Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 3
+    },
+    {
+      "id": "633331e3-586d-4e7c-976f-e2c18e6c966c",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "Dollhouse, floorplan and photorealistic viewer",
+      "description": "Получения полноценных реалистичныз 3Д моделей для просмотра и работы с нмии в реальном масштабе.",
+      "status": "in-progress",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "645ff791-c7dd-4aa8-99f6-91306929c207",
+          "text": "existing 360 and basic SfM artifacts can be viewed through current routes.",
+          "completed": true
+        },
+        {
+          "id": "87d9213a-817f-4757-a05b-54b735bc50fb",
+          "text": "accepted metric model renders as a navigable dollhouse with stable scale/camera framing.",
+          "completed": false
+        },
+        {
+          "id": "9b7a9228-27fa-45d0-9d3d-fc327b69793d",
+          "text": "floorplan is generated/linked and validated against the model.",
+          "completed": false
+        },
+        {
+          "id": "dff61067-f07d-475f-9c1e-bedc9d93975c",
+          "text": "textured photorealistic model meets declared browser performance and visual-quality gates.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:32:59.257Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 3
+    },
+    {
+      "id": "72378a61-7092-43c3-9671-4b365d929265",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "APP MASTER + SLAVE",
+      "description": "",
+      "status": "in-progress",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "f5f76903-fde4-4321-89af-3ed663b4a7c1",
+          "text": "MASTER controls SLAVE recording and persists camera roles, clock samples, per-phone video and IMU.",
+          "completed": true
+        },
+        {
+          "id": "fccc092c-a02e-4206-a4ec-3357f05daa7f",
+          "text": "aggregate dual bundle is accepted by the production upload contract.",
+          "completed": false
+        },
+        {
+          "id": "55af3f42-8c18-4ea9-b32f-4ac87238776d",
+          "text": "required ToF is captured/persisted/uploaded for both roles.",
+          "completed": false
+        },
+        {
+          "id": "3cc64860-c08a-4357-80be-00e206e2c02e",
+          "text": "downstream processing uses both calibrated roles and clock mapping to produce an optimized global result.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [
+        "f601936e-ed07-4083-8aac-fb54f2e45512",
+        "36da4049-c2e5-4463-ab3c-69cae85810b1",
+        "0a4c3d54-1668-4b9b-8733-cab8c91ac647"
+      ],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:42:58.035Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 2
+    },
+    {
+      "id": "8801e3ab-2953-4113-b260-4cdb17238425",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "Order, session and 360 tour MVP",
+      "description": "",
+      "status": "done",
+      "priority": "medium",
+      "progress": 100,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "e5d3baeb-d66e-4cb6-8a23-e7ed3633c460",
+          "text": "an order and capture session persist, uploaded 360 media is associated, and an authorized private/public tour can render it. Evidence: PHP/DB paths plus recorded MVP documentation.",
+          "completed": true
+        },
+        {
+          "id": "ab03aff8-1331-4840-a6a8-04017bc04b91",
+          "text": "repeat the order → upload → publish smoke test on the current deployment without manual database repair.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:30:57.334Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 2
+    },
+    {
+      "id": "a94d2800-5bdf-4dea-83d9-cc05e8ac5152",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "APP 2 android phone + notebook/pc",
+      "description": "построение на локальном компьютере через сеть wifi\nвозможность или доступность испольщовния  IMU  + TOF для коенчной расчета модели с размерами",
+      "status": "in-progress",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "de482b06-976b-40e1-b9d8-451bf35a45c1",
+          "text": "two phone streams reach one host with stable role/session identity, usable clock relation and calibration.",
+          "completed": false
+        },
+        {
+          "id": "e3d09ab1-bf20-4f1c-b5b3-a0b49d049637",
+          "text": "IMU/ToF packets reach the host with integrity/coverage diagnostics; present transport is reduced live data, not a durable canonical bundle.",
+          "completed": false
+        },
+        {
+          "id": "811f598c-056d-4cf4-bfec-dbe016942a6e",
+          "text": "the host or server consumes both cameras and telemetry in global alignment/fusion/optimization.",
+          "completed": false
+        },
+        {
+          "id": "bc57b214-a938-46e8-9c29-bf5755ad9d1d",
+          "text": "an end-to-end run produces a valid metric cloud/mesh with stated accuracy.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [
+        "36da4049-c2e5-4463-ab3c-69cae85810b1",
+        "0a4c3d54-1668-4b9b-8733-cab8c91ac647"
+      ],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:44:50.597Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 2
+    },
+    {
+      "id": "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "Server storage and GrafikStation job orchestration",
+      "description": "обработка полученных данных на серврер и передача доп обработки на графическую станци.\nпринимает данные из андроид приложения \nобрабатывает данные полученные с андроид приложения\nпублицирует готовые резульатты\nведет учет заявок межжу брокерами и исполнителями.\nготовые модели доступнгы для просмотра зарезервированныз и не зарезервированныз польщователей\nдолжен отслеживать получения вспомогательныз данных IMU , TOF и возмодно подключаемых другиз данных если они будут доступны",
+      "status": "in-progress",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "f1dd7741-2b7b-43cb-b0ad-1f37efc70bd2",
+          "text": "authorized station can claim, heartbeat and finish supported jobs and register result artifacts.",
+          "completed": true
+        },
+        {
+          "id": "2ab76c68-3b6e-4fdd-87a6-8a19fd7a4989",
+          "text": "supported capture packages are schema-validated, integrity-checked and durably associated with order/session/mode/roles.",
+          "completed": false
+        },
+        {
+          "id": "28278447-0739-49ca-a1f5-91257e7cc4a1",
+          "text": "every active capture branch, especially dual aggregate, is accepted under one compatible contract.",
+          "completed": false
+        },
+        {
+          "id": "4561799b-1772-4381-9f16-92b257c0df31",
+          "text": "orchestration records whether IMU/ToF were absent, diagnostic-only or actively consumed.",
+          "completed": false
+        },
+        {
+          "id": "6ab38f3e-a8f7-42dc-8e3f-851e8ea281fd",
+          "text": "integration fixtures cover each capture mode and each dispatched job with valid/invalid artifact outcomes.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [
+        "f601936e-ed07-4083-8aac-fb54f2e45512",
+        "36da4049-c2e5-4463-ab3c-69cae85810b1",
+        "897e09fb-2742-4c71-a988-a8d9bbd2cec5"
+      ],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:31:59.306Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 4
+    },
+    {
+      "id": "da6e553d-a4ec-40c5-a431-b03941393d29",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "APP  SINGLE baseline",
+      "description": "Запись видео с возмоджным иполльщованием IMU + TOF для посторояния конечной 3д модели с размерами ",
+      "status": "in-progress",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "995e025e-0db2-47c8-ade5-222432d40da0",
+          "text": "a SINGLE capture records video, IMU and ToF sidecars and the server retains them.",
+          "completed": true
+        },
+        {
+          "id": "a9fba66e-dab8-4c58-95b0-561918158069",
+          "text": "the sparse pipeline produces diagnostics for registration, components, points, reprojection error, trajectory, first/last frame and endpoint distance.",
+          "completed": true
+        },
+        {
+          "id": "6706364d-58f3-4c6e-9c28-dfbcbad54052",
+          "text": "controlled long-range visual links improve connectivity without exhaustive matching; v1 supports this, isolated v2 is NOT_RUN.",
+          "completed": false
+        },
+        {
+          "id": "11ea8572-1261-425e-b4fd-7bf00ee47fdd",
+          "text": "IMU participates as a mapper/optimization pose or gravity prior; current use is selection/diagnostic only.",
+          "completed": false
+        },
+        {
+          "id": "78fe15c3-1e8c-43a3-a01b-5a5ac442cd0a",
+          "text": "ToF participates as an active metric/geometric constraint and changes the reconstructed solution.",
+          "completed": false
+        },
+        {
+          "id": "014f44e0-d002-477e-84c6-0edf75af35fe",
+          "text": "a predeclared physical-ground-truth test demonstrates repeatable scale/trajectory improvement and acceptable metric error.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [
+        "ebc6c657-8ff8-48af-bebb-b2c6bfcd90f6",
+        "0255284d-fe83-45ba-9558-d3159330e067",
+        "897e09fb-2742-4c71-a988-a8d9bbd2cec5"
+      ],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:39:46.582Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 3
+    },
+    {
+      "id": "fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+      "kind": "task",
+      "parentId": null,
+      "rank": "a",
+      "title": "Обработчик на графической станции.",
+      "description": "получает задания с сервера и выполняет для построения 3Д модели через DENSE COLMAP полноценной 3Д модели. после выполнения отдает резульат обратно сервера\nдолжен уметь рабоатть с вспомогательными данными IMU , TOF и возмодно подключаемых другиз данных если они будут доступны",
+      "status": "in-progress",
+      "priority": "medium",
+      "progress": 0,
+      "owner": null,
+      "tags": [],
+      "schedule": {
+        "plannedStart": null,
+        "plannedEnd": null,
+        "actualStart": null,
+        "actualEnd": null,
+        "estimateHours": null
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "c03e4ccc-82f2-4f3d-8290-7aeb440fcedc",
+          "text": "sparse/dense/PLY/mesh and synchronized-dense commands emit validated artifacts rather than relying only on exit status.",
+          "completed": true
+        },
+        {
+          "id": "7235d7f3-f980-4d60-9b1b-c437695f3546",
+          "text": "diagnostics quantify components, trajectory and sensor coverage.",
+          "completed": false
+        },
+        {
+          "id": "d1cb9e1b-17f1-46b3-86ad-9f2d41210b60",
+          "text": "IMU/ToF alter optimization as active constraints and the effect is measured A/B.",
+          "completed": false
+        },
+        {
+          "id": "d3ee118a-87bb-42ea-b658-70bd84c62973",
+          "text": "stereo pair clouds undergo accepted global alignment, fusion, optimization/loop handling and mesh/texturing.",
+          "completed": false
+        },
+        {
+          "id": "87bb736b-c0e9-4aee-af97-b61b069c027d",
+          "text": "Hybrid v2 and latest stereo path run in isolation with command/manifest/audit agreement.",
+          "completed": false
+        }
+      ],
+      "artifactIds": [],
+      "riskIds": [],
+      "issueIds": [
+        "ebc6c657-8ff8-48af-bebb-b2c6bfcd90f6",
+        "0255284d-fe83-45ba-9558-d3159330e067",
+        "897e09fb-2742-4c71-a988-a8d9bbd2cec5",
+        "0a4c3d54-1668-4b9b-8733-cab8c91ac647"
+      ],
+      "decisionIds": [],
+      "createdAt": "2026-08-28T06:51:05.766Z",
+      "updatedAt": "2026-08-28T08:56:43.022Z",
+      "revision": 3
+    }
+  ],
+  "dependencies": [
+    {
+      "id": "0565163f-2737-4c72-aea5-027af681854b",
+      "predecessorId": "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "successorId": "4c7e40a0-5f6a-4563-b889-27e1f3286010",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "UVC/stereo work can and did proceed against fixtures while contract unification remains active.",
+      "createdAt": "2026-08-28T06:47:16.254Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "0add6d93-5546-4022-8668-a9750e1f8ce2",
+      "predecessorId": "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "successorId": "0b06374d-ccc3-4261-a376-676807e8ac12",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "Metric reconstruction research can start on frozen datasets; final acceptance requires server/worker evidence.",
+      "createdAt": "2026-08-28T06:51:50.989Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "13dc18e0-300d-4666-915e-52d0d6d127f5",
+      "predecessorId": "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "successorId": "da6e553d-a4ec-40c5-a431-b03941393d29",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "SINGLE already runs; shared contract and sensor-prior work are parallelizable.",
+      "createdAt": "2026-08-28T06:46:36.842Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "4253399e-bda8-4256-832d-37f42a25fada",
+      "predecessorId": "8801e3ab-2953-4113-b260-4cdb17238425",
+      "successorId": "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "Business UI and orchestration can co-develop against schema and fixtures.",
+      "createdAt": "2026-08-28T06:56:56.550Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "49255588-415f-45ed-b3f6-6cb8c597c1fc",
+      "predecessorId": "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "successorId": "a94d2800-5bdf-4dea-83d9-cc05e8ac5152",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "Laptop-live is an independent prototype that can converge on the common contract in parallel.",
+      "createdAt": "2026-08-28T06:47:08.935Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "4fa1dfa5-92f4-499a-bd81-4b39b62b60be",
+      "predecessorId": "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "successorId": "2498f509-0f87-41e1-9eba-fe0684511263",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "Automatic Photo already uses a dedicated endpoint and can converge on the shared envelope in parallel.",
+      "createdAt": "2026-08-28T06:36:42.843Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "91d901b0-9049-4f49-923a-2e35e5a8c840",
+      "predecessorId": "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "successorId": "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "Client and server contract must be co-designed; neither complete tile blocks the other's start.",
+      "createdAt": "2026-08-28T06:34:36.459Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "a54cb001-fa65-44a1-9c42-0bd813070c70",
+      "predecessorId": "8801e3ab-2953-4113-b260-4cdb17238425",
+      "successorId": "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "removed",
+      "rationale": "Duplicate relation; human confirmation is required before removal.",
+      "createdAt": "2026-08-28T06:34:09.383Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "a8b597f8-1475-48d9-8c0d-3d1b7ae0a45b",
+      "predecessorId": "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "successorId": "72378a61-7092-43c3-9671-4b365d929265",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "Role/control capture exists and server acceptance can be repaired against fixtures concurrently.",
+      "createdAt": "2026-08-28T06:46:52.994Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "be2c5370-2340-4f7d-9c30-a95bacba8d4c",
+      "predecessorId": "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "successorId": "fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "Worker runners can be developed from frozen jobs; integration acceptance requires both.",
+      "createdAt": "2026-08-28T06:51:29.743Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "be9c1f3e-a0ea-46b0-bab1-65ac0649c09c",
+      "predecessorId": "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "successorId": "19dfb29a-4d50-4fb5-8848-39af4e78eb5d",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "Camera integration and tour ingestion are independently testable.",
+      "createdAt": "2026-08-28T06:55:35.474Z",
+      "createdBy": "user"
+    },
+    {
+      "id": "e8ba8b8e-2f85-4440-b9b3-80d18994fc4f",
+      "predecessorId": "0b06374d-ccc3-4261-a376-676807e8ac12",
+      "successorId": "633331e3-586d-4e7c-976f-e2c18e6c966c",
+      "type": "finish-to-start",
+      "lagDays": 0,
+      "strength": "soft",
+      "status": "active",
+      "rationale": "Viewer implementation can use frozen assets; production acceptance requires the final model.",
+      "createdAt": "2026-08-28T06:33:47.017Z",
+      "createdBy": "user"
+    }
+  ],
+  "artifacts": [],
+  "risks": [],
+  "decisions": [],
+  "issues": [
+    {
+      "id": "0255284d-fe83-45ba-9558-d3159330e067",
+      "type": "problem",
+      "description": "ToF metric evidence is not applied to geometry",
+      "severity": "high",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "0a4c3d54-1668-4b9b-8733-cab8c91ac647",
+      "type": "problem",
+      "description": "Stereo F01/F02 implementation lacks runtime acceptance",
+      "severity": "high",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "36da4049-c2e5-4463-ab3c-69cae85810b1",
+      "type": "problem",
+      "description": "Dual-phone and USB packages omit ToF sidecars",
+      "severity": "high",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "897e09fb-2742-4c71-a988-a8d9bbd2cec5",
+      "type": "problem",
+      "description": "Hybrid v2 audit and runner disagree on loop detection",
+      "severity": "high",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "a2871bac-c1b3-4aa7-b196-e6069feb9e65",
+      "type": "problem",
+      "description": "MainActivity is an oversized composition/UI/orchestration boundary",
+      "severity": "medium",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "c1cb3bbd-1cdb-4f48-bcbd-63ba4916d2cf",
+      "type": "problem",
+      "description": "Legacy roadmaps and historical task headers contradict current code/results",
+      "severity": "medium",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "de89eb3b-b5fe-4ee0-b877-d721416e05d1",
+      "type": "problem",
+      "description": "Dirty/untracked/generated/backup artifacts obscure authoritative source",
+      "severity": "medium",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "ebc6c657-8ff8-48af-bebb-b2c6bfcd90f6",
+      "type": "problem",
+      "description": "IMU does not constrain mapper or bundle adjustment",
+      "severity": "high",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "f601936e-ed07-4083-8aac-fb54f2e45512",
+      "type": "problem",
+      "description": "Dual-phone aggregate upload type is rejected by PHP",
+      "severity": "critical",
+      "status": "open",
+      "resolution": null
+    }
+  ],
+  "confirmations": [],
+  "changeLog": [
+    {
+      "id": "change-2-8801e3ab-2953-4113-b260-4cdb17238425",
+      "timestamp": "2026-08-28T06:30:57.334Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "8801e3ab-2953-4113-b260-4cdb17238425"
+      ],
+      "summary": "WorkItem added: Order, session and 360 tour MVP",
+      "beforeRevision": 1,
+      "afterRevision": 2,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-3-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:31:22.026Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem added: APP Android capture and upload foundation",
+      "beforeRevision": 2,
+      "afterRevision": 3,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-4-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:31:59.306Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem added: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 3,
+      "afterRevision": 4,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-5-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T06:32:42.182Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem added: Globally consistent metric mesh with textures",
+      "beforeRevision": 4,
+      "afterRevision": 5,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-6-633331e3-586d-4e7c-976f-e2c18e6c966c",
+      "timestamp": "2026-08-28T06:32:59.257Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "633331e3-586d-4e7c-976f-e2c18e6c966c"
+      ],
+      "summary": "WorkItem added: Dollhouse, floorplan and photorealistic viewer",
+      "beforeRevision": 5,
+      "afterRevision": 6,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-7-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:33:02.349Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 6,
+      "afterRevision": 7,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-8-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:33:05.459Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 7,
+      "afterRevision": 8,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-9-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:33:07.640Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 8,
+      "afterRevision": 9,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-10-633331e3-586d-4e7c-976f-e2c18e6c966c",
+      "timestamp": "2026-08-28T06:33:10.174Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "633331e3-586d-4e7c-976f-e2c18e6c966c"
+      ],
+      "summary": "WorkItem position changed: Dollhouse, floorplan and photorealistic viewer",
+      "beforeRevision": 9,
+      "afterRevision": 10,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-11-633331e3-586d-4e7c-976f-e2c18e6c966c",
+      "timestamp": "2026-08-28T06:33:24.693Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "633331e3-586d-4e7c-976f-e2c18e6c966c"
+      ],
+      "summary": "WorkItem position changed: Dollhouse, floorplan and photorealistic viewer",
+      "beforeRevision": 10,
+      "afterRevision": 11,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-12-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T06:33:26.486Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem position changed: Globally consistent metric mesh with textures",
+      "beforeRevision": 11,
+      "afterRevision": 12,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-13-8801e3ab-2953-4113-b260-4cdb17238425",
+      "timestamp": "2026-08-28T06:33:28.365Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "8801e3ab-2953-4113-b260-4cdb17238425"
+      ],
+      "summary": "WorkItem position changed: Order, session and 360 tour MVP",
+      "beforeRevision": 12,
+      "afterRevision": 13,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-14-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:33:30.174Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 13,
+      "afterRevision": 14,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-15-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:33:31.306Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 14,
+      "afterRevision": 15,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-16-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:33:39.793Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 15,
+      "afterRevision": 16,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-17-e8ba8b8e-2f85-4440-b9b3-80d18994fc4f",
+      "timestamp": "2026-08-28T06:33:47.017Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "e8ba8b8e-2f85-4440-b9b3-80d18994fc4f",
+        "0b06374d-ccc3-4261-a376-676807e8ac12",
+        "633331e3-586d-4e7c-976f-e2c18e6c966c"
+      ],
+      "summary": "Dependency added: Globally consistent metric mesh with textures -> Dollhouse, floorplan and photorealistic viewer",
+      "beforeRevision": 16,
+      "afterRevision": 17,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-18-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:33:53.180Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 17,
+      "afterRevision": 18,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-19-a54cb001-fa65-44a1-9c42-0bd813070c70",
+      "timestamp": "2026-08-28T06:34:09.383Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "a54cb001-fa65-44a1-9c42-0bd813070c70",
+        "8801e3ab-2953-4113-b260-4cdb17238425",
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "Dependency added: Order, session and 360 tour MVP -> Server storage and GrafikStation job orchestration",
+      "beforeRevision": 18,
+      "afterRevision": 19,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-20-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:34:11.443Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 19,
+      "afterRevision": 20,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-21-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:34:13.269Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 20,
+      "afterRevision": 21,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-22-91d901b0-9049-4f49-923a-2e35e5a8c840",
+      "timestamp": "2026-08-28T06:34:36.459Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "91d901b0-9049-4f49-923a-2e35e5a8c840",
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "Dependency added: Server storage and GrafikStation job orchestration -> APP Android capture and upload foundation",
+      "beforeRevision": 21,
+      "afterRevision": 22,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-23-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:34:41.251Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 22,
+      "afterRevision": 23,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-24-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:34:53.723Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 23,
+      "afterRevision": 24,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-25-8801e3ab-2953-4113-b260-4cdb17238425",
+      "timestamp": "2026-08-28T06:34:55.915Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "8801e3ab-2953-4113-b260-4cdb17238425"
+      ],
+      "summary": "WorkItem position changed: Order, session and 360 tour MVP",
+      "beforeRevision": 24,
+      "afterRevision": 25,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-26-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:34:59.197Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 25,
+      "afterRevision": 26,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-27-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:35:00.653Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 26,
+      "afterRevision": 27,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-28-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:35:25.616Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 27,
+      "afterRevision": 28,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-29-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:36:03.531Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem added: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 28,
+      "afterRevision": 29,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-30-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:36:05.617Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem position changed: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 29,
+      "afterRevision": 30,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-31-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:36:33.435Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem position changed: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 30,
+      "afterRevision": 31,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-32-4fa1dfa5-92f4-499a-bd81-4b39b62b60be",
+      "timestamp": "2026-08-28T06:36:42.843Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "4fa1dfa5-92f4-499a-bd81-4b39b62b60be",
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "Dependency added: APP Android capture and upload foundation -> APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 31,
+      "afterRevision": 32,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-33-da6e553d-a4ec-40c5-a431-b03941393d29",
+      "timestamp": "2026-08-28T06:39:46.582Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "WorkItem added: APP  SINGLE baseline",
+      "beforeRevision": 32,
+      "afterRevision": 33,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-34-da6e553d-a4ec-40c5-a431-b03941393d29",
+      "timestamp": "2026-08-28T06:41:50.652Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "WorkItem position changed: APP  SINGLE baseline",
+      "beforeRevision": 33,
+      "afterRevision": 34,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-35-da6e553d-a4ec-40c5-a431-b03941393d29",
+      "timestamp": "2026-08-28T06:42:15.474Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "WorkItem position changed: APP  SINGLE baseline",
+      "beforeRevision": 34,
+      "afterRevision": 35,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-36-72378a61-7092-43c3-9671-4b365d929265",
+      "timestamp": "2026-08-28T06:42:58.035Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "72378a61-7092-43c3-9671-4b365d929265"
+      ],
+      "summary": "WorkItem added: APP MASTER + SLAVE",
+      "beforeRevision": 35,
+      "afterRevision": 36,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-37-72378a61-7092-43c3-9671-4b365d929265",
+      "timestamp": "2026-08-28T06:43:05.195Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "72378a61-7092-43c3-9671-4b365d929265"
+      ],
+      "summary": "WorkItem position changed: APP MASTER + SLAVE",
+      "beforeRevision": 36,
+      "afterRevision": 37,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-38-da6e553d-a4ec-40c5-a431-b03941393d29",
+      "timestamp": "2026-08-28T06:43:07.163Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "WorkItem position changed: APP  SINGLE baseline",
+      "beforeRevision": 37,
+      "afterRevision": 38,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-39-a94d2800-5bdf-4dea-83d9-cc05e8ac5152",
+      "timestamp": "2026-08-28T06:44:50.597Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "a94d2800-5bdf-4dea-83d9-cc05e8ac5152"
+      ],
+      "summary": "WorkItem added: APP 2 android phone + notebook/pc",
+      "beforeRevision": 38,
+      "afterRevision": 39,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-40-4c7e40a0-5f6a-4563-b889-27e1f3286010",
+      "timestamp": "2026-08-28T06:45:55.796Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "4c7e40a0-5f6a-4563-b889-27e1f3286010"
+      ],
+      "summary": "WorkItem added: APP Android + USB камера",
+      "beforeRevision": 39,
+      "afterRevision": 40,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-41-72378a61-7092-43c3-9671-4b365d929265",
+      "timestamp": "2026-08-28T06:45:59.404Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "72378a61-7092-43c3-9671-4b365d929265"
+      ],
+      "summary": "WorkItem position changed: APP MASTER + SLAVE",
+      "beforeRevision": 40,
+      "afterRevision": 41,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-42-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:46:00.925Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem position changed: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 41,
+      "afterRevision": 42,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-43-da6e553d-a4ec-40c5-a431-b03941393d29",
+      "timestamp": "2026-08-28T06:46:28.897Z",
+      "actor": "user",
+      "commandType": "update-work-item",
+      "entityRefs": [
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "WorkItem updated: APP  SINGLE baseline",
+      "beforeRevision": 42,
+      "afterRevision": 43,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-44-13dc18e0-300d-4666-915e-52d0d6d127f5",
+      "timestamp": "2026-08-28T06:46:36.842Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "13dc18e0-300d-4666-915e-52d0d6d127f5",
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "Dependency added: APP Android capture and upload foundation -> APP  SINGLE baseline",
+      "beforeRevision": 43,
+      "afterRevision": 44,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-45-4c7e40a0-5f6a-4563-b889-27e1f3286010",
+      "timestamp": "2026-08-28T06:46:38.940Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4c7e40a0-5f6a-4563-b889-27e1f3286010"
+      ],
+      "summary": "WorkItem position changed: APP Android + USB камера",
+      "beforeRevision": 44,
+      "afterRevision": 45,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-46-a8b597f8-1475-48d9-8c0d-3d1b7ae0a45b",
+      "timestamp": "2026-08-28T06:46:52.994Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "a8b597f8-1475-48d9-8c0d-3d1b7ae0a45b",
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+        "72378a61-7092-43c3-9671-4b365d929265"
+      ],
+      "summary": "Dependency added: APP Android capture and upload foundation -> APP MASTER + SLAVE",
+      "beforeRevision": 45,
+      "afterRevision": 46,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-47-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:46:56.501Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem position changed: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 46,
+      "afterRevision": 47,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-48-da6e553d-a4ec-40c5-a431-b03941393d29",
+      "timestamp": "2026-08-28T06:46:58.377Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "WorkItem position changed: APP  SINGLE baseline",
+      "beforeRevision": 47,
+      "afterRevision": 48,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-49-49255588-415f-45ed-b3f6-6cb8c597c1fc",
+      "timestamp": "2026-08-28T06:47:08.935Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "49255588-415f-45ed-b3f6-6cb8c597c1fc",
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+        "a94d2800-5bdf-4dea-83d9-cc05e8ac5152"
+      ],
+      "summary": "Dependency added: APP Android capture and upload foundation -> APP 2 android phone + notebook/pc",
+      "beforeRevision": 48,
+      "afterRevision": 49,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-50-0565163f-2737-4c72-aea5-027af681854b",
+      "timestamp": "2026-08-28T06:47:16.254Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "0565163f-2737-4c72-aea5-027af681854b",
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+        "4c7e40a0-5f6a-4563-b889-27e1f3286010"
+      ],
+      "summary": "Dependency added: APP Android capture and upload foundation -> APP Android + USB камера",
+      "beforeRevision": 49,
+      "afterRevision": 50,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-51-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:47:19.491Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 50,
+      "afterRevision": 51,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-52-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:47:21.787Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 51,
+      "afterRevision": 52,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-53-4c7e40a0-5f6a-4563-b889-27e1f3286010",
+      "timestamp": "2026-08-28T06:47:23.713Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4c7e40a0-5f6a-4563-b889-27e1f3286010"
+      ],
+      "summary": "WorkItem position changed: APP Android + USB камера",
+      "beforeRevision": 52,
+      "afterRevision": 53,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-54-da6e553d-a4ec-40c5-a431-b03941393d29",
+      "timestamp": "2026-08-28T06:47:27.037Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "WorkItem position changed: APP  SINGLE baseline",
+      "beforeRevision": 53,
+      "afterRevision": 54,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-55-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:47:27.907Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem position changed: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 54,
+      "afterRevision": 55,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-56-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T06:47:33.461Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem position changed: APP Android capture and upload foundation",
+      "beforeRevision": 55,
+      "afterRevision": 56,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-57-72378a61-7092-43c3-9671-4b365d929265",
+      "timestamp": "2026-08-28T06:47:35.933Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "72378a61-7092-43c3-9671-4b365d929265"
+      ],
+      "summary": "WorkItem position changed: APP MASTER + SLAVE",
+      "beforeRevision": 56,
+      "afterRevision": 57,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-58-a94d2800-5bdf-4dea-83d9-cc05e8ac5152",
+      "timestamp": "2026-08-28T06:47:37.621Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "a94d2800-5bdf-4dea-83d9-cc05e8ac5152"
+      ],
+      "summary": "WorkItem position changed: APP 2 android phone + notebook/pc",
+      "beforeRevision": 57,
+      "afterRevision": 58,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-59-72378a61-7092-43c3-9671-4b365d929265",
+      "timestamp": "2026-08-28T06:47:38.781Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "72378a61-7092-43c3-9671-4b365d929265"
+      ],
+      "summary": "WorkItem position changed: APP MASTER + SLAVE",
+      "beforeRevision": 58,
+      "afterRevision": 59,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-60-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:47:40.748Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem position changed: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 59,
+      "afterRevision": 60,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-61-da6e553d-a4ec-40c5-a431-b03941393d29",
+      "timestamp": "2026-08-28T06:47:42.818Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "WorkItem position changed: APP  SINGLE baseline",
+      "beforeRevision": 60,
+      "afterRevision": 61,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-62-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:47:45.081Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 61,
+      "afterRevision": 62,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-63-4c7e40a0-5f6a-4563-b889-27e1f3286010",
+      "timestamp": "2026-08-28T06:47:50.501Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4c7e40a0-5f6a-4563-b889-27e1f3286010"
+      ],
+      "summary": "WorkItem position changed: APP Android + USB камера",
+      "beforeRevision": 62,
+      "afterRevision": 63,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-64-4c7e40a0-5f6a-4563-b889-27e1f3286010",
+      "timestamp": "2026-08-28T06:47:52.282Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4c7e40a0-5f6a-4563-b889-27e1f3286010"
+      ],
+      "summary": "WorkItem position changed: APP Android + USB камера",
+      "beforeRevision": 63,
+      "afterRevision": 64,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-65-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:47:54.412Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 64,
+      "afterRevision": 65,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-66-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:49:06.651Z",
+      "actor": "user",
+      "commandType": "update-work-item",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem updated: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 65,
+      "afterRevision": 66,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-67-a94d2800-5bdf-4dea-83d9-cc05e8ac5152",
+      "timestamp": "2026-08-28T06:49:09.015Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "a94d2800-5bdf-4dea-83d9-cc05e8ac5152"
+      ],
+      "summary": "WorkItem position changed: APP 2 android phone + notebook/pc",
+      "beforeRevision": 66,
+      "afterRevision": 67,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-68-633331e3-586d-4e7c-976f-e2c18e6c966c",
+      "timestamp": "2026-08-28T06:49:13.505Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "633331e3-586d-4e7c-976f-e2c18e6c966c"
+      ],
+      "summary": "WorkItem position changed: Dollhouse, floorplan and photorealistic viewer",
+      "beforeRevision": 67,
+      "afterRevision": 68,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-69-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T06:49:17.217Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem position changed: Globally consistent metric mesh with textures",
+      "beforeRevision": 68,
+      "afterRevision": 69,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-70-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:49:28.332Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 69,
+      "afterRevision": 70,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-71-fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+      "timestamp": "2026-08-28T06:51:05.766Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+      ],
+      "summary": "WorkItem added: Обработчик на графической станции.",
+      "beforeRevision": 70,
+      "afterRevision": 71,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-72-fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+      "timestamp": "2026-08-28T06:51:09.576Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+      ],
+      "summary": "WorkItem position changed: Обработчик на графической станции.",
+      "beforeRevision": 71,
+      "afterRevision": 72,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-73-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:51:12.358Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem position changed: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 72,
+      "afterRevision": 73,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-74-be2c5370-2340-4f7d-9c30-a95bacba8d4c",
+      "timestamp": "2026-08-28T06:51:29.743Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "be2c5370-2340-4f7d-9c30-a95bacba8d4c",
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+        "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+      ],
+      "summary": "Dependency added: Server storage and GrafikStation job orchestration -> Обработчик на графической станции.",
+      "beforeRevision": 73,
+      "afterRevision": 74,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-75-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T06:51:31.774Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem position changed: Globally consistent metric mesh with textures",
+      "beforeRevision": 74,
+      "afterRevision": 75,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-76-fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+      "timestamp": "2026-08-28T06:51:37.166Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+      ],
+      "summary": "WorkItem position changed: Обработчик на графической станции.",
+      "beforeRevision": 75,
+      "afterRevision": 76,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-77-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T06:51:40.581Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem position changed: Globally consistent metric mesh with textures",
+      "beforeRevision": 76,
+      "afterRevision": 77,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-78-633331e3-586d-4e7c-976f-e2c18e6c966c",
+      "timestamp": "2026-08-28T06:51:41.700Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "633331e3-586d-4e7c-976f-e2c18e6c966c"
+      ],
+      "summary": "WorkItem position changed: Dollhouse, floorplan and photorealistic viewer",
+      "beforeRevision": 77,
+      "afterRevision": 78,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-79-0add6d93-5546-4022-8668-a9750e1f8ce2",
+      "timestamp": "2026-08-28T06:51:50.989Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "0add6d93-5546-4022-8668-a9750e1f8ce2",
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "Dependency added: Server storage and GrafikStation job orchestration -> Globally consistent metric mesh with textures",
+      "beforeRevision": 78,
+      "afterRevision": 79,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-80-fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+      "timestamp": "2026-08-28T06:51:54.104Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+      ],
+      "summary": "WorkItem position changed: Обработчик на графической станции.",
+      "beforeRevision": 79,
+      "afterRevision": 80,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-81-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T06:51:55.871Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem position changed: Globally consistent metric mesh with textures",
+      "beforeRevision": 80,
+      "afterRevision": 81,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-82-4c7e40a0-5f6a-4563-b889-27e1f3286010",
+      "timestamp": "2026-08-28T06:52:01.992Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4c7e40a0-5f6a-4563-b889-27e1f3286010"
+      ],
+      "summary": "WorkItem position changed: APP Android + USB камера",
+      "beforeRevision": 81,
+      "afterRevision": 82,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-83-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:54:16.358Z",
+      "actor": "user",
+      "commandType": "update-work-item",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem updated: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 82,
+      "afterRevision": 83,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-84-19dfb29a-4d50-4fb5-8848-39af4e78eb5d",
+      "timestamp": "2026-08-28T06:55:02.062Z",
+      "actor": "user",
+      "commandType": "add-work-item",
+      "entityRefs": [
+        "19dfb29a-4d50-4fb5-8848-39af4e78eb5d"
+      ],
+      "summary": "WorkItem added: Использщование камеры Insta360",
+      "beforeRevision": 83,
+      "afterRevision": 84,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-85-8801e3ab-2953-4113-b260-4cdb17238425",
+      "timestamp": "2026-08-28T06:55:06.441Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "8801e3ab-2953-4113-b260-4cdb17238425"
+      ],
+      "summary": "WorkItem position changed: Order, session and 360 tour MVP",
+      "beforeRevision": 84,
+      "afterRevision": 85,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-86-a54cb001-fa65-44a1-9c42-0bd813070c70",
+      "timestamp": "2026-08-28T06:55:26.259Z",
+      "actor": "user",
+      "commandType": "remove-dependency",
+      "entityRefs": [
+        "a54cb001-fa65-44a1-9c42-0bd813070c70",
+        "8801e3ab-2953-4113-b260-4cdb17238425",
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "Dependency removed: Order, session and 360 tour MVP -> Server storage and GrafikStation job orchestration",
+      "beforeRevision": 85,
+      "afterRevision": 86,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-87-be9c1f3e-a0ea-46b0-bab1-65ac0649c09c",
+      "timestamp": "2026-08-28T06:55:35.474Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "be9c1f3e-a0ea-46b0-bab1-65ac0649c09c",
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+        "19dfb29a-4d50-4fb5-8848-39af4e78eb5d"
+      ],
+      "summary": "Dependency added: APP Android capture and upload foundation -> Использщование камеры Insta360",
+      "beforeRevision": 86,
+      "afterRevision": 87,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-88-19dfb29a-4d50-4fb5-8848-39af4e78eb5d",
+      "timestamp": "2026-08-28T06:55:37.880Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "19dfb29a-4d50-4fb5-8848-39af4e78eb5d"
+      ],
+      "summary": "WorkItem position changed: Использщование камеры Insta360",
+      "beforeRevision": 87,
+      "afterRevision": 88,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-89-da6e553d-a4ec-40c5-a431-b03941393d29",
+      "timestamp": "2026-08-28T06:55:52.419Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "da6e553d-a4ec-40c5-a431-b03941393d29"
+      ],
+      "summary": "WorkItem position changed: APP  SINGLE baseline",
+      "beforeRevision": 88,
+      "afterRevision": 89,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-90-2498f509-0f87-41e1-9eba-fe0684511263",
+      "timestamp": "2026-08-28T06:55:53.251Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "2498f509-0f87-41e1-9eba-fe0684511263"
+      ],
+      "summary": "WorkItem position changed: APP record Automatic photo capture to Photo SfM/viewer",
+      "beforeRevision": 89,
+      "afterRevision": 90,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-91-a94d2800-5bdf-4dea-83d9-cc05e8ac5152",
+      "timestamp": "2026-08-28T06:55:54.339Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "a94d2800-5bdf-4dea-83d9-cc05e8ac5152"
+      ],
+      "summary": "WorkItem position changed: APP 2 android phone + notebook/pc",
+      "beforeRevision": 90,
+      "afterRevision": 91,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-92-72378a61-7092-43c3-9671-4b365d929265",
+      "timestamp": "2026-08-28T06:55:56.221Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "72378a61-7092-43c3-9671-4b365d929265"
+      ],
+      "summary": "WorkItem position changed: APP MASTER + SLAVE",
+      "beforeRevision": 91,
+      "afterRevision": 92,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-93-4c7e40a0-5f6a-4563-b889-27e1f3286010",
+      "timestamp": "2026-08-28T06:55:57.184Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "4c7e40a0-5f6a-4563-b889-27e1f3286010"
+      ],
+      "summary": "WorkItem position changed: APP Android + USB камера",
+      "beforeRevision": 92,
+      "afterRevision": 93,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-94-8801e3ab-2953-4113-b260-4cdb17238425",
+      "timestamp": "2026-08-28T06:56:36.296Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "8801e3ab-2953-4113-b260-4cdb17238425"
+      ],
+      "summary": "WorkItem position changed: Order, session and 360 tour MVP",
+      "beforeRevision": 93,
+      "afterRevision": 94,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-95-19dfb29a-4d50-4fb5-8848-39af4e78eb5d",
+      "timestamp": "2026-08-28T06:56:39.195Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "19dfb29a-4d50-4fb5-8848-39af4e78eb5d"
+      ],
+      "summary": "WorkItem position changed: Использщование камеры Insta360",
+      "beforeRevision": 94,
+      "afterRevision": 95,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-96-19dfb29a-4d50-4fb5-8848-39af4e78eb5d",
+      "timestamp": "2026-08-28T06:56:41.739Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "19dfb29a-4d50-4fb5-8848-39af4e78eb5d"
+      ],
+      "summary": "WorkItem position changed: Использщование камеры Insta360",
+      "beforeRevision": 95,
+      "afterRevision": 96,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-97-4253399e-bda8-4256-832d-37f42a25fada",
+      "timestamp": "2026-08-28T06:56:56.550Z",
+      "actor": "user",
+      "commandType": "add-dependency",
+      "entityRefs": [
+        "4253399e-bda8-4256-832d-37f42a25fada",
+        "8801e3ab-2953-4113-b260-4cdb17238425",
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "Dependency added: Order, session and 360 tour MVP -> Server storage and GrafikStation job orchestration",
+      "beforeRevision": 96,
+      "afterRevision": 97,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-98-8801e3ab-2953-4113-b260-4cdb17238425",
+      "timestamp": "2026-08-28T06:56:58.424Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "8801e3ab-2953-4113-b260-4cdb17238425"
+      ],
+      "summary": "WorkItem position changed: Order, session and 360 tour MVP",
+      "beforeRevision": 97,
+      "afterRevision": 98,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-99-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T06:57:29.238Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem position changed: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 98,
+      "afterRevision": 99,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-100-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T07:10:29.964Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem position changed: Globally consistent metric mesh with textures",
+      "beforeRevision": 99,
+      "afterRevision": 100,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-101-fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+      "timestamp": "2026-08-28T07:10:32.562Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+      ],
+      "summary": "WorkItem position changed: Обработчик на графической станции.",
+      "beforeRevision": 100,
+      "afterRevision": 101,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-102-4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+      "timestamp": "2026-08-28T08:08:42.534Z",
+      "actor": "user",
+      "commandType": "update-work-item",
+      "entityRefs": [
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+      ],
+      "summary": "WorkItem updated: APP Android инструмент для работы с заказами и сьемкой материалов для построения 3Д модели",
+      "beforeRevision": 101,
+      "afterRevision": 102,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-103-c7ba832d-1307-475d-b543-59ac5c17ea6c",
+      "timestamp": "2026-08-28T08:10:04.291Z",
+      "actor": "user",
+      "commandType": "update-work-item",
+      "entityRefs": [
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+      ],
+      "summary": "WorkItem updated: Server storage and GrafikStation job orchestration",
+      "beforeRevision": 102,
+      "afterRevision": 103,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-104-fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+      "timestamp": "2026-08-28T08:10:33.538Z",
+      "actor": "user",
+      "commandType": "update-work-item",
+      "entityRefs": [
+        "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+      ],
+      "summary": "WorkItem updated: Обработчик на графической станции.",
+      "beforeRevision": 103,
+      "afterRevision": 104,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-105-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T08:10:35.600Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem position changed: Globally consistent metric mesh with textures",
+      "beforeRevision": 104,
+      "afterRevision": 105,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-106-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T08:10:36.637Z",
+      "actor": "user",
+      "commandType": "set-work-item-position",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem position changed: Globally consistent metric mesh with textures",
+      "beforeRevision": 105,
+      "afterRevision": 106,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-107-0b06374d-ccc3-4261-a376-676807e8ac12",
+      "timestamp": "2026-08-28T08:12:14.109Z",
+      "actor": "user",
+      "commandType": "update-work-item",
+      "entityRefs": [
+        "0b06374d-ccc3-4261-a376-676807e8ac12"
+      ],
+      "summary": "WorkItem updated: Получения полноценных модели с достоверными метрическими данными",
+      "beforeRevision": 106,
+      "afterRevision": 107,
+      "override": false,
+      "overrideReason": null
+    },
+    {
+      "id": "change-108-633331e3-586d-4e7c-976f-e2c18e6c966c",
+      "timestamp": "2026-08-28T08:12:46.287Z",
+      "actor": "user",
+      "commandType": "update-work-item",
+      "entityRefs": [
+        "633331e3-586d-4e7c-976f-e2c18e6c966c"
+      ],
+      "summary": "WorkItem updated: Dollhouse, floorplan and photorealistic viewer",
+      "beforeRevision": 107,
+      "afterRevision": 108,
+      "override": false,
+      "overrideReason": null
+    }
+  ],
+  "extensions": {
+    "project-navigator.layout": {
+      "positions": {
+        "c7ba832d-1307-475d-b543-59ac5c17ea6c": {
+          "x": 576,
+          "y": 0
+        },
+        "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3": {
+          "x": 354,
+          "y": 832
+        },
+        "633331e3-586d-4e7c-976f-e2c18e6c966c": {
+          "x": 1842,
+          "y": 108
+        },
+        "0b06374d-ccc3-4261-a376-676807e8ac12": {
+          "x": 1399,
+          "y": 272
+        },
+        "8801e3ab-2953-4113-b260-4cdb17238425": {
+          "x": 56,
+          "y": 209
+        },
+        "2498f509-0f87-41e1-9eba-fe0684511263": {
+          "x": 929,
+          "y": 624
+        },
+        "da6e553d-a4ec-40c5-a431-b03941393d29": {
+          "x": 943,
+          "y": 364
+        },
+        "72378a61-7092-43c3-9671-4b365d929265": {
+          "x": 949,
+          "y": 1145
+        },
+        "4c7e40a0-5f6a-4563-b889-27e1f3286010": {
+          "x": 983,
+          "y": 1348
+        },
+        "a94d2800-5bdf-4dea-83d9-cc05e8ac5152": {
+          "x": 930,
+          "y": 908
+        },
+        "fa24df7a-87d4-4606-b4c8-3ce87eed24a1": {
+          "x": 1174,
+          "y": 0
+        },
+        "19dfb29a-4d50-4fb5-8848-39af4e78eb5d": {
+          "x": 990,
+          "y": 1551
+        }
+      }
+    },
+    "project-navigator.rescue": {
+      "version": 1,
+      "source": {
+        "userPlan": ".projectnavigator-rescue-input/user-plan.json",
+        "originalProjectId": "8803837e-0475-4ed2-872e-bce39bd7ae6e",
+        "archaeology": ".projectnavigator-analysis/",
+        "archaeologyProposal": ".projectnavigator-analysis/proposal.json",
+        "rescueAnalysis": ".projectnavigator-rescue/",
+        "rescueProposal": ".projectnavigator-rescue/rescue-proposal.json"
+      },
+      "mappings": [
+        {
+          "userWorkItemId": "8801e3ab-2953-4113-b260-4cdb17238425",
+          "archaeologyTemporaryKeys": [
+            "tour-platform-mvp"
+          ],
+          "recommendedStatus": "done",
+          "sourceFiles": [
+            "web/www/order.php",
+            "web/www/api/tour_session.php",
+            "web/templates/maklertour_tour.html",
+            "web/www/public_tour.php"
+          ],
+          "documents": [
+            "docs/llm/00_PROJECT_OVERVIEW.md",
+            "ROADMAP.md",
+            "DOC/PHONE_SCAN_MVP_STATUS.md"
+          ],
+          "issueKeys": [
+            "documentation-drift",
+            "repository-provenance-hygiene"
+          ]
+        },
+        {
+          "userWorkItemId": "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+          "archaeologyTemporaryKeys": [
+            "android-capture-upload",
+            "capture-topology-unification"
+          ],
+          "recommendedStatus": "in-progress",
+          "sourceFiles": [
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/MainActivity.kt",
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/state/AppStateViewModel.kt",
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/auth/MobileUploadApi.kt",
+            "app/MaklerTour/app/src/main/java/com/maklertour/data/local/AppDatabase.kt",
+            "web/www/api/mobile.php"
+          ],
+          "documents": [
+            "docs/ANDROID_CAPTURE_ARCHITECTURE_AUDIT.md",
+            "docs/CAPTURE_ARCHITECTURE_RECOVERY_PLAN.md",
+            "web/DOCS/CAPTURE_BUNDLE_DENSE_CONTRACT.md"
+          ],
+          "issueKeys": [
+            "dual-capture-type-mismatch",
+            "sensor-sidecar-gaps",
+            "mainactivity-coupling"
+          ]
+        },
+        {
+          "userWorkItemId": "da6e553d-a4ec-40c5-a431-b03941393d29",
+          "archaeologyTemporaryKeys": [
+            "single-sfm-baseline",
+            "single-connectivity-drift",
+            "tof-imu-measurement",
+            "single-sensor-constraints"
+          ],
+          "recommendedStatus": "in-progress",
+          "sourceFiles": [
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraScanProvider.kt",
+            "web/www/api/mobile.php",
+            "web/remote_station/scripts/process_colmap_sparse.sh",
+            "web/remote_station/single_hybrid_v2/run.sh",
+            "web/remote_station/scripts/build_world_alignment.py"
+          ],
+          "documents": [
+            "docs/SINGLE_HYBRID_LOOP_RESULT.md",
+            "docs/SINGLE_VISUAL_LOOP_CLOSURE_AB_AUDIT.md",
+            "docs/SINGLE_IMU_PARTICIPATION_AUDIT.md",
+            "docs/SINGLE_TOF_PARTICIPATION_AUDIT.md",
+            "docs/SINGLE_HYBRID_V2_AUDIT.md"
+          ],
+          "issueKeys": [
+            "imu-not-active-prior",
+            "tof-measurement-only",
+            "hybrid-v2-contract-conflict"
+          ]
+        },
+        {
+          "userWorkItemId": "2498f509-0f87-41e1-9eba-fe0684511263",
+          "archaeologyTemporaryKeys": [
+            "auto-photo-sfm",
+            "tof-imu-measurement"
+          ],
+          "recommendedStatus": "in-progress",
+          "sourceFiles": [
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/AutoPhotoCaptureManager.kt",
+            "web/libs/auto_photo_bundle_lib.php",
+            "web/libs/auto_photo_sparse_lib.php",
+            "web/tools/sfm_remote_worker.php",
+            "web/www/sfm_viewer.php"
+          ],
+          "documents": [
+            "docs/llm/tasks/AUTO-PHOTO-EPIC.md",
+            "docs/llm/tasks/results/AUTO-B02-AUTO-PHOTO-PREPARE-RESULT.md",
+            "docs/llm/tasks/results/AUTO-B06-AUTO-PHOTO-DENSE-PREVIEW-RESULT.md"
+          ],
+          "issueKeys": [
+            "sensor-sidecar-gaps",
+            "imu-not-active-prior",
+            "tof-measurement-only"
+          ]
+        },
+        {
+          "userWorkItemId": "72378a61-7092-43c3-9671-4b365d929265",
+          "archaeologyTemporaryKeys": [
+            "dual-phone-capture",
+            "capture-topology-unification"
+          ],
+          "recommendedStatus": "in-progress",
+          "sourceFiles": [
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneControlManager.kt",
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneCaptureRuntime.kt",
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneBundleTransfer.kt",
+            "web/www/api/mobile.php"
+          ],
+          "documents": [
+            "docs/llm/tasks/APP-DUAL-PHONE-STEREO-ROADMAP.md",
+            "docs/ANDROID_CAPTURE_ARCHITECTURE_AUDIT.md"
+          ],
+          "issueKeys": [
+            "dual-capture-type-mismatch",
+            "sensor-sidecar-gaps",
+            "stereo-runtime-pending"
+          ]
+        },
+        {
+          "userWorkItemId": "a94d2800-5bdf-4dea-83d9-cc05e8ac5152",
+          "archaeologyTemporaryKeys": [
+            "dual-phone-capture",
+            "capture-topology-unification",
+            "stereo-global-fusion"
+          ],
+          "recommendedStatus": "in-progress",
+          "sourceFiles": [
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneLiveStreamController.kt",
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/dualphone/DualPhoneLiveStreamSessionCoordinator.kt"
+          ],
+          "documents": [
+            "app/MaklerTour/docs/APP_DUAL_PHONE_LM02_7B_1_LAPTOP_HOST_CONTRACT.md",
+            "docs/ANDROID_CAPTURE_ARCHITECTURE_AUDIT.md",
+            "docs/CAPTURE_ARCHITECTURE_RECOVERY_PLAN.md"
+          ],
+          "issueKeys": [
+            "sensor-sidecar-gaps",
+            "stereo-runtime-pending"
+          ]
+        },
+        {
+          "userWorkItemId": "4c7e40a0-5f6a-4563-b889-27e1f3286010",
+          "archaeologyTemporaryKeys": [
+            "usb-stereo-capture",
+            "stereo-global-fusion",
+            "capture-topology-unification"
+          ],
+          "recommendedStatus": "in-progress",
+          "sourceFiles": [
+            "app/MaklerTour/app/src/main/cpp/cam1_uvc.cpp",
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/StereoCaptureExperimental.kt",
+            "app/MaklerTour/tools/stereo_contract_audit.py",
+            "web/remote_station/scripts/process_maklertour_synced_dense.sh",
+            "web/remote_station/scripts/stereo_global_fusion.py"
+          ],
+          "documents": [
+            "docs/llm/tasks/APP-STEREO-F01-GLOBAL-STEREO-DEPTH-FUSION.md",
+            "docs/llm/tasks/APP-STEREO-F02-A-ANDROID-CAPTURE-BUNDLE-PREFLIGHT.md",
+            "docs/ANDROID_CAPTURE_ARCHITECTURE_AUDIT.md"
+          ],
+          "issueKeys": [
+            "sensor-sidecar-gaps",
+            "stereo-runtime-pending"
+          ]
+        },
+        {
+          "userWorkItemId": "19dfb29a-4d50-4fb5-8848-39af4e78eb5d",
+          "archaeologyTemporaryKeys": [
+            "android-capture-upload",
+            "tour-platform-mvp"
+          ],
+          "recommendedStatus": "done",
+          "sourceFiles": [
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/camera/Insta360Provider.kt",
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/data/camera/Insta360OscProvider.kt",
+            "web/templates/maklertour_tour.html"
+          ],
+          "documents": [
+            "docs/llm/00_PROJECT_OVERVIEW.md",
+            "ROADMAP.md"
+          ],
+          "issueKeys": [
+            "documentation-drift"
+          ]
+        },
+        {
+          "userWorkItemId": "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+          "archaeologyTemporaryKeys": [
+            "server-processing-orchestration",
+            "auto-photo-sfm",
+            "capture-topology-unification",
+            "sfm-component-assembly"
+          ],
+          "recommendedStatus": "in-progress",
+          "sourceFiles": [
+            "web/www/api/mobile.php",
+            "web/libs/auto_photo_bundle_lib.php",
+            "web/tools/sfm_remote_worker.php",
+            "web/remote_station/sfm_pipeline.php",
+            "web/remote_station/sfm_cleanup.php"
+          ],
+          "documents": [
+            "web/remote_station/README.md",
+            "web/DOCS/CAPTURE_BUNDLE_DENSE_CONTRACT.md",
+            "docs/ANDROID_CAPTURE_ARCHITECTURE_AUDIT.md"
+          ],
+          "issueKeys": [
+            "dual-capture-type-mismatch",
+            "sensor-sidecar-gaps",
+            "hybrid-v2-contract-conflict"
+          ]
+        },
+        {
+          "userWorkItemId": "fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+          "archaeologyTemporaryKeys": [
+            "server-processing-orchestration",
+            "single-sfm-baseline",
+            "tof-imu-measurement",
+            "stereo-global-fusion",
+            "sfm-component-assembly"
+          ],
+          "recommendedStatus": "in-progress",
+          "sourceFiles": [
+            "web/remote_station/scripts/process_colmap_sparse.sh",
+            "web/remote_station/scripts/process_colmap_dense.sh",
+            "web/remote_station/scripts/process_colmap_mesh.sh",
+            "web/remote_station/scripts/process_maklertour_synced_dense.sh",
+            "web/remote_station/single_hybrid_v2/run.sh",
+            "web/remote_station/scripts/stereo_global_fusion.py"
+          ],
+          "documents": [
+            "web/remote_station/README.md",
+            "docs/SINGLE_IMU_PARTICIPATION_AUDIT.md",
+            "docs/SINGLE_TOF_PARTICIPATION_AUDIT.md",
+            "docs/llm/tasks/APP-STEREO-F01-GLOBAL-STEREO-DEPTH-FUSION.md"
+          ],
+          "issueKeys": [
+            "imu-not-active-prior",
+            "tof-measurement-only",
+            "hybrid-v2-contract-conflict",
+            "stereo-runtime-pending"
+          ]
+        },
+        {
+          "userWorkItemId": "0b06374d-ccc3-4261-a376-676807e8ac12",
+          "archaeologyTemporaryKeys": [
+            "metric-textured-model",
+            "single-sensor-constraints",
+            "stereo-global-fusion",
+            "sfm-component-assembly"
+          ],
+          "recommendedStatus": "planned",
+          "sourceFiles": [
+            "web/remote_station/scripts/process_colmap_dense.sh",
+            "web/remote_station/scripts/process_colmap_mesh.sh",
+            "web/remote_station/scripts/process_maklertour_synced_dense.sh",
+            "web/remote_station/scripts/stereo_global_fusion.py"
+          ],
+          "documents": [
+            "docs/SINGLE_VISUAL_LOOP_CLOSURE_AB_AUDIT.md",
+            "docs/SINGLE_TOF_PARTICIPATION_AUDIT.md",
+            "docs/llm/tasks/APP-STEREO-F01-GLOBAL-STEREO-DEPTH-FUSION.md"
+          ],
+          "issueKeys": [
+            "imu-not-active-prior",
+            "tof-measurement-only",
+            "stereo-runtime-pending"
+          ]
+        },
+        {
+          "userWorkItemId": "633331e3-586d-4e7c-976f-e2c18e6c966c",
+          "archaeologyTemporaryKeys": [
+            "photorealistic-viewer",
+            "tour-platform-mvp",
+            "auto-photo-sfm",
+            "sfm-component-assembly"
+          ],
+          "recommendedStatus": "in-progress",
+          "sourceFiles": [
+            "web/templates/maklertour_tour.html",
+            "web/www/public_tour.php",
+            "web/www/sfm_viewer.php",
+            "web/www/sfm_manual_align.php"
+          ],
+          "documents": [
+            "docs/llm/00_PROJECT_OVERVIEW.md",
+            "DOC/PHONE_SCAN_MVP_STATUS.md"
+          ],
+          "issueKeys": []
+        }
+      ],
+      "acceptanceCriteria": {
+        "e5d3baeb-d66e-4cb6-8a23-e7ed3633c460": {
+          "sourceKey": "ac-tour-01",
+          "assessment": "pass",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "ab03aff8-1331-4840-a6a8-04017bc04b91": {
+          "sourceKey": "ac-tour-02",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "06ab0d28-5274-40c6-a888-93b1ab52f170": {
+          "sourceKey": "ac-foundation-01",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "a986331e-1c79-418a-8e1e-b1770303efba": {
+          "sourceKey": "ac-foundation-02",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "d4aa69b6-07c3-4ded-97bd-d6bcc3aef0fa": {
+          "sourceKey": "ac-foundation-03",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "1d5ce5cc-3dd8-478e-b106-88e8031a6b7b": {
+          "sourceKey": "ac-foundation-04",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "995e025e-0db2-47c8-ade5-222432d40da0": {
+          "sourceKey": "ac-single-01",
+          "assessment": "pass",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "a9fba66e-dab8-4c58-95b0-561918158069": {
+          "sourceKey": "ac-single-02",
+          "assessment": "pass",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "6706364d-58f3-4c6e-9c28-dfbcbad54052": {
+          "sourceKey": "ac-single-03",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "11ea8572-1261-425e-b4fd-7bf00ee47fdd": {
+          "sourceKey": "ac-single-04",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "78fe15c3-1e8c-43a3-a01b-5a5ac442cd0a": {
+          "sourceKey": "ac-single-05",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "014f44e0-d002-477e-84c6-0edf75af35fe": {
+          "sourceKey": "ac-single-06",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "fababca3-d6a7-4ef8-9c7a-fb85906d851d": {
+          "sourceKey": "ac-auto-01",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "99d36633-1823-4ff1-a6f0-d1aaff06aa38": {
+          "sourceKey": "ac-auto-02",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "aa40bb32-f03f-45c3-a509-1226b78d6164": {
+          "sourceKey": "ac-auto-03",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "f36db81f-c451-4166-9307-df93e8689b00": {
+          "sourceKey": "ac-auto-04",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "f5f76903-fde4-4321-89af-3ed663b4a7c1": {
+          "sourceKey": "ac-dual-01",
+          "assessment": "pass",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "fccc092c-a02e-4206-a4ec-3357f05daa7f": {
+          "sourceKey": "ac-dual-02",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "55af3f42-8c18-4ea9-b32f-4ac87238776d": {
+          "sourceKey": "ac-dual-03",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "3cc64860-c08a-4357-80be-00e206e2c02e": {
+          "sourceKey": "ac-dual-04",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "de482b06-976b-40e1-b9d8-451bf35a45c1": {
+          "sourceKey": "ac-laptop-01",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "e3d09ab1-bf20-4f1c-b5b3-a0b49d049637": {
+          "sourceKey": "ac-laptop-02",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "811f598c-056d-4cf4-bfec-dbe016942a6e": {
+          "sourceKey": "ac-laptop-03",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "bc57b214-a938-46e8-9c29-bf5755ad9d1d": {
+          "sourceKey": "ac-laptop-04",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "7a33a4fb-a6af-41d8-84e2-b0a3b015b2f2": {
+          "sourceKey": "ac-usb-01",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "aa723b4e-e833-46a2-af37-a6b0a43208a5": {
+          "sourceKey": "ac-usb-02",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "b44dcb35-f4c0-4004-afa2-2218b80e4c18": {
+          "sourceKey": "ac-usb-03",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "b453402a-1601-41f5-978a-7a88ebae60eb": {
+          "sourceKey": "ac-usb-04",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "6cc26e31-bc52-48d9-9d75-77aeb2a7dc1f": {
+          "sourceKey": "ac-usb-05",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "f2f815cf-9bc0-47ed-a296-214b198f0e87": {
+          "sourceKey": "ac-360-01",
+          "assessment": "pass",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "037e4c4a-1bd5-49ca-970b-2c05690ddae5": {
+          "sourceKey": "ac-360-02",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "0233db28-04a1-4e79-815b-ade08145cac1": {
+          "sourceKey": "ac-360-03",
+          "assessment": "not_applicable",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "f1dd7741-2b7b-43cb-b0ad-1f37efc70bd2": {
+          "sourceKey": "ac-server-01",
+          "assessment": "pass",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "2ab76c68-3b6e-4fdd-87a6-8a19fd7a4989": {
+          "sourceKey": "ac-server-02",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "28278447-0739-49ca-a1f5-91257e7cc4a1": {
+          "sourceKey": "ac-server-03",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "4561799b-1772-4381-9f16-92b257c0df31": {
+          "sourceKey": "ac-server-04",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "6ab38f3e-a8f7-42dc-8e3f-851e8ea281fd": {
+          "sourceKey": "ac-server-05",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "c03e4ccc-82f2-4f3d-8290-7aeb440fcedc": {
+          "sourceKey": "ac-worker-01",
+          "assessment": "pass",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "7235d7f3-f980-4d60-9b1b-c437695f3546": {
+          "sourceKey": "ac-worker-02",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "d1cb9e1b-17f1-46b3-86ad-9f2d41210b60": {
+          "sourceKey": "ac-worker-03",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "d3ee118a-87bb-42ea-b658-70bd84c62973": {
+          "sourceKey": "ac-worker-04",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "87bb736b-c0e9-4aee-af97-b61b069c027d": {
+          "sourceKey": "ac-worker-05",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "0ef71a6e-7291-4695-8e19-41de6f9f058e": {
+          "sourceKey": "ac-metric-01",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "e925c9fe-c328-4d2b-a612-46d5b400eda4": {
+          "sourceKey": "ac-metric-02",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "37a51344-591e-4cca-be68-ec131ca4ebb2": {
+          "sourceKey": "ac-metric-03",
+          "assessment": "not_run",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "ad05ac6e-942a-44c5-9602-d9c9497be4c0": {
+          "sourceKey": "ac-metric-04",
+          "assessment": "partial",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "645ff791-c7dd-4aa8-99f6-91306929c207": {
+          "sourceKey": "ac-viewer-01",
+          "assessment": "pass",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "87d9213a-817f-4757-a05b-54b735bc50fb": {
+          "sourceKey": "ac-viewer-02",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "9b7a9228-27fa-45d0-9d3d-fc327b69793d": {
+          "sourceKey": "ac-viewer-03",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        },
+        "dff61067-f07d-475f-9c1e-bedc9d93975c": {
+          "sourceKey": "ac-viewer-04",
+          "assessment": "fail",
+          "source": ".projectnavigator-rescue/03-acceptance-criteria.md"
+        }
+      },
+      "issues": {
+        "f601936e-ed07-4083-8aac-fb54f2e45512": {
+          "archaeologyIssueKey": "dual-capture-type-mismatch",
+          "title": "Dual-phone aggregate upload type is rejected by PHP",
+          "sourceFiles": [
+            "docs/ANDROID_CAPTURE_ARCHITECTURE_AUDIT.md",
+            "web/www/api/mobile.php",
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/state/AppStateViewModel.kt"
+          ],
+          "confidence": 0.99,
+          "projectLevel": false,
+          "linkedWorkItemIds": [
+            "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+            "72378a61-7092-43c3-9671-4b365d929265",
+            "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+          ]
+        },
+        "36da4049-c2e5-4463-ab3c-69cae85810b1": {
+          "archaeologyIssueKey": "sensor-sidecar-gaps",
+          "title": "Dual-phone and USB packages omit ToF sidecars",
+          "sourceFiles": [
+            "docs/ANDROID_CAPTURE_ARCHITECTURE_AUDIT.md"
+          ],
+          "confidence": 0.96,
+          "projectLevel": false,
+          "linkedWorkItemIds": [
+            "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+            "2498f509-0f87-41e1-9eba-fe0684511263",
+            "72378a61-7092-43c3-9671-4b365d929265",
+            "a94d2800-5bdf-4dea-83d9-cc05e8ac5152",
+            "4c7e40a0-5f6a-4563-b889-27e1f3286010",
+            "c7ba832d-1307-475d-b543-59ac5c17ea6c"
+          ]
+        },
+        "ebc6c657-8ff8-48af-bebb-b2c6bfcd90f6": {
+          "archaeologyIssueKey": "imu-not-active-prior",
+          "title": "IMU does not constrain mapper or bundle adjustment",
+          "sourceFiles": [
+            "docs/SINGLE_IMU_PARTICIPATION_AUDIT.md",
+            "web/remote_station/scripts/build_world_alignment.py"
+          ],
+          "confidence": 0.99,
+          "projectLevel": false,
+          "linkedWorkItemIds": [
+            "da6e553d-a4ec-40c5-a431-b03941393d29",
+            "2498f509-0f87-41e1-9eba-fe0684511263",
+            "fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+            "0b06374d-ccc3-4261-a376-676807e8ac12"
+          ]
+        },
+        "0255284d-fe83-45ba-9558-d3159330e067": {
+          "archaeologyIssueKey": "tof-measurement-only",
+          "title": "ToF metric evidence is not applied to geometry",
+          "sourceFiles": [
+            "docs/SINGLE_TOF_PARTICIPATION_AUDIT.md"
+          ],
+          "confidence": 0.99,
+          "projectLevel": false,
+          "linkedWorkItemIds": [
+            "da6e553d-a4ec-40c5-a431-b03941393d29",
+            "2498f509-0f87-41e1-9eba-fe0684511263",
+            "fa24df7a-87d4-4606-b4c8-3ce87eed24a1",
+            "0b06374d-ccc3-4261-a376-676807e8ac12"
+          ]
+        },
+        "897e09fb-2742-4c71-a988-a8d9bbd2cec5": {
+          "archaeologyIssueKey": "hybrid-v2-contract-conflict",
+          "title": "Hybrid v2 audit and runner disagree on loop detection",
+          "sourceFiles": [
+            "docs/SINGLE_HYBRID_V2_AUDIT.md",
+            "web/remote_station/single_hybrid_v2/run.sh"
+          ],
+          "confidence": 0.99,
+          "projectLevel": false,
+          "linkedWorkItemIds": [
+            "da6e553d-a4ec-40c5-a431-b03941393d29",
+            "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+            "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+          ]
+        },
+        "0a4c3d54-1668-4b9b-8733-cab8c91ac647": {
+          "archaeologyIssueKey": "stereo-runtime-pending",
+          "title": "Stereo F01/F02 implementation lacks runtime acceptance",
+          "sourceFiles": [
+            "docs/llm/tasks/APP-STEREO-F01-GLOBAL-STEREO-DEPTH-FUSION.md",
+            "docs/llm/tasks/APP-STEREO-RUNTIME-A-STATION-DEPLOY-GATE.md"
+          ],
+          "confidence": 0.98,
+          "projectLevel": false,
+          "linkedWorkItemIds": [
+            "72378a61-7092-43c3-9671-4b365d929265",
+            "a94d2800-5bdf-4dea-83d9-cc05e8ac5152",
+            "4c7e40a0-5f6a-4563-b889-27e1f3286010",
+            "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+          ]
+        },
+        "a2871bac-c1b3-4aa7-b196-e6069feb9e65": {
+          "archaeologyIssueKey": "mainactivity-coupling",
+          "title": "MainActivity is an oversized composition/UI/orchestration boundary",
+          "sourceFiles": [
+            "docs/llm/02_ARCHITECTURE.md",
+            "app/MaklerTour/app/src/main/java/com/example/maklertour/MainActivity.kt"
+          ],
+          "confidence": 0.96,
+          "projectLevel": false,
+          "linkedWorkItemIds": [
+            "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3"
+          ]
+        },
+        "c1cb3bbd-1cdb-4f48-bcbd-63ba4916d2cf": {
+          "archaeologyIssueKey": "documentation-drift",
+          "title": "Legacy roadmaps and historical task headers contradict current code/results",
+          "sourceFiles": [
+            "ROADMAP.md",
+            "docs/llm/tasks/APP-STEREO-CURRENT-STATUS-AND-NEXT-STEPS.md"
+          ],
+          "confidence": 0.95,
+          "projectLevel": true,
+          "linkedWorkItemIds": []
+        },
+        "de89eb3b-b5fe-4ee0-b877-d721416e05d1": {
+          "archaeologyIssueKey": "repository-provenance-hygiene",
+          "title": "Dirty/untracked/generated/backup artifacts obscure authoritative source",
+          "sourceFiles": [
+            "docs/AGENTS.md",
+            ".gitignore"
+          ],
+          "confidence": 0.98,
+          "projectLevel": true,
+          "linkedWorkItemIds": []
+        }
+      },
+      "dependencyChanges": [
+        {
+          "dependencyId": "0565163f-2737-4c72-aea5-027af681854b",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "0add6d93-5546-4022-8668-a9750e1f8ce2",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "13dc18e0-300d-4666-915e-52d0d6d127f5",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "4253399e-bda8-4256-832d-37f42a25fada",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "a54cb001-fa65-44a1-9c42-0bd813070c70",
+          "from": "hard",
+          "to": "soft",
+          "status": "removed-duplicate",
+          "duplicateOf": "4253399e-bda8-4256-832d-37f42a25fada"
+        },
+        {
+          "dependencyId": "49255588-415f-45ed-b3f6-6cb8c597c1fc",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "4fa1dfa5-92f4-499a-bd81-4b39b62b60be",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "91d901b0-9049-4f49-923a-2e35e5a8c840",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "a8b597f8-1475-48d9-8c0d-3d1b7ae0a45b",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "be2c5370-2340-4f7d-9c30-a95bacba8d4c",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "be9c1f3e-a0ea-46b0-bab1-65ac0649c09c",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        },
+        {
+          "dependencyId": "e8ba8b8e-2f85-4440-b9b3-80d18994fc4f",
+          "from": "hard",
+          "to": "soft",
+          "status": "active",
+          "duplicateOf": null
+        }
+      ],
+      "crossCuttingContract": {
+        "disposition": "project-level-document-and-shared-active-work",
+        "ownerWorkItemIds": [
+          "4dcc4e53-cc41-4b0a-bb3a-ca2e47cca4d3",
+          "c7ba832d-1307-475d-b543-59ac5c17ea6c",
+          "fa24df7a-87d4-4606-b4c8-3ce87eed24a1"
+        ],
+        "requiredAreas": [
+          "session identity",
+          "capture mode",
+          "camera roles",
+          "timestamps and clock relation",
+          "calibration",
+          "media",
+          "IMU",
+          "ToF",
+          "checksums and integrity",
+          "upload lifecycle",
+          "server acceptance",
+          "processing expectations",
+          "result provenance"
+        ]
+      },
+      "generatedAt": "2026-08-28T08:56:43.022Z",
+      "notes": [
+        "User WorkItem IDs and top-level architecture are preserved.",
+        "Non-done progress is conservatively set to 0; no unsupported percentage was inferred.",
+        "Capture contract unification remains a project-level artifact owned by existing Android, server and worker WorkItems.",
+        "The duplicate Tour MVP to Server edge a54cb001-fa65-44a1-9c42-0bd813070c70 is preserved but marked removed."
+      ]
+    }
+  }
+}

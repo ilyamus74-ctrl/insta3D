@@ -1,0 +1,163 @@
+{
+  "format": "project-navigator-ai-result",
+  "version": 1,
+  "result": {
+    "id": "result-bab2f402-single-analysis-20260828",
+    "taskId": "bab2f402-c346-4e7d-8ae3-bdc3f13187b9",
+    "projectId": "b6ea9bc5-8560-45ca-933c-33a09849f66b",
+    "workItemId": "da6e553d-a4ec-40c5-a431-b03941393d29",
+    "mode": "ANALYZE",
+    "startedAt": "2026-08-28T09:08:28.482Z",
+    "completedAt": "2026-08-28T09:26:04.690Z",
+    "agent": {
+      "provider": "openai",
+      "name": "Codex",
+      "model": "GPT-5"
+    },
+    "summary": "APP SINGLE baseline is partially implemented and must remain in-progress. Android video, IMU and ToF capture/persistence/upload wiring exists; server storage and station transfer paths exist; visual COLMAP reconstruction and diagnostics exist. Available evidence does not independently runtime-verify the complete sidecar path for the reference capture. IMU affects frame selection and post-COLMAP diagnostics but does not constrain mapper or bundle adjustment. ToF produces calibrated metric observations and measurement-only scale/depth diagnostics but does not mutate poses, sparse/dense geometry, scale or fusion. Hybrid v1 and exhaustive historical results show improved visual connectivity, while controlled Hybrid v2 is not run and its README contradicts the executable loop-detection setting. No physical-ground-truth metric result exists.",
+    "outcome": "PARTIAL"
+  },
+  "changes": {
+    "applied": false,
+    "files": [],
+    "patch": {
+      "format": "unified-diff",
+      "content": null
+    },
+    "projectProposal": {
+      "operations": []
+    }
+  },
+  "tests": [
+    {
+      "command": "No build, unit test, device capture, COLMAP job or physical-ground-truth run executed",
+      "status": "NOT_RUN",
+      "summary": "ANALYZE mode used read-only source and documentation inspection only."
+    }
+  ],
+  "acceptanceResults": [
+    {
+      "criterionId": "995e025e-0db2-47c8-ade5-222432d40da0",
+      "result": "NOT_TESTED",
+      "evidence": [
+        "app/MaklerTour/app/src/main/java/com/example/maklertour/data/phonecamera/PhoneCameraScanProvider.kt starts/stops ImuRecorder and TofCaptureSidecarRecorder and writes sidecars to the manifest.",
+        "app/MaklerTour/app/src/main/java/com/example/maklertour/auth/MobileUploadApi.kt attaches imu, tof_frames and tof_calibration multipart parts.",
+        "web/www/api/mobile.php stores optional IMU/ToF files; web/remote_station/run_extract_frames_job.sh transfers them to the station.",
+        "docs/SINGLE_BASELINE_AUDIT.md historically claims IMU/ToF capture and server output for job_180237696.",
+        "docs/SINGLE_IMU_PARTICIPATION_AUDIT.md and docs/SINGLE_TOF_PARTICIPATION_AUDIT.md both state RUNTIME NOT RUN."
+      ],
+      "notes": "Implemented end-to-end wiring and a historical claim exist, but reference job artifacts/logs were unavailable for independent validation. The completed=true state in the originating WorkItem is stronger than the accessible evidence."
+    },
+    {
+      "criterionId": "a9fba66e-dab8-4c58-95b0-561918158069",
+      "result": "PASS",
+      "evidence": [
+        "web/remote_station/scripts/process_colmap_sparse.sh creates sparse_diagnostics.json and sparse_components.json.",
+        "web/remote_station/scripts/analyze_sparse_trajectory.py reports registration, reprojection and trajectory metrics.",
+        "experiments/single_hybrid_v2/diagnostics.py implements registered images, components, sparse points, reprojection, first/last frame and endpoint distance.",
+        "docs/SINGLE_VISUAL_LOOP_CLOSURE_AB_AUDIT.md records concrete sequential/exhaustive runtime metrics for job_180237696."
+      ],
+      "notes": "Satisfied for research/audit diagnostics. Metrics are distributed across production and experimental outputs rather than one uniformly runtime-accepted production artifact."
+    },
+    {
+      "criterionId": "6706364d-58f3-4c6e-9c28-dfbcbad54052",
+      "result": "NOT_TESTED",
+      "evidence": [
+        "docs/SINGLE_HYBRID_LOOP_RESULT.md reports Hybrid v1 improved largest model 204 to 440 and components 6 to 3.",
+        "experiments/single_hybrid_v2/generate_pairs.py implements a bounded non-exhaustive controlled pair graph.",
+        "docs/SINGLE_HYBRID_V2_AUDIT.md reports all Hybrid v2 metrics NOT_RUN.",
+        "experiments/single_hybrid_v2/README.md says loop detection enabled, while experiments/single_hybrid_v2/run.sh sets --SequentialMatching.loop_detection 0."
+      ],
+      "notes": "Hybrid v1 is supporting historical evidence, not acceptance of the controlled Hybrid v2 policy. The exact controlled experiment has not run."
+    },
+    {
+      "criterionId": "11ea8572-1261-425e-b4fd-7bf00ee47fdd",
+      "result": "FAIL",
+      "evidence": [
+        "web/remote_station/scripts/process_colmap_sparse.sh runs feature_extractor, visual matcher and ordinary colmap mapper before locating IMU for diagnostics.",
+        "web/remote_station/scripts/build_world_alignment.py returns UNALIGNED with identity rotation because device-to-COLMAP transform is not implemented.",
+        "docs/SINGLE_IMU_PARTICIPATION_AUDIT.md classifies IMU as PARTIAL and explicitly finds no pose prior or inertial bundle-adjustment constraint."
+      ],
+      "notes": "IMU is captured and can influence pre-COLMAP frame selection, but it does not enter the mapper/BA objective or apply gravity alignment."
+    },
+    {
+      "criterionId": "78fe15c3-1e8c-43a3-a01b-5a5ac442cd0a",
+      "result": "FAIL",
+      "evidence": [
+        "web/remote_station/scripts/process_extract_frames.sh generates tof_metric_observations.jsonl for measurement.",
+        "web/remote_station/scripts/measure_tof_sparse_scale.py fixes measurement_only=true, geometry_mutation_enabled=false, camera_poses_modified=false, points3d_modified=false and fusion_enabled=false.",
+        "docs/SINGLE_TOF_PARTICIPATION_AUDIT.md classifies ToF as METRIC ONLY and finds no COLMAP/PatchMatch constraint or automatic scale application."
+      ],
+      "notes": "ToF is calibrated and consumed for diagnostics, but it does not change camera poses, sparse/dense geometry, bundle adjustment, scale or fusion."
+    },
+    {
+      "criterionId": "014f44e0-d002-477e-84c6-0edf75af35fe",
+      "result": "NOT_TESTED",
+      "evidence": [
+        "docs/SINGLE_PIPELINE_CURRENT_STATE.md states metric reconstruction is NOT IMPLEMENTED and requires controlled Video-only, Video+IMU and Video+IMU+ToF comparisons.",
+        "docs/SINGLE_VISUAL_LOOP_CLOSURE_AB_AUDIT.md explicitly states that no ground-truth object geometry measurement was performed.",
+        "No repository artifact defines accepted physical dimensions, metric-error thresholds or a repeatable sensor-assisted result."
+      ],
+      "notes": "The required physical-ground-truth experiment and acceptance thresholds are absent."
+    }
+  ],
+  "discoveredIssues": [],
+  "artifacts": [
+    {
+      "type": "report",
+      "title": "SINGLE current state",
+      "path": "docs/SINGLE_PIPELINE_CURRENT_STATE.md",
+      "checksum": null,
+      "verified": true
+    },
+    {
+      "type": "report",
+      "title": "SINGLE IMU participation audit",
+      "path": "docs/SINGLE_IMU_PARTICIPATION_AUDIT.md",
+      "checksum": null,
+      "verified": true
+    },
+    {
+      "type": "report",
+      "title": "SINGLE ToF participation audit",
+      "path": "docs/SINGLE_TOF_PARTICIPATION_AUDIT.md",
+      "checksum": null,
+      "verified": true
+    },
+    {
+      "type": "report",
+      "title": "Visual loop closure A/B audit",
+      "path": "docs/SINGLE_VISUAL_LOOP_CLOSURE_AB_AUDIT.md",
+      "checksum": null,
+      "verified": true
+    },
+    {
+      "type": "report",
+      "title": "Hybrid v2 audit",
+      "path": "docs/SINGLE_HYBRID_V2_AUDIT.md",
+      "checksum": null,
+      "verified": true
+    }
+  ],
+  "assumptions": [
+    "docs/SINGLE_BASELINE_AUDIT.md is treated as a historical claim about job_180237696, not independently verified runtime evidence.",
+    "The source tree inspected is the implementation corresponding to the originating reconciled ProjectNavigator task.",
+    "No inaccessible remote station or /mnt/storage artifacts are assumed to exist or pass acceptance."
+  ],
+  "warnings": [
+    "Reference job runtime artifacts and logs were unavailable locally, so capture-to-retention criterion remains NOT_TESTED despite implemented wiring and historical documentation.",
+    "Hybrid v2 documentation and executable code disagree on loop detection; results would be ambiguous until the contract is reconciled.",
+    "Improved visual connectivity does not establish physical loop closure, metric scale or geometric correctness.",
+    "ToF server storage is optional and downstream recovery partly relies on sidecar filenames; this is a robustness risk, not reported as a new Issue because the existing ToF geometry Issue already covers the material acceptance gap."
+  ],
+  "completion": {
+    "workItemDoneClaimed": false,
+    "workItemStateMutated": false,
+    "acceptanceCriteriaMutated": false
+  },
+  "review": {
+    "status": "pending",
+    "reviewedAt": null,
+    "reviewReason": null
+  }
+}
